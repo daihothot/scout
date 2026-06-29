@@ -1,4 +1,5 @@
 /node_modules/
 /dist/
-run/
+/run/
+assets/codex/mcp/codegraph/vendor/
 npm-debug.log*

@@ -53,7 +53,7 @@
     {
       "id": "rg",
       "name": "rg",
-      "command": "/Users/chengdai/.vscode/extensions/openai.chatgpt-26.616.81150-darwin-arm64/bin/macos-aarch64/rg",
+      "command": "rg",
       "exposeAs": "rg",
       "required": true,
       "smokeArgs": [

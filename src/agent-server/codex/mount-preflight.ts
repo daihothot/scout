@@ -33,10 +33,11 @@ export async function preflightCodexMount(mount: CodexMount): Promise<AgentServe
 
   try {
     await client.startSession();
-    result.configRead = await client.request("config/read", {
+    const configRead = await client.request("config/read", {
       cwd: mount.mountRoot,
       includeLayers: true,
     });
+    result.configLayers = readConfigLayers(configRead);
     result.skillsList = await client.request("skills/list", {
       cwds: [mount.mountRoot],
       forceReload: true,
@@ -131,6 +132,11 @@ function preflightPassed(result: AgentServerPreflightResult): boolean {
   if (result.shellSmoke?.some((item) => item.status !== "passed")) return false;
   if (result.pluginGate && result.pluginGate.status !== "passed") return false;
   return true;
+}
+
+function readConfigLayers(response: unknown): unknown[] {
+  const root = readObjectOrUndefined(response);
+  return readArrayOrUndefined(root?.layers) ?? [];
 }
 
 function buildPluginGate(input: {
