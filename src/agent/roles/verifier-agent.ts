@@ -1,0 +1,28 @@
+import { ScoutAgent, type ScoutAgentOptions } from "../scout-agent.js";
+import { buildDynamicToolsForRole } from "../tool-profiles.js";
+import { ScoutAgentPhases, ScoutAgentRoles } from "../types.js";
+import { readWorkerRoleInstructions } from "../helper.js";
+
+export class VerifierAgent extends ScoutAgent {
+  constructor(options: ScoutAgentOptions) {
+    super({
+      ...options,
+      spec: {
+        role: ScoutAgentRoles.Verifier,
+        phases: [ScoutAgentPhases.Verify],
+        cwd: options.agentMount.mountRoot,
+        approvalPolicy: "never",
+        sandbox: "workspace-write",
+        contextBundleId: options.contextBundle.contextBundleId,
+        config: {
+          model_reasoning_effort: "minimal",
+          features: {
+            multi_agent: false,
+          },
+        },
+        developerInstructions: readWorkerRoleInstructions(options, ScoutAgentRoles.Verifier),
+        dynamicTools: buildDynamicToolsForRole(ScoutAgentRoles.Verifier),
+      },
+    });
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "tools": [
+    {
+      "id": "scoutAssets",
+      "name": "scout-assets",
+      "command": "node",
+      "args": [
+        "assets/codex/tools/scout-assets.cjs"
+      ],
+      "exposeAs": "scout-assets",
+      "required": true,
+      "smokeArgs": [
+        "--smoke"
+      ],
+      "marker": "SCOUT_ASSETS_OK"
+    },
+    {
+      "id": "scoutJsonWrite",
+      "name": "scout-json-write",
+      "command": "node",
+      "args": [
+        "assets/codex/tools/scout-json-write.cjs"
+      ],
+      "exposeAs": "scout-json-write",
+      "required": true,
+      "smokeArgs": [
+        "--smoke"
+      ],
+      "marker": "SCOUT_JSON_WRITE_OK"
+    },
+    {
+      "id": "jarvis",
+      "name": "jarvis",
+      "command": "/Users/chengdai/.guru/guru-jarvis/scripts/jarvis",
+      "exposeAs": "jarvis",
+      "required": true,
+      "smokeArgs": [
+        "codebase",
+        "supported"
+      ],
+      "marker": "gurusdk-unity"
+    },
+    {
+      "id": "codegraph",
+      "name": "codegraph",
+      "command": "/Users/chengdai/.npm-global/bin/codegraph",
+      "exposeAs": "codegraph",
+      "required": true,
+      "smokeArgs": [
+        "--version"
+      ]
+    },
+    {
+      "id": "rg",
+      "name": "rg",
+      "command": "/Users/chengdai/.vscode/extensions/openai.chatgpt-26.616.81150-darwin-arm64/bin/macos-aarch64/rg",
+      "exposeAs": "rg",
+      "required": true,
+      "smokeArgs": [
+        "--version"
+      ],
+      "marker": "ripgrep"
+    },
+    {
+      "id": "sed",
+      "name": "sed",
+      "command": "/usr/bin/sed",
+      "exposeAs": "sed",
+      "required": true
+    },
+    {
+      "id": "find",
+      "name": "find",
+      "command": "/usr/bin/find",
+      "exposeAs": "find",
+      "required": true
+    },
+    {
+      "id": "grep",
+      "name": "grep",
+      "command": "/usr/bin/grep",
+      "exposeAs": "grep",
+      "required": true
+    },
+    {
+      "id": "cat",
+      "name": "cat",
+      "command": "/bin/cat",
+      "exposeAs": "cat",
+      "required": true
+    },
+    {
+      "id": "ls",
+      "name": "ls",
+      "command": "/bin/ls",
+      "exposeAs": "ls",
+      "required": true
+    },
+    {
+      "id": "pwd",
+      "name": "pwd",
+      "command": "/bin/pwd",
+      "exposeAs": "pwd",
+      "required": true
+    },
+    {
+      "id": "wc",
+      "name": "wc",
+      "command": "/usr/bin/wc",
+      "exposeAs": "wc",
+      "required": true
+    },
+    {
+      "id": "head",
+      "name": "head",
+      "command": "/usr/bin/head",
+      "exposeAs": "head",
+      "required": true
+    },
+    {
+      "id": "tail",
+      "name": "tail",
+      "command": "/usr/bin/tail",
+      "exposeAs": "tail",
+      "required": true
+    },
+    {
+      "id": "sort",
+      "name": "sort",
+      "command": "/usr/bin/sort",
+      "exposeAs": "sort",
+      "required": true
+    },
+    {
+      "id": "uniq",
+      "name": "uniq",
+      "command": "/usr/bin/uniq",
+      "exposeAs": "uniq",
+      "required": true
+    },
+    {
+      "id": "git",
+      "name": "git",
+      "command": "/usr/bin/git",
+      "exposeAs": "git",
+      "required": true
+    }
+  ]
+}

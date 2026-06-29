@@ -1,0 +1,128 @@
+{
+  "profiles": {
+    "coordinator": {
+      "config": "config/base.config.toml",
+      "skills": [],
+      "shellTools": [
+        "scoutAssets"
+      ],
+      "mcpServers": [],
+      "plugins": [],
+      "trustedRoots": [
+        "${SCOUT_MOUNT_ROOT}"
+      ],
+      "writableRoots": [
+        "${SCOUT_MOUNT_ROOT}",
+        "${SCOUT_ARTIFACT_ROOT}"
+      ]
+    },
+    "researcher": {
+      "config": "config/base.config.toml",
+      "skills": [
+        "scout-understanding",
+        "jarvis-codebase"
+      ],
+      "shellTools": [
+        "scoutAssets",
+        "scoutJsonWrite",
+        "jarvis",
+        "codegraph",
+        "rg",
+        "sed",
+        "find",
+        "grep",
+        "cat",
+        "ls",
+        "pwd"
+      ],
+      "mcpServers": [],
+      "plugins": [],
+      "trustedRoots": [
+        "${SCOUT_MOUNT_ROOT}",
+        "${SCOUT_REPO_ROOT}",
+        "~/.guru/knowledge"
+      ],
+      "writableRoots": [
+        "${SCOUT_MOUNT_ROOT}",
+        "${SCOUT_ARTIFACT_ROOT}",
+        "~/.guru/codebase"
+      ]
+    },
+    "verifier": {
+      "config": "config/base.config.toml",
+      "skills": [
+        "scout-runtime",
+        "jarvis-codebase"
+      ],
+      "shellTools": [
+        "scoutAssets",
+        "scoutJsonWrite",
+        "jarvis",
+        "codegraph",
+        "rg",
+        "git",
+        "cat",
+        "sed",
+        "find",
+        "grep",
+        "ls",
+        "pwd",
+        "wc",
+        "head",
+        "tail",
+        "sort",
+        "uniq"
+      ],
+      "mcpServers": [
+        "scout_local_capability"
+      ],
+      "plugins": [
+        "scout-local-capability-plugin"
+      ],
+      "trustedRoots": [
+        "${SCOUT_MOUNT_ROOT}",
+        "${SCOUT_REPO_ROOT}",
+        "~/.guru/knowledge"
+      ],
+      "writableRoots": [
+        "${SCOUT_MOUNT_ROOT}",
+        "${SCOUT_ARTIFACT_ROOT}",
+        "~/.guru/codebase"
+      ]
+    },
+    "validator": {
+      "config": "config/base.config.toml",
+      "skills": [
+        "scout-runtime"
+      ],
+      "shellTools": [
+        "scoutAssets",
+        "scoutJsonWrite",
+        "rg",
+        "cat",
+        "sed",
+        "find",
+        "grep",
+        "ls",
+        "pwd",
+        "wc",
+        "head",
+        "tail",
+        "sort",
+        "uniq"
+      ],
+      "mcpServers": [],
+      "plugins": [],
+      "trustedRoots": [
+        "${SCOUT_MOUNT_ROOT}",
+        "${SCOUT_REPO_ROOT}",
+        "~/.guru/knowledge"
+      ],
+      "writableRoots": [
+        "${SCOUT_MOUNT_ROOT}",
+        "${SCOUT_ARTIFACT_ROOT}",
+        "~/.guru/codebase"
+      ]
+    }
+  }
+}

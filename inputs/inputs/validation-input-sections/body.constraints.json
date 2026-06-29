@@ -1,0 +1,98 @@
+{
+  "section": "body.constraints",
+  "updatedAt": "2026-06-24T12:37:50.769Z",
+  "content": [
+    {
+      "id": "constraint.scope.current-bdd",
+      "kind": "scope",
+      "severity": "blocking",
+      "claim": {
+        "claim_id": "claim.constraint.scope.current-bdd",
+        "text": "本次 validation body 聚焦 age-signals-consent-android-success；unsupported platform、default flow integrated 和 compliance boundary 只作为约束或不足证据进入计划。",
+        "source_ref_ids": [
+          "src.bdd.age-signals-consent-android-success",
+          "src.capability.google-play-age-signals-consent-service.spec",
+          "src.spec.google-play-age-signals"
+        ],
+        "evidence_ref_ids": [
+          "ev.bdd.behavior",
+          "ev.capability.spec-review",
+          "ev.spec.acceptance-scenarios"
+        ],
+        "support_level": "synthesized",
+        "planner_use": "限制 Planner 范围，避免一次验证覆盖所有 Age Signals BDD。"
+      }
+    },
+    {
+      "id": "constraint.policy.compliance-boundary",
+      "kind": "privacy",
+      "severity": "blocking",
+      "claim": {
+        "claim_id": "claim.constraint.policy.compliance-boundary",
+        "text": "Age Signals values must not be routed into analytics targeting, ads personalization, marketing, or user profiling paths.",
+        "source_ref_ids": [
+          "src.synaptic.google-play-age-signals.proposal",
+          "src.synaptic.google-play-age-signals.retrieval",
+          "src.spec.google-play-age-signals"
+        ],
+        "evidence_ref_ids": [
+          "ev.gap.compliance-boundary-runtime-missing"
+        ],
+        "support_level": "direct",
+        "planner_use": "硬性隐私/合规约束，任何验证计划都不能绕过。"
+      }
+    },
+    {
+      "id": "constraint.source-truth",
+      "kind": "safety",
+      "severity": "blocking",
+      "claim": {
+        "claim_id": "claim.constraint.source-truth",
+        "text": "获得 Unity repo 后必须使用 CodeGraph MCP 或 rg 校验代码源真实性，不能仅依据 hippocampus 或 synaptic 摘要生成验证计划。",
+        "source_ref_ids": [
+          "src.user.prompt.age-signals-demo"
+        ],
+        "evidence_ref_ids": [
+          "ev.user.scope-confirmed"
+        ],
+        "support_level": "user_confirmed",
+        "planner_use": "确保输入事实有当前源码证据。"
+      }
+    },
+    {
+      "id": "constraint.no-app-native-bridge",
+      "kind": "scope",
+      "severity": "warning",
+      "claim": {
+        "claim_id": "claim.constraint.no-app-native-bridge",
+        "text": "验证目标是 SDK 内部 ConsentManager 和 Android adapter 能力，不应要求 app 侧新增 native bridge。",
+        "source_ref_ids": [
+          "src.synaptic.google-play-age-signals.proposal",
+          "src.spec.google-play-age-signals"
+        ],
+        "evidence_ref_ids": [
+          "ev.spec.acceptance-scenarios"
+        ],
+        "support_level": "direct",
+        "planner_use": "约束执行方案不要绕过 SDK。"
+      }
+    },
+    {
+      "id": "constraint.no-schema-version",
+      "kind": "assumption",
+      "severity": "info",
+      "claim": {
+        "claim_id": "claim.constraint.no-schema-version",
+        "text": "当前输入写入不保留 schemaVersion 字段，最终由当前唯一 ValidationBody/Catalog 结构承载。",
+        "source_ref_ids": [
+          "src.user.prompt.age-signals-demo"
+        ],
+        "evidence_ref_ids": [
+          "ev.user.scope-confirmed"
+        ],
+        "support_level": "user_confirmed",
+        "planner_use": "符合当前 Scout 输入结构约束，避免旧版本兼容字段回流。"
+      }
+    }
+  ]
+}

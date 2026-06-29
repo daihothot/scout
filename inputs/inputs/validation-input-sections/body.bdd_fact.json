@@ -1,0 +1,580 @@
+{
+  "section": "body.bdd_fact",
+  "updatedAt": "2026-06-24T12:37:50.768Z",
+  "content": {
+    "catalog_ref": {
+      "catalog_id": "catalog_age_signals_consent_android_success",
+      "uri": "validation-catalog.json"
+    },
+    "validation_goal": {
+      "goal_id": "goal.age-signals-consent-android-success",
+      "intent": "prove_behavior",
+      "target": {
+        "claim_id": "claim.goal.target",
+        "text": "验证目标是 age-signals-consent-android-success：Android 成功路径下 ConsentManager 请求 Age Signals 并发布 typed AgeSignalsResult。",
+        "source_ref_ids": [
+          "src.bdd.age-signals-consent-android-success",
+          "src.user.prompt.age-signals-demo"
+        ],
+        "evidence_ref_ids": [
+          "ev.bdd.behavior",
+          "ev.user.scope-confirmed"
+        ],
+        "support_level": "user_confirmed",
+        "planner_use": "给 Planner 明确本次验证目标。"
+      },
+      "expected_behavior": {
+        "claim_id": "claim.goal.expected",
+        "text": "期望行为是 SDK 返回并发布包含 status、可选年龄边界、installId、approval date 且 ErrorCode=None 的 AgeSignalsResult。",
+        "source_ref_ids": [
+          "src.bdd.age-signals-consent-android-success",
+          "src.spec.google-play-age-signals",
+          "src.unity.age-signals-consent-tests"
+        ],
+        "evidence_ref_ids": [
+          "ev.bdd.behavior",
+          "ev.spec.acceptance-scenarios",
+          "ev.test.age-signals-consent-tests-rg"
+        ],
+        "support_level": "synthesized",
+        "planner_use": "定义 Planner 需要证明的输出。"
+      },
+      "scope": {
+        "in_scope": [
+          {
+            "claim_id": "claim.goal.scope.in-success",
+            "text": "本次覆盖 Android success typed mapping 和 ConsentManager publish 语义。",
+            "source_ref_ids": [
+              "src.bdd.age-signals-consent-android-success",
+              "src.spec.google-play-age-signals"
+            ],
+            "evidence_ref_ids": [
+              "ev.bdd.behavior",
+              "ev.spec.acceptance-scenarios"
+            ],
+            "support_level": "direct",
+            "planner_use": "限制主验证路径。"
+          }
+        ],
+        "out_of_scope": [
+          {
+            "claim_id": "claim.goal.scope.out-full-lifecycle",
+            "text": "Play significant changes、revoked approval、持久化存储和 analytics targeting 使用不属于本次主验证输出。",
+            "source_ref_ids": [
+              "src.synaptic.google-play-age-signals.proposal",
+              "src.synaptic.google-play-age-signals.retrieval",
+              "src.spec.google-play-age-signals"
+            ],
+            "evidence_ref_ids": [
+              "ev.spec.acceptance-scenarios"
+            ],
+            "support_level": "direct",
+            "planner_use": "防止 Planner 扩大验证目标。"
+          }
+        ],
+        "environment": [
+          {
+            "claim_id": "claim.goal.scope.env",
+            "text": "端到端验证需要 Android build、API 23+、Google Play Age Signals 可用环境或可替代 fake platform 证据。",
+            "source_ref_ids": [
+              "src.bdd.age-signals-consent-android-success",
+              "src.synaptic.google-play-age-signals.proposal",
+              "src.spec.google-play-age-signals"
+            ],
+            "evidence_ref_ids": [
+              "ev.bdd.behavior",
+              "ev.spec.acceptance-scenarios"
+            ],
+            "support_level": "synthesized",
+            "planner_use": "指导环境准备和不足证据判断。"
+          }
+        ]
+      },
+      "failure_hypotheses": [
+        {
+          "id": "fh.field-mapping-loss",
+          "risk_level": "high",
+          "claim": {
+            "claim_id": "claim.failure.field-mapping-loss",
+            "text": "Android success 回调可能成功返回但字段映射丢失或状态映射错误。",
+            "source_ref_ids": [
+              "src.unity.age-signals-android",
+              "src.unity.age-signals-models",
+              "src.unity.age-signals-consent-tests"
+            ],
+            "evidence_ref_ids": [
+              "ev.source.age-signals-android-rg",
+              "ev.source.age-signals-models-rg",
+              "ev.test.age-signals-consent-tests-rg"
+            ],
+            "support_level": "synthesized",
+            "planner_use": "驱动字段级断言。"
+          }
+        },
+        {
+          "id": "fh.runtime-not-proven",
+          "risk_level": "high",
+          "claim": {
+            "claim_id": "claim.failure.runtime-not-proven",
+            "text": "静态源码和编辑器测试不能证明真实 Android runtime listener、Play Services 和 Play Store 依赖链工作。",
+            "source_ref_ids": [
+              "src.bdd.age-signals-consent-android-success",
+              "src.synaptic.google-play-age-signals.implementation",
+              "src.capability.google-play-age-signals-consent-service.spec"
+            ],
+            "evidence_ref_ids": [
+              "ev.gap.android-runtime-device-missing"
+            ],
+            "support_level": "direct",
+            "planner_use": "驱动设备证据或 partial 结论。"
+          }
+        }
+      ]
+    },
+    "specification_facts": [
+      {
+        "fact_id": "fact.spec.age-signals-acceptance",
+        "fact_type": "specification_fact",
+        "claims": [
+          {
+            "claim_id": "claim.spec.fr001",
+            "text": "FR-001 要求系统暴露 public ConsentManager API 请求 Google Play Age Signals 并返回 typed C# result。",
+            "source_ref_ids": [
+              "src.spec.google-play-age-signals"
+            ],
+            "evidence_ref_ids": [
+              "ev.spec.acceptance-scenarios"
+            ],
+            "support_level": "direct",
+            "planner_use": "支撑 API 入口断言。"
+          },
+          {
+            "claim_id": "claim.spec.fr004",
+            "text": "FR-004 要求 Age Signals request 集成进 existing default SDK consent orchestration 且不改变 EnabledCustomConsents skip semantics。",
+            "source_ref_ids": [
+              "src.spec.google-play-age-signals"
+            ],
+            "evidence_ref_ids": [
+              "ev.spec.acceptance-scenarios",
+              "ev.source.guru-sdk-rg"
+            ],
+            "support_level": "direct",
+            "planner_use": "支撑 default flow / custom skip 边界。"
+          },
+          {
+            "claim_id": "claim.spec.fr007",
+            "text": "FR-007 要求 Age Signals data 保持在 consent/compliance boundary，不能写入 analytics targeting 或 advertising paths。",
+            "source_ref_ids": [
+              "src.spec.google-play-age-signals"
+            ],
+            "evidence_ref_ids": [
+              "ev.spec.acceptance-scenarios",
+              "ev.gap.compliance-boundary-runtime-missing"
+            ],
+            "support_level": "direct",
+            "planner_use": "支撑隐私边界约束。"
+          }
+        ],
+        "source_ref_ids": [
+          "src.spec.google-play-age-signals"
+        ],
+        "evidence_ref_ids": [
+          "ev.spec.acceptance-scenarios",
+          "ev.source.guru-sdk-rg",
+          "ev.gap.compliance-boundary-runtime-missing"
+        ]
+      }
+    ],
+    "feature_facts": [
+      {
+        "fact_id": "fact.feature.google-play-age-signals",
+        "fact_type": "feature_fact",
+        "claims": [
+          {
+            "claim_id": "claim.feature.identity",
+            "text": "当前 BDD 关联 feature_id google-play-age-signals，synaptic 目录为 gurusdk-framework/synaptic/google-play-age-signals。",
+            "source_ref_ids": [
+              "src.synaptic.google-play-age-signals.proposal",
+              "src.synaptic.google-play-age-signals.retrieval",
+              "src.synaptic.google-play-age-signals.implementation"
+            ],
+            "evidence_ref_ids": [
+              "ev.spec.acceptance-scenarios"
+            ],
+            "support_level": "direct",
+            "planner_use": "帮助 Planner 追溯 proposal/retrieval/implementation 来源。"
+          },
+          {
+            "claim_id": "claim.feature.impl-partial",
+            "text": "implementation.md 标记 status partial，原因是尚未执行真实 Unity Android runtime/device 验收。",
+            "source_ref_ids": [
+              "src.synaptic.google-play-age-signals.implementation"
+            ],
+            "evidence_ref_ids": [
+              "ev.gap.android-runtime-device-missing"
+            ],
+            "support_level": "direct",
+            "planner_use": "防止 Planner 把历史实现报告当作完成证明。"
+          }
+        ],
+        "source_ref_ids": [
+          "src.synaptic.google-play-age-signals.proposal",
+          "src.synaptic.google-play-age-signals.retrieval",
+          "src.synaptic.google-play-age-signals.implementation"
+        ],
+        "evidence_ref_ids": [
+          "ev.spec.acceptance-scenarios",
+          "ev.gap.android-runtime-device-missing"
+        ]
+      }
+    ],
+    "validator_facts": [
+      {
+        "fact_id": "fact.validator.history.age-signals-tests",
+        "fact_type": "validator_fact",
+        "claims": [
+          {
+            "claim_id": "claim.validator.history-tests",
+            "text": "历史验证资料列出 AgeSignalsConsentTests 覆盖成功 typed result、unsupported fallback、status mapping 和 custom consent skip，但 Unity/editor automated tests 在 implementation.md 中标记 not_run。",
+            "source_ref_ids": [
+              "src.unity.age-signals-consent-tests",
+              "src.synaptic.google-play-age-signals.implementation"
+            ],
+            "evidence_ref_ids": [
+              "ev.test.age-signals-consent-tests-rg"
+            ],
+            "support_level": "partial",
+            "planner_use": "把历史测试作为可复用线索，而不是当前 run 通过证据。"
+          }
+        ],
+        "source_ref_ids": [
+          "src.unity.age-signals-consent-tests",
+          "src.synaptic.google-play-age-signals.implementation"
+        ],
+        "evidence_ref_ids": [
+          "ev.test.age-signals-consent-tests-rg"
+        ]
+      }
+    ],
+    "validation_knowledge_facts": [
+      {
+        "fact_id": "fact.validation-knowledge.age-signals-planning",
+        "fact_type": "validation_knowledge_fact",
+        "claims": [
+          {
+            "claim_id": "claim.knowledge.static-vs-runtime",
+            "text": "当前资料足以生成静态/source/test 验证计划，但不足以直接证明真实 Android runtime 行为。",
+            "source_ref_ids": [
+              "src.bdd.age-signals-consent-android-success",
+              "src.synaptic.google-play-age-signals.implementation",
+              "src.capability.google-play-age-signals-consent-service.spec"
+            ],
+            "evidence_ref_ids": [
+              "ev.gap.android-runtime-device-missing"
+            ],
+            "support_level": "synthesized",
+            "planner_use": "帮助 Planner 选择 runtime 证据或给出 partial 结论。"
+          },
+          {
+            "claim_id": "claim.knowledge.capability-summary-only",
+            "text": "CapabilityFact 应只保留当前 BDD 有用的组合能力摘要和来源证据，不应一比一复制 hippocampus capability 文档。",
+            "source_ref_ids": [
+              "src.user.prompt.age-signals-demo",
+              "src.capability.google-play-age-signals-consent-service.spec"
+            ],
+            "evidence_ref_ids": [
+              "ev.user.scope-confirmed",
+              "ev.capability.spec-review"
+            ],
+            "support_level": "user_confirmed",
+            "planner_use": "维持输入降噪目标。"
+          }
+        ],
+        "source_ref_ids": [
+          "src.bdd.age-signals-consent-android-success",
+          "src.synaptic.google-play-age-signals.implementation",
+          "src.capability.google-play-age-signals-consent-service.spec",
+          "src.user.prompt.age-signals-demo"
+        ],
+        "evidence_ref_ids": [
+          "ev.gap.android-runtime-device-missing",
+          "ev.user.scope-confirmed",
+          "ev.capability.spec-review"
+        ]
+      }
+    ],
+    "implementation_touchpoints": [
+      {
+        "id": "touchpoint.consent-manager-api",
+        "implementation_ref_ids": [
+          "impl.consent-manager.request-age-signals",
+          "impl.consent-manager.observable-state",
+          "impl.consent-manager.testing-hook"
+        ],
+        "claim": {
+          "claim_id": "claim.touchpoint.consent-manager-api",
+          "text": "ConsentManager 是当前 BDD 的 SDK-facing API 和 result publish 触点。",
+          "source_ref_ids": [
+            "src.unity.consent-manager",
+            "src.bdd.age-signals-consent-android-success"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.consent-manager-rg",
+            "ev.bdd.behavior"
+          ],
+          "support_level": "direct",
+          "planner_use": "指导 Executor 从 ConsentManager 入口验证。"
+        }
+      },
+      {
+        "id": "touchpoint.android-adapter",
+        "implementation_ref_ids": [
+          "impl.android-adapter.request",
+          "impl.android-adapter.parse-result"
+        ],
+        "claim": {
+          "claim_id": "claim.touchpoint.android-adapter",
+          "text": "AgeSignalsAndroid 是 Android success result 字段映射触点。",
+          "source_ref_ids": [
+            "src.unity.age-signals-android"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.age-signals-android-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "指导源码或设备验证关注 ParseResult 和 checkAgeSignals。"
+        }
+      },
+      {
+        "id": "touchpoint.result-model",
+        "implementation_ref_ids": [
+          "impl.age-signals-models.result",
+          "impl.age-signals-models.status-mapping"
+        ],
+        "claim": {
+          "claim_id": "claim.touchpoint.result-model",
+          "text": "AgeSignalsModels 定义 typed result 字段、success 判断和 rawStatus 映射。",
+          "source_ref_ids": [
+            "src.unity.age-signals-models",
+            "src.unity.age-signals-consent-tests"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.age-signals-models-rg",
+            "ev.test.age-signals-consent-tests-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "指导状态和字段断言。"
+        }
+      },
+      {
+        "id": "touchpoint.default-consent-flow",
+        "implementation_ref_ids": [
+          "impl.guru-sdk.default-consent-flow"
+        ],
+        "claim": {
+          "claim_id": "claim.touchpoint.default-consent-flow",
+          "text": "GuruSdk 只负责 default consent flow 的触发时机，不负责解析 Age Signals payload。",
+          "source_ref_ids": [
+            "src.unity.guru-sdk",
+            "src.synaptic.google-play-age-signals.implementation"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.guru-sdk-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "帮助 Planner 区分 success BDD 与 default flow 集成。"
+        }
+      },
+      {
+        "id": "touchpoint.dependency",
+        "implementation_ref_ids": [
+          "impl.dependencies.age-signals"
+        ],
+        "claim": {
+          "claim_id": "claim.touchpoint.dependency",
+          "text": "Dependencies.xml 是 Android Play Age Signals package 解析触点。",
+          "source_ref_ids": [
+            "src.unity.age-signals-dependencies-xml",
+            "src.spec.google-play-age-signals"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.dependencies-rg",
+            "ev.spec.acceptance-scenarios"
+          ],
+          "support_level": "direct",
+          "planner_use": "指导配置检查。"
+        }
+      },
+      {
+        "id": "touchpoint.tests",
+        "implementation_ref_ids": [
+          "impl.tests.age-signals-success",
+          "impl.tests.age-signals-status-mapping",
+          "impl.tests.custom-consent-skip"
+        ],
+        "claim": {
+          "claim_id": "claim.touchpoint.tests",
+          "text": "AgeSignalsConsentTests 是历史编辑器测试和可复用验证脚本线索。",
+          "source_ref_ids": [
+            "src.unity.age-signals-consent-tests"
+          ],
+          "evidence_ref_ids": [
+            "ev.test.age-signals-consent-tests-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "指导是否运行或参考既有测试。"
+        }
+      }
+    ],
+    "evidence_hints": [
+      {
+        "id": "hint.run-existing-tests",
+        "channel": "artifact",
+        "subject": "AgeSignalsConsentTests",
+        "query_hint": "Run Unity editor tests for com.guru.sdk.framework.core/Tests/Runtime/Consent/AgeSignalsConsentTests.cs if a runnable Unity project is available.",
+        "selector_hint": "RequestAgeSignals_OnSuccess_PublishesTypedResult",
+        "expected_signal": "test pass with typed result fields asserted",
+        "missing_disposition": "insufficient_evidence",
+        "claim": {
+          "claim_id": "claim.hint.run-existing-tests",
+          "text": "既有测试可验证 fake platform 成功字段和 status mapping，但需要当前 run 重新执行才是当前证据。",
+          "source_ref_ids": [
+            "src.unity.age-signals-consent-tests",
+            "src.synaptic.google-play-age-signals.implementation"
+          ],
+          "evidence_ref_ids": [
+            "ev.test.age-signals-consent-tests-rg"
+          ],
+          "support_level": "partial",
+          "planner_use": "指导验证计划采集当前测试证据。"
+        }
+      },
+      {
+        "id": "hint.android-runtime",
+        "channel": "device_state",
+        "subject": "Android runtime Play Age Signals request",
+        "query_hint": "Build/run Android app with Play Age Signals available and capture ConsentManager RequestAgeSignals result/logs.",
+        "selector_hint": "Age signals result status:* error:None",
+        "expected_signal": "runtime callback returns success result or clear platform error",
+        "missing_disposition": "insufficient_evidence",
+        "claim": {
+          "claim_id": "claim.hint.android-runtime",
+          "text": "真实 Android runtime/device 证据是当前 partial 状态的主要缺口。",
+          "source_ref_ids": [
+            "src.bdd.age-signals-consent-android-success",
+            "src.synaptic.google-play-age-signals.implementation",
+            "src.capability.google-play-age-signals-consent-service.spec"
+          ],
+          "evidence_ref_ids": [
+            "ev.gap.android-runtime-device-missing"
+          ],
+          "support_level": "direct",
+          "planner_use": "指导后续补证。"
+        }
+      },
+      {
+        "id": "hint.source-no-analytics",
+        "channel": "source",
+        "subject": "analytics/ad targeting writeback absence",
+        "query_hint": "rg AgeSignals|AgeLower|AgeUpper|InstallId|MostRecentApprovalDate in analytics/ad paths",
+        "selector_hint": "GuruAnalytics SetUserProperty / event payloads",
+        "expected_signal": "no age signals value write into analytics targeting or advertising paths",
+        "missing_disposition": "degraded",
+        "claim": {
+          "claim_id": "claim.hint.source-no-analytics",
+          "text": "compliance boundary 需要负向源码搜索或 runtime 日志证明 age data 没有进入 analytics/ad targeting。",
+          "source_ref_ids": [
+            "src.synaptic.google-play-age-signals.proposal",
+            "src.synaptic.google-play-age-signals.retrieval",
+            "src.spec.google-play-age-signals"
+          ],
+          "evidence_ref_ids": [
+            "ev.gap.compliance-boundary-runtime-missing"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "指导隐私边界验证。"
+        }
+      }
+    ],
+    "fact_id": "fact.bdd.age-signals-consent-android-success",
+    "fact_type": "bdd_fact",
+    "scenario_id": "age-signals-consent-android-success",
+    "claims": [
+      {
+        "claim_id": "claim.bdd.identity",
+        "text": "目标 BDD 是 age-signals-consent-android-success，并归属 capability google-play-age-signals-consent-service。",
+        "source_ref_ids": [
+          "src.bdd.age-signals-consent-android-success"
+        ],
+        "evidence_ref_ids": [
+          "ev.bdd.behavior"
+        ],
+        "support_level": "direct",
+        "planner_use": "锁定验证对象，防止 Planner 扩大到其它 Age Signals 场景。"
+      },
+      {
+        "claim_id": "claim.bdd.status.partial",
+        "text": "该 BDD 在 hippocampus 中的 verification_status 为 partial，且 evidence 明确记录缺少 Android runtime/device execution。",
+        "source_ref_ids": [
+          "src.bdd.age-signals-consent-android-success"
+        ],
+        "evidence_ref_ids": [
+          "ev.gap.android-runtime-device-missing"
+        ],
+        "support_level": "direct",
+        "planner_use": "要求 Planner 不能把当前静态和编辑器测试证据判定为端到端通过。"
+      }
+    ],
+    "given": [
+      {
+        "claim_id": "claim.bdd.given.android-success-env",
+        "text": "Android build runs with Google Play Age Signals available and the platform implementation returns a successful result.",
+        "source_ref_ids": [
+          "src.bdd.age-signals-consent-android-success"
+        ],
+        "evidence_ref_ids": [
+          "ev.bdd.behavior"
+        ],
+        "support_level": "direct",
+        "planner_use": "定义验证前置环境：Android、Play Age Signals 可用、平台返回成功。"
+      }
+    ],
+    "when": [
+      {
+        "claim_id": "claim.bdd.when.consent-manager-request",
+        "text": "ConsentManager.RequestAgeSignals() requests signals through IAgeSignalsPlatform.",
+        "source_ref_ids": [
+          "src.bdd.age-signals-consent-android-success"
+        ],
+        "evidence_ref_ids": [
+          "ev.bdd.behavior",
+          "ev.source.consent-manager-rg"
+        ],
+        "support_level": "direct",
+        "planner_use": "定义触发动作和调用边界，验证应从 ConsentManager API 进入而不是绕过 SDK。"
+      }
+    ],
+    "then": [
+      {
+        "claim_id": "claim.bdd.then.typed-result",
+        "text": "SDK publishes a typed AgeSignalsResult containing status, optional age bounds, install id, approval date and no error code.",
+        "source_ref_ids": [
+          "src.bdd.age-signals-consent-android-success"
+        ],
+        "evidence_ref_ids": [
+          "ev.bdd.behavior",
+          "ev.test.age-signals-consent-tests-rg"
+        ],
+        "support_level": "direct",
+        "planner_use": "定义主要验收输出：typed result 发布、字段完整、ErrorCode 为 None。"
+      }
+    ],
+    "source_ref_ids": [
+      "src.bdd.age-signals-consent-android-success"
+    ],
+    "evidence_ref_ids": [
+      "ev.bdd.behavior",
+      "ev.gap.android-runtime-device-missing"
+    ]
+  }
+}

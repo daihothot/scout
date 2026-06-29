@@ -1,0 +1,121 @@
+{
+  "section": "body.capability_facts",
+  "updatedAt": "2026-06-24T12:37:50.769Z",
+  "content": [
+    {
+      "fact_id": "fact.capability.google-play-age-signals-consent-service.current-bdd",
+      "fact_type": "capability_fact",
+      "relevant_bdd_refs": [
+        "age-signals-consent-android-success"
+      ],
+      "claims": [
+        {
+          "claim_id": "claim.cap.current-capability-boundary",
+          "text": "google-play-age-signals-consent-service 的当前 BDD 相关职责是通过 ConsentManager 暴露 Age Signals compliance API、调用 Android adapter、发布 typed result，并接入 default consent flow。",
+          "source_ref_ids": [
+            "src.capability.google-play-age-signals-consent-service.spec",
+            "src.bdd.age-signals-consent-android-success",
+            "src.synaptic.google-play-age-signals.implementation"
+          ],
+          "evidence_ref_ids": [
+            "ev.capability.spec-review",
+            "ev.bdd.behavior"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "给 Planner 一个压缩后的 capability 边界，避免复刻完整 hippocampus。"
+        },
+        {
+          "claim_id": "claim.cap.composed-of-useful",
+          "text": "composed_of 中对本 BDD 有直接帮助的是 sdk-deployment-bootstrap-orchestration 的 default consent timing 和 log-observability 的 safe fallback/diagnostic 边界。",
+          "source_ref_ids": [
+            "src.capability.google-play-age-signals-consent-service.spec",
+            "src.synaptic.google-play-age-signals.retrieval",
+            "src.synaptic.google-play-age-signals.implementation"
+          ],
+          "evidence_ref_ids": [
+            "ev.capability.spec-review",
+            "ev.source.guru-sdk-rg"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "只保留能影响验证计划的组合能力语义。"
+        },
+        {
+          "claim_id": "claim.cap.android-adapter-primary",
+          "text": "Android adapter 是当前成功 BDD 的主实现触点；unsupported fallback、custom consent skip 和 compliance boundary 是相邻约束，不是本场景的主验收输出。",
+          "source_ref_ids": [
+            "src.synaptic.google-play-age-signals.retrieval",
+            "src.spec.google-play-age-signals",
+            "src.capability.google-play-age-signals-consent-service.spec"
+          ],
+          "evidence_ref_ids": [
+            "ev.spec.acceptance-scenarios",
+            "ev.capability.spec-review"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "帮助 Planner 聚焦 success typed mapping，同时不丢关键限制。"
+        },
+        {
+          "claim_id": "claim.cap.runtime-gap",
+          "text": "capability spec 和 BDD 都将 Android runtime execution 作为 open risk/gap，因此当前能力不能仅凭 hippocampus partial 状态判定完成。",
+          "source_ref_ids": [
+            "src.capability.google-play-age-signals-consent-service.spec",
+            "src.bdd.age-signals-consent-android-success"
+          ],
+          "evidence_ref_ids": [
+            "ev.gap.android-runtime-device-missing"
+          ],
+          "support_level": "direct",
+          "planner_use": "强制 Plan 产出 runtime/device 证据采集或不足证据结论。"
+        }
+      ],
+      "implementation_touchpoint_refs": [
+        "touchpoint.consent-manager-api",
+        "touchpoint.android-adapter",
+        "touchpoint.default-consent-flow",
+        "touchpoint.tests"
+      ],
+      "excluded_context": [
+        {
+          "claim_id": "claim.cap.exclude.full-type-taxonomy",
+          "text": "capability_type、service_domain、owners、tags 等治理元数据不进入 Planner 主上下文，因为它们不能直接改变本 BDD 的验证步骤。",
+          "source_ref_ids": [
+            "src.capability.google-play-age-signals-consent-service.spec"
+          ],
+          "evidence_ref_ids": [
+            "ev.capability.spec-review"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "降噪，避免把 capability fact 变成 hippocampus 翻版。"
+        },
+        {
+          "claim_id": "claim.cap.exclude-non-primary-scenarios",
+          "text": "age-signals-consent-unsupported-platform、age-signals-consent-default-flow-integrated 和 age-signals-consent-compliance-boundary 不作为当前 BDD 主场景，但以约束和不足证据条件保留。",
+          "source_ref_ids": [
+            "src.capability.google-play-age-signals-consent-service.spec",
+            "src.spec.google-play-age-signals"
+          ],
+          "evidence_ref_ids": [
+            "ev.capability.spec-review",
+            "ev.spec.acceptance-scenarios"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "保持 Plan 聚焦当前成功 BDD，同时保留相邻风险。"
+        }
+      ],
+      "source_ref_ids": [
+        "src.capability.google-play-age-signals-consent-service.spec",
+        "src.bdd.age-signals-consent-android-success",
+        "src.synaptic.google-play-age-signals.retrieval",
+        "src.synaptic.google-play-age-signals.implementation",
+        "src.spec.google-play-age-signals"
+      ],
+      "evidence_ref_ids": [
+        "ev.capability.spec-review",
+        "ev.bdd.behavior",
+        "ev.spec.acceptance-scenarios",
+        "ev.source.guru-sdk-rg",
+        "ev.gap.android-runtime-device-missing"
+      ]
+    }
+  ]
+}

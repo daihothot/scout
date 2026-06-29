@@ -1,0 +1,140 @@
+{
+  "section": "body.implementation_facts",
+  "updatedAt": "2026-06-24T12:37:50.768Z",
+  "content": [
+    {
+      "fact_id": "fact.implementation.age-signals-success-path",
+      "fact_type": "implementation_fact",
+      "coverage_status": "partial",
+      "claims": [
+        {
+          "claim_id": "claim.impl.consent-manager-publishes-result",
+          "text": "ConsentManager.RequestAgeSignalsCoreInternal resolves IAgeSignalsPlatform, awaits platform.RequestAgeSignals(), then publishes the result through AgeSignalsSubject.OnNext(result).",
+          "source_ref_ids": [
+            "src.unity.consent-manager"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.consent-manager-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "给 Planner 提供验证回调/observable 的实现触点。"
+        },
+        {
+          "claim_id": "claim.impl.android-adapter-calls-check-age-signals",
+          "text": "AgeSignalsAndroid builds an AgeSignalsRequest, calls Android checkAgeSignals, and converts success callback output through ParseResult.",
+          "source_ref_ids": [
+            "src.unity.age-signals-android"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.age-signals-android-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "给 Planner 提供 Android 平台真实调用链的 source truth。"
+        },
+        {
+          "claim_id": "claim.impl.parse-result-fields",
+          "text": "AgeSignalsAndroid.ParseResult reads userStatus, ageLower, ageUpper, installId, and mostRecentApprovalDate into SDK AgeSignalsResult.",
+          "source_ref_ids": [
+            "src.unity.age-signals-android"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.age-signals-android-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "驱动字段映射断言和缺字段边界检查。"
+        },
+        {
+          "claim_id": "claim.impl.result-model",
+          "text": "AgeSignalsResult carries Status, AgeLower, AgeUpper, InstallId, MostRecentApprovalDateUtc, ErrorCode and ErrorMessage, and IsSuccess is true only when ErrorCode is None.",
+          "source_ref_ids": [
+            "src.unity.age-signals-models"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.age-signals-models-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "定义 Plan 中 API/result 断言的字段口径。"
+        },
+        {
+          "claim_id": "claim.impl.status-mapping-current-code",
+          "text": "当前 ToAgeSignalsStatus 实现把 rawStatus 0 映射为 Verified，1 映射为 Supervised，2 映射为 SupervisedApprovalPending，3 映射为 SupervisedApprovalDenied，4 映射为 Unknown，5 映射为 Declared。",
+          "source_ref_ids": [
+            "src.unity.age-signals-models",
+            "src.unity.age-signals-consent-tests"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.age-signals-models-rg",
+            "ev.test.age-signals-consent-tests-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "要求验证计划按当前源码与测试断言检查映射，同时留意 enum 注释与实现映射的差异。"
+        },
+        {
+          "claim_id": "claim.impl.default-flow-invokes-age-signals",
+          "text": "GuruSdk.RequestConsentsAsync 在 consent 请求完成后调用 RequestAgeSignalsAsync；EnabledCustomConsents 分支仍在 DispatchRequestConsents 中提前返回。",
+          "source_ref_ids": [
+            "src.unity.guru-sdk"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.guru-sdk-rg",
+            "ev.test.age-signals-consent-tests-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "帮助 Planner 判断成功 BDD 与 default flow 集成的关联边界。"
+        },
+        {
+          "claim_id": "claim.impl.tests-cover-static-editor-behavior",
+          "text": "AgeSignalsConsentTests 覆盖 fake platform 成功结果字段、unsupported fallback、status mapping 和 custom consent skip，但本次没有执行 Unity runtime/device 验证。",
+          "source_ref_ids": [
+            "src.unity.age-signals-consent-tests",
+            "src.synaptic.google-play-age-signals.implementation"
+          ],
+          "evidence_ref_ids": [
+            "ev.test.age-signals-consent-tests-rg",
+            "ev.gap.android-runtime-device-missing"
+          ],
+          "support_level": "partial",
+          "planner_use": "允许 Planner 复用测试作为历史证据，同时必须采集当前 run 证据或标记不足。"
+        },
+        {
+          "claim_id": "claim.impl.edm-dependency-present",
+          "text": "Runtime/Consent/Editor/Dependencies.xml 声明了 com.google.android.play:age-signals:0.0.3。",
+          "source_ref_ids": [
+            "src.unity.age-signals-dependencies-xml"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.dependencies-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "要求 Planner 检查依赖存在，避免只验证 C# 代码路径。"
+        }
+      ],
+      "implementation_touchpoint_refs": [
+        "touchpoint.consent-manager-api",
+        "touchpoint.android-adapter",
+        "touchpoint.result-model",
+        "touchpoint.default-consent-flow",
+        "touchpoint.tests",
+        "touchpoint.dependency"
+      ],
+      "source_ref_ids": [
+        "src.unity.consent-manager",
+        "src.unity.age-signals-android",
+        "src.unity.age-signals-models",
+        "src.unity.guru-sdk",
+        "src.unity.age-signals-consent-tests",
+        "src.unity.age-signals-dependencies-xml",
+        "src.synaptic.google-play-age-signals.implementation"
+      ],
+      "evidence_ref_ids": [
+        "ev.source.consent-manager-rg",
+        "ev.source.age-signals-android-rg",
+        "ev.source.age-signals-models-rg",
+        "ev.source.guru-sdk-rg",
+        "ev.test.age-signals-consent-tests-rg",
+        "ev.source.dependencies-rg",
+        "ev.gap.android-runtime-device-missing"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+
+[features]
+shell_snapshot = false
+
+[shell_environment_policy]
+inherit = "none"
+include_only = ["PATH", "HOME", "TMPDIR", "SCOUT_RUN_ID", "SCOUT_ARTIFACT_ROOT", "SCOUT_ASSET_COMMIT_ID", "SCOUT_UNDERSTANDING_THREAD_ID", "GIT_OPTIONAL_LOCKS"]
