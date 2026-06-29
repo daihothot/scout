@@ -1,0 +1,287 @@
+{
+  "section": "body.acceptance_criteria",
+  "updatedAt": "2026-06-24T12:37:50.769Z",
+  "content": {
+    "pass_conditions": [
+      {
+        "id": "pass.typed-result-published",
+        "claim": {
+          "claim_id": "claim.pass.typed-result-published",
+          "text": "验证通过必须观察到 ConsentManager 请求后发布 typed AgeSignalsResult，且 Status、AgeLower、AgeUpper、InstallId、MostRecentApprovalDateUtc 与成功平台返回一致。",
+          "source_ref_ids": [
+            "src.bdd.age-signals-consent-android-success",
+            "src.unity.consent-manager",
+            "src.unity.age-signals-consent-tests"
+          ],
+          "evidence_ref_ids": [
+            "ev.bdd.behavior",
+            "ev.source.consent-manager-rg",
+            "ev.test.age-signals-consent-tests-rg"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "定义 success BDD 的核心通过标准。"
+        }
+      },
+      {
+        "id": "pass.no-error-code",
+        "claim": {
+          "claim_id": "claim.pass.no-error-code",
+          "text": "成功路径的 AgeSignalsResult.ErrorCode 必须为 None，不能落入 Unsupported 或 Failed。",
+          "source_ref_ids": [
+            "src.bdd.age-signals-consent-android-success",
+            "src.unity.age-signals-models",
+            "src.unity.age-signals-consent-tests"
+          ],
+          "evidence_ref_ids": [
+            "ev.bdd.behavior",
+            "ev.source.age-signals-models-rg",
+            "ev.test.age-signals-consent-tests-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "防止只看到字段但实际为错误结果。"
+        }
+      },
+      {
+        "id": "pass.source-truth-verified",
+        "claim": {
+          "claim_id": "claim.pass.source-truth-verified",
+          "text": "计划阶段必须使用 CodeGraph MCP 或 rg 校验 ConsentManager、AgeSignalsAndroid、AgeSignalsModels、GuruSdk、Dependencies.xml 和 AgeSignalsConsentTests 的真实源码位置。",
+          "source_ref_ids": [
+            "src.user.prompt.age-signals-demo",
+            "src.unity.consent-manager",
+            "src.unity.age-signals-android",
+            "src.unity.age-signals-models",
+            "src.unity.guru-sdk",
+            "src.unity.age-signals-consent-tests",
+            "src.unity.age-signals-dependencies-xml"
+          ],
+          "evidence_ref_ids": [
+            "ev.user.scope-confirmed",
+            "ev.source.consent-manager-rg",
+            "ev.source.age-signals-android-rg",
+            "ev.source.age-signals-models-rg",
+            "ev.source.guru-sdk-rg",
+            "ev.test.age-signals-consent-tests-rg",
+            "ev.source.dependencies-rg"
+          ],
+          "support_level": "user_confirmed",
+          "planner_use": "确保验证知识来自真实代码源，而不是只依赖文档摘要。"
+        }
+      }
+    ],
+    "fail_conditions": [
+      {
+        "id": "fail.no-publish",
+        "claim": {
+          "claim_id": "claim.fail.no-publish",
+          "text": "如果 RequestAgeSignals 返回后 ObservableAgeSignals 或 LatestAgeSignals 没有反映同一个 typed result，应判定失败。",
+          "source_ref_ids": [
+            "src.bdd.age-signals-consent-android-success",
+            "src.unity.consent-manager"
+          ],
+          "evidence_ref_ids": [
+            "ev.bdd.behavior",
+            "ev.source.consent-manager-rg"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "覆盖 BDD 的 publishes typed result 语义。"
+        }
+      },
+      {
+        "id": "fail.mapping-mismatch",
+        "claim": {
+          "claim_id": "claim.fail.mapping-mismatch",
+          "text": "如果 Android success result 中 userStatus、ageLower、ageUpper、installId 或 mostRecentApprovalDate 任一字段没有按 ParseResult 口径进入 AgeSignalsResult，应判定失败。",
+          "source_ref_ids": [
+            "src.bdd.age-signals-consent-android-success",
+            "src.unity.age-signals-android",
+            "src.unity.age-signals-consent-tests"
+          ],
+          "evidence_ref_ids": [
+            "ev.bdd.behavior",
+            "ev.source.age-signals-android-rg",
+            "ev.test.age-signals-consent-tests-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "覆盖字段映射完整性。"
+        }
+      },
+      {
+        "id": "fail-age-data-leaks",
+        "claim": {
+          "claim_id": "claim.fail-age-data-leaks",
+          "text": "如果 ageLower、ageUpper、installId 或 status 被写入 analytics targeting、advertising、marketing 或 profiling 路径，应判定失败。",
+          "source_ref_ids": [
+            "src.synaptic.google-play-age-signals.proposal",
+            "src.synaptic.google-play-age-signals.retrieval",
+            "src.spec.google-play-age-signals"
+          ],
+          "evidence_ref_ids": [
+            "ev.gap.compliance-boundary-runtime-missing"
+          ],
+          "support_level": "direct",
+          "planner_use": "把 compliance boundary 转成硬失败条件。"
+        }
+      }
+    ],
+    "observable_signals": [
+      {
+        "id": "signal.api-result",
+        "channel": "api",
+        "subject": "ConsentManager.RequestAgeSignals() return value",
+        "expected_expression": "AgeSignalsResult.IsSuccess == true and ErrorCode == None",
+        "selector": "AgeSignalsResult.Status/AgeLower/AgeUpper/InstallId/MostRecentApprovalDateUtc/ErrorCode",
+        "claim": {
+          "claim_id": "claim.signal.api-result",
+          "text": "主要信号是 ConsentManager.RequestAgeSignals() 返回的 AgeSignalsResult 字段集合。",
+          "source_ref_ids": [
+            "src.bdd.age-signals-consent-android-success",
+            "src.unity.consent-manager",
+            "src.unity.age-signals-models"
+          ],
+          "evidence_ref_ids": [
+            "ev.bdd.behavior",
+            "ev.source.consent-manager-rg",
+            "ev.source.age-signals-models-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "指导 Executor 采集 API 返回值。"
+        }
+      },
+      {
+        "id": "signal.observable-state",
+        "channel": "callback",
+        "subject": "ConsentManager.ObservableAgeSignals / LatestAgeSignals",
+        "expected_expression": "published value equals API return value",
+        "selector": "AgeSignalsSubject.OnNext(result)",
+        "claim": {
+          "claim_id": "claim.signal.observable-state",
+          "text": "BDD 的 publish 语义需要观察 AgeSignalsSubject 派生状态，而不只是 RequestAgeSignals 的返回值。",
+          "source_ref_ids": [
+            "src.bdd.age-signals-consent-android-success",
+            "src.unity.consent-manager"
+          ],
+          "evidence_ref_ids": [
+            "ev.bdd.behavior",
+            "ev.source.consent-manager-rg"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "指导验证计划同时检查返回值和发布状态。"
+        }
+      },
+      {
+        "id": "signal.android-source-path",
+        "channel": "source",
+        "subject": "AgeSignalsAndroid.ParseResult",
+        "expected_expression": "maps userStatus ageLower ageUpper installId mostRecentApprovalDate",
+        "selector": "AgeSignalsAndroid.cs:118-129",
+        "claim": {
+          "claim_id": "claim.signal.android-source-path",
+          "text": "当前输入要求以 CodeGraph MCP 或 rg 校验 Android adapter 的真实源码字段映射。",
+          "source_ref_ids": [
+            "src.unity.age-signals-android"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.age-signals-android-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "给 Planner 提供静态 source signal。"
+        }
+      },
+      {
+        "id": "signal.dependency",
+        "channel": "source",
+        "subject": "Dependencies.xml",
+        "expected_expression": "contains com.google.android.play:age-signals:0.0.3",
+        "selector": "Runtime/Consent/Editor/Dependencies.xml:4",
+        "claim": {
+          "claim_id": "claim.signal.dependency",
+          "text": "Android 成功路径依赖 Play Age Signals package 声明存在。",
+          "source_ref_ids": [
+            "src.unity.age-signals-dependencies-xml"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.dependencies-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "提醒 Planner 检查配置源。"
+        }
+      }
+    ],
+    "timing": [
+      {
+        "id": "timing.request-await",
+        "timeout_ms": 10000,
+        "observation_window_ms": 1000,
+        "claim": {
+          "claim_id": "claim.timing.request-await",
+          "text": "当前资料没有给出官方超时阈值；验证计划可用 10 秒作为单次 RequestAgeSignals await 的保守观察窗口，超时只能判定证据不足或失败需按执行环境说明。",
+          "source_ref_ids": [
+            "src.synaptic.google-play-age-signals.implementation",
+            "src.bdd.age-signals-consent-android-success"
+          ],
+          "evidence_ref_ids": [
+            "ev.gap.android-runtime-device-missing"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "给执行计划默认等待窗口，同时避免把未定义时序伪装成需求。"
+        }
+      }
+    ],
+    "tolerances": [
+      {
+        "id": "tolerance.no-field-loss",
+        "retry_limit": 0,
+        "threshold_expression": "all expected success fields must match exactly when fake platform is used",
+        "claim": {
+          "claim_id": "claim.tolerance.no-field-loss",
+          "text": "fake platform 或 deterministic source-level 验证中字段不允许丢失或模糊匹配。",
+          "source_ref_ids": [
+            "src.unity.age-signals-consent-tests",
+            "src.bdd.age-signals-consent-android-success"
+          ],
+          "evidence_ref_ids": [
+            "ev.test.age-signals-consent-tests-rg",
+            "ev.bdd.behavior"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "约束字段断言必须精确。"
+        }
+      }
+    ],
+    "insufficient_evidence_conditions": [
+      {
+        "id": "insufficient.no-android-runtime",
+        "claim": {
+          "claim_id": "claim.insufficient.no-android-runtime",
+          "text": "如果没有真实 Android device/emulator 或可替代 runtime log/callback 证据，只能判定当前输入支持静态/编辑器级 partial verification，不能判定端到端通过。",
+          "source_ref_ids": [
+            "src.bdd.age-signals-consent-android-success",
+            "src.synaptic.google-play-age-signals.implementation",
+            "src.capability.google-play-age-signals-consent-service.spec"
+          ],
+          "evidence_ref_ids": [
+            "ev.gap.android-runtime-device-missing"
+          ],
+          "support_level": "direct",
+          "planner_use": "防止 Plan 阶段过度宣称验证完成。"
+        }
+      },
+      {
+        "id": "insufficient.no-source-authenticity-check",
+        "claim": {
+          "claim_id": "claim.insufficient.no-source-authenticity-check",
+          "text": "如果计划阶段未使用 CodeGraph MCP 或 rg 校验 Unity repo 真实代码位置，应判定输入证据不足。",
+          "source_ref_ids": [
+            "src.user.prompt.age-signals-demo"
+          ],
+          "evidence_ref_ids": [
+            "ev.user.scope-confirmed"
+          ],
+          "support_level": "user_confirmed",
+          "planner_use": "落实 Understanding skill 的源码真实性门禁。"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,742 @@
+{
+  "validationBodyId": "vb_age_signals_demo_seed",
+  "bodyType": "validation_body",
+  "runId": "external_seed",
+  "createdAt": "2026-06-24T00:00:00.000Z",
+  "catalog_ref": {
+    "catalog_id": "catalog_age_signals_demo_seed",
+    "uri": "validation-catalog.json"
+  },
+  "validation_goal": {
+    "goal_id": "goal.age_signals_android_success",
+    "intent": "prove_behavior",
+    "target": {
+      "claim_id": "claim.goal.target",
+      "text": "验证目标是通过 ConsentManager 暴露的 Google Play Age Signals Android success path。",
+      "source_ref_ids": [
+        "src.bdd.identity",
+        "src.cap.spec.frontmatter"
+      ],
+      "evidence_ref_ids": [],
+      "support_level": "synthesized",
+      "planner_use": "将计划范围限定在该 BDD 场景及其直接能力，不展开完整 capability graph。"
+    },
+    "expected_behavior": {
+      "claim_id": "claim.goal.expected",
+      "text": "当 ConsentManager 通过 IAgeSignalsPlatform 请求 Age Signals 时，SDK 应发布类型化 AgeSignalsResult，包含 status、可选 age bounds、install id、approval date，并且没有 error code。",
+      "source_ref_ids": [
+        "src.bdd.when",
+        "src.bdd.then"
+      ],
+      "evidence_ref_ids": [
+        "ev.behavior.publish",
+        "ev.behavior.mapping"
+      ],
+      "support_level": "direct",
+      "planner_use": "将这一点作为验证计划的主要通过行为。"
+    },
+    "scope": {
+      "in_scope": [
+        {
+          "claim_id": "claim.scope.in.success_path",
+          "text": "本次验证覆盖 Android Age Signals success path 以及类型化结果发布。",
+          "source_ref_ids": [
+            "src.bdd.given",
+            "src.bdd.when",
+            "src.bdd.then"
+          ],
+          "evidence_ref_ids": [
+            "ev.behavior.publish",
+            "ev.behavior.mapping"
+          ],
+          "support_level": "direct",
+          "planner_use": "将计划步骤限定为证明 success path 的 BDD Given/When/Then。"
+        }
+      ],
+      "out_of_scope": [
+        {
+          "claim_id": "claim.scope.out.default_flow",
+          "text": "默认 consent flow 集成可以从 capability context 触达，但不是该 BDD 断言的行为。",
+          "source_ref_ids": [
+            "src.cap.spec.frontmatter",
+            "src.cap.spec.requirements"
+          ],
+          "evidence_ref_ids": [],
+          "support_level": "inferred",
+          "planner_use": "除非用户补充对应 BDD，否则不要将计划扩展到 GuruSdk 默认 consent 编排。"
+        },
+        {
+          "claim_id": "claim.scope.out.unsupported",
+          "text": "unsupported-platform fallback 不属于当前选中的 Android success BDD。",
+          "source_ref_ids": [
+            "src.cap.bdd.status"
+          ],
+          "evidence_ref_ids": [],
+          "support_level": "inferred",
+          "planner_use": "不要把 fallback/error 测试纳入主要 success-path 计划。"
+        }
+      ],
+      "environment": [
+        {
+          "claim_id": "claim.env.android_age_signals_available",
+          "text": "该 BDD 假设 Android build 中 Google Play Age Signals 可用，并且 platform implementation 返回 success。",
+          "source_ref_ids": [
+            "src.bdd.given"
+          ],
+          "evidence_ref_ids": [],
+          "support_level": "direct",
+          "planner_use": "计划必须提供这一 Android runtime 条件，或者将 runtime proof 标记为 insufficient evidence。"
+        }
+      ]
+    },
+    "failure_hypotheses": [
+      {
+        "id": "failure.no_runtime_proof",
+        "risk_level": "high",
+        "claim": {
+          "claim_id": "claim.failure.no_runtime_proof",
+          "text": "仅有 unit/source 证据不足以证明真实 Android runtime success path。",
+          "source_ref_ids": [
+            "src.bdd.evidence",
+            "src.syn.impl.verification"
+          ],
+          "evidence_ref_ids": [
+            "ev.gap.android_runtime"
+          ],
+          "support_level": "partial",
+          "planner_use": "Planner 应补充 runtime/device 证据，或明确将结果归类为 insufficient evidence。"
+        }
+      }
+    ]
+  },
+  "bdd_fact": {
+    "fact_id": "bdd.age_signals_consent_android_success",
+    "fact_type": "bdd_fact",
+    "scenario_id": "age-signals-consent-android-success",
+    "claims": [
+      {
+        "claim_id": "claim.bdd.identity",
+        "text": "规范 BDD 场景是 age-signals-consent-android-success，并映射到 google-play-age-signals-consent-service。",
+        "source_ref_ids": [
+          "src.bdd.identity"
+        ],
+        "evidence_ref_ids": [],
+        "support_level": "direct",
+        "planner_use": "使用该 scenario id 作为稳定验证身份，并仅将 capability 作为来源上下文。"
+      },
+      {
+        "claim_id": "claim.bdd.history_status",
+        "text": "该场景的历史验证状态是 partial。",
+        "source_ref_ids": [
+          "src.bdd.identity",
+          "src.cap.bdd.status"
+        ],
+        "evidence_ref_ids": [
+          "ev.test.success",
+          "ev.gap.android_runtime"
+        ],
+        "support_level": "partial",
+        "planner_use": "不要将历史状态视为 passed；计划必须收集或解释缺失的 runtime 证据。"
+      }
+    ],
+    "given": [
+      {
+        "claim_id": "claim.bdd.given.android_available",
+        "text": "Android build 运行时 Google Play Age Signals 可用，并且 platform implementation 返回成功结果。",
+        "source_ref_ids": [
+          "src.bdd.given"
+        ],
+        "evidence_ref_ids": [],
+        "support_level": "direct",
+        "planner_use": "建立 success-path 验证所需的 runtime 前置条件。"
+      }
+    ],
+    "when": [
+      {
+        "claim_id": "claim.bdd.when.request",
+        "text": "ConsentManager.RequestAgeSignals() 通过 IAgeSignalsPlatform 请求信号。",
+        "source_ref_ids": [
+          "src.bdd.when"
+        ],
+        "evidence_ref_ids": [],
+        "support_level": "direct",
+        "planner_use": "将 RequestAgeSignals 作为被验证动作。"
+      }
+    ],
+    "then": [
+      {
+        "claim_id": "claim.bdd.then.typed_result",
+        "text": "SDK 发布类型化 AgeSignalsResult，其中包含 status、可选 age bounds、install id、approval date，并且没有 error code。",
+        "source_ref_ids": [
+          "src.bdd.then"
+        ],
+        "evidence_ref_ids": [
+          "ev.behavior.publish",
+          "ev.behavior.mapping"
+        ],
+        "support_level": "direct",
+        "planner_use": "将类型化 AgeSignalsResult 发布作为主要预期可观测结果。"
+      }
+    ],
+    "source_ref_ids": [
+      "src.bdd.identity",
+      "src.bdd.given",
+      "src.bdd.when",
+      "src.bdd.then",
+      "src.bdd.evidence"
+    ],
+    "evidence_ref_ids": [
+      "ev.behavior.publish",
+      "ev.behavior.mapping",
+      "ev.test.success",
+      "ev.gap.android_runtime"
+    ]
+  },
+  "capability_facts": [
+    {
+      "fact_id": "capability.age_signals_success_slice",
+      "fact_type": "capability_fact",
+      "relevant_bdd_refs": [
+        "age-signals-consent-android-success"
+      ],
+      "claims": [
+        {
+          "claim_id": "claim.capability.root_slice",
+          "text": "对这个 BDD 来说，google-play-age-signals-consent-service 只作为 success-path 行为、code_refs 和历史证据缺口的来源有用。",
+          "source_ref_ids": [
+            "src.bdd.identity",
+            "src.cap.spec.frontmatter",
+            "src.cap.spec.code_refs",
+            "src.cap.bdd.status"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.code_refs",
+            "ev.gap.android_runtime"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "将 capability 用作过滤后的上下文切片，而不是复制 capability graph。"
+        },
+        {
+          "claim_id": "claim.capability.touchpoints",
+          "text": "success-path code_refs 将 Planner 指向 ConsentManager、AgeSignalsAndroid、AgeSignalsModels 和 AgeSignalsConsentTests。",
+          "source_ref_ids": [
+            "src.cap.spec.code_refs"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.code_refs"
+          ],
+          "support_level": "direct",
+          "planner_use": "据此选择 source/test/runtime 验证所需的实现触点和证据通道。"
+        }
+      ],
+      "implementation_touchpoint_refs": [
+        "touch.consent_manager",
+        "touch.age_signals_android",
+        "touch.age_signals_models",
+        "touch.success_test"
+      ],
+      "excluded_context": [
+        {
+          "claim_id": "claim.capability.excluded.bootstrap",
+          "text": "sdk-deployment-bootstrap-orchestration 可从 capability composition 触达，但该 BDD 不验证默认 consent lifecycle 编排。",
+          "source_ref_ids": [
+            "src.cap.spec.frontmatter",
+            "src.cap.spec.requirements"
+          ],
+          "evidence_ref_ids": [],
+          "support_level": "inferred",
+          "planner_use": "除非选择 default-flow BDD，否则不要向 success-path 计划加入 GuruSdk bootstrap 步骤。"
+        },
+        {
+          "claim_id": "claim.capability.excluded.logging",
+          "text": "log-observability 可从 capability composition 触达，但该 BDD 不验证 logging diagnostics。",
+          "source_ref_ids": [
+            "src.cap.spec.frontmatter"
+          ],
+          "evidence_ref_ids": [],
+          "support_level": "inferred",
+          "planner_use": "除非用户补充 logging BDD，否则不要将计划扩展到 log-diagnostic assertions。"
+        }
+      ],
+      "source_ref_ids": [
+        "src.bdd.identity",
+        "src.cap.spec.frontmatter",
+        "src.cap.spec.code_refs",
+        "src.cap.bdd.status"
+      ],
+      "evidence_ref_ids": [
+        "ev.source.code_refs",
+        "ev.gap.android_runtime"
+      ]
+    }
+  ],
+  "requirement_facts": [
+    {
+      "fact_id": "requirement.google_play_age_signals",
+      "fact_type": "requirement_fact",
+      "claims": [
+        {
+          "claim_id": "claim.requirement.intent",
+          "text": "该 feature requirement 是通过集成到 ConsentManager 的平台安全 SDK 接口，在 Unity SDK 中支持 Google Play Age Signals。",
+          "source_ref_ids": [
+            "src.syn.proposal.requirement"
+          ],
+          "evidence_ref_ids": [],
+          "support_level": "direct",
+          "planner_use": "将 BDD success path 连接到原始 feature intent，但不复制完整 issue。"
+        }
+      ],
+      "source_ref_ids": [
+        "src.syn.proposal.requirement"
+      ],
+      "evidence_ref_ids": []
+    }
+  ],
+  "specification_facts": [
+    {
+      "fact_id": "specification.age_signals_success_contract",
+      "fact_type": "specification_fact",
+      "claims": [
+        {
+          "claim_id": "claim.spec.typed_api",
+          "text": "capability spec 将类型化 ConsentManager API 暴露、Android adapter 隔离和安全降级视为已覆盖需求。",
+          "source_ref_ids": [
+            "src.cap.spec.requirements"
+          ],
+          "evidence_ref_ids": [],
+          "support_level": "direct",
+          "planner_use": "使用这些承诺判断哪些 source/API 断言应进入计划。"
+        },
+        {
+          "claim_id": "claim.spec.compliance_scope",
+          "text": "capability spec 将 age data 保持在合规边界内标记为 partial，而不是 fully covered。",
+          "source_ref_ids": [
+            "src.cap.spec.requirements"
+          ],
+          "evidence_ref_ids": [],
+          "support_level": "partial",
+          "planner_use": "将 compliance-boundary 断言作为约束或风险处理，不作为主要 success-path 通过条件。"
+        }
+      ],
+      "source_ref_ids": [
+        "src.cap.spec.requirements"
+      ],
+      "evidence_ref_ids": []
+    }
+  ],
+  "feature_facts": [
+    {
+      "fact_id": "feature.google_play_age_signals",
+      "fact_type": "feature_fact",
+      "claims": [
+        {
+          "claim_id": "claim.feature.synaptic",
+          "text": "该 capability context 关联的 synaptic feature 是 gurusdk-framework 中的 synaptic/google-play-age-signals。",
+          "source_ref_ids": [
+            "src.cap.spec.frontmatter",
+            "src.syn.impl.summary"
+          ],
+          "evidence_ref_ids": [],
+          "support_level": "direct",
+          "planner_use": "定位 proposal、retrieval 和 implementation 记录，用于当前 BDD 的 fact 抽取。"
+        }
+      ],
+      "source_ref_ids": [
+        "src.cap.spec.frontmatter",
+        "src.syn.impl.summary"
+      ],
+      "evidence_ref_ids": []
+    }
+  ],
+  "implementation_facts": [
+    {
+      "fact_id": "implementation.age_signals_success_path",
+      "fact_type": "implementation_fact",
+      "coverage_status": "partial",
+      "claims": [
+        {
+          "claim_id": "claim.implementation.added_components",
+          "text": "实现新增了类型化模型、Android/Mock platform adapters、ConsentManager API/state、GuruSdk 集成、EDM 依赖以及聚焦的 editor tests。",
+          "source_ref_ids": [
+            "src.syn.impl.summary"
+          ],
+          "evidence_ref_ids": [],
+          "support_level": "direct",
+          "planner_use": "使用这一点选择 source 和 test 触点，同时过滤无关集成区域。"
+        },
+        {
+          "claim_id": "claim.implementation.partial_runtime",
+          "text": "实现状态仍为 partial，因为尚未执行真实 Unity Android runtime 或 device 验证。",
+          "source_ref_ids": [
+            "src.syn.impl.summary",
+            "src.syn.impl.verification"
+          ],
+          "evidence_ref_ids": [
+            "ev.gap.android_runtime"
+          ],
+          "support_level": "partial",
+          "planner_use": "要求 runtime/device 证据，否则将最终结果标记为 insufficient evidence。"
+        }
+      ],
+      "implementation_touchpoint_refs": [
+        "touch.consent_manager",
+        "touch.age_signals_android",
+        "touch.age_signals_models",
+        "touch.success_test"
+      ],
+      "source_ref_ids": [
+        "src.syn.impl.summary",
+        "src.syn.impl.verification"
+      ],
+      "evidence_ref_ids": [
+        "ev.gap.android_runtime"
+      ]
+    }
+  ],
+  "validator_facts": [
+    {
+      "fact_id": "validator.age_signals_success_history",
+      "fact_type": "validator_fact",
+      "claims": [
+        {
+          "claim_id": "claim.validator.unit_test_history",
+          "text": "历史验证证据包括 AgeSignalsConsentTests.RequestAgeSignals_OnSuccess_PublishesTypedResult。",
+          "source_ref_ids": [
+            "src.bdd.evidence",
+            "src.cap.bdd.status"
+          ],
+          "evidence_ref_ids": [
+            "ev.test.success"
+          ],
+          "support_level": "direct",
+          "planner_use": "Planner 可以复用该测试作为一个证据通道，但不能将其等同于 runtime/device proof。"
+        }
+      ],
+      "source_ref_ids": [
+        "src.bdd.evidence",
+        "src.cap.bdd.status"
+      ],
+      "evidence_ref_ids": [
+        "ev.test.success"
+      ]
+    }
+  ],
+  "validation_knowledge_facts": [
+    {
+      "fact_id": "knowledge.android_runtime_required",
+      "fact_type": "validation_knowledge_fact",
+      "claims": [
+        {
+          "claim_id": "claim.knowledge.runtime_required",
+          "text": "当 BDD 明确指向 Android runtime 行为时，不能仅凭 source 和 unit 证据将 success-path 结论标记为 passed。",
+          "source_ref_ids": [
+            "src.bdd.given",
+            "src.bdd.evidence",
+            "src.syn.impl.verification"
+          ],
+          "evidence_ref_ids": [
+            "ev.gap.android_runtime"
+          ],
+          "support_level": "synthesized",
+          "planner_use": "缺少 Android runtime/device 证据时，应创建 insufficient-evidence 条件。"
+        }
+      ],
+      "source_ref_ids": [
+        "src.bdd.given",
+        "src.bdd.evidence",
+        "src.syn.impl.verification"
+      ],
+      "evidence_ref_ids": [
+        "ev.gap.android_runtime"
+      ]
+    }
+  ],
+  "acceptance_criteria": {
+    "pass_conditions": [
+      {
+        "id": "pass.typed_result_published",
+        "claim": {
+          "claim_id": "claim.pass.typed_result_published",
+          "text": "只有 RequestAgeSignals 生成并发布 BDD 预期的类型化 AgeSignalsResult 时，验证才可以通过。",
+          "source_ref_ids": [
+            "src.bdd.when",
+            "src.bdd.then"
+          ],
+          "evidence_ref_ids": [
+            "ev.behavior.publish",
+            "ev.behavior.mapping"
+          ],
+          "support_level": "direct",
+          "planner_use": "将类型化结果发布作为主要通过条件。"
+        }
+      }
+    ],
+    "fail_conditions": [
+      {
+        "id": "fail.no_typed_result",
+        "claim": {
+          "claim_id": "claim.fail.no_typed_result",
+          "text": "如果 SDK 没有为 success path 发布类型化 AgeSignalsResult，则不满足 BDD 预期。",
+          "source_ref_ids": [
+            "src.bdd.then"
+          ],
+          "evidence_ref_ids": [],
+          "support_level": "direct",
+          "planner_use": "将 AgeSignalsResult 缺失或结构错误作为失败条件。"
+        }
+      }
+    ],
+    "observable_signals": [
+      {
+        "id": "signal.age_signals_subject",
+        "channel": "source",
+        "subject": "ConsentManager.RequestAgeSignals / AgeSignalsSubject",
+        "expected_expression": "发布类型化 AgeSignalsResult",
+        "selector": "ConsentManager.RequestAgeSignals",
+        "claim": {
+          "claim_id": "claim.signal.age_signals_subject",
+          "text": "ConsentManager.RequestAgeSignals 通过 AgeSignalsSubject 发布结果，是 success path 的必要信号。",
+          "source_ref_ids": [
+            "src.bdd.evidence",
+            "src.cap.spec.code_refs"
+          ],
+          "evidence_ref_ids": [
+            "ev.behavior.publish",
+            "ev.source.code_refs"
+          ],
+          "support_level": "direct",
+          "planner_use": "计划应检查或执行发布路径。"
+        }
+      },
+      {
+        "id": "signal.age_signals_mapping",
+        "channel": "source",
+        "subject": "AgeSignalsAndroid.ParseResult",
+        "expected_expression": "将 Android result 字段映射到 AgeSignalsResult",
+        "selector": "AgeSignalsAndroid.ParseResult",
+        "claim": {
+          "claim_id": "claim.signal.age_signals_mapping",
+          "text": "AgeSignalsAndroid.ParseResult 的字段映射是类型化 success result 的必要信号。",
+          "source_ref_ids": [
+            "src.bdd.evidence",
+            "src.cap.spec.code_refs"
+          ],
+          "evidence_ref_ids": [
+            "ev.behavior.mapping",
+            "ev.source.code_refs"
+          ],
+          "support_level": "direct",
+          "planner_use": "计划应检查字段映射，或围绕映射路径运行聚焦测试。"
+        }
+      }
+    ],
+    "timing": [],
+    "tolerances": [],
+    "insufficient_evidence_conditions": [
+      {
+        "id": "insufficient.missing_android_runtime",
+        "claim": {
+          "claim_id": "claim.insufficient.missing_android_runtime",
+          "text": "如果仍缺少 Android runtime/device 执行证据，结果不能从 partial source/test 证据升级为 passed runtime behavior。",
+          "source_ref_ids": [
+            "src.bdd.evidence",
+            "src.syn.impl.verification"
+          ],
+          "evidence_ref_ids": [
+            "ev.gap.android_runtime"
+          ],
+          "support_level": "partial",
+          "planner_use": "要求 Planner 收集 device/runtime proof，或明确返回 insufficient evidence。"
+        }
+      }
+    ]
+  },
+  "given": [
+    "Android build 运行时 Google Play Age Signals 可用，并且 platform implementation 返回成功结果。"
+  ],
+  "when": [
+    "ConsentManager.RequestAgeSignals() 通过 IAgeSignalsPlatform 请求信号。"
+  ],
+  "then": [
+    "SDK 发布类型化 AgeSignalsResult，其中包含 status、可选 age bounds、install id、approval date，并且没有 error code。"
+  ],
+  "implementation_touchpoints": [
+    {
+      "id": "touch.consent_manager",
+      "implementation_ref_ids": [
+        "impl.consent_manager"
+      ],
+      "claim": {
+        "claim_id": "claim.touch.consent_manager",
+        "text": "ConsentManager 拥有该 BDD 的 RequestAgeSignals API 与结果发布边界。",
+        "source_ref_ids": [
+          "src.cap.spec.code_refs",
+          "src.bdd.evidence"
+        ],
+        "evidence_ref_ids": [
+          "ev.behavior.publish",
+          "ev.source.code_refs"
+        ],
+        "support_level": "direct",
+        "planner_use": "将 ConsentManager 作为主要 source/runtime 触点。"
+      }
+    },
+    {
+      "id": "touch.age_signals_android",
+      "implementation_ref_ids": [
+        "impl.age_signals_android"
+      ],
+      "claim": {
+        "claim_id": "claim.touch.age_signals_android",
+        "text": "AgeSignalsAndroid 拥有 success-path 类型化结果所使用的 Android result parsing。",
+        "source_ref_ids": [
+          "src.cap.spec.code_refs",
+          "src.bdd.evidence"
+        ],
+        "evidence_ref_ids": [
+          "ev.behavior.mapping",
+          "ev.source.code_refs"
+        ],
+        "support_level": "direct",
+        "planner_use": "将 AgeSignalsAndroid 作为 mapping 触点。"
+      }
+    },
+    {
+      "id": "touch.age_signals_models",
+      "implementation_ref_ids": [
+        "impl.age_signals_models"
+      ],
+      "claim": {
+        "claim_id": "claim.touch.age_signals_models",
+        "text": "AgeSignalsModels 定义 BDD 预期的类型化 AgeSignalsResult contract。",
+        "source_ref_ids": [
+          "src.cap.spec.code_refs",
+          "src.bdd.then"
+        ],
+        "evidence_ref_ids": [
+          "ev.source.code_refs"
+        ],
+        "support_level": "direct",
+        "planner_use": "使用 AgeSignalsModels 检查预期结果结构。"
+      }
+    },
+    {
+      "id": "touch.success_test",
+      "implementation_ref_ids": [
+        "impl.success_test"
+      ],
+      "claim": {
+        "claim_id": "claim.touch.success_test",
+        "text": "聚焦的历史测试覆盖 success path 的类型化结果发布。",
+        "source_ref_ids": [
+          "src.bdd.evidence",
+          "src.cap.bdd.status"
+        ],
+        "evidence_ref_ids": [
+          "ev.test.success"
+        ],
+        "support_level": "direct",
+        "planner_use": "将该测试作为可复用证据通道，但保持 runtime proof 独立。"
+      }
+    }
+  ],
+  "evidence_hints": [
+    {
+      "id": "hint.source_publication",
+      "channel": "source",
+      "subject": "ConsentManager.RequestAgeSignals 发布路径",
+      "query_hint": "搜索 ConsentManager.RequestAgeSignals 和 AgeSignalsSubject",
+      "selector_hint": "ConsentManager.RequestAgeSignals",
+      "expected_signal": "结果通过 AgeSignalsSubject 发布",
+      "missing_disposition": "insufficient_evidence",
+      "claim": {
+        "claim_id": "claim.hint.source_publication",
+        "text": "源码检查应证明或否定 BDD evidence 所指的结果发布路径。",
+        "source_ref_ids": [
+          "src.bdd.evidence",
+          "src.cap.spec.code_refs"
+        ],
+        "evidence_ref_ids": [
+          "ev.behavior.publish",
+          "ev.source.code_refs"
+        ],
+        "support_level": "direct",
+        "planner_use": "引导 Planner 收集 source 证据。"
+      }
+    },
+    {
+      "id": "hint.runtime_android",
+      "channel": "device_state",
+      "subject": "Android runtime/device 执行",
+      "query_hint": "运行或检查 Age Signals success path 的 Android device/emulator 证据",
+      "expected_signal": "存在成功 Age Signals 请求对应的 Android runtime/device 证据",
+      "missing_disposition": "insufficient_evidence",
+      "claim": {
+        "claim_id": "claim.hint.runtime_android",
+        "text": "runtime/device 证据是该 BDD 已知缺失的证据通道。",
+        "source_ref_ids": [
+          "src.bdd.evidence",
+          "src.syn.impl.verification"
+        ],
+        "evidence_ref_ids": [
+          "ev.gap.android_runtime"
+        ],
+        "support_level": "partial",
+        "planner_use": "强制 Planner 收集 runtime 证据，或保留证据不足结论。"
+      }
+    }
+  ],
+  "constraints": [
+    {
+      "id": "constraint.success_path_only",
+      "kind": "scope",
+      "severity": "blocking",
+      "claim": {
+        "claim_id": "claim.constraint.success_path_only",
+        "text": "计划必须保持在已选 success BDD 范围内，未经用户确认不得扩展到 default flow、unsupported fallback 或 logging diagnostics。",
+        "source_ref_ids": [
+          "src.bdd.identity",
+          "src.cap.bdd.status"
+        ],
+        "evidence_ref_ids": [],
+        "support_level": "synthesized",
+        "planner_use": "防止嘈杂的 capability 遍历生成无关验证步骤。"
+      }
+    },
+    {
+      "id": "constraint.compliance_boundary",
+      "kind": "privacy",
+      "severity": "warning",
+      "claim": {
+        "claim_id": "claim.constraint.compliance_boundary",
+        "text": "Age Signals 值应保留在 consent/compliance state 内，不应在本次 success-path 验证中被当作 analytics 或 targeting 输出。",
+        "source_ref_ids": [
+          "src.syn.proposal.requirement",
+          "src.cap.spec.requirements"
+        ],
+        "evidence_ref_ids": [],
+        "support_level": "synthesized",
+        "planner_use": "将证据收集聚焦在 consent result state，而不是 analytics payload。"
+      }
+    }
+  ],
+  "uncertainty_items": [
+    {
+      "id": "uncertainty.android_runtime_missing",
+      "disposition": "allow_with_review",
+      "claim": {
+        "claim_id": "claim.uncertainty.android_runtime_missing",
+        "text": "历史知识中缺少 Android runtime/device proof，可能需要后续具备 Worker 能力的 runtime 来解决。",
+        "source_ref_ids": [
+          "src.bdd.evidence",
+          "src.syn.impl.verification"
+        ],
+        "evidence_ref_ids": [
+          "ev.gap.android_runtime"
+        ],
+        "support_level": "partial",
+        "planner_use": "将该不确定性带入计划，而不是静默地把历史 partial 证据当作 passed。"
+      }
+    }
+  ]
+}

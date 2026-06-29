@@ -1,0 +1,240 @@
+{
+  "catalog_id": "catalog_age_signals_demo_seed",
+  "catalogType": "validation_catalog",
+  "runId": "external_seed",
+  "createdAt": "2026-06-24T00:00:00.000Z",
+  "source_refs": [
+    {
+      "source_ref_id": "src.bdd.identity",
+      "type": "bdd",
+      "ref": "age-signals-consent-android-success",
+      "uri": "/Users/chengdai/.guru/gurusdk-hippocampus/bdd/scenarios/age-signals-consent-android-success.md",
+      "locator": {
+        "kind": "frontmatter",
+        "value": "scenario_id, capability_id, verification_status"
+      },
+      "summary": "BDD frontmatter 标识该场景、关联能力以及历史验证状态。"
+    },
+    {
+      "source_ref_id": "src.bdd.given",
+      "type": "bdd",
+      "ref": "age-signals-consent-android-success#Given",
+      "uri": "/Users/chengdai/.guru/gurusdk-hippocampus/bdd/scenarios/age-signals-consent-android-success.md",
+      "locator": {
+        "kind": "heading",
+        "value": "Given"
+      },
+      "summary": "BDD Given 步骤定义 Android Age Signals 可用性的前置条件。"
+    },
+    {
+      "source_ref_id": "src.bdd.when",
+      "type": "bdd",
+      "ref": "age-signals-consent-android-success#When",
+      "uri": "/Users/chengdai/.guru/gurusdk-hippocampus/bdd/scenarios/age-signals-consent-android-success.md",
+      "locator": {
+        "kind": "heading",
+        "value": "When"
+      },
+      "summary": "BDD When 步骤定义 ConsentManager 的请求动作。"
+    },
+    {
+      "source_ref_id": "src.bdd.then",
+      "type": "bdd",
+      "ref": "age-signals-consent-android-success#Then",
+      "uri": "/Users/chengdai/.guru/gurusdk-hippocampus/bdd/scenarios/age-signals-consent-android-success.md",
+      "locator": {
+        "kind": "heading",
+        "value": "Then"
+      },
+      "summary": "BDD Then 步骤定义发布类型化 AgeSignalsResult 的预期结果。"
+    },
+    {
+      "source_ref_id": "src.bdd.evidence",
+      "type": "bdd",
+      "ref": "age-signals-consent-android-success#Evidence",
+      "uri": "/Users/chengdai/.guru/gurusdk-hippocampus/bdd/scenarios/age-signals-consent-android-success.md",
+      "locator": {
+        "kind": "heading",
+        "value": "Evidence"
+      },
+      "summary": "BDD evidence 列出行为证据、测试证据以及 Android runtime/device 缺口。"
+    },
+    {
+      "source_ref_id": "src.cap.spec.frontmatter",
+      "type": "capability",
+      "ref": "google-play-age-signals-consent-service/spec",
+      "uri": "/Users/chengdai/.guru/gurusdk-hippocampus/capabilities/google-play-age-signals-consent-service/spec.md",
+      "locator": {
+        "kind": "frontmatter",
+        "value": "capability_id, bdd_primary_scenario, related_feature, composed_of"
+      },
+      "summary": "Capability spec frontmatter 将该 BDD 关联到 google-play-age-signals-consent-service 以及对应的 synaptic feature。"
+    },
+    {
+      "source_ref_id": "src.cap.spec.requirements",
+      "type": "capability",
+      "ref": "google-play-age-signals-consent-service/spec#Requirement Mapping",
+      "uri": "/Users/chengdai/.guru/gurusdk-hippocampus/capabilities/google-play-age-signals-consent-service/spec.md",
+      "locator": {
+        "kind": "heading",
+        "value": "1. Requirement Mapping"
+      },
+      "summary": "Capability spec 映射了类型化 API、Android adapter、默认 consent flow、依赖声明以及合规边界覆盖情况。"
+    },
+    {
+      "source_ref_id": "src.cap.spec.code_refs",
+      "type": "capability",
+      "ref": "google-play-age-signals-consent-service/spec#code_refs",
+      "uri": "/Users/chengdai/.guru/gurusdk-hippocampus/capabilities/google-play-age-signals-consent-service/spec.md",
+      "locator": {
+        "kind": "frontmatter",
+        "value": "code_refs.symbols"
+      },
+      "summary": "Capability code_refs 标识 ConsentManager、AgeSignalsAndroid、AgeSignalsModels、GuruSdk 和 AgeSignalsConsentTests。"
+    },
+    {
+      "source_ref_id": "src.cap.bdd.status",
+      "type": "capability",
+      "ref": "google-play-age-signals-consent-service/bdd",
+      "uri": "/Users/chengdai/.guru/gurusdk-hippocampus/capabilities/google-play-age-signals-consent-service/bdd.md",
+      "locator": {
+        "kind": "table_row",
+        "value": "age-signals-consent-android-success"
+      },
+      "summary": "Capability BDD 矩阵将 Android success 场景标记为 partial，并记录已有 unit 证据。"
+    },
+    {
+      "source_ref_id": "src.syn.proposal.requirement",
+      "type": "synaptic",
+      "ref": "synaptic/google-play-age-signals/proposal.md",
+      "uri": "/Users/chengdai/Documents/UnityProjects/Castbox/Guru/v3.2.0/gurusdk-unity/gurusdk-framework/synaptic/google-play-age-signals/proposal.md",
+      "locator": {
+        "kind": "heading",
+        "value": "需求摘要"
+      },
+      "summary": "Synaptic proposal 描述 Google Play Age Signals 需求、已选择方案以及 BDD seeds。"
+    },
+    {
+      "source_ref_id": "src.syn.impl.summary",
+      "type": "implementation",
+      "ref": "synaptic/google-play-age-signals/implementation.md#Summary",
+      "uri": "/Users/chengdai/Documents/UnityProjects/Castbox/Guru/v3.2.0/gurusdk-unity/gurusdk-framework/synaptic/google-play-age-signals/implementation.md",
+      "locator": {
+        "kind": "heading",
+        "value": "Summary"
+      },
+      "summary": "Implementation summary 说明已新增类型化模型、Android/Mock platform adapters、ConsentManager API/state、GuruSdk 集成、EDM 依赖以及聚焦的 editor tests。"
+    },
+    {
+      "source_ref_id": "src.syn.impl.verification",
+      "type": "implementation",
+      "ref": "synaptic/google-play-age-signals/implementation.md#BDD Validation Matrix",
+      "uri": "/Users/chengdai/Documents/UnityProjects/Castbox/Guru/v3.2.0/gurusdk-unity/gurusdk-framework/synaptic/google-play-age-signals/implementation.md",
+      "locator": {
+        "kind": "heading",
+        "value": "BDD Validation Matrix"
+      },
+      "summary": "Implementation validation matrix 记录 success mapping 仍为 partial，并缺少 Android runtime 执行证据。"
+    }
+  ],
+  "evidence_refs": [
+    {
+      "evidence_ref_id": "ev.behavior.publish",
+      "type": "behavior",
+      "ref": "ConsentManager.RequestAgeSignals publishes result through AgeSignalsSubject",
+      "summary": "BDD evidence 说明 ConsentManager 通过 AgeSignalsSubject 发布 Age Signals 结果。",
+      "source_ref_ids": [
+        "src.bdd.evidence"
+      ]
+    },
+    {
+      "evidence_ref_id": "ev.behavior.mapping",
+      "type": "behavior",
+      "ref": "AgeSignalsAndroid.ParseResult maps Android result fields",
+      "summary": "BDD evidence 说明 AgeSignalsAndroid 会映射 userStatus、ageLower、ageUpper、installId 和 mostRecentApprovalDate。",
+      "source_ref_ids": [
+        "src.bdd.evidence"
+      ]
+    },
+    {
+      "evidence_ref_id": "ev.test.success",
+      "type": "test",
+      "ref": "AgeSignalsConsentTests.RequestAgeSignals_OnSuccess_PublishesTypedResult",
+      "summary": "BDD 与 capability BDD 矩阵都指出类型化结果发布对应的聚焦测试。",
+      "source_ref_ids": [
+        "src.bdd.evidence",
+        "src.cap.bdd.status"
+      ]
+    },
+    {
+      "evidence_ref_id": "ev.gap.android_runtime",
+      "type": "gap",
+      "ref": "缺少 Android runtime/device 执行证据",
+      "summary": "BDD evidence 与 implementation matrix 都说明尚未执行 Android runtime/device 验证。",
+      "source_ref_ids": [
+        "src.bdd.evidence",
+        "src.syn.impl.verification"
+      ]
+    },
+    {
+      "evidence_ref_id": "ev.source.code_refs",
+      "type": "source_review",
+      "ref": "Age Signals success path 的 capability code_refs",
+      "summary": "Capability code_refs 标识 Planner 需要检查或执行的源码与测试触点。",
+      "source_ref_ids": [
+        "src.cap.spec.code_refs"
+      ]
+    }
+  ],
+  "implementation_refs": [
+    {
+      "implementation_ref_id": "impl.consent_manager",
+      "kind": "source_path",
+      "ref": "com.guru.sdk.framework.core/Runtime/Consent/ConsentManager.cs",
+      "locator": {
+        "kind": "symbol",
+        "value": "ConsentManager.RequestAgeSignals"
+      },
+      "source_ref_ids": [
+        "src.cap.spec.code_refs"
+      ]
+    },
+    {
+      "implementation_ref_id": "impl.age_signals_android",
+      "kind": "source_path",
+      "ref": "com.guru.sdk.framework.core/Runtime/Consent/Platform/AgeSignalsAndroid.cs",
+      "locator": {
+        "kind": "symbol",
+        "value": "AgeSignalsAndroid.ParseResult"
+      },
+      "source_ref_ids": [
+        "src.cap.spec.code_refs"
+      ]
+    },
+    {
+      "implementation_ref_id": "impl.age_signals_models",
+      "kind": "source_path",
+      "ref": "com.guru.sdk.framework.core/Runtime/Consent/AgeSignalsModels.cs",
+      "locator": {
+        "kind": "symbol",
+        "value": "AgeSignalsResult"
+      },
+      "source_ref_ids": [
+        "src.cap.spec.code_refs"
+      ]
+    },
+    {
+      "implementation_ref_id": "impl.success_test",
+      "kind": "test",
+      "ref": "AgeSignalsConsentTests.RequestAgeSignals_OnSuccess_PublishesTypedResult",
+      "locator": {
+        "kind": "symbol",
+        "value": "AgeSignalsConsentTests.RequestAgeSignals_OnSuccess_PublishesTypedResult"
+      },
+      "source_ref_ids": [
+        "src.bdd.evidence",
+        "src.cap.bdd.status"
+      ]
+    }
+  ]
+}

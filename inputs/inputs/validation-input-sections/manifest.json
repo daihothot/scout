@@ -1,0 +1,46 @@
+{
+  "manifestType": "validation_input_sections",
+  "updatedAt": "2026-06-24T12:37:50.771Z",
+  "sections": [
+    {
+      "section": "body.acceptance_criteria",
+      "path": "/Users/chengdai/Documents/DevopsProjects/scout/run/run-20260624T110809/inputs/validation-input-sections/body.acceptance_criteria.json",
+      "written": true
+    },
+    {
+      "section": "body.bdd_fact",
+      "path": "/Users/chengdai/Documents/DevopsProjects/scout/run/run-20260624T110809/inputs/validation-input-sections/body.bdd_fact.json",
+      "written": true
+    },
+    {
+      "section": "body.capability_facts",
+      "path": "/Users/chengdai/Documents/DevopsProjects/scout/run/run-20260624T110809/inputs/validation-input-sections/body.capability_facts.json",
+      "written": true
+    },
+    {
+      "section": "body.constraints",
+      "path": "/Users/chengdai/Documents/DevopsProjects/scout/run/run-20260624T110809/inputs/validation-input-sections/body.constraints.json",
+      "written": true
+    },
+    {
+      "section": "body.implementation_facts",
+      "path": "/Users/chengdai/Documents/DevopsProjects/scout/run/run-20260624T110809/inputs/validation-input-sections/body.implementation_facts.json",
+      "written": true
+    },
+    {
+      "section": "body.requirement_facts",
+      "path": "/Users/chengdai/Documents/DevopsProjects/scout/run/run-20260624T110809/inputs/validation-input-sections/body.requirement_facts.json",
+      "written": true
+    },
+    {
+      "section": "body.uncertainty_items",
+      "path": "/Users/chengdai/Documents/DevopsProjects/scout/run/run-20260624T110809/inputs/validation-input-sections/body.uncertainty_items.json",
+      "written": true
+    },
+    {
+      "section": "catalog",
+      "path": "/Users/chengdai/Documents/DevopsProjects/scout/run/run-20260624T110809/inputs/validation-input-sections/catalog.json",
+      "written": true
+    }
+  ]
+}

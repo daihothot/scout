@@ -1,0 +1,18 @@
+{
+  "name": "scout-local-capability-plugin",
+  "version": "0.1.0",
+  "description": "Mock Codex plugin fixture for Scout runtime mount validation.",
+  "author": {
+    "name": "Scout"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Scout Mock Local Capability Plugin",
+    "shortDescription": "Mock plugin fixture for Scout runtime validation.",
+    "longDescription": "Provides a self-contained mock plugin package, skill, and MCP fixture for Scout runtime mount validation.",
+    "developerName": "Scout",
+    "category": "Productivity",
+    "capabilities": ["Local Capability Skill"],
+    "defaultPrompt": "Use the Scout mock local capability plugin only for runtime mount validation."
+  }
+}

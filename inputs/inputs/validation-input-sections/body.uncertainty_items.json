@@ -1,0 +1,79 @@
+{
+  "section": "body.uncertainty_items",
+  "updatedAt": "2026-06-24T12:37:50.769Z",
+  "content": [
+    {
+      "id": "uncertainty.android-runtime-not-executed",
+      "disposition": "track_as_risk",
+      "claim": {
+        "claim_id": "claim.uncertainty.android-runtime-not-executed",
+        "text": "当前资料缺少真实 Android runtime/device 执行证据，无法证明 Play Services、Play Store、Activity 和 listener 在设备上的实际行为。",
+        "source_ref_ids": [
+          "src.bdd.age-signals-consent-android-success",
+          "src.synaptic.google-play-age-signals.implementation",
+          "src.capability.google-play-age-signals-consent-service.spec"
+        ],
+        "evidence_ref_ids": [
+          "ev.gap.android-runtime-device-missing"
+        ],
+        "support_level": "missing",
+        "planner_use": "要求 Plan 选择设备/模拟器验证，或明确输出 partial 结论。"
+      }
+    },
+    {
+      "id": "uncertainty.enum-comment-vs-mapping",
+      "disposition": "allow_with_review",
+      "claim": {
+        "claim_id": "claim.uncertainty.enum-comment-vs-mapping",
+        "text": "AgeSignalsStatus enum 注释写 Verified/Supervised 等为官方状态值 1/2/3/4/5，但 ToAgeSignalsStatus 和测试断言使用 0=Verified、1=Supervised、2=Pending、3=Denied、4=Unknown、5=Declared。",
+        "source_ref_ids": [
+          "src.unity.age-signals-models",
+          "src.unity.age-signals-consent-tests",
+          "src.synaptic.google-play-age-signals.implementation"
+        ],
+        "evidence_ref_ids": [
+          "ev.source.age-signals-models-rg",
+          "ev.test.age-signals-consent-tests-rg"
+        ],
+        "support_level": "partial",
+        "planner_use": "Planner 应以当前实现和测试为验证对象，同时可把注释不一致作为 review 风险。"
+      }
+    },
+    {
+      "id": "uncertainty.compliance-runtime-proof",
+      "disposition": "track_as_risk",
+      "claim": {
+        "claim_id": "claim.uncertainty.compliance-runtime-proof",
+        "text": "compliance boundary 目前主要来自需求、spec 和源码审查，缺少 runtime/device 或专项 BDD 执行证据。",
+        "source_ref_ids": [
+          "src.synaptic.google-play-age-signals.proposal",
+          "src.synaptic.google-play-age-signals.retrieval",
+          "src.spec.google-play-age-signals",
+          "src.synaptic.google-play-age-signals.implementation"
+        ],
+        "evidence_ref_ids": [
+          "ev.gap.compliance-boundary-runtime-missing"
+        ],
+        "support_level": "partial",
+        "planner_use": "Planner 如需声明 compliance 通过，必须补充数据流/日志/analytics 写入缺失证据。"
+      }
+    },
+    {
+      "id": "uncertainty.unity-test-not-run",
+      "disposition": "allow_with_review",
+      "claim": {
+        "claim_id": "claim.uncertainty.unity-test-not-run",
+        "text": "AgeSignalsConsentTests 已作为历史测试证据定位，但本次 input 生成没有运行 Unity test runner。",
+        "source_ref_ids": [
+          "src.unity.age-signals-consent-tests",
+          "src.synaptic.google-play-age-signals.implementation"
+        ],
+        "evidence_ref_ids": [
+          "ev.test.age-signals-consent-tests-rg"
+        ],
+        "support_level": "partial",
+        "planner_use": "后续验证计划需要决定是否执行测试或只把它作为历史证据。"
+      }
+    }
+  ]
+}

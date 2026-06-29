@@ -1,0 +1,21 @@
+module: feature-fact
+imports:
+  source-ref:
+    - SourcedClaim
+exports:
+  FeatureFact:
+    kind: interface
+    description: 当前 BDD 相关的 synaptic proposal 事实投影；只保留 proposal 中会影响 Planner 的需求背景、目标、范围和非目标。
+    fields:
+      fact_id:
+        type: string
+        required: true
+        description: feature fact 稳定 ID。
+      fact_type:
+        type: '"feature_fact"'
+        required: true
+        description: 固定为 feature_fact。
+      claims:
+        type: SourcedClaim[]
+        required: true
+        description: proposal 的动机、目标、范围、非目标、用户价值和与当前 BDD 的关系 claim。

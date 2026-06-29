@@ -1,0 +1,37 @@
+{
+  "servers": {
+    "scout_local_capability": {
+      "command": "node",
+      "args": [
+        "assets/codex/plugins/mock/scout-local-capability-plugin/mcp/scout-local-capability.cjs"
+      ]
+    },
+    "codegraph": {
+      "command": "node",
+      "args": [
+        "assets/codex/mcp/codegraph/wrapper.cjs"
+      ],
+      "requiredBindings": [
+        "path"
+      ],
+      "cwd": "${binding.path}",
+      "env": {
+        "SCOUT_MCP_TARGET_PATH": "${binding.path}"
+      },
+      "trustedRoots": [
+        "${binding.path}"
+      ],
+      "writableRoots": [
+        "${binding.path}/.codegraph"
+      ],
+      "smoke": {
+        "tool": "codegraph_search",
+        "arguments": {
+          "query": "CodeGraph",
+          "limit": 1,
+          "projectPath": "${binding.path}"
+        }
+      }
+    }
+  }
+}

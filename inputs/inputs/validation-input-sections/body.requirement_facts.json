@@ -1,0 +1,94 @@
+{
+  "section": "body.requirement_facts",
+  "updatedAt": "2026-06-24T12:37:50.768Z",
+  "content": [
+    {
+      "fact_id": "fact.requirement.age-signals-core",
+      "fact_type": "requirement_fact",
+      "claims": [
+        {
+          "claim_id": "claim.req.typed-consent-manager-api",
+          "text": "需求要求 Unity SDK 通过 ConsentManager 提供稳定 typed C# API，让 app code 不需要自己写 Android native bridge。",
+          "source_ref_ids": [
+            "src.synaptic.google-play-age-signals.proposal",
+            "src.spec.google-play-age-signals"
+          ],
+          "evidence_ref_ids": [
+            "ev.spec.acceptance-scenarios"
+          ],
+          "support_level": "direct",
+          "planner_use": "把验证入口限定为 SDK API 能力，而不是项目层 Android 桥接。"
+        },
+        {
+          "claim_id": "claim.req.android-success-fields",
+          "text": "成功结果必须包含 userStatus、可选 ageLower、ageUpper、installId、mostRecentApprovalDate，并以 typed result 返回。",
+          "source_ref_ids": [
+            "src.spec.google-play-age-signals",
+            "src.synaptic.google-play-age-signals.retrieval",
+            "src.bdd.age-signals-consent-android-success"
+          ],
+          "evidence_ref_ids": [
+            "ev.spec.acceptance-scenarios",
+            "ev.bdd.behavior"
+          ],
+          "support_level": "direct",
+          "planner_use": "驱动断言字段选择和结果结构检查。"
+        },
+        {
+          "claim_id": "claim.req.dependency",
+          "text": "需求要求通过项目现有 Unity Android dependency 机制声明 com.google.android.play:age-signals:0.0.3。",
+          "source_ref_ids": [
+            "src.synaptic.google-play-age-signals.proposal",
+            "src.spec.google-play-age-signals"
+          ],
+          "evidence_ref_ids": [
+            "ev.source.dependencies-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "要求验证计划检查 EDM dependency 文件，而不只检查 C# 代码。"
+        },
+        {
+          "claim_id": "claim.req.unsupported-safe-fallback",
+          "text": "需求要求 unsupported platform 或 API 不可用时安全降级且不抛 unhandled exception。",
+          "source_ref_ids": [
+            "src.spec.google-play-age-signals",
+            "src.synaptic.google-play-age-signals.retrieval"
+          ],
+          "evidence_ref_ids": [
+            "ev.spec.acceptance-scenarios",
+            "ev.test.age-signals-consent-tests-rg"
+          ],
+          "support_level": "direct",
+          "planner_use": "虽然当前 BDD 聚焦成功路径，Planner 仍需保留失败判断边界。"
+        },
+        {
+          "claim_id": "claim.req.compliance-boundary",
+          "text": "Age Signals 数据只允许用于 age compliance 和 age-appropriate experience，不应进入 analytics、ads targeting、marketing 或 profiling 路径。",
+          "source_ref_ids": [
+            "src.synaptic.google-play-age-signals.proposal",
+            "src.synaptic.google-play-age-signals.retrieval",
+            "src.spec.google-play-age-signals"
+          ],
+          "evidence_ref_ids": [
+            "ev.gap.compliance-boundary-runtime-missing"
+          ],
+          "support_level": "direct",
+          "planner_use": "要求 Planner 在成功字段验证之外检查数据边界或标记证据不足。"
+        }
+      ],
+      "source_ref_ids": [
+        "src.synaptic.google-play-age-signals.proposal",
+        "src.synaptic.google-play-age-signals.retrieval",
+        "src.spec.google-play-age-signals",
+        "src.bdd.age-signals-consent-android-success"
+      ],
+      "evidence_ref_ids": [
+        "ev.spec.acceptance-scenarios",
+        "ev.bdd.behavior",
+        "ev.source.dependencies-rg",
+        "ev.test.age-signals-consent-tests-rg",
+        "ev.gap.compliance-boundary-runtime-missing"
+      ]
+    }
+  ]
+}

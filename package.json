@@ -1,0 +1,19 @@
+{
+  "name": "scout",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/tests/unit/**/*.test.js\"",
+    "test:integration": "npm run build && SCOUT_RUN_CODEX_APP_SERVER_INTEGRATION=1 node --test \"dist/tests/integration/**/*.test.js\"",
+    "schema:generate:validation-body": "tsc -p tsconfig.json && node dist/schemas/input/scripts/generate-validation-body.js",
+    "check": "npm run schema:generate:validation-body && npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3"
+  }
+}
