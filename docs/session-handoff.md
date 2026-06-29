@@ -6,10 +6,10 @@
 
 当前代码主线已经从旧 chat/session 流程切换到 Scout 自己的 runtime + agent 基础设施：
 
-- `RunManager` 是 run 入口，负责加载 Scout Input、准备 run、启动 Codex app-server、创建 Coordinator，并运行主 orchestrator。
-- `AssetStore` 负责 materialize mount、runtime files、mount manifest、mount preflight、Asset Commit。
+- `RunManager` 已接入 `prepareRuntimeRun()`；一个 run 会 materialize 多个 agent mount，并创建一个共享的 Codex app-server session/client 配置。
+- `AssetStore` 负责按 agent profile materialize mount、生成 mount manifest、构建 Asset Commit，并暴露该 mount 的有效 trusted / writable roots。
 - 每个 agent 有独立 mount：`coordinator`、`researcher`、`verifier`、`validator`。
-- 每个 agent mount 会生成自己的 `artifacts/`、`logs/`、`mount-preflight.json`、`asset-commit.json`。
+- 每个 agent mount 会生成自己的 `mount/`、`artifacts/`、`logs/`；`prepareRuntimeRun()` 会把 mount preflight 和 Asset Commit 结果写入对应 agent 的 artifacts。
 - `CodexAppServerClient` 已拆成 `startSession()`、`startThread()`、`startTurn()`、`awaitTurnCompletion()`、`runTurn()`，并实时消费 app-server JSONL。
 - `AppServerEventStore` 是 app-server timeline/state 的归并层，维护 thread / turn / item / plan / goal / progress / request 状态。
 - `AgentBackend` 负责 app-server dynamic tool backend、task state、notification、timeline 到 task/progress 的映射。
@@ -19,32 +19,18 @@
 
 ## 如何启动当前基础设施
 
-入口在 `src/runtime/run/run-manager.ts`。
+当前 `RunManager` 已经接上第一版启动链路，不要恢复旧 `chat-session` 流程。启动顺序是：
 
-使用方式：
+1. 为本次 run 生成 `runId` 和 run root。
+2. 对 `coordinator`、`researcher`、`verifier`、`validator` 分别调用 `AssetStore.materializeMount()`。
+3. 对每个 mount 调 `preflightCodexMount()` 做 Codex app-server mount preflight；preflight 结果写到该 agent 的 `artifacts/`。
+4. 用 `AssetStore.buildCommit()` 生成该 agent 的 Asset Commit，并写到该 agent 的 `artifacts/`。
+5. 汇总所有 agent 的 mount roots、`trustedRootsForMount()` 和 `writableRootsForMount()`。
+6. 用汇总后的 roots 创建一个 `CodexAppServerClient` bundle；这一 run 只使用这个 app-server session/client，多个 agent 通过不同 thread 运行。
+7. `RunManager.startRun()` 复用 prepared app-server client，创建 `AgentBackend`、Coordinator agent 和 `ScoutAgentOrchestrator`。
+8. Coordinator 作为主 session loop 启动，researcher / verifier / validator 由 Coordinator 通过 tools 分配 task。
 
-```ts
-import { startRun } from "./src/runtime/run/index.js";
-
-await startRun({
-  cwd: "/path/to/repo",
-  scoutInputPath: "/path/to/run/.../agents/researcher/artifacts/scout-input.json",
-  interactionPort,
-});
-```
-
-关键流程：
-
-1. `RunManager.startRun()` 加载 Scout Input。
-2. `prepareRuntimeRun()` 为 coordinator/researcher/verifier/validator 分别 materialize mount。
-3. 每个 mount 执行 mount preflight，并写入 agent 自己的 artifact。
-4. 创建 Codex app-server client，传入所有 agent mount 的 trusted roots / writable roots。
-5. 创建 `AgentBackend` 和 `CoordinatorAgent`。
-6. `appServer.startSession()`。
-7. `coordinatorAgent.startWithPreflight()` 执行 thread start + thread preflight。
-8. `ScoutAgentOrchestrator.run()` 开始主 session loop。
-
-注意：当前 run 必须传 `scoutInputPath`，没有实现从自然语言直接生成 Scout Input 的完整业务链路。Understanding / Research 业务层下一步需要补。
+注意：当前还没有从自然语言直接生成 Scout Input 的完整业务链路。Understanding / Research 业务层下一步需要补。
 
 ## Agent 使用模型
 
@@ -208,7 +194,9 @@ AssetStore 文件：
 - `src/asset-store/materialize.ts`
 - `src/asset-store/preflight.ts`
 - `src/asset-store/commit.ts`
-- `src/asset-store/runtime-files.ts`
+- `src/asset-store/mount-helpers.ts`
+- `src/asset-store/mount-macros.ts`
+- `src/asset-store/asset-layout.ts`
 
 资产来源：
 
@@ -217,18 +205,102 @@ AssetStore 文件：
 - `assets/codex/skills/`
 - `assets/codex/tools/`
 - `assets/codex/mcp/`
-- `assets/codex/shell-tools.json`
-- `assets/codex/manifest.json`
 
-每个 agent 的 profile 由 `assets/codex/agents/agent-profiles.json` 决定。后续不要把所有 skills/tools/mcp 一股脑塞给所有 agent；通过 profile 控制每个 agent 的可见资产。
+当前没有 `assets/codex/manifest.json`。`AssetStore` 直接读取固定 asset layout：
+
+- `assets/codex/agents/agent-profiles.json`：每个 agent 的 profile。
+- `assets/codex/tools/shell-tools.json`：shell tool registry。
+- `assets/codex/mcp/servers.json`：MCP server registry。
+- `assets/codex/skills/`：skill 源目录。
+- `assets/codex/plugins/`：plugin 源目录。
+- `assets/codex/config/`：Codex base config。
+
+每个 agent 的可见能力只由 `agent-profiles.json` 决定。后续不要把所有 skills/tools/mcp 一股脑塞给所有 agent；必须通过 profile 控制每个 agent 的可见资产。
+
+Profile 字段语义：
+
+- `config`：相对 `assets/codex/` 的 base config 路径。
+- `skills`：可挂载 skill 名称列表，对应 `assets/codex/skills/<name>/`。
+- `shellTools`：可选；省略等于不挂载 shell tool。引用短 id，例如 `scoutAssets`、`rg`、`git`、`codegraph`，不要使用 `shellTools.*` 前缀。
+- `mcpServers`：MCP server 名称列表，对应 `assets/codex/mcp/servers.json`。
+- `plugins`：plugin 名称列表，对应 `assets/codex/plugins/`。
+- `trustedRoots` / `writableRoots`：该 agent 的读写边界。
+
+Root 配置支持：
+
+- Runtime 宏：`${SCOUT_MOUNT_ROOT}`、`${SCOUT_ARTIFACT_ROOT}`、`${SCOUT_REPO_ROOT}`、`${SCOUT_RUN_ROOT}`、`${SCOUT_ASSET_COMMIT_ID}`、`${SCOUT_RUN_ID}`。
+- `~/`：展开到当前用户 home。
+- 绝对路径。
+- 相对路径：按 repo root 解析。
+
+当前 worker 类 agent 是 `researcher`、`verifier`、`validator`。它们的 profile 已把 `~/.guru/knowledge` 配为 readable trusted root，把 `~/.guru/codebase` 配为 writable root。已有测试覆盖这些路径的 profile 展开。
 
 当前实现为每个 agent 独立 mount root：
 
-- cwd = agent mount root
-- artifacts/logs 也在 agent 自己目录下
+- mount root：`run/<run-id>/agents/<agent>/mount`
+- artifacts：`run/<run-id>/agents/<agent>/artifacts`
+- logs：`run/<run-id>/agents/<agent>/logs`
+- app-server thread cwd 应使用该 agent 的 `mountRoot`
+- `mount-manifest.json` 写在该 agent 的 `mountRoot`
 - manifest 内部路径应保持相对路径记录，运行时再 resolve 成绝对路径
 
-新增 skill/tool/config/mcp 时，先更新 assets/profile，再通过 AssetStore 重新 materialize。当前第一版可以直接覆盖旧 AssetCommit；正在执行的 task 下一个 turn 才能看到新增 mount 内容。
+Materialize 会生成：
+
+- `AGENTS.md` 和 role AGENTS 到 mount。
+- `.codex/config.toml`，其中 PATH 优先 `mountRoot/bin`。
+- `.codex/hooks.json`。
+- `.agents/skills/` 和 `.agents/plugins/`。
+- `bin/<exposeAs>` shell wrappers。
+- `mcp/<server>` wrappers。
+- `mount-manifest.json`。
+
+Shell tool 规则：
+
+- `shellTools` registry 路径是 `assets/codex/tools/shell-tools.json`。
+- profile 只引用短 id。
+- `bin/<exposeAs>` 统一生成 shell wrapper，不切成 symlink / wrapper 两套模型；即使是 `cat`、`sed`、`rg` 这类纯转发命令也保持 wrapper，方便后续加 env、审计和权限门禁。
+- registry 里的 command 可以是可执行名，也可以是绝对路径；不带 `/` 的 command 会按当前 PATH 解析成真实可执行文件后写入 wrapper。
+- `rg` 必须配置为 `"command": "rg"`，不要写死 VS Code / ChatGPT 扩展里的版本化绝对路径，否则扩展升级后 materialize 会失败。
+- 找不到 command 时不 throw；写入 `mount.issues` 和 manifest `issues` 后继续。
+- `required: true` 记为 `severity: "error"`；`required: false` 记为 `severity: "warning"`。
+- 找不到的 shell tool 不会进入 `mount.shellTools`、manifest `shellTools` 或 `bin/`。
+
+MCP server 规则：
+
+- MCP registry 路径是 `assets/codex/mcp/servers.json`。
+- registry 里可以保留 `codegraph` 配置；agent profile 默认不要配置 `codegraph` MCP。
+- 当前 `codegraph` 以 shell tool 方式给 researcher/verifier 使用；如果后续要启用 CodeGraph MCP，需要提供 required binding，例如 repo `path`，并保证 wrapper 依赖可用。
+- profile 未列出的 MCP server 不会进入 mount config，也不会增加 trusted / writable roots。
+
+Asset Commit 使用方式：
+
+```ts
+const store = new AssetStore();
+const mount = store.materializeMount({ repoRoot, runId, agentId });
+const preflight = await preflightCodexMount(mount);
+const assetCommit = store.buildCommit({
+  mount,
+  preflightStatus: preflight.status === "passed" ? "passed" : "failed",
+  preflightPath,
+});
+```
+
+`AssetStore.buildCommit()` 是构建 Asset Commit 的唯一入口；不要在 RunManager / AgentBackend 里手拼 commit。`prepareRuntimeRun()` 还会检查 `mount.issues`，只要存在 `severity: "error"`，即使 preflight mock 返回 passed，commit 也必须按 failed 处理。当前第一版可以直接覆盖旧 AssetCommit；正在执行的 task 下一个 turn 才能看到新 materialize 的内容。
+
+权限根使用方式：
+
+- `AssetStore.trustedRootsForMount(mount)` = profile trusted roots + materialized MCP trusted roots。
+- `AssetStore.writableRootsForMount(mount)` = profile writable roots + materialized MCP writable roots。
+- app-server 创建 session/thread 前，必须把所有 agent mount 的有效 roots 汇总给 Codex 可访问目录配置；当前 `prepareRuntimeRun()` 已做这一步。
+- 不要把没有进 profile 的本地目录隐式加进 Codex sandbox。
+
+Preflight 边界：
+
+- `src/agent-server/codex/mount-preflight.ts` 负责 Codex app-server 侧 mount preflight，包括 config/read、skills/list、plugin/list、hooks/list 和 required shell tool smoke。
+- `mount-preflight.json` 不保存完整 `configRead`；只保存 `configLayers`，用于证明 Codex 读到了 isolated CODEX_HOME user layer 和 agent mount `.codex` project layer。
+- `configRead.config` 和逐 key `origins` 不落盘，避免 artifact 过大且混入 Codex 内部调试细节。
+- `src/agent/backend/thread-preflight.ts` 负责 thread preflight。
+- 不要把 thread preflight 结果写回 Asset Commit 的 mount preflight。
 
 ## 业务层下一步
 
@@ -281,6 +353,10 @@ npm run test:integration
 - logger redaction / summarizer / serializer
 - app-server event store reducer / timeline
 - app-server client timeline publish 顺序
+- AssetStore per-agent trusted / writable roots、`~/` 展开、本地相对路径解析
+- AssetStore omitted `shellTools` 空集合语义
+- AssetStore unresolved shell tool issue 记录和 mount 输出排除
+- real mount preflight run 已验证 `run-real-preflight-20260629T085333`：coordinator / researcher / verifier / validator 均 `preflight_passed`，`rg --version` smoke passed。
 - ScoutAgentTaskRuntime `TaskResult` 终态门禁
 - AgenticLoop idle/error/stopped 行为
 - real Codex app-server start session/thread/turn smoke
@@ -297,6 +373,7 @@ npm run test:integration
 - task 恢复、回滚、持久化重放还没有实现。
 - policy / approval / elicitation 目前仍较薄，app-server client 里还有 auto-accept 过渡逻辑。
 - Understanding 从外部自然语言生成 Scout Input 的完整业务链路还没接。
+- 不要把 shell tool registry 重新改成机器特定版本路径；优先使用 PATH 可解析 command，wrapper 会在 materialize 时固化到实际可执行路径。
 
 不要做：
 

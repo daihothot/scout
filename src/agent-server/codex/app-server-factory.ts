@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { CodexAppServerClient } from "./app-server-client.js";
 
 export interface CreateCodexAppServerClientOptions {
-  mountRoot: string;
+  mountRoots: string[];
   trustedRoots?: string[];
   writableRoots?: string[];
   tempPrefix: string;
@@ -16,13 +16,21 @@ export interface CodexAppServerClientBundle {
   isolatedHome: string;
   isolatedCodexHome: string;
   defaultWritableRoots: string[];
+  mountRoots: string[];
+  trustedRoots: string[];
+}
+
+export interface CodexAppServerClientConfig {
+  mountRoots: string[];
+  trustedRoots: string[];
+  defaultWritableRoots: string[];
+  configToml: string;
 }
 
 export function createCodexAppServerClient(options: CreateCodexAppServerClientOptions): CodexAppServerClientBundle {
-  const mountRoot = resolve(options.mountRoot);
-  const trustedRoots = uniqueResolved(options.trustedRoots ?? []);
-  const defaultWritableRoots = buildDefaultWritableRoots({
-    mountRoot,
+  const config = buildCodexAppServerClientConfig({
+    mountRoots: options.mountRoots,
+    trustedRoots: options.trustedRoots,
     writableRoots: options.writableRoots ?? [],
   });
   const isolatedHome = mkdtempSync(join(tmpdir(), options.tempPrefix));
@@ -30,10 +38,7 @@ export function createCodexAppServerClient(options: CreateCodexAppServerClientOp
   mkdirSync(isolatedCodexHome, { recursive: true });
   writeFileSync(
     join(isolatedCodexHome, "config.toml"),
-    buildIsolatedConfig({
-      mountRoots: [mountRoot],
-      trustedRoots,
-    }),
+    config.configToml,
     "utf8",
   );
   return {
@@ -44,17 +49,41 @@ export function createCodexAppServerClient(options: CreateCodexAppServerClientOp
     }),
     isolatedHome,
     isolatedCodexHome,
+    defaultWritableRoots: config.defaultWritableRoots,
+    mountRoots: config.mountRoots,
+    trustedRoots: config.trustedRoots,
+  };
+}
+
+export function buildCodexAppServerClientConfig(input: {
+  mountRoots: string[];
+  trustedRoots?: string[];
+  writableRoots: string[];
+}): CodexAppServerClientConfig {
+  const mountRoots = uniqueResolved(input.mountRoots);
+  const trustedRoots = uniqueResolved(input.trustedRoots ?? []);
+  const defaultWritableRoots = buildDefaultWritableRoots({
+    mountRoots,
+    writableRoots: input.writableRoots,
+  });
+  return {
+    mountRoots,
+    trustedRoots,
     defaultWritableRoots,
+    configToml: buildIsolatedConfig({
+      mountRoots,
+      trustedRoots,
+    }),
   };
 }
 
 function buildDefaultWritableRoots(input: {
-  mountRoot: string;
+  mountRoots: string[];
   writableRoots: string[];
 }): string[] {
   const roots = [
-    input.mountRoot,
-    resolve(input.mountRoot, "..", "artifacts"),
+    ...input.mountRoots,
+    ...input.mountRoots.map((mountRoot) => resolve(mountRoot, "..", "artifacts")),
     ...input.writableRoots,
   ];
   return uniqueResolved(roots);

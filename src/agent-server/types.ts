@@ -2,7 +2,7 @@ export interface AgentServerPreflightResult {
   status: "passed" | "failed";
   isolatedHome: string;
   isolatedCodexHome: string;
-  configRead?: unknown;
+  configLayers?: unknown[];
   skillsList?: unknown;
   pluginList?: unknown;
   pluginInstalled?: unknown;
