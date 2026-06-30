@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AgenticLoop } from "../../src/agent/orchestration/agentic-loop.js";
+import { AgenticLoop } from "../../src/agent/core/agentic-loop.js";
 
 test("AgenticLoop runs pending work until idle", async () => {
   let pending = 3;

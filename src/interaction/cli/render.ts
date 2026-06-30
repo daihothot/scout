@@ -1,6 +1,6 @@
-import type { RuntimeQueuedCommand } from "../../core/queue/message-queue.js";
+import type { AgentTaskSystemEvent } from "../../agent/task/task-events.js";
 import type { RuntimeDisclosureEvent, RuntimeProgressEvent } from "../port.js";
-import { escapeXml } from "../protocol/index.js";
+import { renderEventNotification as renderProtocolEventNotification } from "../protocol/index.js";
 
 export function renderDisclosure(event: RuntimeDisclosureEvent): string {
   const structured = renderStructuredDisclosureData(event.data);
@@ -8,16 +8,8 @@ export function renderDisclosure(event: RuntimeDisclosureEvent): string {
   return `[${event.level}] ${event.source}: ${event.message}${data}\n`;
 }
 
-export function renderQueuedCommandNotification(command: RuntimeQueuedCommand): string {
-  if (command.type === "task_notification" || command.type === "user_input") {
-    return `${command.payload}\n`;
-  }
-  return [
-    `<runtime-command id="${escapeXml(command.id)}" type="${escapeXml(command.type)}" priority="${escapeXml(command.priority)}">`,
-    command.payload,
-    "</runtime-command>",
-    "",
-  ].join("\n");
+export function renderEventNotification(event: AgentTaskSystemEvent): string {
+  return renderProtocolEventNotification(event);
 }
 
 export function renderProgress(event: RuntimeProgressEvent): string {

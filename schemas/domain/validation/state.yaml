@@ -1,0 +1,194 @@
+module: state
+imports:
+  common:
+    - ArtifactRef
+    - EvidenceRef
+    - ValidationAgentRole
+    - ValidationTaskStatus
+  validation-result:
+    - ValidationGateStatus
+exports:
+  ValidationDomainState:
+    kind: enum
+    values:
+      - missing_bdd
+      - research_required
+      - research_running
+      - research_ready
+      - verification_required
+      - verification_running
+      - verification_complete
+      - validation_required
+      - validation_running
+      - accepted
+      - needs_fix
+      - insufficient_evidence
+      - blocked
+      - failed
+  ValidationCoordinatorAction:
+    kind: enum
+    values:
+      - request_bdd
+      - dispatch_researcher
+      - dispatch_verifier
+      - dispatch_validator
+      - send_message
+      - request_user_input
+      - synthesize
+      - stop
+  WorkerOutcomeObservation:
+    kind: interface
+    description: Coordinator 可观察到的 worker 业务 outcome。
+    fields:
+      task_id:
+        type: string
+        required: true
+        description: task id。
+      agent_role:
+        type: ValidationAgentRole
+        required: true
+        description: worker role。
+      status:
+        type: ValidationTaskStatus
+        required: true
+        description: TaskResult 状态。
+      summary:
+        type: string
+        required: true
+        description: worker 结论摘要。
+      artifact_refs:
+        type: ArtifactRef[]
+        required: true
+        description: worker 提交的 artifact refs。
+      evidence_refs:
+        type: EvidenceRef[]
+        required: true
+        description: worker 提交的 evidence refs。
+      blocker:
+        type: string
+        required: false
+        description: 阻塞原因。
+      next_step:
+        type: string
+        required: false
+        description: worker 建议下一步。
+      observed_at:
+        type: string
+        required: true
+        description: Coordinator 观察时间。
+  UserInputObservation:
+    kind: interface
+    description: Coordinator 可观察到的用户输入事件。
+    fields:
+      input_id:
+        type: string
+        required: true
+        description: 用户输入事件 ID。
+      kind:
+        type: '"bdd" | "clarification" | "confirmation" | "correction" | "other"'
+        required: true
+        description: 用户输入类型。
+      summary:
+        type: string
+        required: true
+        description: 输入摘要。
+      evidence_ref_ids:
+        type: string[]
+        required: false
+        description: 如果用户输入被登记为证据，对应 evidence refs。
+      observed_at:
+        type: string
+        required: true
+        description: 观察时间。
+  ValidationStateTransition:
+    kind: interface
+    description: 业务状态流转记录。
+    fields:
+      from_state:
+        type: ValidationDomainState
+        required: true
+        description: 流转前状态。
+      to_state:
+        type: ValidationDomainState
+        required: true
+        description: 流转后状态。
+      action:
+        type: ValidationCoordinatorAction
+        required: true
+        description: Coordinator 采取或应该采取的策略动作。
+      reason:
+        type: string
+        required: true
+        description: 状态变化原因。
+      evidence_ref_ids:
+        type: string[]
+        required: true
+        description: 支撑该状态流转的 evidence refs。
+      artifact_ref_ids:
+        type: string[]
+        required: true
+        description: 支撑该状态流转的 artifact refs。
+      occurred_at:
+        type: string
+        required: true
+        description: 流转时间。
+  ValidationStateSnapshot:
+    kind: interface
+    description: Coordinator 观察业务状态的快照；不包含 worker 私有推理过程。
+    fields:
+      artifact_type:
+        type: '"ValidationStateSnapshot"'
+        required: true
+        description: 固定为 ValidationStateSnapshot。
+      artifact_version:
+        type: number
+        required: true
+        description: snapshot schema 版本。
+      snapshot_id:
+        type: string
+        required: true
+        description: snapshot ID。
+      run_id:
+        type: string
+        required: true
+        description: run id。
+      current_state:
+        type: ValidationDomainState
+        required: true
+        description: 当前业务状态。
+      allowed_actions:
+        type: ValidationCoordinatorAction[]
+        required: true
+        description: 当前状态下 Coordinator 可以采取的动作。
+      user_inputs:
+        type: UserInputObservation[]
+        required: true
+        description: 已纳入状态判断的用户输入。
+      worker_outcomes:
+        type: WorkerOutcomeObservation[]
+        required: true
+        description: 已纳入状态判断的 worker outcomes。
+      artifact_refs:
+        type: ArtifactRef[]
+        required: true
+        description: 当前状态可见 artifact refs。
+      evidence_refs:
+        type: EvidenceRef[]
+        required: true
+        description: 当前状态可见 evidence refs。
+      latest_gate_status:
+        type: ValidationGateStatus
+        required: false
+        description: 最近一次 Validator gate 状态。
+      transitions:
+        type: ValidationStateTransition[]
+        required: true
+        description: 已发生的业务状态流转。
+      blocker:
+        type: string
+        required: false
+        description: 当前阻塞原因。
+      next_step:
+        type: string
+        required: true
+        description: Coordinator 下一步策略。

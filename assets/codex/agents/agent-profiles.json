@@ -19,7 +19,7 @@
     "researcher": {
       "config": "config/base.config.toml",
       "skills": [
-        "scout-understanding",
+        "scout-bdd-verification",
         "jarvis-codebase"
       ],
       "shellTools": [
@@ -51,7 +51,7 @@
     "verifier": {
       "config": "config/base.config.toml",
       "skills": [
-        "scout-runtime",
+        "scout-bdd-verification",
         "jarvis-codebase"
       ],
       "shellTools": [
@@ -93,7 +93,7 @@
     "validator": {
       "config": "config/base.config.toml",
       "skills": [
-        "scout-runtime"
+        "scout-bdd-verification"
       ],
       "shellTools": [
         "scoutAssets",

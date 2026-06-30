@@ -3,18 +3,18 @@ import assert from "node:assert/strict";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { prepareRuntimeRun, RuntimeRunAgentRoles } from "../../src/runtime/run/index.js";
+import { prepareRunEnvironment, RunAgentRoles } from "../../src/run/index.js";
 import {
   buildCodexAppServerClientConfig,
   type CreateCodexAppServerClientOptions,
 } from "../../src/agent-server/codex/app-server-factory.js";
 import type { AgentServerPreflightResult } from "../../src/agent-server/types.js";
 import type { CodexMount } from "../../src/asset-store/index.js";
-import { ScoutAgentRoles } from "../../src/agent/types.js";
+import { ScoutAgentRoles } from "../../src/agent/model/types.js";
 
 const repoRoot = process.cwd();
 
-test("prepareRuntimeRun materializes all agent mounts and wires one app-server session root set", async () => {
+test("prepareRunEnvironment materializes all agent mounts and wires one app-server session root set", async () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-run-preparation-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
   cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
@@ -25,7 +25,7 @@ test("prepareRuntimeRun materializes all agent mounts and wires one app-server s
   const preflightedAgents: string[] = [];
   const runId = "run-root-aggregation-test";
 
-  const prepared = await prepareRuntimeRun({
+  const prepared = await prepareRunEnvironment({
     repoRoot: fixtureRoot,
     runId,
     preflightMount: async (mount: CodexMount): Promise<AgentServerPreflightResult> => {
@@ -50,13 +50,13 @@ test("prepareRuntimeRun materializes all agent mounts and wires one app-server s
   });
 
   assert.equal(clientCalls.length, 1);
-  assert.deepEqual(preflightedAgents.sort(), [...RuntimeRunAgentRoles].sort());
-  assert.deepEqual(Object.keys(prepared.agents).sort(), [...RuntimeRunAgentRoles].sort());
+  assert.deepEqual(preflightedAgents.sort(), [...RunAgentRoles].sort());
+  assert.deepEqual(Object.keys(prepared.agents).sort(), [...RunAgentRoles].sort());
   assert.deepEqual(clientCalls[0]?.mountRoots.sort(), prepared.rootAccess.mountRoots.sort());
   assert.deepEqual(clientCalls[0]?.trustedRoots?.sort(), prepared.rootAccess.trustedRoots.sort());
   assert.deepEqual(clientCalls[0]?.writableRoots?.sort(), prepared.rootAccess.writableRoots.sort());
 
-  for (const role of RuntimeRunAgentRoles) {
+  for (const role of RunAgentRoles) {
     const agent = prepared.agents[role];
     assert.equal(agent.mount.mountRoot, join(fixtureRoot, "run", runId, "agents", role, "mount"));
     assert.ok(existsSync(agent.preflightPath));
@@ -71,7 +71,7 @@ test("prepareRuntimeRun materializes all agent mounts and wires one app-server s
   }
   assert.ok(Object.values(prepared.agents).every((agent) => agent.assetCommit.status === "preflight_passed"));
 
-  const expectedMountRoots = RuntimeRunAgentRoles.map((role) =>
+  const expectedMountRoots = RunAgentRoles.map((role) =>
     resolve(fixtureRoot, "run", runId, "agents", role, "mount")
   ).sort();
   assert.deepEqual(prepared.rootAccess.mountRoots, expectedMountRoots);

@@ -1,0 +1,156 @@
+module: research-artifact
+imports:
+  common:
+    - ActivityRef
+    - EvidenceRef
+    - ReplayContext
+    - SourceRef
+exports:
+  BddStatement:
+    kind: inline_object
+    description: BDD Given / When / Then 的单条语义。
+    fields:
+      text:
+        type: string
+        required: true
+        description: BDD 语句文本。
+      source_ref_ids:
+        type: string[]
+        required: true
+        description: 支撑该语句的来源。
+  BddFacts:
+    kind: inline_object
+    description: Researcher 清理后的 BDD 输入。
+    fields:
+      scenario_id:
+        type: string
+        required: true
+        description: BDD 场景 ID；无法唯一识别时不能 complete。
+      title:
+        type: string
+        required: false
+        description: 场景标题。
+      given:
+        type: BddStatement[]
+        required: true
+        description: Given 语句。
+      when:
+        type: BddStatement[]
+        required: true
+        description: When 语句。
+      then:
+        type: BddStatement[]
+        required: true
+        description: Then 语句。
+      acceptance_criteria:
+        type: BddStatement[]
+        required: false
+        description: 额外验收条件。
+  ImplementationHint:
+    kind: interface
+    description: Verifier 后续可使用的实现定位线索；不是最终代码证据。
+    fields:
+      hint_id:
+        type: string
+        required: true
+        description: hint ID。
+      kind:
+        type: '"repo" | "path" | "symbol" | "config" | "log" | "artifact" | "other"'
+        required: true
+        description: 线索类型。
+      ref:
+        type: string
+        required: true
+        description: repo、路径、symbol、配置 key 或 artifact ref。
+      summary:
+        type: string
+        required: true
+        description: 为什么该线索可能有助于验证。
+      source_ref_ids:
+        type: string[]
+        required: true
+        description: 线索来源。
+  UncertaintyItem:
+    kind: interface
+    description: 当前研究阶段无法闭环的不确定项。
+    fields:
+      item_id:
+        type: string
+        required: true
+        description: 不确定项 ID。
+      severity:
+        type: '"info" | "warning" | "blocking"'
+        required: true
+        description: 对后续验证的影响等级。
+      summary:
+        type: string
+        required: true
+        description: 缺口、冲突或不确定内容。
+      source_ref_ids:
+        type: string[]
+        required: true
+        description: 相关来源。
+      next_step:
+        type: string
+        required: true
+        description: Coordinator 或后续 Agent 的下一步。
+  ResearchArtifact:
+    kind: interface
+    description: Researcher 将外部输入清理成 Scout 内部 BDD 验证输入后的领域产物。
+    fields:
+      artifact_type:
+        type: '"ResearchArtifact"'
+        required: true
+        description: 固定为 ResearchArtifact。
+      artifact_version:
+        type: number
+        required: true
+        description: artifact schema 版本。
+      artifact_id:
+        type: string
+        required: true
+        description: run 内 artifact ID。
+      run_id:
+        type: string
+        required: true
+        description: run id。
+      task_id:
+        type: string
+        required: true
+        description: Researcher task id。
+      status:
+        type: '"complete" | "prompt_required" | "insufficient_evidence" | "blocked" | "failed"'
+        required: true
+        description: Researcher 产物状态。
+      input_summary:
+        type: string
+        required: true
+        description: 输入摘要。
+      bdd_facts:
+        type: BddFacts
+        required: true
+        description: 清理后的 BDD 事实。
+      source_refs:
+        type: SourceRef[]
+        required: true
+        description: 来源目录。
+      evidence_refs:
+        type: EvidenceRef[]
+        required: true
+        description: 研究阶段形成的证据候选。
+      activity_refs:
+        type: ActivityRef[]
+        required: false
+        description: 支撑研究过程的活动记录。
+      implementation_hints:
+        type: ImplementationHint[]
+        required: true
+        description: Verifier 可用的实现线索。
+      uncertainty_items:
+        type: UncertaintyItem[]
+        required: true
+        description: 不确定项和缺口。
+      replay_context:
+        type: ReplayContext
+        required: true
+        description: 重放上下文。

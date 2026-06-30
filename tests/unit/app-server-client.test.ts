@@ -67,6 +67,48 @@ test("CodexAppServerClient publishes timeline after store state is reduced", asy
   }
 });
 
+test("CodexAppServerClient exposes turn interrupt without coupling it to runTurn", async () => {
+  const fakeServer = writeFakeAppServer(`
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin });
+    function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+    rl.on("line", (line) => {
+      const message = JSON.parse(line);
+      if (message.method === "initialize") {
+        send({ id: message.id, result: { ok: true } });
+        return;
+      }
+      if (message.method === "turn/interrupt") {
+        send({ id: message.id, result: { interrupted: true, params: message.params } });
+      }
+    });
+  `);
+  const client = new CodexAppServerClient({
+    codexPath: fakeServer,
+    home: tmpdir(),
+    codexHome: tmpdir(),
+    providerName: "missing-provider",
+  });
+
+  try {
+    await client.startSession();
+    const result = await client.interruptTurn({
+      threadId: "thread-1",
+      turnId: "turn-1",
+    });
+
+    assert.deepEqual(result, {
+      interrupted: true,
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+      },
+    });
+  } finally {
+    client.close();
+  }
+});
+
 function writeFakeAppServer(source: string): string {
   const root = mkdtempSync(join(tmpdir(), "scout-fake-app-server-"));
   const path = join(root, "fake-app-server.cjs");

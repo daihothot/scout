@@ -1,0 +1,100 @@
+module: validation-result
+imports:
+  common:
+    - ArtifactRef
+    - EvidenceRef
+    - ReplayContext
+    - SourceRef
+exports:
+  ValidationGateStatus:
+    kind: enum
+    values:
+      - accepted
+      - needs_fix
+      - insufficient_evidence
+      - blocked
+      - failed
+  ValidationFinding:
+    kind: interface
+    description: Validator 对字段、证据、状态或重放条件的发现。
+    fields:
+      finding_id:
+        type: string
+        required: true
+        description: finding ID。
+      severity:
+        type: '"info" | "warning" | "error" | "blocking"'
+        required: true
+        description: 严重程度。
+      category:
+        type: '"schema" | "required_field" | "evidence_ref" | "state_consistency" | "replay" | "risk" | "other"'
+        required: true
+        description: 发现类别。
+      ref:
+        type: string
+        required: true
+        description: artifact 字段、证据 ref 或状态 ref。
+      summary:
+        type: string
+        required: true
+        description: 问题或确认摘要。
+      evidence_ref_ids:
+        type: string[]
+        required: false
+        description: 支撑该 finding 的证据。
+      minimum_fix:
+        type: string
+        required: false
+        description: 不合格时的最小修复项。
+  ValidationResult:
+    kind: interface
+    description: Validator gate 结果；决定 artifact 是否可被 Coordinator 用于推进状态。
+    fields:
+      artifact_type:
+        type: '"ValidationResult"'
+        required: true
+        description: 固定为 ValidationResult。
+      artifact_version:
+        type: number
+        required: true
+        description: artifact schema 版本。
+      artifact_id:
+        type: string
+        required: true
+        description: run 内 artifact ID。
+      run_id:
+        type: string
+        required: true
+        description: run id。
+      task_id:
+        type: string
+        required: true
+        description: Validator task id。
+      gate_status:
+        type: ValidationGateStatus
+        required: true
+        description: gate 结论。
+      checked_artifact_refs:
+        type: ArtifactRef[]
+        required: true
+        description: 被检查的 artifact refs。
+      source_refs:
+        type: SourceRef[]
+        required: true
+        description: Validator 使用的来源。
+      evidence_refs:
+        type: EvidenceRef[]
+        required: true
+        description: Validator 使用或确认的证据。
+      findings:
+        type: ValidationFinding[]
+        required: true
+        description: 所有字段、证据、状态和重放发现。
+      minimum_fixes:
+        type: string[]
+        required: true
+        description: gate 未通过时的最小修复项。
+      replay_context:
+        type: ReplayContext
+        required: true
+        description: 重放上下文。

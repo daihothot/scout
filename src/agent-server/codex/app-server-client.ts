@@ -281,6 +281,16 @@ export class CodexAppServerClient {
     };
   }
 
+  async interruptTurn(input: {
+    threadId: string;
+    turnId: string;
+  }): Promise<unknown> {
+    return this.request("turn/interrupt", {
+      threadId: input.threadId,
+      turnId: input.turnId,
+    });
+  }
+
   async setThreadGoal(input: {
     threadId: string;
     objective: string;

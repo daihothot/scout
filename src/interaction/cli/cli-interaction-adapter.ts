@@ -5,9 +5,9 @@ import type {
   RuntimeInteractionPort,
   RuntimeProgressEvent,
 } from "../port.js";
-import type { RuntimeQueuedCommand } from "../../core/queue/message-queue.js";
+import type { AgentTaskSystemEvent } from "../../agent/task/task-events.js";
 import { promptForHumanInput } from "./prompt.js";
-import { renderDisclosure, renderProgress, renderQueuedCommandNotification } from "./render.js";
+import { renderDisclosure, renderEventNotification, renderProgress } from "./render.js";
 
 export class CliInteractionAdapter implements RuntimeInteractionPort {
   async disclose(event: RuntimeDisclosureEvent): Promise<void> {
@@ -19,8 +19,8 @@ export class CliInteractionAdapter implements RuntimeInteractionPort {
     process.stdout.write(rendered);
   }
 
-  async notify(command: RuntimeQueuedCommand): Promise<void> {
-    process.stdout.write(renderQueuedCommandNotification(command));
+  async notify(event: AgentTaskSystemEvent): Promise<void> {
+    process.stdout.write(renderEventNotification(event));
   }
 
   async publishProgress(event: RuntimeProgressEvent): Promise<void> {
