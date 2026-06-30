@@ -1,0 +1,189 @@
+module: common
+exports:
+  ValidationAgentRole:
+    kind: enum
+    values:
+      - coordinator
+      - researcher
+      - verifier
+      - validator
+  ValidationTaskStatus:
+    kind: enum
+    values:
+      - complete
+      - prompt_required
+      - confirmation_required
+      - blocked
+      - insufficient_evidence
+      - failed
+  ValidationArtifactType:
+    kind: enum
+    values:
+      - ResearchArtifact
+      - VerificationReport
+      - ValidationResult
+      - ValidationStateSnapshot
+  ValidationLocator:
+    kind: inline_object
+    description: 可审计定位信息；用于把来源、证据或 artifact 定位到稳定对象。
+    fields:
+      kind:
+        type: '"file" | "line_range" | "heading" | "json_path" | "symbol" | "command" | "artifact" | "user_confirmation" | "other"'
+        required: true
+        description: 定位类型。
+      value:
+        type: string
+        required: true
+        description: 定位值，例如相对路径、json path、symbol、命令或用户确认 ID。
+      description:
+        type: string
+        required: false
+        description: 定位说明。
+  ArtifactRef:
+    kind: interface
+    description: 领域 artifact 引用；Coordinator 只通过 refs 观察业务产物。
+    fields:
+      artifact_ref_id:
+        type: string
+        required: true
+        description: run 内 artifact 引用 ID。
+      artifact_type:
+        type: ValidationArtifactType
+        required: true
+        description: artifact 类型。
+      uri:
+        type: string
+        required: true
+        description: artifact 路径、运行时 URI 或相对路径。
+      agent_role:
+        type: ValidationAgentRole
+        required: true
+        description: 产出该 artifact 的 agent role。
+      task_id:
+        type: string
+        required: true
+        description: 产出该 artifact 的 task id。
+      produced_at:
+        type: string
+        required: true
+        description: 产出时间。
+      digest:
+        type: string
+        required: false
+        description: 可选内容摘要，用于重放时检测漂移。
+  SourceRef:
+    kind: interface
+    description: 领域来源引用；保留可审计来源，不复制来源全文。
+    fields:
+      source_ref_id:
+        type: string
+        required: true
+        description: run 内来源 ID。
+      type:
+        type: '"bdd" | "knowledge" | "codebase" | "source" | "artifact" | "tool_output" | "user_confirmation" | "runtime" | "other"'
+        required: true
+        description: 来源类型。
+      collection_method:
+        type: '"file-read" | "knowledge-read" | "jarvis-codebase" | "codegraph" | "rg-fallback" | "tool-call" | "user-confirmation" | "runtime-event" | "other"'
+        required: true
+        description: 本 run 内来源收集方式。
+      ref:
+        type: string
+        required: true
+        description: 来源系统内稳定引用，例如 scenario_id、知识库文件、repo 名或 task id。
+      uri:
+        type: string
+        required: true
+        description: 来源 URI、路径或本地相对路径。
+      locator:
+        type: ValidationLocator
+        required: true
+        description: 来源内定位。
+      summary:
+        type: string
+        required: true
+        description: 来源摘要。
+  ActivityRef:
+    kind: interface
+    description: Runtime 观察到的活动引用；只能作为 evidence candidate。
+    fields:
+      activity_ref_id:
+        type: string
+        required: true
+        description: run 内 activity ID。
+      type:
+        type: '"tool_call" | "command" | "file_read" | "file_write" | "mcp" | "plan" | "progress" | "runtime_event" | "other"'
+        required: true
+        description: 活动类型。
+      ref:
+        type: string
+        required: true
+        description: 工具名、命令、runtime event id 或日志 ref。
+      summary:
+        type: string
+        required: true
+        description: 该活动说明发生了什么。
+      observed_at:
+        type: string
+        required: true
+        description: Runtime 观察时间。
+  EvidenceRef:
+    kind: interface
+    description: 可支撑 Validation State 的证据引用；必须能追溯来源或活动。
+    fields:
+      evidence_ref_id:
+        type: string
+        required: true
+        description: run 内 evidence ID。
+      type:
+        type: '"bdd" | "knowledge" | "code" | "config" | "log" | "artifact" | "tool_output" | "user_confirmation" | "gap" | "other"'
+        required: true
+        description: 证据类型。
+      ref:
+        type: string
+        required: true
+        description: 证据稳定引用。
+      summary:
+        type: string
+        required: true
+        description: 证据摘要。
+      locator:
+        type: ValidationLocator
+        required: false
+        description: 证据内定位。
+      source_ref_ids:
+        type: string[]
+        required: true
+        description: 支撑该证据的 SourceRef IDs。
+      activity_ref_ids:
+        type: string[]
+        required: false
+        description: 该证据来自哪些 Runtime activity；activity 不能单独替代证据解释。
+  ReplayContext:
+    kind: interface
+    description: 重放上下文；用于复现同一 BDD 在同一知识库、代码库和 asset commit 下的判断。
+    fields:
+      run_id:
+        type: string
+        required: true
+        description: 当前 run id。
+      asset_commit_id:
+        type: string
+        required: true
+        description: 当前 agent mount 的 asset commit id。
+      agent_profile:
+        type: string
+        required: true
+        description: agent profile 或 role。
+      knowledge_roots:
+        type: string[]
+        required: true
+        description: 本次使用的知识库根。
+      codebase_refs:
+        type: string[]
+        required: true
+        description: 本次涉及的 codebase repo/version/branch 摘要。
+      commands:
+        type: string[]
+        required: true
+        description: 影响领域结论的关键命令。

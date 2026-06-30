@@ -2,46 +2,20 @@ import type {
   AppServerPlanState,
   AppServerThreadGoalState,
 } from "../../agent-server/codex/app-server-event-store.js";
-import type { AgentThreadRecord, ScoutAgentRole } from "../types.js";
+import type { AgentThreadRecord, ScoutAgentRole } from "../model/types.js";
 
 export type AgentTaskStatus =
   | "queued"
   | "running"
-  | "waiting_for_input"
+  | "waiting_for_human_input"
+  | "waiting_for_coordinator"
   | "complete"
-  | "prompt_required"
-  | "confirmation_required"
   | "blocked"
-  | "insufficient_evidence"
   | "failed"
   | "stopped";
-export const AgentTaskStateEvents = {
-  Assigned: "task_assigned",
-  MessageQueued: "task_message_queued",
-  Stopped: "task_stopped",
-  OutcomeRecorded: "task_outcome_recorded",
-  WaitingForInput: "task_waiting_for_input",
-  ThreadAttached: "task_thread_attached",
-  PendingMessagesDrained: "task_pending_messages_drained",
-  StepStarted: "task_step_started",
-  StepCompletedWaitingForInput: "task_step_completed_waiting_for_input",
-  StepCompletedAfterTerminalUpdate: "task_step_completed_after_terminal_update",
-  StepOutput: "task_step_output",
-  StepCompletedWithPendingMessages: "task_step_completed_with_pending_messages",
-  MissingTaskResult: "task_missing_task_result",
-  Failed: "task_failed",
-  NotificationEnqueued: "task_notification_enqueued",
-  UserInputRequestEnqueued: "user_input_request_enqueued",
-  GoalUpdated: "task_goal_updated",
-  PlanUpdated: "task_plan_updated",
-} as const;
-export type AgentTaskStateEvent = typeof AgentTaskStateEvents[keyof typeof AgentTaskStateEvents];
 export type AgentTaskOutcomeStatus =
   | "complete"
-  | "prompt_required"
-  | "confirmation_required"
   | "blocked"
-  | "insufficient_evidence"
   | "failed";
 export interface AgentTaskUsage {
   totalTokens?: number;
@@ -53,10 +27,20 @@ export interface AgentUserInputRequest {
   requestId: string;
   agentId: string;
   taskId: string;
+  turnId?: string;
   kind: "prompt_required" | "confirmation_required";
   question: string;
   context?: string;
   options?: string[];
+  createdAt: string;
+  status: "pending" | "answered" | "cancelled";
+}
+
+export interface AgentUserInputResponse {
+  requestId: string;
+  agentId: string;
+  taskId: string;
+  response: string;
   createdAt: string;
 }
 
@@ -68,6 +52,29 @@ export interface AgentTaskOutcome {
   blocker?: string;
   nextStep?: string;
   emittedAt: string;
+}
+
+export interface AgentTaskStepRecord {
+  stepId: string;
+  taskId: string;
+  turnId?: string;
+  status: "completed" | "waiting_for_human_input" | "waiting_for_coordinator" | "failed";
+  prompt: string;
+  finalResponse?: string;
+  toolCalls: AgentTaskStepToolCall[];
+  startedAt: string;
+  finishedAt: string;
+  durationMs?: number;
+  protocolWarnings?: string[];
+  error?: string;
+}
+
+export interface AgentTaskStepToolCall {
+  namespace: string | null;
+  tool: string;
+  callId?: string;
+  arguments?: unknown;
+  success?: boolean | null;
 }
 
 export interface AgentTaskState {
@@ -92,6 +99,9 @@ export interface AgentTaskState {
   goal?: AppServerThreadGoalState;
   plan?: AppServerPlanState;
   userInputRequest?: AgentUserInputRequest;
+  humanInputRequests?: AgentUserInputRequest[];
+  humanInputResponses?: AgentUserInputResponse[];
+  steps?: AgentTaskStepRecord[];
   outcome?: AgentTaskOutcome;
 }
 

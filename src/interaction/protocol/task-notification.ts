@@ -35,14 +35,8 @@ function renderTaskSummary(task: AgentTaskState): string {
   if (task.status === "complete") {
     return `Agent "${task.description}" completed`;
   }
-  if (task.status === "prompt_required" || task.status === "confirmation_required") {
-    return `Agent "${task.description}" requires user input`;
-  }
   if (task.status === "blocked") {
     return `Agent "${task.description}" blocked`;
-  }
-  if (task.status === "insufficient_evidence") {
-    return `Agent "${task.description}" reported insufficient evidence`;
   }
   if (task.status === "stopped") {
     return `Agent "${task.description}" stopped`;
@@ -50,8 +44,11 @@ function renderTaskSummary(task: AgentTaskState): string {
   if (task.status === "failed") {
     return `Agent "${task.description}" failed`;
   }
-  if (task.status === "waiting_for_input") {
+  if (task.status === "waiting_for_human_input") {
     return `Agent "${task.description}" is waiting for user input`;
+  }
+  if (task.status === "waiting_for_coordinator") {
+    return `Agent "${task.description}" is waiting for Coordinator`;
   }
   return `Agent "${task.description}" is running`;
 }

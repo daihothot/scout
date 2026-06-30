@@ -1,29 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  AGENT_TASK_RESULT_TOOL_NAMESPACE,
-  AGENT_USER_INPUT_TOOL_NAMESPACE,
-  COORDINATOR_TOOL_NAMESPACE,
+  SYSTEM_TOOL_NAMESPACE,
   buildAgentToolDynamicTool,
-  buildRequestUserInputDynamicTool,
-  buildTaskResultDynamicTool,
-  parseCoordinatorDynamicToolCall,
-  parseRequestUserInputDynamicToolCall,
-  parseTaskResultDynamicToolCall,
-} from "../../src/agent/tools.js";
-import { ScoutAgentRoles } from "../../src/agent/types.js";
+  buildRequestHumanInputDynamicTool,
+  buildSendMessageDynamicTool,
+  parseSystemDynamicToolCall,
+} from "../../src/agent/tools/system-tools.js";
+import { ScoutAgentRoles } from "../../src/agent/model/types.js";
 
 test("agent dynamic tool specs expose stable namespaces and required fields", () => {
   const agentTool = buildAgentToolDynamicTool();
-  const userInputTool = buildRequestUserInputDynamicTool();
-  const taskResultTool = buildTaskResultDynamicTool();
+  const sendMessageTool = buildSendMessageDynamicTool();
+  const humanInputTool = buildRequestHumanInputDynamicTool();
 
-  assert.equal(agentTool.namespace, COORDINATOR_TOOL_NAMESPACE);
-  assert.equal(userInputTool.namespace, AGENT_USER_INPUT_TOOL_NAMESPACE);
-  assert.equal(taskResultTool.namespace, AGENT_TASK_RESULT_TOOL_NAMESPACE);
+  assert.equal(agentTool.namespace, SYSTEM_TOOL_NAMESPACE);
+  assert.equal(sendMessageTool.namespace, SYSTEM_TOOL_NAMESPACE);
+  assert.equal(humanInputTool.namespace, SYSTEM_TOOL_NAMESPACE);
   assert.deepEqual(readRequired(agentTool.inputSchema), ["description", "subagent_type", "prompt"]);
-  assert.deepEqual(readRequired(userInputTool.inputSchema), ["question"]);
-  assert.deepEqual(readRequired(taskResultTool.inputSchema), ["status", "summary"]);
+  assert.deepEqual(readRequired(sendMessageTool.inputSchema), ["to", "message"]);
+  assert.deepEqual(readRequired(humanInputTool.inputSchema), ["question"]);
   assert.deepEqual(readEnumProperty(agentTool.inputSchema, "subagent_type"), [
     ScoutAgentRoles.Researcher,
     ScoutAgentRoles.Verifier,
@@ -32,7 +28,7 @@ test("agent dynamic tool specs expose stable namespaces and required fields", ()
 });
 
 test("agent tool parsers preserve typed payloads", () => {
-  assert.deepEqual(parseCoordinatorDynamicToolCall("SendMessage", {
+  assert.deepEqual(parseSystemDynamicToolCall("SendMessage", {
     to: "researcher",
     message: "继续验证",
   }), {
@@ -40,32 +36,21 @@ test("agent tool parsers preserve typed payloads", () => {
     to: "researcher",
     message: "继续验证",
   });
-  assert.deepEqual(parseRequestUserInputDynamicToolCall("RequestUserInput", {
+  assert.deepEqual(parseSystemDynamicToolCall("RequestHumanInput", {
     kind: "prompt_required",
     question: "选 A 还是 B?",
     options: ["A", "B"],
   }), {
-    tool: "RequestUserInput",
+    tool: "RequestHumanInput",
     kind: "prompt_required",
     question: "选 A 还是 B?",
     options: ["A", "B"],
-  });
-  assert.deepEqual(parseTaskResultDynamicToolCall("TaskResult", {
-    status: "insufficient_evidence",
-    summary: "证据不足",
-    evidence_refs: ["evidence://1"],
-  }), {
-    tool: "TaskResult",
-    status: "insufficient_evidence",
-    summary: "证据不足",
-    evidence_refs: ["evidence://1"],
   });
 });
 
 test("agent tool parsers reject non-object arguments", () => {
-  assert.throws(() => parseCoordinatorDynamicToolCall("AgentTool", null));
-  assert.throws(() => parseRequestUserInputDynamicToolCall("RequestUserInput", []));
-  assert.throws(() => parseTaskResultDynamicToolCall("TaskResult", "bad"));
+  assert.throws(() => parseSystemDynamicToolCall("AgentTool", null));
+  assert.throws(() => parseSystemDynamicToolCall("RequestHumanInput", []));
 });
 
 function readRequired(schema: unknown): string[] {

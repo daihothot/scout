@@ -1,4 +1,4 @@
-import type { RuntimeQueuedCommand } from "../core/queue/message-queue.js";
+import type { AgentTaskSystemEvent } from "../agent/task/task-events.js";
 
 export type RuntimeDisclosureLevel = "debug" | "info" | "warn" | "error";
 
@@ -40,7 +40,7 @@ export interface HumanInputResponse {
 export interface RuntimeInteractionPort {
   disclose(event: RuntimeDisclosureEvent): Promise<void>;
   publishProgress(event: RuntimeProgressEvent): Promise<void>;
-  notify(command: RuntimeQueuedCommand): Promise<void>;
+  notify(event: AgentTaskSystemEvent): Promise<void>;
   requestInput(request: HumanInputRequest): Promise<HumanInputResponse>;
 }
 

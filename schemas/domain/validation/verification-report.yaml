@@ -1,0 +1,167 @@
+module: verification-report
+imports:
+  common:
+    - ActivityRef
+    - ArtifactRef
+    - EvidenceRef
+    - ReplayContext
+    - SourceRef
+  research-artifact:
+    - BddFacts
+    - UncertaintyItem
+exports:
+  CriterionVerdict:
+    kind: enum
+    values:
+      - verified
+      - not_verified
+      - insufficient_evidence
+      - blocked
+  EvidenceSupportLevel:
+    kind: enum
+    values:
+      - direct
+      - indirect
+      - partial
+      - contradictory
+      - missing
+  EvidenceMatrixItem:
+    kind: interface
+    description: 单条 BDD Then 或验收条件的证据矩阵项。
+    fields:
+      criterion_id:
+        type: string
+        required: true
+        description: 验收条件 ID。
+      criterion_text:
+        type: string
+        required: true
+        description: 验收条件文本。
+      verdict:
+        type: CriterionVerdict
+        required: true
+        description: 该条件的验证结论。
+      support_level:
+        type: EvidenceSupportLevel
+        required: true
+        description: 证据支持程度。
+      evidence_ref_ids:
+        type: string[]
+        required: true
+        description: 支撑该结论的 evidence IDs。
+      gap_summary:
+        type: string
+        required: false
+        description: 证据不足或阻塞原因。
+  CodeEvidence:
+    kind: interface
+    description: 源码证据；必须保留 repo/version/relative path/locator。
+    fields:
+      code_evidence_id:
+        type: string
+        required: true
+        description: code evidence ID。
+      repo:
+        type: string
+        required: true
+        description: codebase repo 名。
+      version:
+        type: string
+        required: true
+        description: branch、tag、commit 或 SDK version。
+      relative_path:
+        type: string
+        required: true
+        description: 相对 codebase 根的路径。
+      locator:
+        type: string
+        required: true
+        description: 行号、symbol、json path 或其它定位。
+      symbol:
+        type: string
+        required: false
+        description: 相关 symbol。
+      collection_method:
+        type: '"codegraph" | "rg-fallback" | "file-read" | "other"'
+        required: true
+        description: 收集方式。
+      command:
+        type: string
+        required: true
+        description: 产生该定位的关键命令。
+      evidence_ref_id:
+        type: string
+        required: true
+        description: 对应 EvidenceRef。
+      summary:
+        type: string
+        required: true
+        description: 源码证据摘要，不复制长源码。
+  VerificationReport:
+    kind: interface
+    description: Verifier 对 BDD 进行证据验证后的领域产物。
+    fields:
+      artifact_type:
+        type: '"VerificationReport"'
+        required: true
+        description: 固定为 VerificationReport。
+      artifact_version:
+        type: number
+        required: true
+        description: artifact schema 版本。
+      artifact_id:
+        type: string
+        required: true
+        description: run 内 artifact ID。
+      run_id:
+        type: string
+        required: true
+        description: run id。
+      task_id:
+        type: string
+        required: true
+        description: Verifier task id。
+      status:
+        type: '"verified" | "not_verified" | "insufficient_evidence" | "blocked" | "failed"'
+        required: true
+        description: Verifier 结论状态。
+      bdd_ref:
+        type: BddFacts
+        required: true
+        description: 被验证的 BDD。
+      research_artifact_refs:
+        type: ArtifactRef[]
+        required: true
+        description: 使用的 ResearchArtifact refs。
+      source_refs:
+        type: SourceRef[]
+        required: true
+        description: 来源目录。
+      evidence_refs:
+        type: EvidenceRef[]
+        required: true
+        description: 证据目录。
+      activity_refs:
+        type: ActivityRef[]
+        required: false
+        description: 关键活动引用。
+      evidence_matrix:
+        type: EvidenceMatrixItem[]
+        required: true
+        description: 每条验收条件对应的证据与结论。
+      code_evidence:
+        type: CodeEvidence[]
+        required: true
+        description: 源码证据。
+      knowledge_evidence_ref_ids:
+        type: string[]
+        required: true
+        description: 知识库 evidence refs。
+      gaps_and_risks:
+        type: UncertaintyItem[]
+        required: true
+        description: 缺口和风险。
+      replay_context:
+        type: ReplayContext
+        required: true
+        description: 重放上下文。

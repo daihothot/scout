@@ -1,71 +1,70 @@
-import { join } from "node:path";
-import { writeJsonFile } from "../../core/fs.js";
+import {
+  SystemEvents,
+  type EventBus,
+  type ScoutEvent,
+} from "../../core/events/index.js";
 import type {
   AppServerPlanState,
-  AppServerProgressItem,
   AppServerResolvedTimelineEntry,
   AppServerTimelineEntry,
   AppServerThreadGoalState,
 } from "../../agent-server/codex/app-server-event-store.js";
+import type { ScoutAgent } from "../core/scout-agent.js";
 import {
-  runtimeMessageQueueManager,
-  type EnqueueRuntimeCommandInput,
-  type RuntimeMessageQueueManager,
-  type RuntimeQueuedCommand,
-} from "../../core/queue/message-queue.js";
-import type { RuntimeInteractionPort } from "../../interaction/index.js";
-import {
-  renderTaskNotificationXml,
-  renderUserInputRequestNotification,
-} from "../../interaction/protocol/index.js";
-import type { ScoutAgent } from "../scout-agent.js";
-import { AgentTaskStateEvents } from "../task/types.js";
+  AgentTaskStore,
+  cloneAgentTaskState,
+} from "../task/agent-task-store.js";
+import type {
+  AgentTaskEventPayload,
+  AgentTaskSystemEvent,
+} from "../task/task-events.js";
+import type { CoordinatorPromptReadyPayload } from "../orchestration/orchestration-events.js";
 import type {
   AgentTaskState,
-  AgentTaskStateEvent,
+  AgentUserInputResponse,
   SendAgentMessageInput,
 } from "../task/types.js";
-import type { AgentRegistry } from "./agent-registry.js";
+import type { AgentRegistry } from "../lifecycle/agent-registry.js";
 import type {
+  AgentProvider,
   AssignBackendAgentTaskInput,
-  ScoutAgentLedger,
 } from "./types.js";
 
 export interface AgentTaskBackendOptions {
-  runId: string;
-  ledgerRoot: string;
   registry: AgentRegistry;
+  taskStore: AgentTaskStore;
+  eventBus: EventBus;
+  agentProvider: AgentProvider;
   logger: {
     info(input: unknown): void;
     warn(input: unknown): void;
   };
-  messageQueue?: RuntimeMessageQueueManager;
-  interactionPort?: RuntimeInteractionPort;
+  onTaskChanged?: () => void;
 }
 
 export class AgentTaskBackend {
-  private readonly runId: string;
-  private readonly ledgerRoot: string;
   private readonly registry: AgentRegistry;
+  private readonly taskStore: AgentTaskStore;
+  private readonly eventBus: EventBus;
+  private readonly agentProvider: AgentProvider;
   private readonly logger: AgentTaskBackendOptions["logger"];
-  private readonly messageQueue: RuntimeMessageQueueManager;
-  private readonly interactionPort?: RuntimeInteractionPort;
-  private readonly tasks = new Map<string, AgentTaskState>();
+  private readonly onTaskChanged?: () => void;
   private taskSequence = 0;
 
   constructor(options: AgentTaskBackendOptions) {
-    this.runId = options.runId;
-    this.ledgerRoot = options.ledgerRoot;
     this.registry = options.registry;
+    this.taskStore = options.taskStore;
+    this.eventBus = options.eventBus;
+    this.agentProvider = options.agentProvider;
     this.logger = options.logger;
-    this.messageQueue = options.messageQueue ?? runtimeMessageQueueManager;
-    this.interactionPort = options.interactionPort;
+    this.onTaskChanged = options.onTaskChanged;
+    this.subscribeToTaskEvents();
   }
 
   assignAgentTask(input: AssignBackendAgentTaskInput): AgentTaskState {
     const agent = input.agentId
       ? this.registry.resolveAgent(input.agentId)
-      : this.registry.getOrCreateAgentForRole(input.subagentType);
+      : this.agentProvider.getOrCreateWorker({ role: input.subagentType });
     if (agent.role !== input.subagentType) {
       throw new Error(`Agent ${agent.agentId} is ${agent.role}, not ${input.subagentType}.`);
     }
@@ -95,300 +94,108 @@ export class AgentTaskBackend {
     return task;
   }
 
+  handleUserInputResponse(input: {
+    taskId: string;
+    requestId: string;
+    response: string;
+  }): AgentTaskState {
+    const target = this.resolveTaskTarget(input.taskId);
+    const current = this.taskStore.requireTask(target.taskId);
+    const response: AgentUserInputResponse = {
+      requestId: input.requestId,
+      agentId: current.agentId,
+      taskId: current.taskId,
+      response: input.response,
+      createdAt: new Date().toISOString(),
+    };
+    const task = target.agent.task.applyUserInputResponse(response);
+    this.eventBus.publish(SystemEvents.task.humanInputResponded, {
+      task,
+      data: {
+        requestId: input.requestId,
+      },
+    } satisfies AgentTaskEventPayload);
+    this.syncTaskSnapshot(task);
+    return task;
+  }
+
   getAgentTask(taskId: string): AgentTaskState {
-    const task = this.tasks.get(taskId);
-    if (!task) throw new Error(`Unknown agent task: ${taskId}`);
-    return cloneTask(task);
-  }
-
-  drainCoordinatorCommands(): RuntimeQueuedCommand[] {
-    return this.messageQueue.drain();
-  }
-
-  hasQueuedCoordinatorCommands(): boolean {
-    return this.messageQueue.snapshot().length > 0;
+    return this.taskStore.requireTask(taskId);
   }
 
   hasRunningAgentTasks(): boolean {
-    if ([...this.tasks.values()].some((task) => task.status === "queued" || task.status === "running")) {
+    if (this.taskStore.hasRunningTasks()) {
       return true;
     }
     return this.registry.listAgents().some((agent) => agent.task.hasRunningTasks());
   }
 
-  enqueueCoordinatorCommand(input: EnqueueRuntimeCommandInput): RuntimeQueuedCommand {
-    return this.messageQueue.enqueue(input);
+  syncTaskSnapshot(_task: AgentTaskState): void {
+    this.onTaskChanged?.();
   }
 
-  syncTaskSnapshot(task: AgentTaskState): void {
-    this.tasks.set(task.taskId, cloneTask(task));
-    this.writeLedger();
-  }
-
-  applyTaskStateChange(event: AgentTaskStateEvent, task: AgentTaskState, data?: unknown): void {
-    this.tasks.set(task.taskId, cloneTask(task));
-    this.logger.info({
-      module: "agent.task",
-      event,
-      agentId: task.agentId,
-      taskId: task.taskId,
-      data: {
-        status: task.status,
-        role: task.role,
-        description: task.description,
-        ...asLogObject(data),
-      },
-    });
-    this.writeLedger();
-  }
-
-  handleUserInputRequested(task: AgentTaskState): void {
-    this.tasks.set(task.taskId, cloneTask(task));
-    this.enqueueUserInputRequest(task);
-    this.writeLedger();
-  }
-
-  handleTaskTerminal(task: AgentTaskState): void {
-    this.tasks.set(task.taskId, cloneTask(task));
-    this.enqueueTaskNotification(task);
-    this.writeLedger();
-  }
-
-  async consumeAppServerTimelineEntry(
+  consumeAppServerTimelineEntry(
     agent: ScoutAgent,
     entry: AppServerTimelineEntry,
     resolved: AppServerResolvedTimelineEntry,
-  ): Promise<void> {
-    const activeTask = this.findActiveTask(agent);
-    this.logger.info({
-      module: `agent.app_server.${entry.stream}`,
-      event: entry.kind,
-      agentId: agent.agentId,
-      taskId: activeTask?.taskId,
-      data: {
-        runId: this.runId,
-        timeline: entry,
-        resolved,
-      },
-    });
+  ): AgentTaskTimelineProjection | undefined {
+    const activeTask = this.taskStore.findActiveTaskForAgent(agent.agentId);
     if (
       entry.stream === "item"
       && (entry.kind === "item_started" || entry.kind === "item_completed")
       && resolved.progressItem
     ) {
-      this.publishAppServerProgress(agent, entry, resolved.progressItem);
-      return;
+      return {
+        kind: "progress",
+        agent,
+        activeTask,
+        entry,
+        progressItem: resolved.progressItem,
+      };
     }
-    if (entry.stream === "plan" && resolved.plan) {
-      await this.applyPlanUpdate(agent, resolved.plan, entry);
-      return;
+    if (entry.stream === "plan" && resolved.plan && activeTask) {
+      const updated = this.applyPlanUpdate(activeTask, resolved.plan, entry);
+      return {
+        kind: "plan_updated",
+        agent,
+        task: updated,
+        entry,
+        plan: resolved.plan,
+      };
     }
-    if (entry.stream === "state" && entry.kind === "goal_updated" && resolved.goal) {
-      await this.applyGoalUpdate(agent, resolved.goal, entry);
-      return;
+    if (entry.stream === "state" && entry.kind === "goal_updated" && resolved.goal && activeTask) {
+      const updated = this.applyGoalUpdate(activeTask, resolved.goal, entry);
+      return {
+        kind: "goal_updated",
+        agent,
+        task: updated,
+        entry,
+        goal: resolved.goal,
+      };
     }
     if (entry.stream === "state" && entry.kind === "token_usage_updated") {
-      this.logger.info({
-        module: "agent.state",
-        event: "thread_token_usage_updated",
-        agentId: agent.agentId,
-        taskId: activeTask?.taskId,
-        data: {
-          runId: this.runId,
-          seq: entry.seq,
-          threadId: entry.threadId,
-          turnId: entry.turnId,
-          tokenUsage: resolved.tokenUsage,
-        },
-      });
+      return {
+        kind: "token_usage_updated",
+        agent,
+        activeTask,
+        entry,
+        tokenUsage: resolved.tokenUsage,
+      };
     }
-  }
-
-  handleUnboundAppServerTimelineEntry(
-    entry: AppServerTimelineEntry,
-    resolved: AppServerResolvedTimelineEntry,
-  ): void {
-    this.logger.info({
-      module: `agent.app_server.${entry.stream}`,
-      event: entry.kind,
-      data: {
-        runId: this.runId,
-        timeline: entry,
-        resolved,
-      },
-    });
+    return undefined;
   }
 
   resolveAgentTask(agent: ScoutAgent, taskId: string | undefined, context: string): AgentTaskState {
     if (taskId) {
-      const task = agent.task.getTaskSnapshot(taskId);
-      if (!task) throw new Error(`Task ${taskId} does not belong to agent ${agent.agentId}.`);
-      return task;
+      return this.taskStore.requireAgentTask(agent.agentId, taskId);
     }
-    const active = agent.task.listTasks().find((task) => task.status === "running" || task.status === "queued" || task.status === "waiting_for_input");
+    const active = this.taskStore.findActiveTaskForAgent(agent.agentId);
     if (!active) throw new Error(`Agent ${agent.agentId} has no active task for ${context}.`);
     return active;
   }
 
-  getLedger(): ScoutAgentLedger {
-    return {
-      ledgerVersion: 1,
-      runId: this.runId,
-      agents: this.registry.listStartedAgents(),
-      threadPreflights: this.registry.listThreadPreflights(),
-      tasks: [...this.tasks.values()].map(cloneTask),
-    };
-  }
-
-  flushLedger(): void {
-    this.writeLedger();
-  }
-
-  private findActiveTask(agent: ScoutAgent): AgentTaskState | undefined {
-    const live = agent.task.listTasks().find((task) =>
-      task.status === "running" || task.status === "queued" || task.status === "waiting_for_input"
-    );
-    if (live) {
-      const recorded = this.tasks.get(live.taskId);
-      return recorded ? { ...live, ...recorded } : live;
-    }
-    return [...this.tasks.values()].find((task) =>
-      task.agentId === agent.agentId
-      && (task.status === "running" || task.status === "queued" || task.status === "waiting_for_input")
-    );
-  }
-
-  private async applyGoalUpdate(
-    agent: ScoutAgent,
-    goal: AppServerThreadGoalState,
-    entry?: AppServerTimelineEntry,
-  ): Promise<void> {
-    const task = this.findActiveTask(agent);
-    if (!task) return;
-    const updated: AgentTaskState = {
-      ...task,
-      goal,
-      updatedAt: new Date().toISOString(),
-    };
-    this.tasks.set(updated.taskId, cloneTask(updated));
-    this.logger.info({
-      module: "agent.task",
-      event: AgentTaskStateEvents.GoalUpdated,
-      agentId: updated.agentId,
-      taskId: updated.taskId,
-      data: {
-        status: updated.status,
-        role: updated.role,
-        description: updated.description,
-        seq: entry?.seq,
-        goal,
-      },
-    });
-    this.writeLedger();
-    await this.interactionPort?.disclose({
-      level: "info",
-      source: `agent.goal.${agent.agentId}`,
-      message: "Agent goal updated.",
-      data: {
-        runId: this.runId,
-        seq: entry?.seq,
-        agentId: agent.agentId,
-        taskId: updated.taskId,
-        goal,
-      },
-    });
-  }
-
-  private async applyPlanUpdate(
-    agent: ScoutAgent,
-    plan: AppServerPlanState,
-    entry?: AppServerTimelineEntry,
-  ): Promise<void> {
-    const task = this.findActiveTask(agent);
-    if (!task) return;
-    const updated: AgentTaskState = {
-      ...task,
-      plan,
-      updatedAt: new Date().toISOString(),
-    };
-    this.tasks.set(updated.taskId, cloneTask(updated));
-    this.logger.info({
-      module: "agent.task",
-      event: AgentTaskStateEvents.PlanUpdated,
-      agentId: updated.agentId,
-      taskId: updated.taskId,
-      data: {
-        status: updated.status,
-        role: updated.role,
-        description: updated.description,
-        seq: entry?.seq,
-        plan,
-      },
-    });
-    this.writeLedger();
-    await this.interactionPort?.disclose({
-      level: "info",
-      source: `agent.plan.${agent.agentId}`,
-      message: "Agent plan updated.",
-      data: {
-        runId: this.runId,
-        seq: entry?.seq,
-        agentId: agent.agentId,
-        taskId: updated.taskId,
-        plan,
-      },
-    });
-  }
-
-  private publishAppServerProgress(
-    agent: ScoutAgent,
-    entry: AppServerTimelineEntry,
-    progressItem: AppServerProgressItem,
-  ): void {
-    const activeTask = agent.task.listTasks().find((task) =>
-      task.status === "running" || task.status === "queued" || task.status === "waiting_for_input"
-    );
-    const progressEvent = {
-      source: "app-server",
-      seq: entry.seq,
-      agentId: agent.agentId,
-      taskId: activeTask?.taskId,
-      threadId: progressItem.threadId,
-      turnId: progressItem.turnId,
-      itemId: progressItem.itemId,
-      type: progressItem.type,
-      status: progressItem.status,
-      label: progressItem.label,
-      detail: progressItem.detail,
-      updatedAt: progressItem.updatedAt,
-      data: {
-        timeline: entry,
-        item: progressItem.item,
-      },
-    };
-    this.logger.info({
-      module: "agent.progress",
-      event: "progress_item",
-      agentId: agent.agentId,
-      taskId: activeTask?.taskId,
-      data: progressEvent,
-    });
-    void this.interactionPort?.publishProgress(progressEvent).catch((error) => {
-      this.logger.warn({
-        module: "interaction",
-        event: "progress_publish_failed",
-        agentId: agent.agentId,
-        taskId: activeTask?.taskId,
-        data: {
-          progressItemId: progressItem.itemId,
-          error: error instanceof Error ? error.stack ?? error.message : String(error),
-        },
-      });
-    });
-  }
-
   private resolveTaskTarget(target: string): { agent: ScoutAgent; taskId: string } {
-    const task = this.tasks.get(target);
+    const task = this.taskStore.getTask(target);
     if (task) {
       return {
         agent: this.registry.resolveAgent(task.agentId),
@@ -396,7 +203,7 @@ export class AgentTaskBackend {
       };
     }
     const agent = this.registry.resolveAgent(target);
-    const active = agent.task.listTasks().find((item) => item.status === "running" || item.status === "queued" || item.status === "waiting_for_input");
+    const active = this.taskStore.findActiveTaskForAgent(agent.agentId);
     if (!active) {
       throw new Error(`Agent ${agent.agentId} has no active task.`);
     }
@@ -406,51 +213,31 @@ export class AgentTaskBackend {
     };
   }
 
-  private enqueueTaskNotification(task: AgentTaskState): void {
-    this.messageQueue.enqueue({
-      type: "task_notification",
-      priority: "later",
-      sourceTaskId: task.taskId,
-      payload: renderTaskNotificationXml(task),
-    });
-    this.logger.info({
-      module: "agent.task",
-      event: AgentTaskStateEvents.NotificationEnqueued,
-      agentId: task.agentId,
-      taskId: task.taskId,
-      data: {
-        status: task.status,
-        role: task.role,
-        description: task.description,
-      },
+  private subscribeToTaskEvents(): void {
+    this.eventBus.subscribe(SystemEvents.task, (event) => {
+      this.handleTaskEvent(event as ScoutEvent<AgentTaskEventPayload>);
     });
   }
 
-  private enqueueUserInputRequest(task: AgentTaskState): void {
-    if (!task.userInputRequest) return;
-    this.messageQueue.enqueue({
-      type: "user_input",
-      priority: "next",
-      sourceTaskId: task.taskId,
-      payload: renderUserInputRequestNotification({
-        task,
-        request: task.userInputRequest,
-      }),
-    });
+  private handleTaskEvent(event: ScoutEvent<AgentTaskEventPayload>): void {
+    const { task, data } = event.payload;
     this.logger.info({
       module: "agent.task",
-      event: AgentTaskStateEvents.UserInputRequestEnqueued,
+      event: event.key.routeKey,
       agentId: task.agentId,
       taskId: task.taskId,
       data: {
+        eventKey: event.key.routeKey,
         status: task.status,
         role: task.role,
         description: task.description,
-        requestId: task.userInputRequest.requestId,
-        kind: task.userInputRequest.kind,
-        question: task.userInputRequest.question,
+        ...asLogObject(data),
       },
     });
+    this.onTaskChanged?.();
+    this.eventBus.publish(SystemEvents.orchestration.coordinatorPromptReady, {
+      sourceEvents: [event as AgentTaskSystemEvent],
+    } satisfies CoordinatorPromptReadyPayload);
   }
 
   private nextTaskId(): string {
@@ -458,26 +245,107 @@ export class AgentTaskBackend {
     return `agent-task-${String(this.taskSequence).padStart(4, "0")}`;
   }
 
-  private writeLedger(): void {
-    writeJsonFile(join(this.ledgerRoot, "agent-ledger.json"), this.getLedger());
+  private applyGoalUpdate(
+    task: AgentTaskState,
+    goal: AppServerThreadGoalState,
+    entry: AppServerTimelineEntry,
+  ): AgentTaskState {
+    const updated: AgentTaskState = {
+      ...task,
+      goal,
+      updatedAt: new Date().toISOString(),
+    };
+    this.taskStore.updateTask(updated.taskId, () => updated);
+    this.logger.info({
+      module: "agent.task",
+      event: "goal_updated",
+      agentId: updated.agentId,
+      taskId: updated.taskId,
+      data: {
+        status: updated.status,
+        role: updated.role,
+        description: updated.description,
+        seq: entry.seq,
+        goal,
+      },
+    });
+    this.eventBus.publish(SystemEvents.task.goalUpdated, {
+      task: cloneAgentTaskState(updated),
+      data: {
+        seq: entry.seq,
+        goal,
+      },
+    } satisfies AgentTaskEventPayload);
+    return updated;
+  }
+
+  private applyPlanUpdate(
+    task: AgentTaskState,
+    plan: AppServerPlanState,
+    entry: AppServerTimelineEntry,
+  ): AgentTaskState {
+    const updated: AgentTaskState = {
+      ...task,
+      plan,
+      updatedAt: new Date().toISOString(),
+    };
+    this.taskStore.updateTask(updated.taskId, () => updated);
+    this.logger.info({
+      module: "agent.task",
+      event: "plan_updated",
+      agentId: updated.agentId,
+      taskId: updated.taskId,
+      data: {
+        status: updated.status,
+        role: updated.role,
+        description: updated.description,
+        seq: entry.seq,
+        plan,
+      },
+    });
+    this.eventBus.publish(SystemEvents.task.planUpdated, {
+      task: cloneAgentTaskState(updated),
+      data: {
+        seq: entry.seq,
+        plan,
+      },
+    } satisfies AgentTaskEventPayload);
+    return updated;
   }
 }
 
-export function cloneTask(task: AgentTaskState): AgentTaskState {
-  return {
-    ...task,
-    usage: task.usage ? { ...task.usage } : undefined,
-    thread: task.thread ? { ...task.thread } : undefined,
-    userInputRequest: task.userInputRequest ? {
-      ...task.userInputRequest,
-      options: task.userInputRequest.options ? [...task.userInputRequest.options] : undefined,
-    } : undefined,
-    outcome: task.outcome ? {
-      ...task.outcome,
-      artifactRefs: [...task.outcome.artifactRefs],
-      evidenceRefs: [...task.outcome.evidenceRefs],
-    } : undefined,
+export type AgentTaskTimelineProjection =
+  | {
+    kind: "progress";
+    agent: ScoutAgent;
+    activeTask?: AgentTaskState;
+    entry: AppServerTimelineEntry;
+    progressItem: NonNullable<AppServerResolvedTimelineEntry["progressItem"]>;
+  }
+  | {
+    kind: "plan_updated";
+    agent: ScoutAgent;
+    task: AgentTaskState;
+    entry: AppServerTimelineEntry;
+    plan: AppServerPlanState;
+  }
+  | {
+    kind: "goal_updated";
+    agent: ScoutAgent;
+    task: AgentTaskState;
+    entry: AppServerTimelineEntry;
+    goal: AppServerThreadGoalState;
+  }
+  | {
+    kind: "token_usage_updated";
+    agent: ScoutAgent;
+    activeTask?: AgentTaskState;
+    entry: AppServerTimelineEntry;
+    tokenUsage: AppServerResolvedTimelineEntry["tokenUsage"];
   };
+
+export function cloneTask(task: AgentTaskState): AgentTaskState {
+  return cloneAgentTaskState(task);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

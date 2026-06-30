@@ -1,7 +1,6 @@
-import { ScoutAgent, type ScoutAgentOptions } from "../scout-agent.js";
-import { buildDynamicToolsForRole } from "../tool-profiles.js";
-import { ScoutAgentPhases, ScoutAgentRoles } from "../types.js";
-import { readWorkerRoleInstructions } from "../helper.js";
+import { ScoutAgent, type ScoutAgentOptions } from "../core/scout-agent.js";
+import { ScoutAgentPhases, ScoutAgentRoles } from "../model/types.js";
+import { readWorkerRoleInstructions } from "./instructions.js";
 
 export class ResearcherAgent extends ScoutAgent {
   constructor(options: ScoutAgentOptions) {
@@ -21,7 +20,7 @@ export class ResearcherAgent extends ScoutAgent {
           },
         },
         developerInstructions: readWorkerRoleInstructions(options, ScoutAgentRoles.Researcher),
-        dynamicTools: buildDynamicToolsForRole(ScoutAgentRoles.Researcher),
+        dynamicTools: options.dynamicTools,
       },
     });
   }

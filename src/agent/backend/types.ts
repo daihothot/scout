@@ -1,28 +1,36 @@
-import type { AssetCommit, CodexMount } from "../../asset-store/index.js";
+import type { CodexAppServerClient } from "../../agent-server/codex/app-server-client.js";
 import type { RuntimeInteractionPort } from "../../interaction/index.js";
-import type { RuntimeMessageQueueManager } from "../../core/queue/message-queue.js";
-import type { ScoutAgentOptions } from "../scout-agent.js";
-import type { ScoutAgentThreadPreflightRecord } from "./thread-preflight.js";
-import type { AgentThreadRecord, ScoutAgentRole } from "../types.js";
-import { ScoutAgentRoles } from "../types.js";
+import type { EventBus } from "../../core/events/index.js";
+import type { ScoutAgentThreadPreflightRecord } from "../lifecycle/thread-preflight.js";
+import type { AgentThreadRecord, ScoutAgentRole } from "../model/types.js";
+import { ScoutAgentRoles } from "../model/types.js";
 import type { AgentTaskState, AssignAgentTaskInput } from "../task/types.js";
+import type { ScoutDomain } from "../../domain/index.js";
+import type { AgentRegistry } from "../lifecycle/agent-registry.js";
+import type { AgentThreadLifecycle } from "../lifecycle/agent-thread-lifecycle.js";
+import type { Logger } from "../../core/logging/index.js";
+import type { ScoutAgent } from "../core/scout-agent.js";
+import type { AgentTaskStore } from "../task/agent-task-store.js";
 
-export interface AgentBackendOptions extends ScoutAgentOptions {
-  runId: string;
-  ledgerRoot: string;
-  agentMounts?: Partial<Record<ScoutAgentRole, CodexMount>>;
-  agentAssetCommits?: Partial<Record<ScoutAgentRole, AssetCommit>>;
-  messageQueue?: RuntimeMessageQueueManager;
-  interactionPort?: RuntimeInteractionPort;
+export interface AgentProvider {
+  getOrCreateWorker(input: {
+    role: Exclude<ScoutAgentRole, typeof ScoutAgentRoles.Coordinator>;
+    agentId?: string;
+  }): ScoutAgent;
 }
 
-export interface CoordinatorSyntheticOutput {
-  status: "in_progress" | "complete" | "blocked" | "failed";
-  summary: string;
-  evidence: string[];
-  blocker?: string;
-  emittedAt: string;
-  coordinatorThreadId: string;
+export interface AgentBackendOptions {
+  runId: string;
+  ledgerRoot: string;
+  appServer: CodexAppServerClient;
+  registry: AgentRegistry;
+  lifecycle: AgentThreadLifecycle;
+  taskStore: AgentTaskStore;
+  eventBus: EventBus;
+  agentProvider: AgentProvider;
+  logger: Logger;
+  domain: ScoutDomain;
+  interactionPort?: RuntimeInteractionPort;
 }
 
 export interface ScoutAgentLedger {

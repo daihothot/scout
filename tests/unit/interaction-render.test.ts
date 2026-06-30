@@ -1,22 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renderQueuedCommandNotification, renderGoal, renderPlan, renderPlanStatus } from "../../src/interaction/cli/render.js";
-import { renderQueuedCommands } from "../../src/interaction/protocol/queued-command.js";
+import { renderEventNotification, renderGoal, renderPlan, renderPlanStatus } from "../../src/interaction/cli/render.js";
 import { renderTaskNotificationXml } from "../../src/interaction/protocol/task-notification.js";
 import {
   renderHumanInputPrompt,
   renderUserInputRequestNotification,
   renderUserInputResponse,
 } from "../../src/interaction/protocol/user-input.js";
-import type { RuntimeQueuedCommand } from "../../src/core/queue/message-queue.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
-import { ScoutAgentRoles } from "../../src/agent/types.js";
+import type {
+  AgentTaskEventPayload,
+  AgentTaskSystemEvent,
+  SystemInterruptEventPayload,
+} from "../../src/agent/task/task-events.js";
+import type { ScoutEvent } from "../../src/core/events/index.js";
+import { ScoutAgentRoles } from "../../src/agent/model/types.js";
+import { InMemoryEventBus, SystemEvents } from "../../src/core/events/index.js";
 
 test("task notification XML escapes task content and renders outcome refs", () => {
   const xml = renderTaskNotificationXml(task({
-    status: "insufficient_evidence",
+    status: "blocked",
     outcome: {
-      status: "insufficient_evidence",
+      status: "blocked",
       summary: "证据 <不足> & 需要确认",
       artifactRefs: ["artifact://report?x=1&y=2"],
       evidenceRefs: ["evidence://line<'1'>"],
@@ -26,7 +31,7 @@ test("task notification XML escapes task content and renders outcome refs", () =
     result: "raw <result>",
   }));
 
-  assert.match(xml, /<status>insufficient_evidence<\/status>/);
+  assert.match(xml, /<status>blocked<\/status>/);
   assert.match(xml, /证据 &lt;不足&gt; &amp; 需要确认/);
   assert.match(xml, /artifact:\/\/report\?x=1&amp;y=2/);
   assert.match(xml, /evidence:\/\/line&lt;&apos;1&apos;&gt;/);
@@ -34,49 +39,61 @@ test("task notification XML escapes task content and renders outcome refs", () =
 });
 
 test("user input protocol renders request, human prompt and escaped response", () => {
-  const command = queuedCommand({
-    type: "user_input",
-    payload: renderUserInputRequestNotification({
-      task: task({ description: "选择方案" }),
-      request: {
-        requestId: "request-1",
-        agentId: "verifier",
-        taskId: "task-1",
-        kind: "prompt_required",
-        question: "选 <A> 还是 B?",
-        context: "Worker 发现两个方案 & 都可行",
-        options: ["A <fast>", "B & safe"],
-        createdAt: "2026-06-29T00:00:00.000Z",
-      },
-    }),
+  const request = {
+    requestId: "request-1",
+    agentId: "verifier",
+    taskId: "task-1",
+    kind: "prompt_required" as const,
+    question: "选 <A> 还是 B?",
+    context: "Worker 发现两个方案 & 都可行",
+    options: ["A <fast>", "B & safe"],
+    createdAt: "2026-06-29T00:00:00.000Z",
+    status: "pending" as const,
+  };
+  const event = humanInputEvent({
+    task: task({ description: "选择方案" }),
+    request,
   });
 
-  assert.match(command.payload, /选 &lt;A&gt; 还是 B\?/);
-  assert.equal(renderHumanInputPrompt(command), [
+  const payload = renderUserInputRequestNotification({
+    task: event.payload.task,
+    request,
+  });
+  assert.match(payload, /选 &lt;A&gt; 还是 B\?/);
+  assert.equal(renderHumanInputPrompt(event), [
     "Agent 执行过程中需要用户输入。",
     "上下文：Worker 发现两个方案 & 都可行",
     "问题：选 <A> 还是 B?",
     "1. A <fast>",
     "2. B & safe",
   ].join("\n"));
-  assert.match(renderUserInputResponse(command, "选择 A & 继续"), /选择 A &amp; 继续/);
+  const renderedResponse = renderUserInputResponse(event, "选择 A & 继续");
+  assert.match(renderedResponse, /<request-id>request-1<\/request-id>/);
+  assert.match(renderedResponse, /选择 A &amp; 继续/);
 });
 
-test("queued command rendering delegates task and user notifications and wraps system events", () => {
-  const taskCommand = queuedCommand({ type: "task_notification", payload: "<task-notification />" });
-  const userCommand = queuedCommand({ type: "user_input", payload: "<user-input-request-notification />" });
-  const systemCommand = queuedCommand({
-    id: "command<&>",
-    type: "system_event",
-    priority: "now",
-    payload: "<system>raw</system>",
+test("event rendering delegates task terminal and human-input interrupt notifications", () => {
+  const terminalEvent = taskTerminalEvent(task({
+    status: "complete",
+    result: "done <ok>",
+  }));
+  const humanEvent = humanInputEvent({
+    task: task({ description: "选择方案" }),
+    request: {
+      requestId: "request-1",
+      agentId: "verifier",
+      taskId: "task-1",
+      kind: "prompt_required",
+      question: "选 <A> 还是 B?",
+      createdAt: "2026-06-29T00:00:00.000Z",
+      status: "pending",
+    },
   });
 
-  assert.equal(renderQueuedCommandNotification(taskCommand), "<task-notification />\n");
-  assert.equal(renderQueuedCommandNotification(userCommand), "<user-input-request-notification />\n");
-  assert.match(renderQueuedCommandNotification(systemCommand), /id="command&lt;&amp;&gt;"/);
-  assert.match(renderQueuedCommandNotification(systemCommand), /<system>raw<\/system>/);
-  assert.match(renderQueuedCommands([systemCommand]), /&lt;system&gt;raw&lt;\/system&gt;/);
+  assert.match(renderEventNotification(terminalEvent), /<task-notification>/);
+  assert.match(renderEventNotification(terminalEvent), /done &lt;ok&gt;/);
+  assert.match(renderEventNotification(humanEvent), /<user-input-request-notification>/);
+  assert.match(renderEventNotification(humanEvent), /选 &lt;A&gt; 还是 B\?/);
 });
 
 test("CLI render formats goal and plan status", () => {
@@ -110,15 +127,32 @@ test("CLI render formats goal and plan status", () => {
   ].join("\n"));
 });
 
-function queuedCommand(input: Partial<RuntimeQueuedCommand>): RuntimeQueuedCommand {
-  return {
-    id: "queued-command-0001",
-    type: "user_input",
-    priority: "next",
-    enqueuedAt: "2026-06-29T00:00:00.000Z",
-    payload: "",
-    ...input,
-  };
+function taskTerminalEvent(taskState: AgentTaskState): AgentTaskSystemEvent {
+  const bus = new InMemoryEventBus();
+  return bus.publish(SystemEvents.task.terminal, {
+    task: taskState,
+  } satisfies AgentTaskEventPayload, {
+    id: "event-1",
+    occurredAt: "2026-06-29T00:00:00.000Z",
+  }) as AgentTaskSystemEvent;
+}
+
+function humanInputEvent(input: {
+  task: AgentTaskState;
+  request: NonNullable<SystemInterruptEventPayload["request"]>;
+}): ScoutEvent<SystemInterruptEventPayload> {
+  const bus = new InMemoryEventBus();
+  return bus.publish(SystemEvents.interrupt.raised, {
+    interruptKind: "human_input",
+    taskId: input.task.taskId,
+    agentId: input.task.agentId,
+    requestId: input.request.requestId,
+    request: input.request,
+    task: input.task,
+  } satisfies SystemInterruptEventPayload, {
+    id: "event-human-input",
+    occurredAt: "2026-06-29T00:00:00.000Z",
+  });
 }
 
 function task(input: Partial<AgentTaskState> = {}): AgentTaskState {
