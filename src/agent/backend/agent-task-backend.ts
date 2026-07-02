@@ -1,8 +1,8 @@
 import {
-  SystemEvents,
   type EventBus,
   type ScoutEvent,
 } from "../../core/events/index.js";
+import { SystemEvents } from "../../system/events/index.js";
 import type {
   AppServerPlanState,
   AppServerResolvedTimelineEntry,
@@ -16,12 +16,12 @@ import {
 } from "../task/agent-task-store.js";
 import type {
   AgentTaskEventPayload,
-  AgentTaskSystemEvent,
+  AgentHumanInputRespondedEventPayload,
 } from "../task/task-events.js";
-import type { CoordinatorPromptReadyPayload } from "../orchestration/orchestration-events.js";
+import type { InteractionHumanInputReceivedPayload } from "../../interaction/index.js";
 import type {
   AgentTaskState,
-  AgentUserInputResponse,
+  AgentHumanInputResponse,
   SendAgentMessageInput,
 } from "../task/types.js";
 import type { AgentRegistry } from "../lifecycle/agent-registry.js";
@@ -39,7 +39,6 @@ export interface AgentTaskBackendOptions {
     info(input: unknown): void;
     warn(input: unknown): void;
   };
-  onTaskChanged?: () => void;
 }
 
 export class AgentTaskBackend {
@@ -48,7 +47,6 @@ export class AgentTaskBackend {
   private readonly eventBus: EventBus;
   private readonly agentProvider: AgentProvider;
   private readonly logger: AgentTaskBackendOptions["logger"];
-  private readonly onTaskChanged?: () => void;
   private taskSequence = 0;
 
   constructor(options: AgentTaskBackendOptions) {
@@ -57,7 +55,6 @@ export class AgentTaskBackend {
     this.eventBus = options.eventBus;
     this.agentProvider = options.agentProvider;
     this.logger = options.logger;
-    this.onTaskChanged = options.onTaskChanged;
     this.subscribeToTaskEvents();
   }
 
@@ -68,54 +65,51 @@ export class AgentTaskBackend {
     if (agent.role !== input.subagentType) {
       throw new Error(`Agent ${agent.agentId} is ${agent.role}, not ${input.subagentType}.`);
     }
-    const task = agent.task.assignTask({
+    const task = agent.runner.assignTask({
       ...input,
       taskId: this.nextTaskId(),
       agentId: agent.agentId,
     });
-    this.syncTaskSnapshot(task);
     return task;
   }
 
   sendAgentMessage(input: SendAgentMessageInput): AgentTaskState {
     const target = this.resolveTaskTarget(input.target);
-    const task = target.agent.task.queueMessage({
+    const task = target.agent.runner.queueMessage({
       taskId: target.taskId,
       message: input.message,
     });
-    this.syncTaskSnapshot(task);
     return task;
   }
 
   stopAgentTask(target: string, reason = "任务已被 Coordinator 停止。"): AgentTaskState {
     const resolved = this.resolveTaskTarget(target);
-    const task = resolved.agent.task.stopTask(resolved.taskId, reason);
-    this.syncTaskSnapshot(task);
+    const task = resolved.agent.runner.stopTask(resolved.taskId, reason);
     return task;
   }
 
-  handleUserInputResponse(input: {
+  handleHumanInputResponse(input: {
     taskId: string;
     requestId: string;
     response: string;
   }): AgentTaskState {
     const target = this.resolveTaskTarget(input.taskId);
     const current = this.taskStore.requireTask(target.taskId);
-    const response: AgentUserInputResponse = {
+    const response: AgentHumanInputResponse = {
       requestId: input.requestId,
       agentId: current.agentId,
       taskId: current.taskId,
       response: input.response,
       createdAt: new Date().toISOString(),
     };
-    const task = target.agent.task.applyUserInputResponse(response);
+    const task = target.agent.runner.applyHumanInputResponse(response);
     this.eventBus.publish(SystemEvents.task.humanInputResponded, {
       task,
+      response,
       data: {
         requestId: input.requestId,
       },
-    } satisfies AgentTaskEventPayload);
-    this.syncTaskSnapshot(task);
+    } satisfies AgentHumanInputRespondedEventPayload);
     return task;
   }
 
@@ -127,11 +121,15 @@ export class AgentTaskBackend {
     if (this.taskStore.hasRunningTasks()) {
       return true;
     }
-    return this.registry.listAgents().some((agent) => agent.task.hasRunningTasks());
+    return this.registry.listAgents().some((agent) => agent.runner.hasRunningTasks());
   }
 
-  syncTaskSnapshot(_task: AgentTaskState): void {
-    this.onTaskChanged?.();
+  hasOpenAgentTasks(): boolean {
+    return this.taskStore.hasOpenTasks();
+  }
+
+  hasWaitingHumanInputTasks(): boolean {
+    return this.taskStore.hasWaitingHumanInputTasks();
   }
 
   consumeAppServerTimelineEntry(
@@ -217,6 +215,16 @@ export class AgentTaskBackend {
     this.eventBus.subscribe(SystemEvents.task, (event) => {
       this.handleTaskEvent(event as ScoutEvent<AgentTaskEventPayload>);
     });
+    this.eventBus.subscribe<InteractionHumanInputReceivedPayload>(
+      SystemEvents.interaction.humanInputReceived,
+      (event) => {
+        this.handleHumanInputResponse({
+          taskId: event.payload.taskId,
+          requestId: event.payload.requestId,
+          response: event.payload.response.text,
+        });
+      },
+    );
   }
 
   private handleTaskEvent(event: ScoutEvent<AgentTaskEventPayload>): void {
@@ -234,10 +242,6 @@ export class AgentTaskBackend {
         ...asLogObject(data),
       },
     });
-    this.onTaskChanged?.();
-    this.eventBus.publish(SystemEvents.orchestration.coordinatorPromptReady, {
-      sourceEvents: [event as AgentTaskSystemEvent],
-    } satisfies CoordinatorPromptReadyPayload);
   }
 
   private nextTaskId(): string {

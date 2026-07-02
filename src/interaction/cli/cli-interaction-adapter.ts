@@ -27,6 +27,10 @@ export class CliInteractionAdapter implements RuntimeInteractionPort {
     process.stdout.write(renderProgress(event));
   }
 
+  async publishAgentMessage(message: string): Promise<void> {
+    process.stdout.write(`${message}\n`);
+  }
+
   requestInput(request: HumanInputRequest): Promise<HumanInputResponse> {
     return promptForHumanInput(request);
   }

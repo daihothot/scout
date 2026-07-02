@@ -8,44 +8,46 @@ import {
   AgentTaskStore,
   cloneAgentTaskState as cloneTaskState,
   isActiveAgentTaskStatus,
-} from "./agent-task-store.js";
-import { type EventBus, SystemEvents } from "../../core/events/index.js";
+} from "../task/agent-task-store.js";
+import type { EventBus } from "../../core/events/index.js";
+import { SystemEvents } from "../../system/events/index.js";
 import type {
   AgentTaskEventPayload,
+  AgentHumanInputRequestedEventPayload,
   AgentTaskStepEventPayload,
   AgentTaskTerminalEventPayload,
-  SystemInterruptEventPayload,
-} from "./task-events.js";
+} from "../task/task-events.js";
 import type {
   AgentTaskOutcome,
-  AgentTaskStepRecord,
+  AgentTaskStep,
   AgentTaskState,
-  AgentUserInputRequest,
-  AgentUserInputResponse,
+  AgentHumanInputRequest,
+  AgentHumanInputResponse,
   AssignAgentTaskInput,
-} from "./types.js";
+} from "../task/types.js";
 import type {
   ScoutAgentTurnInput,
   ScoutAgentTurnOutcome,
 } from "../core/scout-agent.js";
-import type { ScoutAgentThreadPreflightRecord } from "../lifecycle/thread-preflight.js";
-import type { AgentThreadRecord, AgentThreadSpec } from "../model/types.js";
+import type { ScoutAgentThreadPreflightSnapshot } from "../lifecycle/thread-preflight.js";
+import type { AgentThreadSnapshot, AgentThreadSpec } from "../model/types.js";
+import { AgentRunner } from "./types.js";
 
-export interface ScoutAgentTaskSnapshot {
+export interface WorkerRunnerSnapshot {
   tasks: AgentTaskState[];
   activeTaskId?: string;
   pendingMessageCount: number;
 }
 
-export interface ScoutAgentTaskHost {
+export interface WorkerRunnerHost {
   readonly agentId: string;
   readonly role: AgentThreadSpec["role"];
   readonly spec: AgentThreadSpec;
-  readonly threadRecord?: AgentThreadRecord;
+  readonly threadSnapshot?: AgentThreadSnapshot;
   readonly logger: Logger;
   startWithPreflight(): Promise<{
-    thread: AgentThreadRecord;
-    preflight: ScoutAgentThreadPreflightRecord;
+    thread: AgentThreadSnapshot;
+    preflight: ScoutAgentThreadPreflightSnapshot;
   }>;
   runTurn(input: ScoutAgentTurnInput): Promise<ScoutAgentTurnOutcome>;
   setGoal(input: {
@@ -54,35 +56,41 @@ export interface ScoutAgentTaskHost {
   }): Promise<AgentTaskState["goal"] | undefined>;
 }
 
-export interface ScoutAgentTaskRuntimeOptions {
-  host: ScoutAgentTaskHost;
+export interface WorkerRunnerOptions {
+  host: WorkerRunnerHost;
   store: AgentTaskStore;
   eventBus: EventBus;
 }
 
-export class ScoutAgentTaskRuntime {
-  private readonly host: ScoutAgentTaskHost;
+export class WorkerRunner extends AgentRunner {
+  readonly runnerKind = "worker";
+  private readonly host: WorkerRunnerHost;
   private readonly store: AgentTaskStore;
   private readonly eventBus: EventBus;
-  private readonly loop: AgenticLoop;
+  private readonly loop: AgenticLoop<string>;
   private readonly taskQueue: string[] = [];
   private readonly pendingMessages = new Map<string, string[]>();
   private activeTaskId?: string;
   private stopped = false;
 
-  constructor(options: ScoutAgentTaskRuntimeOptions) {
+  constructor(options: WorkerRunnerOptions) {
+    super();
     this.host = options.host;
     this.store = options.store;
     this.eventBus = options.eventBus;
-    this.loop = new AgenticLoop({
+    this.loop = new AgenticLoop<string>({
       agentId: this.host.agentId,
       handlers: {
-        runStep: () => this.runTaskStep(),
-        hasPendingWork: () => this.hasPendingWork(),
+        takeStep: () => this.takeTaskStep(),
+        runStep: (taskId) => this.runTaskStep(taskId),
         isStopped: () => this.stopped,
         onError: (error) => this.failActiveTask(error),
       },
     });
+  }
+
+  get agentId(): string {
+    return this.host.agentId;
   }
 
   assignTask(input: AssignAgentTaskInput): AgentTaskState {
@@ -106,7 +114,7 @@ export class ScoutAgentTaskRuntime {
       createdAt: now,
       updatedAt: now,
       parentTaskId: input.parentTaskId,
-      thread: this.host.threadRecord,
+      thread: this.host.threadSnapshot,
     };
     const stored = this.store.addTask(task);
     this.taskQueue.push(task.taskId);
@@ -130,7 +138,7 @@ export class ScoutAgentTaskRuntime {
       status: currentTask.status === "waiting_for_human_input" || currentTask.status === "waiting_for_coordinator"
         ? "running"
         : currentTask.status,
-      userInputRequest: undefined,
+      humanInputRequest: undefined,
       updatedAt: new Date().toISOString(),
     }));
     this.eventBus.publish(SystemEvents.task.messageQueued, {
@@ -181,6 +189,10 @@ export class ScoutAgentTaskRuntime {
     }
   }
 
+  stop(reason?: string): void {
+    this.stopAgent(reason);
+  }
+
   listTasks(): AgentTaskState[] {
     return this.store.listTasks({ agentId: this.host.agentId });
   }
@@ -210,7 +222,7 @@ export class ScoutAgentTaskRuntime {
         evidenceRefs: [...input.outcome.evidenceRefs],
         emittedAt,
       },
-      userInputRequest: undefined,
+      humanInputRequest: undefined,
       finishedAt: emittedAt,
       updatedAt: emittedAt,
     }));
@@ -219,7 +231,7 @@ export class ScoutAgentTaskRuntime {
     if (this.activeTaskId === task.taskId) {
       this.activeTaskId = undefined;
     }
-    this.eventBus.publish(SystemEvents.task.outcomeRecorded, {
+    this.eventBus.publish(SystemEvents.task.outcomeAccepted, {
       task: completed,
       data: {
         outcome: completed.outcome,
@@ -236,55 +248,44 @@ export class ScoutAgentTaskRuntime {
     return cloneTaskState(completed);
   }
 
-  requestUserInput(input: {
+  requestHumanInput(input: {
     taskId: string;
-    request: AgentUserInputRequest;
+    request: AgentHumanInputRequest;
   }): AgentTaskState {
     const task = this.getTask(input.taskId);
     if (isTerminalTaskStatus(task.status)) {
-      throw new Error(`Cannot request user input for terminal task ${task.taskId}. Status: ${task.status}`);
+      throw new Error(`Cannot request human input for terminal task ${task.taskId}. Status: ${task.status}`);
     }
     const updatedAt = new Date().toISOString();
     const request = {
       ...input.request,
       status: input.request.status ?? "pending",
-    } satisfies AgentUserInputRequest;
+    } satisfies AgentHumanInputRequest;
     const waiting = this.updateTask(task.taskId, (current) => ({
       ...current,
       status: "waiting_for_human_input",
-      userInputRequest: { ...request },
+      humanInputRequest: { ...request },
       humanInputRequests: [...(current.humanInputRequests ?? []), request],
       updatedAt,
     }));
     this.eventBus.publish(SystemEvents.task.humanInputRequested, {
       task: waiting,
-      data: { userInputRequest: waiting.userInputRequest },
-    } satisfies AgentTaskEventPayload);
-    if (waiting.userInputRequest) {
-      this.eventBus.publish(SystemEvents.interrupt.raised, {
-        interruptKind: "human_input",
-        taskId: waiting.taskId,
-        agentId: waiting.agentId,
-        turnId: waiting.userInputRequest.turnId,
-        requestId: waiting.userInputRequest.requestId,
-        status: waiting.userInputRequest.status,
-        request: waiting.userInputRequest,
-        task: waiting,
-      } satisfies SystemInterruptEventPayload);
-    }
+      request,
+      data: { requestId: request.requestId },
+    } satisfies AgentHumanInputRequestedEventPayload);
     return cloneTaskState(waiting);
   }
 
-  applyUserInputResponse(input: AgentUserInputResponse): AgentTaskState {
+  applyHumanInputResponse(input: AgentHumanInputResponse): AgentTaskState {
     const task = this.getTask(input.taskId);
     const updated = this.updateTask(task.taskId, (current) => ({
       ...current,
-      userInputRequest: current.userInputRequest?.requestId === input.requestId
+      humanInputRequest: current.humanInputRequest?.requestId === input.requestId
         ? {
-          ...current.userInputRequest,
+          ...current.humanInputRequest,
           status: "answered",
         }
-        : current.userInputRequest,
+        : current.humanInputRequest,
       humanInputRequests: (current.humanInputRequests ?? []).map((request) =>
         request.requestId === input.requestId ? { ...request, status: "answered" } : request
       ),
@@ -303,7 +304,7 @@ export class ScoutAgentTaskRuntime {
     await this.loop.runToIdle();
   }
 
-  snapshot(): ScoutAgentTaskSnapshot {
+  snapshot(): WorkerRunnerSnapshot {
     return {
       tasks: this.listTasks(),
       activeTaskId: this.activeTaskId,
@@ -311,11 +312,17 @@ export class ScoutAgentTaskRuntime {
     };
   }
 
-  private async runTaskStep(): Promise<void> {
-    const taskId = this.activeTaskId ?? this.dequeueNextTaskId();
-    if (!taskId) return;
+  private takeTaskStep(): string | undefined {
+    if (this.activeTaskId) {
+      return this.countPendingMessages(this.activeTaskId) > 0 ? this.activeTaskId : undefined;
+    }
+    const taskId = this.dequeueNextTaskId();
+    if (!taskId) return undefined;
     this.activeTaskId = taskId;
+    return taskId;
+  }
 
+  private async runTaskStep(taskId: string): Promise<void> {
     let task = this.getTask(taskId);
     if (task.status === "stopped") {
       this.activeTaskId = undefined;
@@ -382,7 +389,7 @@ export class ScoutAgentTaskRuntime {
       return;
     }
     if (latest.status === "waiting_for_human_input") {
-      const waiting = this.updateTask(taskId, (current) => this.recordTurnCompletion({
+      const waiting = this.updateTask(taskId, (current) => this.appendTaskStep({
         task: current,
         outcome,
         prompt,
@@ -397,7 +404,7 @@ export class ScoutAgentTaskRuntime {
       return;
     }
     if (isTerminalTaskStatus(latest.status)) {
-      const recorded = this.updateTask(taskId, (current) => this.recordTurnCompletion({
+      const updated = this.updateTask(taskId, (current) => this.appendTaskStep({
         task: current,
         outcome,
         prompt,
@@ -406,8 +413,8 @@ export class ScoutAgentTaskRuntime {
       }));
       this.activeTaskId = undefined;
       this.eventBus.publish(SystemEvents.task.stepCompleted, {
-        task: recorded,
-        step: latestTaskStep(recorded),
+        task: updated,
+        step: latestTaskStep(updated),
         data: { reason: "terminal_update" },
       } satisfies AgentTaskStepEventPayload);
       return;
@@ -437,7 +444,7 @@ export class ScoutAgentTaskRuntime {
         } satisfies AgentTaskStepEventPayload);
         return;
       }
-      const waiting = this.updateTask(taskId, (current) => this.recordTurnCompletion({
+      const waiting = this.updateTask(taskId, (current) => this.appendTaskStep({
         task: current,
         outcome,
         prompt,
@@ -454,7 +461,7 @@ export class ScoutAgentTaskRuntime {
       return;
     }
 
-    const failed = this.updateTask(taskId, (current) => this.recordTurnCompletion({
+    const failed = this.updateTask(taskId, (current) => this.appendTaskStep({
       task: {
         ...current,
         status: "failed",
@@ -524,23 +531,15 @@ export class ScoutAgentTaskRuntime {
     } satisfies AgentTaskTerminalEventPayload);
   }
 
-  private hasPendingWork(): boolean {
-    if (this.taskQueue.some((taskId) => this.store.getAgentTask(this.host.agentId, taskId)?.status === "queued")) {
-      return true;
-    }
-    if (!this.activeTaskId) return false;
-    return this.countPendingMessages(this.activeTaskId) > 0;
-  }
-
-  private recordTurnCompletion(input: {
+  private appendTaskStep(input: {
     task: AgentTaskState;
     outcome: ScoutAgentTurnOutcome;
     prompt: string;
     durationMs: number;
-    status: AgentTaskStepRecord["status"];
+    status: AgentTaskStep["status"];
     protocolWarnings?: string[];
   }): AgentTaskState {
-    const step: AgentTaskStepRecord = {
+    const step: AgentTaskStep = {
       stepId: `${input.task.taskId}-step-${String((input.task.steps?.length ?? 0) + 1).padStart(4, "0")}`,
       taskId: input.task.taskId,
       turnId: input.outcome.turn.turnId,
@@ -637,6 +636,6 @@ export function isTerminalTaskStatus(status: AgentTaskState["status"]): boolean 
     || status === "stopped";
 }
 
-function latestTaskStep(task: AgentTaskState): AgentTaskStepRecord | undefined {
+function latestTaskStep(task: AgentTaskState): AgentTaskStep | undefined {
   return task.steps?.[task.steps.length - 1];
 }

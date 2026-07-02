@@ -1,10 +1,10 @@
 import type { CodexAppServerClient } from "../../agent-server/codex/app-server-client.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
-import type { AgentThreadRecord } from "../model/types.js";
+import type { AgentThreadSnapshot } from "../model/types.js";
 import type { AgentRegistry } from "./agent-registry.js";
 import {
   runThreadPreflight,
-  type ScoutAgentThreadPreflightRecord,
+  type ScoutAgentThreadPreflightSnapshot,
 } from "./thread-preflight.js";
 
 export interface AgentThreadLifecycleLogger {
@@ -15,35 +15,24 @@ export interface AgentThreadLifecycleOptions {
   appServer: CodexAppServerClient;
   registry: AgentRegistry;
   logger: AgentThreadLifecycleLogger;
-  onAgentStarted?(input: {
-    agent: ScoutAgent;
-    thread: AgentThreadRecord;
-    preflight: ScoutAgentThreadPreflightRecord;
-  }): void;
 }
 
 export class AgentThreadLifecycle {
   private readonly appServer: CodexAppServerClient;
   private readonly registry: AgentRegistry;
   private readonly logger: AgentThreadLifecycleLogger;
-  private onAgentStarted?: NonNullable<AgentThreadLifecycleOptions["onAgentStarted"]>;
-  private readonly startedAgents = new Map<string, AgentThreadRecord>();
-  private readonly threadPreflights = new Map<string, ScoutAgentThreadPreflightRecord>();
+  private readonly startedAgents = new Map<string, AgentThreadSnapshot>();
+  private readonly threadPreflights = new Map<string, ScoutAgentThreadPreflightSnapshot>();
 
   constructor(options: AgentThreadLifecycleOptions) {
     this.appServer = options.appServer;
     this.registry = options.registry;
     this.logger = options.logger;
-    this.onAgentStarted = options.onAgentStarted;
-  }
-
-  setAgentStartedHandler(handler: NonNullable<AgentThreadLifecycleOptions["onAgentStarted"]>): void {
-    this.onAgentStarted = handler;
   }
 
   async startWithPreflight(agent: ScoutAgent): Promise<{
-    thread: AgentThreadRecord;
-    preflight: ScoutAgentThreadPreflightRecord;
+    thread: AgentThreadSnapshot;
+    preflight: ScoutAgentThreadPreflightSnapshot;
   }> {
     const thread = await agent.start();
     this.registry.bindThread(agent.agentId, thread.threadId);
@@ -62,25 +51,25 @@ export class AgentThreadLifecycle {
       mount: agent.mount,
       appServer: this.appServer,
     });
-    this.recordStartedAgent(agent, thread, preflight);
+    this.cacheStartedAgent(agent, thread, preflight);
     return {
       thread,
       preflight,
     };
   }
 
-  listStartedAgents(): AgentThreadRecord[] {
+  listStartedAgents(): AgentThreadSnapshot[] {
     return [...this.startedAgents.values()];
   }
 
-  listThreadPreflights(): ScoutAgentThreadPreflightRecord[] {
+  listThreadPreflights(): ScoutAgentThreadPreflightSnapshot[] {
     return [...this.threadPreflights.values()];
   }
 
-  private recordStartedAgent(
+  private cacheStartedAgent(
     agent: ScoutAgent,
-    thread: AgentThreadRecord,
-    preflight: ScoutAgentThreadPreflightRecord,
+    thread: AgentThreadSnapshot,
+    preflight: ScoutAgentThreadPreflightSnapshot,
   ): void {
     if (this.startedAgents.has(thread.threadId)) return;
     this.startedAgents.set(thread.threadId, thread);
@@ -95,11 +84,6 @@ export class AgentThreadLifecycle {
         phases: thread.phases,
         preflightStatus: preflight.result.status,
       },
-    });
-    this.onAgentStarted?.({
-      agent,
-      thread,
-      preflight,
     });
   }
 }

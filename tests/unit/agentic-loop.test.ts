@@ -3,16 +3,15 @@ import assert from "node:assert/strict";
 import { AgenticLoop } from "../../src/agent/core/agentic-loop.js";
 
 test("AgenticLoop runs pending work until idle", async () => {
-  let pending = 3;
+  const pending = [1, 2, 3];
   let steps = 0;
-  const loop = new AgenticLoop({
+  const loop = new AgenticLoop<number>({
     agentId: "worker",
     handlers: {
+      takeStep: () => pending.shift(),
       runStep: async () => {
         steps += 1;
-        pending -= 1;
       },
-      hasPendingWork: () => pending > 0,
       isStopped: () => false,
       onError: () => undefined,
     },
@@ -27,18 +26,17 @@ test("AgenticLoop runs pending work until idle", async () => {
 });
 
 test("AgenticLoop reports step errors and continues when work remains", async () => {
-  let pending = 2;
+  const pending = [1, 2];
   let steps = 0;
   const errors: unknown[] = [];
-  const loop = new AgenticLoop({
+  const loop = new AgenticLoop<number>({
     agentId: "worker",
     handlers: {
+      takeStep: () => pending.shift(),
       runStep: async () => {
         steps += 1;
-        pending -= 1;
         if (steps === 1) throw new Error("boom");
       },
-      hasPendingWork: () => pending > 0,
       isStopped: () => false,
       onError: (error) => errors.push(error),
     },
@@ -52,24 +50,23 @@ test("AgenticLoop reports step errors and continues when work remains", async ()
 });
 
 test("AgenticLoop schedules again when new work appears during finally", async () => {
-  let pending = 1;
+  const pending = [1];
   let stopped = false;
   let steps = 0;
-  const loop = new AgenticLoop({
+  const loop = new AgenticLoop<number>({
     agentId: "worker",
     handlers: {
+      takeStep: () => pending.shift(),
       runStep: async () => {
         steps += 1;
-        pending -= 1;
         if (steps === 1) {
           queueMicrotask(() => {
-            pending += 1;
+            pending.push(2);
           });
         } else {
           stopped = true;
         }
       },
-      hasPendingWork: () => pending > 0,
       isStopped: () => stopped,
       onError: () => undefined,
     },
@@ -80,4 +77,25 @@ test("AgenticLoop schedules again when new work appears during finally", async (
   await loop.runToIdle();
 
   assert.equal(steps, 2);
+});
+
+test("AgenticLoop does not run a step when no step can be taken", async () => {
+  let steps = 0;
+  const loop = new AgenticLoop<number>({
+    agentId: "worker",
+    handlers: {
+      takeStep: () => undefined,
+      runStep: async () => {
+        steps += 1;
+      },
+      isStopped: () => false,
+      onError: () => undefined,
+    },
+  });
+
+  loop.schedule();
+  await loop.runToIdle();
+
+  assert.equal(steps, 0);
+  assert.equal(loop.isRunning(), false);
 });

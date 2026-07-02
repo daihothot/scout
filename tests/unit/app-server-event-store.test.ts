@@ -94,7 +94,7 @@ test("AppServerEventStore reduces plan, goal, item progress and final response",
   assert.equal(store.resolveTimelineEntry(latest!).thread?.id, "thread-1");
 });
 
-test("AppServerEventStore records local server request resolution and clears pending request", () => {
+test("AppServerEventStore handles local server request resolution and clears pending request", () => {
   const store = new AppServerEventStore();
   const request: JsonRpcServerRequest = {
     id: 9,

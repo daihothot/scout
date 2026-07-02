@@ -7,16 +7,16 @@ import type { AssetCommit, CodexMount } from "../../asset-store/types.js";
 import type { EventBus } from "../../core/events/index.js";
 import type { Logger } from "../../core/logging/index.js";
 import type { RunContextBundle } from "../../run/types.js";
-import {
-  ScoutAgentTaskRuntime,
-} from "../task/agent-task-runtime.js";
+import { CoordinatorRunner } from "../runner/coordinator-runner.js";
+import { WorkerRunner } from "../runner/worker-runner.js";
+import { AgentRunner } from "../runner/types.js";
 import type { AgentTaskStore } from "../task/agent-task-store.js";
 import type {
   AgentTaskStepToolCall,
   AgentTaskState,
 } from "../task/types.js";
-import type { AgentThreadRecord, AgentThreadSpec } from "../model/types.js";
-import type { ScoutAgentThreadPreflightRecord } from "../lifecycle/thread-preflight.js";
+import { ScoutAgentRoles, type AgentThreadSnapshot, type AgentThreadSpec } from "../model/types.js";
+import type { ScoutAgentThreadPreflightSnapshot } from "../lifecycle/thread-preflight.js";
 
 export interface ScoutAgentTurnInput {
   prompt: string;
@@ -51,7 +51,7 @@ export interface ScoutAgentTurnOutcome {
 
 export interface ScoutAgentSnapshot {
   agentId: string;
-  thread?: AgentThreadRecord;
+  thread?: AgentThreadSnapshot;
   tasks: AgentTaskState[];
   activeTaskId?: string;
   pendingMessageCount: number;
@@ -79,11 +79,11 @@ export class ScoutAgent {
   protected readonly assetCommit: AssetCommit;
   protected readonly logger: Logger;
   protected readonly eventBus: EventBus;
-  readonly task: ScoutAgentTaskRuntime;
-  private thread?: AgentThreadRecord;
+  readonly runner: AgentRunner;
+  private thread?: AgentThreadSnapshot;
   private threadPreflightRunner?: (agent: ScoutAgent) => Promise<{
-    thread: AgentThreadRecord;
-    preflight: ScoutAgentThreadPreflightRecord;
+    thread: AgentThreadSnapshot;
+    preflight: ScoutAgentThreadPreflightSnapshot;
   }>;
   private invocationSequence = 0;
 
@@ -101,28 +101,7 @@ export class ScoutAgent {
     this.logger.registerAgentLogRoot(this.agentId, input.agentMount.logsRoot);
 
     const agent = this;
-    this.task = new ScoutAgentTaskRuntime({
-      store: input.taskStore,
-      eventBus: this.eventBus,
-      host: {
-        get agentId() {
-          return agent.agentId;
-        },
-        get role() {
-          return agent.role;
-        },
-        get spec() {
-          return agent.spec;
-        },
-        get threadRecord() {
-          return agent.threadRecord;
-        },
-        logger: this.logger,
-        startWithPreflight: () => agent.startWithPreflight(),
-        runTurn: (turnInput) => agent.runTurn(turnInput),
-        setGoal: (goalInput) => agent.setGoal(goalInput),
-      },
-    });
+    this.runner = this.createRunner(input.taskStore, agent);
   }
 
   get role(): AgentThreadSpec["role"] {
@@ -133,7 +112,7 @@ export class ScoutAgent {
     return this.spec.phases;
   }
 
-  get threadRecord(): AgentThreadRecord | undefined {
+  get threadSnapshot(): AgentThreadSnapshot | undefined {
     return this.thread;
   }
 
@@ -146,13 +125,13 @@ export class ScoutAgent {
   }
 
   setThreadPreflightRunner(runner: (agent: ScoutAgent) => Promise<{
-    thread: AgentThreadRecord;
-    preflight: ScoutAgentThreadPreflightRecord;
+    thread: AgentThreadSnapshot;
+    preflight: ScoutAgentThreadPreflightSnapshot;
   }>): void {
     this.threadPreflightRunner = runner;
   }
 
-  async start(): Promise<AgentThreadRecord> {
+  async start(): Promise<AgentThreadSnapshot> {
     if (this.thread) return this.thread;
     const started = await this.appServer.startThread({
       model: "gpt-5.4-mini",
@@ -179,8 +158,8 @@ export class ScoutAgent {
   }
 
   async startWithPreflight(): Promise<{
-    thread: AgentThreadRecord;
-    preflight: ScoutAgentThreadPreflightRecord;
+    thread: AgentThreadSnapshot;
+    preflight: ScoutAgentThreadPreflightSnapshot;
   }> {
     if (!this.threadPreflightRunner) {
       throw new Error(`Agent ${this.agentId} has no thread preflight runner.`);
@@ -308,12 +287,51 @@ export class ScoutAgent {
   }
 
   snapshot(): ScoutAgentSnapshot {
-    const taskSnapshot = this.task.snapshot();
+    const taskSnapshot = this.runner.snapshot();
     return {
       agentId: this.agentId,
       thread: this.thread,
       ...taskSnapshot,
     };
+  }
+
+  private createRunner(taskStore: AgentTaskStore, agent: ScoutAgent): AgentRunner {
+    if (this.spec.role === ScoutAgentRoles.Coordinator) {
+      return new CoordinatorRunner({
+        host: {
+          get agentId() {
+            return agent.agentId;
+          },
+          runTurn: (turnInput) => agent.runTurn(turnInput),
+          get threadId() {
+            return agent.threadId;
+          },
+        },
+        eventBus: this.eventBus,
+      });
+    }
+    return new WorkerRunner({
+      store: taskStore,
+      eventBus: this.eventBus,
+      host: {
+        get agentId() {
+          return agent.agentId;
+        },
+        get role() {
+          return agent.role;
+        },
+        get spec() {
+          return agent.spec;
+        },
+        get threadSnapshot() {
+          return agent.threadSnapshot;
+        },
+        logger: this.logger,
+        startWithPreflight: () => agent.startWithPreflight(),
+        runTurn: (turnInput) => agent.runTurn(turnInput),
+        setGoal: (goalInput) => agent.setGoal(goalInput),
+      },
+    });
   }
 
   private defaultWritableRoots(): string[] {
@@ -360,7 +378,7 @@ function extractToolCalls(progressItems: NonNullable<Awaited<ReturnType<CodexApp
   });
 }
 
-function readEffectiveThreadConfig(response: unknown): AgentThreadRecord["effective"] {
+function readEffectiveThreadConfig(response: unknown): AgentThreadSnapshot["effective"] {
   const root = readObject(response);
   const sandbox = readObjectOrUndefined(root.sandbox);
   return {

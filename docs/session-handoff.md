@@ -13,8 +13,8 @@
 - `CodexAppServerClient` 已拆成 `startSession()`、`startThread()`、`startTurn()`、`awaitTurnCompletion()`、`runTurn()`，并实时消费 app-server JSONL。
 - `AppServerEventStore` 是 app-server timeline/state 的归并层，维护 thread / turn / item / plan / goal / progress / request 状态。
 - `AgentBackend` 负责 app-server dynamic tool backend、task state、notification、timeline 到 task/progress 的映射。
-- `ScoutAgent` 代表一个 agent/thread 抽象，持有自身 task runtime、mount、thread record 和 turn 调用能力。
-- `ScoutAgentOrchestrator` 是主业务循环，驱动 Coordinator 的 turn，消费全局 message queue，并把 worker notification / user input 投递回 Coordinator。
+- `ScoutAgent` 代表一个 agent/thread 抽象，持有自身 runner、mount、thread snapshot 和 turn 调用能力。
+- `AgentOrchestrator` 是主业务循环，驱动 Coordinator 的 turn，消费 orchestration event inbox，并把 worker notification / human input 投递回 Coordinator。
 - CLI/interaction 现在只是 disclosure、input、notification 的交互端口，不承载业务逻辑。
 
 ## 如何启动当前基础设施
@@ -71,12 +71,12 @@ Coordinator 可用：
 - `SendMessage`：给已有 agent 或 task 追加消息。
 - `TaskStop`：停止已有 task。
 - `SyntheticOutput`：报告 Coordinator 综合状态或最终结论。
-- `RequestUserInput`：Coordinator 和 worker 共用，用于向用户请求补充信息或确认。
+- `RequestHumanInput`：Coordinator 和 worker 共用，用于向用户请求补充信息或确认。
 
 Worker 可用：
 
 - `TaskResult`：提交正式 task 业务结论。
-- `RequestUserInput`：请求人工输入，统一回到 Coordinator 再转发。
+- `RequestHumanInput`：请求人工输入，统一回到 Coordinator 再转发。
 - 其它工具由 agent profile / mount 决定。
 
 约束：
@@ -118,11 +118,11 @@ worker 完成后：
 
 worker 请求人工输入时：
 
-1. worker 调 `RequestUserInput`。
+1. worker 调 `RequestHumanInput`。
 2. task 进入 `waiting_for_input`。
-3. runtime enqueue `<user-input-request-notification>`。
+3. runtime enqueue `<human-input-request-notification>`。
 4. interaction port 向用户提问。
-5. 用户回答被渲染成 `<user-input-response>`，注入 Coordinator 下一轮。
+5. 用户回答被渲染成 `<human-input-response>`，注入 Coordinator 下一轮。
 6. Coordinator 再用 `SendMessage` 把明确选择或补充信息发回 worker。
 
 ## App-server Timeline 与 Progress
@@ -182,9 +182,8 @@ timeline stream 类型：
 - `run/<run-id>/agents/<agent>/artifacts/mount-preflight.json`
 - `run/<run-id>/agents/<agent>/artifacts/asset-commit.json`
 - `run/<run-id>/agents/coordinator/artifacts/run-preparation-artifact.json`
-- `run/<run-id>/agents/coordinator/artifacts/agent-ledger.json`
 
-当前没有恢复/回滚系统，task state 主要在内存中，ledger 是调试和审计辅助。
+当前没有恢复/回滚系统，task state 由运行时 state store 维护；审计文件后续由独立模块负责。
 
 ## Asset / Mount 使用方式
 

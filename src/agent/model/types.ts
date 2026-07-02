@@ -45,7 +45,7 @@ export interface AgentThreadSpec {
   dynamicTools?: AgentDynamicToolSpec[];
 }
 
-export interface AgentThreadRecord {
+export interface AgentThreadSnapshot {
   role: ScoutAgentRole;
   phases: ScoutAgentPhase[];
   threadId: string;

@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  SystemEvents,
   InMemoryEventBus,
+  EventMailbox,
   createEventKeyFactory,
   defineEventCatalog,
   event,
 } from "../../src/core/events/index.js";
+import { SystemEvents } from "../../src/system/events/index.js";
 
 test("event key factory builds scope/group/name route keys and rejects duplicates", () => {
   const factory = createEventKeyFactory();
@@ -14,21 +15,21 @@ test("event key factory builds scope/group/name route keys and rejects duplicate
     scope: "domain.validation",
     group: "task",
     name: "state_changed",
-    tag: "audit",
+    tag: "snapshot",
   });
 
-  assert.equal(key.routeKey, "domain.validation.task.state_changed.audit");
+  assert.equal(key.routeKey, "domain.validation.task.state_changed.snapshot");
   assert.equal(factory.build({
     scope: "domain.validation",
     group: "task",
     name: "state_changed",
-    tag: "audit",
+    tag: "snapshot",
   }), key.routeKey);
   assert.throws(() => factory.define({
     scope: "domain.validation",
     group: "task",
     name: "state_changed",
-    tag: "audit",
+    tag: "snapshot",
   }), /Duplicate event key/);
 });
 
@@ -163,4 +164,39 @@ test("event bus publishAndWait awaits async handlers", async () => {
   await bus.publishAndWait(SystemEvents.task.assigned, { taskId: "task-1" });
 
   assert.equal(completed, true);
+});
+
+test("event mailbox filters subscribed events before enqueueing", () => {
+  const bus = new InMemoryEventBus();
+  const mailbox = new EventMailbox({ eventBus: bus });
+
+  mailbox.subscribe<{ taskId: string }>(SystemEvents.task, {
+    filter: (event) => event.payload.taskId === "task-2",
+  });
+
+  bus.publish(SystemEvents.task.assigned, { taskId: "task-1" });
+  bus.publish(SystemEvents.task.messageQueued, { taskId: "task-2" });
+
+  const events = mailbox.drain();
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.key.routeKey, SystemEvents.task.messageQueued.routeKey);
+  assert.deepEqual(events[0]?.payload, { taskId: "task-2" });
+});
+
+test("event mailbox keeps concurrent published events without dropping them", async () => {
+  const bus = new InMemoryEventBus();
+  const mailbox = new EventMailbox({ eventBus: bus });
+
+  mailbox.subscribe<{ taskId: string }>(SystemEvents.task);
+
+  await Promise.all(Array.from({ length: 20 }, async (_, index) => {
+    await new Promise((resolve) => setTimeout(resolve, index % 3));
+    bus.publish(SystemEvents.task.messageQueued, { taskId: `task-${index}` });
+  }));
+
+  const taskIds = mailbox.drain()
+    .map((event) => (event.payload as { taskId: string }).taskId)
+    .sort();
+  assert.deepEqual(taskIds, Array.from({ length: 20 }, (_, index) => `task-${index}`).sort());
+  assert.equal(mailbox.hasEvents(), false);
 });

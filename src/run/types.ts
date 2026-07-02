@@ -1,5 +1,5 @@
 import type { AssetCommit } from "../asset-store/types.js";
-import type { AgentThreadRecord } from "../agent/model/types.js";
+import type { AgentThreadSnapshot } from "../agent/model/types.js";
 
 export interface RunContextBundle {
   contextBundleId: string;
@@ -35,7 +35,7 @@ export interface RunOrchestrationArtifact {
   runId: string;
   status: "passed" | "failed";
   contextBundle: RunContextBundle;
-  agentThreads: AgentThreadRecord[];
+  agentThreads: AgentThreadSnapshot[];
   gates: {
     isolatedThreads: boolean;
     sharedContextBundle: boolean;

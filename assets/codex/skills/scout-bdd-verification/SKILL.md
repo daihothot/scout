@@ -29,7 +29,7 @@ summary: 以 BDD 为输入，按角色产出可追溯 ResearchArtifact、BDD Ver
 
 1. 用 `scout-assets list` 和 `scout-assets skills/tools/mcp/plugins` 确认可用能力。
 2. 确认 Coordinator task 中的目标状态、输入 refs、角色职责和完成门槛。
-3. 缺少当前角色必要输入时，调用 `RequestUserInput` 或用 `TaskResult` 报告需要 Coordinator 补充。
+3. 缺少当前角色必要输入时，调用 `RequestHumanInput` 或用 `TaskResult` 报告需要 Coordinator 补充。
 4. 收集证据候选，并记录收集方法、命令、路径、版本和不确定性。
 5. 写入当前角色 artifact。
 6. 用 `TaskResult` 提交状态、artifact refs、evidence refs、缺口和下一步建议。

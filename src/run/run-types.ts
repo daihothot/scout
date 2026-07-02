@@ -28,8 +28,6 @@ export interface ScoutRunResult {
     preflightStatus: "passed" | "failed";
     preflightPath: string;
   }>;
-  orchestrationStatus?: "completed" | "blocked" | "failed" | "idle" | "max_steps";
-  agentLedgerPath?: string;
 }
 
 export type ScoutRunPreparedAgents = Record<ScoutAgentRole, PreparedRunAgent>;

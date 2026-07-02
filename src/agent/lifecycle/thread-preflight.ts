@@ -1,11 +1,11 @@
 import type { ThreadPreflightResult } from "../../agent-server/types.js";
 import type { CodexAppServerClient } from "../../agent-server/codex/app-server-client.js";
 import type { CodexMount } from "../../asset-store/types.js";
-import type { AgentThreadRecord } from "../model/types.js";
+import type { AgentThreadSnapshot } from "../model/types.js";
 
-export interface ScoutAgentThreadPreflightRecord {
+export interface ScoutAgentThreadPreflightSnapshot {
   agentId: string;
-  role: AgentThreadRecord["role"];
+  role: AgentThreadSnapshot["role"];
   threadId: string;
   checkedAt: string;
   result: ThreadPreflightResult;
@@ -13,10 +13,10 @@ export interface ScoutAgentThreadPreflightRecord {
 
 export async function runThreadPreflight(input: {
   agentId: string;
-  thread: AgentThreadRecord;
+  thread: AgentThreadSnapshot;
   mount: CodexMount;
   appServer: CodexAppServerClient;
-}): Promise<ScoutAgentThreadPreflightRecord> {
+}): Promise<ScoutAgentThreadPreflightSnapshot> {
   return {
     agentId: input.agentId,
     role: input.thread.role,
@@ -27,7 +27,7 @@ export async function runThreadPreflight(input: {
 }
 
 async function checkThread(input: {
-  thread: AgentThreadRecord;
+  thread: AgentThreadSnapshot;
   mount: CodexMount;
   appServer: CodexAppServerClient;
 }): Promise<ThreadPreflightResult> {

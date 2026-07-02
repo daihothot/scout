@@ -41,6 +41,7 @@ export interface RuntimeInteractionPort {
   disclose(event: RuntimeDisclosureEvent): Promise<void>;
   publishProgress(event: RuntimeProgressEvent): Promise<void>;
   notify(event: AgentTaskSystemEvent): Promise<void>;
+  publishAgentMessage(message: string, data?: unknown): Promise<void>;
   requestInput(request: HumanInputRequest): Promise<HumanInputResponse>;
 }
 
@@ -54,6 +55,10 @@ export class NoopRuntimeInteractionPort implements RuntimeInteractionPort {
   }
 
   async notify(): Promise<void> {
+    // no-op
+  }
+
+  async publishAgentMessage(): Promise<void> {
     // no-op
   }
 

@@ -37,6 +37,11 @@ export type DefinedEventCatalog<TCatalog extends EventCatalogShape> = {
       : never;
 };
 
+export interface EventCatalogRegistry<TScope extends EventKeyScope> {
+  readonly scope: TScope;
+  add<TCatalog extends EventCatalogShape>(catalog: TCatalog): DefinedEventCatalog<TCatalog>;
+}
+
 const globalEventKeyFactory = createEventKeyFactory();
 
 export function event<TPayload = unknown>(input: {
@@ -62,6 +67,51 @@ export function defineEventCatalog<TCatalog extends EventCatalogShape>(
     path: [],
     factory,
   }) as DefinedEventCatalog<TCatalog>;
+}
+
+export function createEventCatalog<TScope extends EventKeyScope>(
+  scope: TScope,
+  input: {
+    factory?: EventKeyFactory;
+  } = {},
+): EventCatalogRegistry<TScope> {
+  const factory = input.factory ?? globalEventKeyFactory;
+  const root: Record<string, unknown> = {};
+  return new Proxy(root, {
+    get(target, property, receiver) {
+      if (property === "scope") return scope;
+      if (property === "add") {
+        return <TCatalog extends EventCatalogShape>(catalog: TCatalog): DefinedEventCatalog<TCatalog> => {
+          const defined = defineEventCatalog(scope, catalog, { factory });
+          mergeCatalog(target, defined as Record<string, unknown>);
+          return defined;
+        };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  }) as unknown as EventCatalogRegistry<TScope>;
+}
+
+function mergeCatalog(target: Record<string, unknown>, source: Record<string, unknown>): void {
+  for (const [key, value] of Object.entries(source)) {
+    if (!(key in target)) {
+      target[key] = value;
+      continue;
+    }
+    const targetValue = target[key];
+    if (isMergeableCatalogNode(targetValue) && isMergeableCatalogNode(value)) {
+      mergeCatalog(targetValue, value);
+      continue;
+    }
+    throw new Error(`Duplicate event catalog property: ${key}`);
+  }
+}
+
+function isMergeableCatalogNode(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object"
+    && value !== null
+    && !Array.isArray(value)
+    && !("kind" in value && value.kind === "event");
 }
 
 function defineCatalogNode(input: {
