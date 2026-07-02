@@ -7,7 +7,7 @@ import { AssetStore, type AgentProfilesFile, type MountManifest, type ShellTools
 
 const repoRoot = process.cwd();
 
-test("AssetStore records unresolved shell tools as issues and excludes them from mount outputs", () => {
+test("AssetStore reports unresolved shell tools as issues and excludes them from mount outputs", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-shell-tools-");
   const assetsRoot = join(fixtureRoot, "assets", "codex");
   writeShellTools(assetsRoot, {

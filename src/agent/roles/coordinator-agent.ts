@@ -3,9 +3,12 @@ import {
   ScoutAgent,
   type ScoutAgentOptions,
 } from "../core/scout-agent.js";
+import type { CoordinatorRunner } from "../runner/coordinator-runner.js";
 import { readRoleAgentInstructions } from "./instructions.js";
 
 export class CoordinatorAgent extends ScoutAgent {
+  declare readonly runner: CoordinatorRunner;
+
   constructor(options: ScoutAgentOptions) {
     super({
       ...options,

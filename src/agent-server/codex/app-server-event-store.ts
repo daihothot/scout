@@ -999,22 +999,22 @@ function isProgressSourceItem(item: AppServerItem): item is AppServerProgressSou
 }
 
 function isResponse(value: unknown): value is JsonRpcResponse {
-  return isRecord(value)
+  return isPlainObject(value)
     && typeof value.id === "number"
     && !("method" in value);
 }
 
 function isServerRequest(value: unknown): value is JsonRpcServerRequest {
-  return isRecord(value)
+  return isPlainObject(value)
     && (typeof value.id === "number" || typeof value.id === "string")
     && typeof value.method === "string";
 }
 
 function readObjectOrUndefined(value: unknown): Record<string, unknown> | undefined {
-  return isRecord(value) ? value : undefined;
+  return isPlainObject(value) ? value : undefined;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

@@ -152,7 +152,7 @@ export class AgentToolBackend {
         ? undefined
         : this.taskBackend.resolveAgentTask(caller, call.task_id, "human input request");
       if (task) {
-        const updated = caller.task.requestUserInput({
+        const updated = caller.runner.requestHumanInput({
           taskId: task.taskId,
           request: {
             ...request,
@@ -163,13 +163,12 @@ export class AgentToolBackend {
             status: "pending",
           },
         });
-        this.taskBackend.syncTaskSnapshot(updated);
         return {
-          status: "recorded",
+          status: "accepted",
           requestId: request.requestId,
           routedTo: "coordinator",
           taskId: updated.taskId,
-          instruction: "Human input request recorded. Stop this turn now. Do not continue work until Coordinator resumes the task.",
+          instruction: "Human input request accepted. Stop this turn now. Do not continue work until Coordinator resumes the task.",
         };
       }
       throw new Error("RequestHumanInput requires an active non-coordinator task.");

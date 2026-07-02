@@ -1,7 +1,5 @@
 export * from "./model/types.js";
-export * from "./task/attachments.js";
 export * from "./core/scout-agent.js";
-export * from "./task/agent-task-runtime.js";
 export * from "./backend/agent-backend.js";
 export * from "./lifecycle/agent-registry.js";
 export * from "./lifecycle/agent-thread-lifecycle.js";
@@ -9,6 +7,7 @@ export * from "./backend/agent-task-backend.js";
 export * from "./backend/agent-tool-backend.js";
 export * from "./backend/types.js";
 export * from "./core/agentic-loop.js";
+export * from "./runner/index.js";
 export * from "./orchestration/agent-orchestrator.js";
 export * from "./roles/coordinator-agent.js";
 export * from "./roles/researcher-agent.js";

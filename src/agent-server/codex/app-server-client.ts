@@ -191,12 +191,12 @@ export class CodexAppServerClient {
     });
     this.child.once("exit", (code, signal) => {
       const message = `Codex app-server exited with ${signal ? `signal ${signal}` : `code ${code ?? 1}`}.`;
-      this.recordDisconnect(message);
+      this.handleDisconnect(message);
       this.rejectAll(new Error(message));
     });
     this.child.once("error", (error) => {
       const normalized = error instanceof Error ? error : new Error(String(error));
-      this.recordDisconnect(normalized.message);
+      this.handleDisconnect(normalized.message);
       this.rejectAll(normalized);
     });
 
@@ -673,7 +673,7 @@ export class CodexAppServerClient {
     this.turnWaiters.clear();
   }
 
-  private recordDisconnect(message: string): void {
+  private handleDisconnect(message: string): void {
     const beforeSeq = this.eventStore.currentSeq();
     this.eventStore.markDisconnected(message);
     this.publishTimelineSince(beforeSeq);

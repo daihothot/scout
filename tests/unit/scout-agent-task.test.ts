@@ -1,24 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ScoutAgentTaskRuntime } from "../../src/agent/task/agent-task-runtime.js";
+import { WorkerRunner } from "../../src/agent/runner/worker-runner.js";
 import { AgentTaskStore } from "../../src/agent/task/agent-task-store.js";
 import { ScoutAgentRoles, ScoutAgentPhases } from "../../src/agent/model/types.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import type {
   AgentTaskState,
 } from "../../src/agent/task/types.js";
-import type { AgentTaskSystemEvent } from "../../src/agent/task/task-events.js";
-import {
-  InMemoryEventBus,
-  SystemEvents,
-} from "../../src/core/events/index.js";
+import type {
+  AgentTaskEventPayload,
+  AgentTaskSystemEvent,
+} from "../../src/agent/task/task-events.js";
+import { InMemoryEventBus } from "../../src/core/events/index.js";
+import { SystemEvents } from "../../src/system/events/index.js";
 import type {
   ScoutAgentTurnInput,
   ScoutAgentTurnOutcome,
 } from "../../src/agent/core/scout-agent.js";
-import type { AgentThreadRecord } from "../../src/agent/model/types.js";
+import type { AgentThreadSnapshot } from "../../src/agent/model/types.js";
 
-test("ScoutAgentTaskRuntime waits for coordinator when a turn completes without terminal domain state", async () => {
+test("WorkerRunner waits for coordinator when a turn completes without terminal domain state", async () => {
   const harness = createHarness({
     runTurn: async () => completedTurn("worker response without task result"),
   });
@@ -44,7 +45,7 @@ test("ScoutAgentTaskRuntime waits for coordinator when a turn completes without 
   ));
 });
 
-test("ScoutAgentTaskRuntime accepts explicit outcome as terminal state", () => {
+test("WorkerRunner accepts explicit outcome as terminal state", () => {
   const harness = createHarness();
   harness.runtime.assignTask({
     taskId: "task-1",
@@ -69,15 +70,15 @@ test("ScoutAgentTaskRuntime accepts explicit outcome as terminal state", () => {
   assert.equal(harness.terminalTasks.length, 1);
 });
 
-test("ScoutAgentTaskRuntime queues user input response back into waiting task", () => {
+test("WorkerRunner queues human input response back into waiting task", () => {
   const harness = createHarness();
   harness.runtime.assignTask({
     taskId: "task-1",
     description: "Choose option",
     subagentType: ScoutAgentRoles.Verifier,
-    prompt: "Need user input",
+    prompt: "Need human input",
   });
-  harness.runtime.requestUserInput({
+  harness.runtime.requestHumanInput({
     taskId: "task-1",
     request: {
       requestId: "input-1",
@@ -96,17 +97,17 @@ test("ScoutAgentTaskRuntime queues user input response back into waiting task", 
   });
 
   assert.equal(updated.status, "running");
-  assert.equal(updated.userInputRequest, undefined);
+  assert.equal(updated.humanInputRequest, undefined);
   assert.equal(updated.outcome, undefined);
   assert.equal(updated.humanInputRequests?.[0]?.status, "pending");
   assert.equal(harness.runtime.snapshot().pendingMessageCount, 1);
 });
 
-test("ScoutAgentTaskRuntime records RequestHumanInput turn as a waiting task step", async () => {
-  let runtime: ScoutAgentTaskRuntime | undefined;
+test("WorkerRunner appends RequestHumanInput turn as a waiting task step", async () => {
+  let runtime: WorkerRunner | undefined;
   const harness = createHarness({
     runTurn: async () => {
-      runtime?.requestUserInput({
+      runtime?.requestHumanInput({
         taskId: "task-1",
         request: {
           requestId: "input-1",
@@ -128,14 +129,14 @@ test("ScoutAgentTaskRuntime records RequestHumanInput turn as a waiting task ste
     taskId: "task-1",
     description: "Choose option",
     subagentType: ScoutAgentRoles.Verifier,
-    prompt: "Need user input",
+    prompt: "Need human input",
   });
   await harness.runtime.runTasksToIdle();
 
   const task = harness.runtime.getTaskSnapshot("task-1");
   assert.equal(task?.status, "waiting_for_human_input");
   assert.equal(task?.outcome, undefined);
-  assert.equal(task?.userInputRequest?.requestId, "input-1");
+  assert.equal(task?.humanInputRequest?.requestId, "input-1");
   assert.equal(task?.humanInputRequests?.[0]?.status, "pending");
   assert.equal(task?.steps?.length, 1);
   assert.equal(task?.steps?.[0]?.status, "waiting_for_human_input");
@@ -145,7 +146,7 @@ test("ScoutAgentTaskRuntime records RequestHumanInput turn as a waiting task ste
 function createHarness(input: {
   runTurn?: (turn: ScoutAgentTurnInput) => Promise<ScoutAgentTurnOutcome>;
 } = {}): {
-  runtime: ScoutAgentTaskRuntime;
+  runtime: WorkerRunner;
   events: AgentTaskSystemEvent[];
   terminalTasks: AgentTaskState[];
 } {
@@ -169,12 +170,12 @@ function createHarness(input: {
     eventBus.subscribe(key, (event) => {
       events.push(event as AgentTaskSystemEvent);
       if (SystemEvents.task.terminal.is(event)) {
-        const task = (event as AgentTaskSystemEvent).payload.task;
+        const task = (event.payload as AgentTaskEventPayload).task;
         if (task) terminalTasks.push(task);
       }
     });
   }
-  const thread: AgentThreadRecord = {
+  const thread: AgentThreadSnapshot = {
     role: ScoutAgentRoles.Verifier,
     phases: [ScoutAgentPhases.Verify],
     threadId: "thread-1",
@@ -190,7 +191,7 @@ function createHarness(input: {
     response: {},
   };
   return {
-    runtime: new ScoutAgentTaskRuntime({
+    runtime: new WorkerRunner({
       store: new AgentTaskStore(),
       eventBus,
       host: {
@@ -198,7 +199,7 @@ function createHarness(input: {
         role: ScoutAgentRoles.Verifier,
         spec: thread.request,
         logger: createNoopLogger(),
-        get threadRecord() {
+        get threadSnapshot() {
           return thread;
         },
         startWithPreflight: async () => ({

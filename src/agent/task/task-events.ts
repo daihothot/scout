@@ -1,17 +1,36 @@
 import type { ScoutEvent } from "../../core/events/index.js";
+import { event } from "../../core/events/index.js";
+import { SystemEvents } from "../../system/events/catalog.js";
 import type {
   AgentTaskState,
-  AgentTaskStepRecord,
-  AgentUserInputRequest,
-  AgentUserInputResponse,
+  AgentTaskStep,
+  AgentHumanInputRequest,
+  AgentHumanInputResponse,
 } from "./types.js";
 
-export type SystemInterruptKind =
-  | "human_input"
-  | "tool_call"
-  | "approval"
-  | "exception"
-  | "policy_block";
+const taskEventCatalog = {
+  task: {
+    assigned: event(),
+    messageQueued: event(),
+    stopped: event(),
+    outcomeAccepted: event(),
+    humanInputRequested: event(),
+    humanInputResponded: event(),
+    threadAttached: event(),
+    pendingMessagesDrained: event(),
+    stepStarted: event(),
+    stepCompleted: event(),
+    stepOutput: event(),
+    failed: event(),
+    goalUpdated: event(),
+    planUpdated: event(),
+    terminal: event(),
+  },
+} as const;
+
+SystemEvents.add(taskEventCatalog);
+
+export type AgentTaskEventCatalog = typeof taskEventCatalog;
 
 export interface AgentTaskEventPayload {
   runId?: string;
@@ -21,7 +40,7 @@ export interface AgentTaskEventPayload {
 
 export interface AgentTaskStepEventPayload extends AgentTaskEventPayload {
   prompt?: string;
-  step?: AgentTaskStepRecord;
+  step?: AgentTaskStep;
   output?: string;
 }
 
@@ -30,23 +49,19 @@ export interface AgentTaskTerminalEventPayload extends AgentTaskEventPayload {
   error?: string;
 }
 
-export interface SystemInterruptEventPayload {
-  runId?: string;
-  interruptKind: SystemInterruptKind;
-  taskId?: string;
-  agentId?: string;
-  turnId?: string;
-  requestId?: string;
-  status?: string;
-  request?: AgentUserInputRequest;
-  response?: AgentUserInputResponse;
-  task?: AgentTaskState;
+export interface AgentHumanInputRequestedEventPayload extends AgentTaskEventPayload {
+  request: AgentHumanInputRequest;
+}
+
+export interface AgentHumanInputRespondedEventPayload extends AgentTaskEventPayload {
+  response: AgentHumanInputResponse;
 }
 
 export type AgentTaskSystemEventPayload =
   | AgentTaskEventPayload
+  | AgentHumanInputRequestedEventPayload
+  | AgentHumanInputRespondedEventPayload
   | AgentTaskStepEventPayload
-  | AgentTaskTerminalEventPayload
-  | SystemInterruptEventPayload;
+  | AgentTaskTerminalEventPayload;
 
 export type AgentTaskSystemEvent = ScoutEvent<AgentTaskSystemEventPayload>;

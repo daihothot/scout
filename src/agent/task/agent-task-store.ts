@@ -76,6 +76,14 @@ export class AgentTaskStore {
   hasRunningTasks(): boolean {
     return [...this.tasks.values()].some((task) => task.status === "queued" || task.status === "running");
   }
+
+  hasOpenTasks(): boolean {
+    return [...this.tasks.values()].some((task) => isActiveAgentTaskStatus(task.status));
+  }
+
+  hasWaitingHumanInputTasks(): boolean {
+    return [...this.tasks.values()].some((task) => task.status === "waiting_for_human_input");
+  }
 }
 
 export function isActiveAgentTaskStatus(status: AgentTaskStatus): boolean {
@@ -87,9 +95,9 @@ export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
     ...task,
     usage: task.usage ? { ...task.usage } : undefined,
     thread: task.thread ? { ...task.thread } : undefined,
-    userInputRequest: task.userInputRequest ? {
-      ...task.userInputRequest,
-      options: task.userInputRequest.options ? [...task.userInputRequest.options] : undefined,
+    humanInputRequest: task.humanInputRequest ? {
+      ...task.humanInputRequest,
+      options: task.humanInputRequest.options ? [...task.humanInputRequest.options] : undefined,
     } : undefined,
     humanInputRequests: task.humanInputRequests?.map((request) => ({
       ...request,

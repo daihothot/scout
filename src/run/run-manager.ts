@@ -13,9 +13,14 @@ import { AgentOrchestrator } from "../agent/orchestration/agent-orchestrator.js"
 import type { ScoutAgent } from "../agent/core/scout-agent.js";
 import { AgentTaskStore } from "../agent/task/agent-task-store.js";
 import { InMemoryEventBus } from "../core/events/index.js";
+import { SystemEvents } from "../system/events/index.js";
 import { Logger } from "../core/logging/index.js";
 import { ValidationDomain } from "../domain/index.js";
-import { NoopRuntimeInteractionPort } from "../interaction/index.js";
+import {
+  InteractionGateway,
+  NoopRuntimeInteractionPort,
+  type InteractionDisclosureRequestedPayload,
+} from "../interaction/index.js";
 import { prepareRunEnvironment, type PreparedRun } from "./run-preparation.js";
 import type { CreateCodexAppServerClientOptions } from "../agent-server/codex/app-server-factory.js";
 import { buildRunContextBundle } from "./types.js";
@@ -34,11 +39,17 @@ export class RunManager {
 
   async startRun(options: ScoutRunOptions): Promise<ScoutRunResult> {
     const interactionPort = options.interactionPort ?? new NoopRuntimeInteractionPort();
-    await interactionPort.disclose({
+    const eventBus = new InMemoryEventBus();
+    const interactionGateway = new InteractionGateway({
+      eventBus,
+      interactionPort,
+    });
+    interactionGateway.start();
+    eventBus.publish(SystemEvents.interaction.disclosureRequested, {
       level: "info",
       source: "run.manager",
       message: "Preparing Scout run.",
-    });
+    } satisfies InteractionDisclosureRequestedPayload);
 
     const preparedRun = await prepareRunEnvironment({
       repoRoot: options.cwd,
@@ -47,7 +58,7 @@ export class RunManager {
     });
     const preparationStatus = runPreparationStatus(preparedRun);
     if (preparationStatus !== "passed") {
-      await interactionPort.disclose({
+      eventBus.publish(SystemEvents.interaction.disclosureRequested, {
         level: "error",
         source: "run.manager",
         message: "Scout run preparation failed.",
@@ -55,7 +66,8 @@ export class RunManager {
           runId: preparedRun.runId,
           agents: summarizeAgents(preparedRun),
         },
-      });
+      } satisfies InteractionDisclosureRequestedPayload);
+      interactionGateway.stop();
       preparedRun.appServerClient.client.close();
       return this.toRunResult(preparedRun, "failed");
     }
@@ -86,14 +98,11 @@ export class RunManager {
       logger: runtimeLogger,
     });
     const taskStore = new AgentTaskStore();
-    const eventBus = new InMemoryEventBus();
     let agentBuilder: AgentBuilder | undefined;
     const agentBackend = new AgentBackend({
       runId: preparedRun.runId,
-      ledgerRoot: preparedCoordinator.mount.artifactRoot,
       appServer,
       registry,
-      lifecycle,
       taskStore,
       eventBus,
       agentProvider: {
@@ -103,7 +112,6 @@ export class RunManager {
         },
       },
       logger: runtimeLogger,
-      interactionPort,
       domain,
     });
     agentBuilder = new AgentBuilder({
@@ -122,29 +130,30 @@ export class RunManager {
     });
     const coordinatorAgent = agentBuilder.buildCoordinator();
 
-    let orchestrationStatus: ScoutRunResult["orchestrationStatus"] = "failed";
     try {
       await agentBackend.domain.start?.();
       await appServer.startSession();
       await coordinatorAgent.startWithPreflight();
       const orchestrator = new AgentOrchestrator({
-        coordinator: coordinatorAgent,
-        agentBackend,
         eventBus,
-        interactionPort,
       });
-      const loopResult = await orchestrator.run();
-      orchestrationStatus = loopResult.status;
-    } finally {
+      orchestrator.start();
+    } catch (error) {
       await agentBackend.domain.stop?.();
+      eventBus.publish(SystemEvents.interaction.disclosureRequested, {
+        level: "error",
+        source: "run.manager",
+        message: "Scout run failed to start.",
+        data: {
+          error: error instanceof Error ? error.stack ?? error.message : String(error),
+        },
+      } satisfies InteractionDisclosureRequestedPayload);
+      interactionGateway.stop();
       appServer.close();
+      return this.toRunResult(preparedRun, "failed");
     }
 
-    return {
-      ...this.toRunResult(preparedRun, "passed"),
-      orchestrationStatus,
-      agentLedgerPath: join(preparedCoordinator.mount.artifactRoot, "agent-ledger.json"),
-    };
+    return this.toRunResult(preparedRun, "passed");
   }
 
   private toRunResult(

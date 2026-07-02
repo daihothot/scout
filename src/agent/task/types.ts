@@ -2,7 +2,7 @@ import type {
   AppServerPlanState,
   AppServerThreadGoalState,
 } from "../../agent-server/codex/app-server-event-store.js";
-import type { AgentThreadRecord, ScoutAgentRole } from "../model/types.js";
+import type { AgentThreadSnapshot, ScoutAgentRole } from "../model/types.js";
 
 export type AgentTaskStatus =
   | "queued"
@@ -23,7 +23,7 @@ export interface AgentTaskUsage {
   durationMs?: number;
 }
 
-export interface AgentUserInputRequest {
+export interface AgentHumanInputRequest {
   requestId: string;
   agentId: string;
   taskId: string;
@@ -36,7 +36,7 @@ export interface AgentUserInputRequest {
   status: "pending" | "answered" | "cancelled";
 }
 
-export interface AgentUserInputResponse {
+export interface AgentHumanInputResponse {
   requestId: string;
   agentId: string;
   taskId: string;
@@ -54,7 +54,7 @@ export interface AgentTaskOutcome {
   emittedAt: string;
 }
 
-export interface AgentTaskStepRecord {
+export interface AgentTaskStep {
   stepId: string;
   taskId: string;
   turnId?: string;
@@ -92,16 +92,16 @@ export interface AgentTaskState {
   startedAt?: string;
   finishedAt?: string;
   parentTaskId?: string;
-  thread?: AgentThreadRecord;
+  thread?: AgentThreadSnapshot;
   result?: string;
   error?: string;
   usage?: AgentTaskUsage;
   goal?: AppServerThreadGoalState;
   plan?: AppServerPlanState;
-  userInputRequest?: AgentUserInputRequest;
-  humanInputRequests?: AgentUserInputRequest[];
-  humanInputResponses?: AgentUserInputResponse[];
-  steps?: AgentTaskStepRecord[];
+  humanInputRequest?: AgentHumanInputRequest;
+  humanInputRequests?: AgentHumanInputRequest[];
+  humanInputResponses?: AgentHumanInputResponse[];
+  steps?: AgentTaskStep[];
   outcome?: AgentTaskOutcome;
 }
 

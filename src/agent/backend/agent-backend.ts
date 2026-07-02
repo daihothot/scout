@@ -1,23 +1,22 @@
-import { join } from "node:path";
 import type {
   AppServerProgressItem,
   AppServerResolvedTimelineEntry,
   AppServerTimelineEntry,
 } from "../../agent-server/codex/app-server-event-store.js";
-import { writeJsonFile } from "../../core/fs.js";
 import { AgentTaskBackend, type AgentTaskTimelineProjection } from "./agent-task-backend.js";
 import { AgentToolBackend } from "./agent-tool-backend.js";
-import type {
-  AgentBackendOptions,
-  ScoutAgentLedger,
-} from "./types.js";
+import type { AgentBackendOptions } from "./types.js";
 import type { AgentTaskState } from "../task/types.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
+import { SystemEvents } from "../../system/events/index.js";
+import type {
+  InteractionDisclosureRequestedPayload,
+  InteractionProgressRequestedPayload,
+} from "../../interaction/index.js";
 
 export type {
   AgentBackendOptions,
   AssignBackendAgentTaskInput,
-  ScoutAgentLedger,
 } from "./types.js";
 
 export class AgentBackend {
@@ -26,12 +25,10 @@ export class AgentBackend {
   readonly tool: AgentToolBackend;
   readonly domain: AgentBackendOptions["domain"];
   private readonly runId: string;
-  private readonly ledgerRoot: string;
   private readonly options: AgentBackendOptions;
 
   constructor(options: AgentBackendOptions) {
     this.runId = options.runId;
-    this.ledgerRoot = options.ledgerRoot;
     this.options = options;
     this.domain = options.domain;
     this.registry = options.registry;
@@ -41,9 +38,7 @@ export class AgentBackend {
       eventBus: options.eventBus,
       agentProvider: options.agentProvider,
       logger: options.logger,
-      onTaskChanged: () => this.flushLedger(),
     });
-    options.lifecycle.setAgentStartedHandler(() => this.flushLedger());
     this.tool = new AgentToolBackend({
       registry: this.registry,
       taskBackend: this.task,
@@ -52,20 +47,6 @@ export class AgentBackend {
     });
     options.appServer.setDynamicToolCallHandler((input) => this.tool.handleDynamicToolCall(input));
     options.appServer.onTimeline((entry, resolved) => this.handleAppServerTimelineEntry(entry, resolved));
-  }
-
-  getLedger(): ScoutAgentLedger {
-    return {
-      ledgerVersion: 1,
-      runId: this.runId,
-      agents: this.options.lifecycle.listStartedAgents(),
-      threadPreflights: this.options.lifecycle.listThreadPreflights(),
-      tasks: this.options.taskStore.listTasks(),
-    };
-  }
-
-  flushLedger(): void {
-    writeJsonFile(join(this.ledgerRoot, "agent-ledger.json"), this.getLedger());
   }
 
   private handleAppServerTimelineEntry(
@@ -130,7 +111,7 @@ export class AgentBackend {
         this.publishAppServerProgress(projection.agent, projection.entry, projection.progressItem);
         return;
       case "goal_updated":
-        void this.options.interactionPort?.disclose({
+        this.options.eventBus.publish(SystemEvents.interaction.disclosureRequested, {
           level: "info",
           source: `agent.goal.${projection.agent.agentId}`,
           message: "Agent goal updated.",
@@ -141,10 +122,10 @@ export class AgentBackend {
             taskId: projection.task.taskId,
             goal: projection.goal,
           },
-        });
+        } satisfies InteractionDisclosureRequestedPayload);
         return;
       case "plan_updated":
-        void this.options.interactionPort?.disclose({
+        this.options.eventBus.publish(SystemEvents.interaction.disclosureRequested, {
           level: "info",
           source: `agent.plan.${projection.agent.agentId}`,
           message: "Agent plan updated.",
@@ -155,7 +136,7 @@ export class AgentBackend {
             taskId: projection.task.taskId,
             plan: projection.plan,
           },
-        });
+        } satisfies InteractionDisclosureRequestedPayload);
         return;
       case "token_usage_updated":
         this.options.logger.info({
@@ -206,17 +187,9 @@ export class AgentBackend {
       taskId: activeTask?.taskId,
       data: progressEvent,
     });
-    void this.options.interactionPort?.publishProgress(progressEvent).catch((error) => {
-      this.options.logger.warn({
-        module: "interaction",
-        event: "progress_publish_failed",
-        agentId: agent.agentId,
-        taskId: activeTask?.taskId,
-        data: {
-          progressItemId: progressItem.itemId,
-          error: error instanceof Error ? error.stack ?? error.message : String(error),
-        },
-      });
-    });
+    this.options.eventBus.publish(
+      SystemEvents.interaction.progressRequested,
+      progressEvent satisfies InteractionProgressRequestedPayload,
+    );
   }
 }

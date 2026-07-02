@@ -4,18 +4,19 @@ import { renderEventNotification, renderGoal, renderPlan, renderPlanStatus } fro
 import { renderTaskNotificationXml } from "../../src/interaction/protocol/task-notification.js";
 import {
   renderHumanInputPrompt,
-  renderUserInputRequestNotification,
-  renderUserInputResponse,
-} from "../../src/interaction/protocol/user-input.js";
+  renderHumanInputRequestNotification,
+  renderHumanInputResponse,
+} from "../../src/interaction/protocol/human-input.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import type {
+  AgentHumanInputRequestedEventPayload,
   AgentTaskEventPayload,
   AgentTaskSystemEvent,
-  SystemInterruptEventPayload,
 } from "../../src/agent/task/task-events.js";
 import type { ScoutEvent } from "../../src/core/events/index.js";
 import { ScoutAgentRoles } from "../../src/agent/model/types.js";
-import { InMemoryEventBus, SystemEvents } from "../../src/core/events/index.js";
+import { InMemoryEventBus } from "../../src/core/events/index.js";
+import { SystemEvents } from "../../src/system/events/index.js";
 
 test("task notification XML escapes task content and renders outcome refs", () => {
   const xml = renderTaskNotificationXml(task({
@@ -38,7 +39,7 @@ test("task notification XML escapes task content and renders outcome refs", () =
   assert.match(xml, /raw &lt;result&gt;/);
 });
 
-test("user input protocol renders request, human prompt and escaped response", () => {
+test("human input protocol renders request, human prompt and escaped response", () => {
   const request = {
     requestId: "request-1",
     agentId: "verifier",
@@ -55,24 +56,36 @@ test("user input protocol renders request, human prompt and escaped response", (
     request,
   });
 
-  const payload = renderUserInputRequestNotification({
+  const payload = renderHumanInputRequestNotification({
     task: event.payload.task,
     request,
   });
   assert.match(payload, /选 &lt;A&gt; 还是 B\?/);
-  assert.equal(renderHumanInputPrompt(event), [
+  assert.equal(renderHumanInputPrompt({
+    task: event.payload.task,
+    request,
+  }), [
     "Agent 执行过程中需要用户输入。",
     "上下文：Worker 发现两个方案 & 都可行",
     "问题：选 <A> 还是 B?",
     "1. A <fast>",
     "2. B & safe",
   ].join("\n"));
-  const renderedResponse = renderUserInputResponse(event, "选择 A & 继续");
+  const renderedResponse = renderHumanInputResponse({
+    eventId: "event-human-input-response",
+    response: {
+      requestId: request.requestId,
+      agentId: request.agentId,
+      taskId: request.taskId,
+      response: "选择 A & 继续",
+      createdAt: "2026-06-29T00:00:00.000Z",
+    },
+  });
   assert.match(renderedResponse, /<request-id>request-1<\/request-id>/);
   assert.match(renderedResponse, /选择 A &amp; 继续/);
 });
 
-test("event rendering delegates task terminal and human-input interrupt notifications", () => {
+test("event rendering delegates task terminal and human-input task notifications", () => {
   const terminalEvent = taskTerminalEvent(task({
     status: "complete",
     result: "done <ok>",
@@ -92,7 +105,7 @@ test("event rendering delegates task terminal and human-input interrupt notifica
 
   assert.match(renderEventNotification(terminalEvent), /<task-notification>/);
   assert.match(renderEventNotification(terminalEvent), /done &lt;ok&gt;/);
-  assert.match(renderEventNotification(humanEvent), /<user-input-request-notification>/);
+  assert.match(renderEventNotification(humanEvent), /<human-input-request-notification>/);
   assert.match(renderEventNotification(humanEvent), /选 &lt;A&gt; 还是 B\?/);
 });
 
@@ -139,17 +152,13 @@ function taskTerminalEvent(taskState: AgentTaskState): AgentTaskSystemEvent {
 
 function humanInputEvent(input: {
   task: AgentTaskState;
-  request: NonNullable<SystemInterruptEventPayload["request"]>;
-}): ScoutEvent<SystemInterruptEventPayload> {
+  request: AgentHumanInputRequestedEventPayload["request"];
+}): ScoutEvent<AgentHumanInputRequestedEventPayload> {
   const bus = new InMemoryEventBus();
-  return bus.publish(SystemEvents.interrupt.raised, {
-    interruptKind: "human_input",
-    taskId: input.task.taskId,
-    agentId: input.task.agentId,
-    requestId: input.request.requestId,
-    request: input.request,
+  return bus.publish(SystemEvents.task.humanInputRequested, {
     task: input.task,
-  } satisfies SystemInterruptEventPayload, {
+    request: input.request,
+  } satisfies AgentHumanInputRequestedEventPayload, {
     id: "event-human-input",
     occurredAt: "2026-06-29T00:00:00.000Z",
   });
