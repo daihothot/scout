@@ -50,25 +50,13 @@ export class AgentBuilder {
     return this.registerAgent(agent) as CoordinatorAgent;
   }
 
-  buildWorker(input: {
-    role: Exclude<ScoutAgentRole, typeof ScoutAgentRoles.Coordinator>;
-    agentId?: string;
-  }): ScoutAgent {
+  buildWorker(role: Exclude<ScoutAgentRole, typeof ScoutAgentRoles.Coordinator>): ScoutAgent {
     const common = {
-      ...this.agentOptionsForRole(input.role, input.agentId),
-      dynamicTools: this.dynamicToolsForRole(input.role),
+      ...this.agentOptionsForRole(role),
+      dynamicTools: this.dynamicToolsForRole(role),
     };
-    const agent = this.createWorker(input.role, common);
+    const agent = this.createWorker(role, common);
     return this.registerAgent(agent);
-  }
-
-  getOrCreateWorker(input: {
-    role: Exclude<ScoutAgentRole, typeof ScoutAgentRoles.Coordinator>;
-    agentId?: string;
-  }): ScoutAgent {
-    const existing = this.options.registry.findAgent(input.agentId ?? input.role);
-    if (existing) return existing;
-    return this.buildWorker(input);
   }
 
   dynamicToolsForRole(role: ScoutAgentRole): ReturnType<typeof buildSystemDynamicTools> {
@@ -80,13 +68,13 @@ export class AgentBuilder {
     ];
   }
 
-  private agentOptionsForRole(role: ScoutAgentRole, agentId?: string): ScoutAgentOptions {
+  private agentOptionsForRole(role: ScoutAgentRole): ScoutAgentOptions {
     const preparedAgent = this.options.preparedAgents[role];
     if (!preparedAgent) {
       throw new Error(`Missing prepared agent runtime for role ${role}.`);
     }
     return {
-      agentId: agentId ?? role,
+      agentId: role,
       repoRoot: this.options.runtime.repoRoot,
       appServer: this.options.runtime.appServer,
       contextBundle: this.options.runtime.contextBundle,

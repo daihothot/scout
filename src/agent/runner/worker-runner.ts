@@ -49,7 +49,6 @@ export interface WorkerRunnerHost {
   readonly spec: AgentThreadSpec;
   readonly threadSnapshot?: AgentThreadSnapshot;
   readonly logger: Logger;
-  startThread(): Promise<AgentThreadSnapshot>;
   runTurn(input: ScoutAgentTurnInput): Promise<ScoutAgentTurnOutcome>;
   setGoal(input: {
     objective: string;
@@ -345,7 +344,10 @@ export class WorkerRunner extends AgentRunner {
     }
     const hadStarted = Boolean(task.startedAt);
     const initialPrompt = hadStarted ? undefined : task.initialPrompt;
-    const thread = await this.host.startThread();
+    const thread = this.host.threadSnapshot;
+    if (!thread) {
+      throw new Error(`Worker runner ${this.host.agentId} has no prepared thread.`);
+    }
     if (!hadStarted) {
       if (!initialPrompt) {
         throw new Error(`Task ${taskId} has no initial prompt.`);

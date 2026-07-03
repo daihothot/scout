@@ -5,12 +5,9 @@ import type {
 } from "../asset-store/index.js";
 import type { ScoutAgentRole } from "../agent/thread/types.js";
 import { ScoutAgentRoles } from "../agent/thread/types.js";
-import { AgentBuilder } from "../agent/builder/agent-builder.js";
 import { AgentBackend } from "../agent/backend/agent-backend.js";
-import { AgentRegistry } from "../agent/core/agent-registry.js";
 import { AgentOrchestrator } from "../agent/orchestration/agent-orchestrator.js";
 import type { ScoutAgent } from "../agent/core/scout-agent.js";
-import { AgentTaskStore } from "../agent/task/agent-task-store.js";
 import { InMemoryEventBus } from "../core/events/index.js";
 import { SystemEvents } from "../system/events/index.js";
 import { Logger } from "../core/logging/index.js";
@@ -20,27 +17,37 @@ import {
   NoopRuntimeInteractionPort,
   type InteractionDisclosureRequestedPayload,
 } from "../interaction/index.js";
-import { prepareRunEnvironment, type PreparedRun } from "./run-preparation.js";
-import type { CreateCodexAppServerClientOptions } from "../agent-server/codex/app-server-factory.js";
+import { prepareRunClients } from "./run-client-preparation.js";
+import { prepareRunEnvironment, type PreparedRun } from "./run-env-preparation.js";
+import { prepareAgents } from "./run-agent-preparation.js";
 import {
-  buildRunContextBundle,
   type ScoutRunOptions,
   type ScoutRunResult,
 } from "./types.js";
 
 export class RunManager {
-  async prepareRun(options: ScoutRunOptions): Promise<ScoutRunResult> {
-    const preparedRun = await prepareRunEnvironment<CreateCodexAppServerClientOptions>({
-      repoRoot: options.cwd,
-      runId: buildRunId(),
-      mcpServerBindings: options.mcpServerBindings,
-      createAppServerClient: (clientOptions) => clientOptions,
-    });
-    return this.toRunResult(preparedRun);
-  }
-
   async startRun(options: ScoutRunOptions): Promise<ScoutRunResult> {
     const interactionPort = options.interactionPort ?? new NoopRuntimeInteractionPort();
+    const runId = buildRunId();
+    const runtimeLogger = new Logger({
+      runId,
+      logsRoot: join(options.cwd, "run", runId, "logs"),
+    });
+    const preparedClients = await prepareRunClients({
+      repoRoot: options.cwd,
+      runId,
+    });
+    let preparedRun: PreparedRun;
+    try {
+      preparedRun = await prepareRunEnvironment({
+        repoRoot: options.cwd,
+        runId,
+        preparedClients,
+      });
+    } catch (error) {
+      preparedClients.appServerClient.client.close();
+      throw error;
+    }
     const eventBus = new InMemoryEventBus();
     const interactionGateway = new InteractionGateway({
       eventBus,
@@ -52,12 +59,6 @@ export class RunManager {
       source: "run.manager",
       message: "Preparing Scout run.",
     } satisfies InteractionDisclosureRequestedPayload);
-
-    const preparedRun = await prepareRunEnvironment({
-      repoRoot: options.cwd,
-      runId: buildRunId(),
-      mcpServerBindings: options.mcpServerBindings,
-    });
     const preparationStatus = runPreparationStatus(preparedRun);
     if (preparationStatus !== "passed") {
       eventBus.publish(SystemEvents.interaction.disclosureRequested, {
@@ -70,66 +71,56 @@ export class RunManager {
         },
       } satisfies InteractionDisclosureRequestedPayload);
       interactionGateway.stop();
-      preparedRun.appServerClient.client.close();
+      preparedClients.appServerClient.client.close();
       return this.toRunResult(preparedRun, "failed");
     }
 
-    const preparedCoordinator = preparedRun.agents[ScoutAgentRoles.Coordinator];
-    const contextBundle = buildRunContextBundle({
-      runId: preparedRun.runId,
-      assetCommit: preparedCoordinator.assetCommit,
-    });
-    const runtimeLogger = new Logger({
-      runId: preparedRun.runId,
-      logsRoot: join(preparedCoordinator.assetCommit.runRoot, "logs"),
-    });
-    const appServer = preparedRun.appServerClient.client;
-    const preparedAgents = mapPreparedAgents(preparedRun, (agent) => ({
-      agentMount: agent.mount,
-      assetCommit: agent.assetCommit,
-    }));
     const domain = new ValidationDomain({
       runId: preparedRun.runId,
     });
-    const registry = new AgentRegistry({
-      logger: runtimeLogger,
-    });
-    const taskStore = new AgentTaskStore();
-    let agentBuilder: AgentBuilder | undefined;
+    let preparedAgents: Awaited<ReturnType<typeof prepareAgents>> | undefined;
+
+    try {
+      preparedAgents = await prepareAgents({
+        preparedRun,
+        preparedClients,
+        repoRoot: options.cwd,
+        logger: runtimeLogger,
+        eventBus,
+        domain,
+      });
+    } catch (error) {
+      eventBus.publish(SystemEvents.interaction.disclosureRequested, {
+        level: "error",
+        source: "run.manager",
+        message: "Scout agent preparation failed.",
+        data: {
+          error: error instanceof Error ? error.stack ?? error.message : String(error),
+        },
+      } satisfies InteractionDisclosureRequestedPayload);
+      interactionGateway.stop();
+      preparedClients.appServerClient.client.close();
+      return this.toRunResult(preparedRun, "failed");
+    }
+
+    const appServer = preparedAgents.appServerClient.client;
     const agentBackend = new AgentBackend({
       runId: preparedRun.runId,
       appServer,
-      registry,
-      taskStore,
+      registry: preparedAgents.registry,
+      taskStore: preparedAgents.taskStore,
       eventBus,
       agentProvider: {
-        getOrCreateWorker(input): ScoutAgent {
-          if (!agentBuilder) throw new Error("AgentBuilder is not initialized.");
-          return agentBuilder.getOrCreateWorker(input);
+        resolveWorker(input): ScoutAgent {
+          return preparedAgents.registry.resolveAgent(input.role);
         },
       },
       logger: runtimeLogger,
       domain,
     });
-    agentBuilder = new AgentBuilder({
-      registry,
-      domain,
-      taskStore,
-      runtime: {
-        repoRoot: options.cwd,
-        appServer,
-        contextBundle,
-        logger: runtimeLogger,
-        eventBus,
-      },
-      preparedAgents,
-    });
-    const coordinatorAgent = agentBuilder.buildCoordinator();
 
     try {
       await agentBackend.domain.start?.();
-      await appServer.startSession();
-      await coordinatorAgent.start();
       const orchestrator = new AgentOrchestrator({
         eventBus,
       });
@@ -153,7 +144,7 @@ export class RunManager {
   }
 
   private toRunResult(
-    preparedRun: PreparedRun<unknown>,
+    preparedRun: PreparedRun,
     forcedStatus?: ScoutRunResult["status"],
   ): ScoutRunResult {
     const preparedCoordinator = preparedRun.agents[ScoutAgentRoles.Coordinator];
@@ -161,7 +152,6 @@ export class RunManager {
       status: forcedStatus ?? runPreparationStatus(preparedRun),
       runId: preparedRun.runId,
       coordinatorMountRoot: preparedCoordinator.mount.mountRoot,
-      mcpServerBindings: preparedCoordinator.mount.mcpServerBindings,
       rootAccess: preparedRun.rootAccess,
       agents: mapPreparedAgents(preparedRun, (agent) => ({
         mountId: agent.mount.mountId,
@@ -176,21 +166,17 @@ export class RunManager {
   }
 }
 
-export async function prepareRun(options: ScoutRunOptions): Promise<ScoutRunResult> {
-  return new RunManager().prepareRun(options);
-}
-
 export async function startRun(options: ScoutRunOptions): Promise<ScoutRunResult> {
   return new RunManager().startRun(options);
 }
 
-function runPreparationStatus(preparedRun: PreparedRun<unknown>): ScoutRunResult["status"] {
+function runPreparationStatus(preparedRun: PreparedRun): ScoutRunResult["status"] {
   return Object.values(preparedRun.agents).every((agent) => agent.assetCommit.status === "preflight_passed")
     ? "passed"
     : "failed";
 }
 
-function summarizeAgents(preparedRun: PreparedRun<unknown>): Record<string, unknown> {
+function summarizeAgents(preparedRun: PreparedRun): Record<string, unknown> {
   return mapPreparedAgents(preparedRun, (agent) => ({
     preflightStatus: agent.preflight.status,
     assetCommitStatus: agent.assetCommit.status,
@@ -199,8 +185,8 @@ function summarizeAgents(preparedRun: PreparedRun<unknown>): Record<string, unkn
 }
 
 function mapPreparedAgents<T>(
-  preparedRun: PreparedRun<unknown>,
-  mapper: (agent: PreparedRun<unknown>["agents"][ScoutAgentRole]) => T,
+  preparedRun: PreparedRun,
+  mapper: (agent: PreparedRun["agents"][ScoutAgentRole]) => T,
 ): Record<ScoutAgentRole, T> {
   return Object.fromEntries(
     Object.entries(preparedRun.agents).map(([role, agent]) => [

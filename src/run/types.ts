@@ -5,13 +5,10 @@ import type { RuntimeInteractionPort } from "../interaction/index.js";
 import type {
   PreparedRunAgent,
   RunRootAccess,
-} from "./run-preparation.js";
-
-export type McpServerBindingSet = Record<string, Record<string, string>>;
+} from "./run-env-preparation.js";
 
 export interface ScoutRunOptions {
   cwd: string;
-  mcpServerBindings?: McpServerBindingSet;
   interactionPort?: RuntimeInteractionPort;
 }
 
@@ -19,7 +16,6 @@ export interface ScoutRunResult {
   status: "passed" | "failed";
   runId: string;
   coordinatorMountRoot: string;
-  mcpServerBindings: McpServerBindingSet;
   rootAccess: RunRootAccess;
   agents: Record<ScoutAgentRole, {
     mountId: string;

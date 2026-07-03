@@ -1,10 +1,5 @@
 import { join, resolve } from "node:path";
-import {
-  createCodexAppServerClient,
-  type CodexAppServerClientBundle,
-  type CreateCodexAppServerClientOptions,
-} from "../agent-server/codex/app-server-factory.js";
-import { preflightCodexMount } from "../agent-server/codex/mount-preflight.js";
+import { preflightCodexAppServerMount } from "../agent-server/codex/app-server-preflight.js";
 import type { AgentServerPreflightResult } from "../agent-server/types.js";
 import {
   AssetStore,
@@ -16,6 +11,7 @@ import {
   ScoutAgentRoles,
   type ScoutAgentRole,
 } from "../agent/thread/types.js";
+import type { PreparedRunClients } from "./run-client-preparation.js";
 
 export const RunAgentRoles = [
   ScoutAgentRoles.Coordinator,
@@ -39,29 +35,33 @@ export interface RunRootAccess {
   writableRoots: string[];
 }
 
-export interface PreparedRun<TClientBundle = CodexAppServerClientBundle> {
+export interface PreparedRun {
   runId: string;
   repoRoot: string;
   agents: Record<ScoutAgentRole, PreparedRunAgent>;
   rootAccess: RunRootAccess;
-  appServerClient: TClientBundle;
 }
 
-export interface PrepareRunEnvironmentOptions<TClientBundle = CodexAppServerClientBundle> {
+export interface PrepareRunEnvironmentOptions {
   repoRoot: string;
   runId: string;
-  mcpServerBindings?: Record<string, Record<string, string>>;
+  preparedClients: PreparedRunClients;
   agentRoles?: readonly ScoutAgentRole[];
   assetStore?: AssetStore;
-  preflightMount?: (mount: CodexMount) => Promise<AgentServerPreflightResult>;
-  createAppServerClient?: (options: CreateCodexAppServerClientOptions) => TClientBundle;
+  preflightMount?: (input: {
+    mount: CodexMount;
+    preparedClients: PreparedRunClients;
+  }) => Promise<AgentServerPreflightResult>;
 }
 
-export async function prepareRunEnvironment<TClientBundle = CodexAppServerClientBundle>(
-  options: PrepareRunEnvironmentOptions<TClientBundle>,
-): Promise<PreparedRun<TClientBundle>> {
+export async function prepareRunEnvironment(
+  options: PrepareRunEnvironmentOptions,
+): Promise<PreparedRun> {
   const assetStore = options.assetStore ?? new AssetStore();
-  const preflightMount = options.preflightMount ?? preflightCodexMount;
+  const preflightMount = options.preflightMount ?? ((input) => preflightCodexAppServerMount({
+    mount: input.mount,
+    appServer: input.preparedClients.appServerClient.client,
+  }));
   const agentRoles = options.agentRoles ?? RunAgentRoles;
   const agents: Partial<Record<ScoutAgentRole, PreparedRunAgent>> = {};
 
@@ -70,10 +70,12 @@ export async function prepareRunEnvironment<TClientBundle = CodexAppServerClient
       repoRoot: options.repoRoot,
       runId: options.runId,
       agentId: role,
-      mcpServerBindings: options.mcpServerBindings,
     });
-    const preflight = await preflightMount(mount);
-    const preflightPath = join(mount.artifactRoot, "mount-preflight.json");
+    const preflight = await preflightMount({
+      mount,
+      preparedClients: options.preparedClients,
+    });
+    const preflightPath = join(mount.artifactRoot, "app-server-preflight.json");
     writeJsonFile(preflightPath, preflight);
 
     const preflightStatus = mount.issues.some((issue) => issue.severity === "error")
@@ -99,26 +101,12 @@ export async function prepareRunEnvironment<TClientBundle = CodexAppServerClient
 
   const preparedAgents = requirePreparedAgents(agents, agentRoles);
   const rootAccess = collectRunRootAccess(assetStore, preparedAgents);
-  let appServerClient: TClientBundle;
-  const createClientOptions = {
-    mountRoots: rootAccess.mountRoots,
-    trustedRoots: rootAccess.trustedRoots,
-    writableRoots: rootAccess.writableRoots,
-    tempPrefix: `${options.runId}-codex-home-`,
-    logPrefix: `scout ${options.runId} app-server`,
-  };
-  if (options.createAppServerClient) {
-    appServerClient = options.createAppServerClient(createClientOptions);
-  } else {
-    appServerClient = createCodexAppServerClient(createClientOptions) as TClientBundle;
-  }
 
   return {
     runId: options.runId,
     repoRoot: options.repoRoot,
     agents: preparedAgents,
     rootAccess,
-    appServerClient,
   };
 }
 

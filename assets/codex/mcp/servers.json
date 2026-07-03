@@ -11,25 +11,22 @@
       "args": [
         "assets/codex/mcp/codegraph/wrapper.cjs"
       ],
-      "requiredBindings": [
-        "path"
-      ],
-      "cwd": "${binding.path}",
+      "cwd": "${SCOUT_REPO_ROOT}",
       "env": {
-        "SCOUT_MCP_TARGET_PATH": "${binding.path}"
+        "SCOUT_MCP_TARGET_PATH": "${SCOUT_REPO_ROOT}"
       },
       "trustedRoots": [
-        "${binding.path}"
+        "${SCOUT_REPO_ROOT}"
       ],
       "writableRoots": [
-        "${binding.path}/.codegraph"
+        "${SCOUT_REPO_ROOT}/.codegraph"
       ],
       "smoke": {
         "tool": "codegraph_search",
         "arguments": {
           "query": "CodeGraph",
           "limit": 1,
-          "projectPath": "${binding.path}"
+          "projectPath": "${SCOUT_REPO_ROOT}"
         }
       }
     }

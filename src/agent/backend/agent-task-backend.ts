@@ -62,9 +62,8 @@ export class AgentTaskBackend {
     const taskId = this.nextTaskId();
     const agent = input.agentId
       ? this.registry.resolveAgent(input.agentId)
-      : this.agentProvider.getOrCreateWorker({
+      : this.agentProvider.resolveWorker({
         role: input.subagentType,
-        agentId: this.agentIdForTask(input.subagentType, taskId),
       });
     if (agent.role !== input.subagentType) {
       throw new Error(`Agent ${agent.agentId} is ${agent.role}, not ${input.subagentType}.`);
@@ -259,10 +258,6 @@ export class AgentTaskBackend {
   private nextTaskId(): string {
     this.taskSequence += 1;
     return `agent-task-${String(this.taskSequence).padStart(4, "0")}`;
-  }
-
-  private agentIdForTask(role: string, taskId: string): string {
-    return `${role}-${taskId}`;
   }
 
   private applyGoalUpdate(

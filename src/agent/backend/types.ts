@@ -10,9 +10,8 @@ import type { ScoutAgent } from "../core/scout-agent.js";
 import type { AgentTaskStore } from "../task/agent-task-store.js";
 
 export interface AgentProvider {
-  getOrCreateWorker(input: {
+  resolveWorker(input: {
     role: Exclude<ScoutAgentRole, typeof ScoutAgentRoles.Coordinator>;
-    agentId?: string;
   }): ScoutAgent;
 }
 

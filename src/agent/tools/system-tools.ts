@@ -2,7 +2,15 @@ import type { AgentDynamicToolSpec, AgentJsonValue } from "./types.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 import { ScoutAgentRoles } from "../thread/types.js";
 
-export const SYSTEM_TOOL_NAMESPACE = "scout";
+export const SYSTEM_AGENT_TOOL_NAMESPACE = "scout_system_agenttool";
+export const SYSTEM_SEND_MESSAGE_TOOL_NAMESPACE = "scout_system_sendmessage";
+export const SYSTEM_HUMAN_INPUT_TOOL_NAMESPACE = "scout_system_humaninput";
+
+export const SYSTEM_TOOL_NAMESPACES = new Set<string>([
+  SYSTEM_AGENT_TOOL_NAMESPACE,
+  SYSTEM_SEND_MESSAGE_TOOL_NAMESPACE,
+  SYSTEM_HUMAN_INPUT_TOOL_NAMESPACE,
+]);
 
 export interface AgentToolCall {
   tool: "AgentTool";
@@ -34,7 +42,7 @@ export type SystemToolCall =
 
 export function buildAgentToolDynamicTool(): AgentDynamicToolSpec {
   return {
-    namespace: SYSTEM_TOOL_NAMESPACE,
+    namespace: SYSTEM_AGENT_TOOL_NAMESPACE,
     name: "AgentTool",
     description: "创建或复用一个 Scout researcher、verifier 或 validator worker agent，并分配一个新任务。",
     inputSchema: objectSchema({
@@ -61,7 +69,7 @@ export function buildAgentToolDynamicTool(): AgentDynamicToolSpec {
 
 export function buildSendMessageDynamicTool(): AgentDynamicToolSpec {
   return {
-    namespace: SYSTEM_TOOL_NAMESPACE,
+    namespace: SYSTEM_SEND_MESSAGE_TOOL_NAMESPACE,
     name: "SendMessage",
     description: "给已有 Scout agent 任务追加一条后续消息。",
     inputSchema: objectSchema({
@@ -79,7 +87,7 @@ export function buildSendMessageDynamicTool(): AgentDynamicToolSpec {
 
 export function buildRequestHumanInputDynamicTool(): AgentDynamicToolSpec {
   return {
-    namespace: SYSTEM_TOOL_NAMESPACE,
+    namespace: SYSTEM_HUMAN_INPUT_TOOL_NAMESPACE,
     name: "RequestHumanInput",
     description: "请求人工补充信息或确认。请求会进入主消息队列，人工回答统一返回 Coordinator，由 Coordinator 决定后续投递。",
     inputSchema: objectSchema({

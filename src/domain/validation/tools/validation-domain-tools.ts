@@ -2,7 +2,7 @@ import type { ScoutAgentRole } from "../../../agent/thread/types.js";
 import type { AgentDynamicToolSpec } from "../../../agent/tools/types.js";
 import { ScoutAgentRoles } from "../../../agent/thread/types.js";
 
-export const VALIDATION_DOMAIN_TOOL_NAMESPACE = "scout.domain.validation";
+export const VALIDATION_DOMAIN_TOOL_NAMESPACE = "scout_domain_validation";
 export const GET_VALIDATION_STATE_SNAPSHOT_TOOL = "GetValidationStateSnapshot";
 
 export function buildValidationDomainToolsForRole(role: ScoutAgentRole): AgentDynamicToolSpec[] {

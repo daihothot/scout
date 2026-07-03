@@ -6,7 +6,7 @@ import type { ScoutDomain } from "../../domain/index.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { ScoutAgentRoles } from "../thread/types.js";
 import {
-  SYSTEM_TOOL_NAMESPACE,
+  SYSTEM_TOOL_NAMESPACES,
   parseSystemDynamicToolCall,
   type RequestHumanInputToolCall,
   type SystemToolCall,
@@ -42,7 +42,7 @@ export class AgentToolBackend {
     if (!caller) {
       return dynamicToolFailure(`Unknown dynamic tool caller thread: ${input.threadId}`);
     }
-    if (input.namespace !== SYSTEM_TOOL_NAMESPACE) {
+    if (!input.namespace || !SYSTEM_TOOL_NAMESPACES.has(input.namespace)) {
       return this.handleDomainToolCall(input, caller);
     }
 
