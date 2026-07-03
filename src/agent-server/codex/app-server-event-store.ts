@@ -26,11 +26,6 @@ export interface AppServerAgentMessageItem extends AppServerBaseItem {
   phase?: string | null;
 }
 
-export interface AppServerPlanItem extends AppServerBaseItem {
-  type: "plan";
-  text: string;
-}
-
 export interface AppServerReasoningItem extends AppServerBaseItem {
   type: "reasoning";
   summary?: string[];
@@ -83,7 +78,6 @@ export interface AppServerUnknownItem extends AppServerBaseItem {
 
 export type AppServerItem =
   | AppServerAgentMessageItem
-  | AppServerPlanItem
   | AppServerReasoningItem
   | AppServerCommandExecutionItem
   | AppServerDynamicToolCallItem
@@ -142,7 +136,6 @@ export interface AppServerPlanState {
   turnId?: string;
   explanation: string;
   steps: AppServerPlanStep[];
-  streaming: string;
   updatedAt?: string;
 }
 
@@ -568,21 +561,8 @@ export class AppServerEventStore {
           turnId: readString(params, "turnId"),
           explanation: readString(params, "explanation") ?? "",
           steps: readArray(params.plan).map(normalizePlanStep).filter(isDefined),
-          streaming: "",
           updatedAt: nowIso(),
         };
-        thread.latestTurnId = thread.plan.turnId ?? thread.latestTurnId;
-        thread.updatedAt = nowIso();
-        this.moveThreadToFront(threadId);
-        return;
-      }
-      case "item/plan/delta": {
-        const threadId = readString(params, "threadId");
-        if (!threadId) return;
-        const thread = this.ensureThread(threadId);
-        thread.plan.turnId = readString(params, "turnId") ?? thread.plan.turnId;
-        thread.plan.streaming += readString(params, "delta") ?? "";
-        thread.plan.updatedAt = nowIso();
         thread.latestTurnId = thread.plan.turnId ?? thread.latestTurnId;
         thread.updatedAt = nowIso();
         this.moveThreadToFront(threadId);
@@ -637,7 +617,6 @@ export class AppServerEventStore {
         plan: {
           explanation: "",
           steps: [],
-          streaming: "",
         },
         turns: {},
         turnOrder: [],
@@ -778,14 +757,6 @@ function timelineEntryFromNotification(
         params,
         turnId: readString(params, "turnId"),
       });
-    case "item/plan/delta":
-      return appServerTimelineEntry({
-        stream: AppServerTimelineStreams.Plan,
-        kind: "plan_delta",
-        receivedAt,
-        params,
-        turnId: readString(params, "turnId"),
-      });
     case "item/started":
     case "item/completed": {
       const item = readObjectOrUndefined(params.item);
@@ -890,13 +861,6 @@ function normalizeItem(value: unknown): AppServerItem | undefined {
         type,
         text: readString(raw, "text") ?? "",
         phase: readString(raw, "phase") ?? null,
-      };
-    case "plan":
-      return {
-        ...raw,
-        id,
-        type,
-        text: readString(raw, "text") ?? "",
       };
     case "reasoning":
       return {

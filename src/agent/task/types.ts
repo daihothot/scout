@@ -5,18 +5,29 @@ import type {
 import type { ScoutAgentRole } from "../thread/types.js";
 import type { AgentThreadSnapshot } from "../thread/types.js";
 
-export type AgentTaskStatus =
-  | "queued"
-  | "running"
-  | "waiting_for_human_input"
-  | "complete"
-  | "blocked"
-  | "failed"
-  | "stopped";
-export type AgentTaskOutcomeStatus =
-  | "complete"
-  | "blocked"
-  | "failed";
+export const AgentTaskStatuses = {
+  Queued: "queued",
+  Running: "running",
+  WaitingForHumanInput: "waiting_for_human_input",
+  Complete: "complete",
+  Blocked: "blocked",
+  Failed: "failed",
+  Stopped: "stopped",
+} as const;
+export type AgentTaskStatus = typeof AgentTaskStatuses[keyof typeof AgentTaskStatuses];
+export const AgentTaskStepStatuses = {
+  Running: "running",
+  Completed: "completed",
+  WaitingForHumanInput: "waiting_for_human_input",
+  Failed: "failed",
+} as const;
+export type AgentTaskStepStatus = typeof AgentTaskStepStatuses[keyof typeof AgentTaskStepStatuses];
+export const AgentTaskOutcomeStatuses = {
+  Complete: "complete",
+  Blocked: "blocked",
+  Failed: "failed",
+} as const;
+export type AgentTaskOutcomeStatus = typeof AgentTaskOutcomeStatuses[keyof typeof AgentTaskOutcomeStatuses];
 export interface AgentTaskUsage {
   totalTokens?: number;
   toolUses?: number;
@@ -58,13 +69,15 @@ export interface AgentTaskStep {
   stepId: string;
   taskId: string;
   turnId?: string;
-  status: "completed" | "waiting_for_human_input" | "failed";
+  status: AgentTaskStepStatus;
   prompt: string;
   finalResponse?: string;
   toolCalls: AgentTaskStepToolCall[];
   startedAt: string;
-  finishedAt: string;
+  finishedAt?: string;
   durationMs?: number;
+  humanInputRequest?: AgentHumanInputRequest;
+  humanInputResponse?: AgentHumanInputResponse;
   protocolWarnings?: string[];
   error?: string;
 }
@@ -96,9 +109,7 @@ export interface AgentTaskState {
   usage?: AgentTaskUsage;
   goal?: AppServerThreadGoalState;
   plan?: AppServerPlanState;
-  humanInputRequest?: AgentHumanInputRequest;
-  humanInputRequests?: AgentHumanInputRequest[];
-  humanInputResponses?: AgentHumanInputResponse[];
+  planRecords?: AppServerPlanState[];
   steps?: AgentTaskStep[];
   outcome?: AgentTaskOutcome;
 }

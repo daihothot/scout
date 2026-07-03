@@ -74,6 +74,7 @@ export interface ThreadStartOptions {
   modelProvider?: string;
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  ephemeral?: boolean;
   config?: Record<string, unknown>;
   baseInstructions?: string;
   developerInstructions?: string;
@@ -89,7 +90,6 @@ export interface TurnStartOptions {
   threadId: string;
   prompt: string;
   timeoutMs?: number;
-  collaborationModeId?: string;
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
   sandbox?: "readOnly" | "workspaceWrite";
   writableRoots?: string[];
@@ -227,7 +227,7 @@ export class CodexAppServerClient {
       cwd: options.cwd,
       approvalPolicy: options.approvalPolicy ?? "never",
       sandbox: options.sandbox ?? "workspace-write",
-      ephemeral: true,
+      ephemeral: options.ephemeral ?? true,
       config: options.config ?? {
         model_reasoning_effort: "minimal",
       },
@@ -268,16 +268,16 @@ export class CodexAppServerClient {
   }
 
   async startTurn(options: TurnStartOptions): Promise<TurnStartResult> {
+    const model = "gpt-5.4-mini";
     const response = await this.request("turn/start", cleanUndefined({
       threadId: options.threadId,
       input: [{ type: "text", text: options.prompt, text_elements: [] }],
-      collaborationMode: options.collaborationModeId ? { id: options.collaborationModeId } : undefined,
       approvalPolicy: options.approvalPolicy ?? "never",
       sandboxPolicy: buildSandboxPolicy({
         type: options.sandbox ?? "workspaceWrite",
         writableRoots: options.writableRoots,
       }),
-      model: "gpt-5.4-mini",
+      model,
       effort: "minimal",
     }));
     return {

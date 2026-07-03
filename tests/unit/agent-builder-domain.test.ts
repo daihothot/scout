@@ -41,6 +41,11 @@ import { InteractionGateway } from "../../src/interaction/index.js";
 import type { AgentTaskSystemEvent } from "../../src/agent/task/task-events.js";
 import type { SystemInterruptEventPayload } from "../../src/agent/orchestration/interrupt-events.js";
 import type { ScoutEvent } from "../../src/core/events/index.js";
+import type { WorkerRunner } from "../../src/agent/runner/worker-runner.js";
+import {
+  AgentTaskStatuses,
+  AgentTaskStepStatuses,
+} from "../../src/agent/task/types.js";
 
 test("AgentBuilder creates a coordinator with system and single-domain tools", () => {
   const fixture = createAgentFixture("builder-coordinator");
@@ -199,8 +204,28 @@ test("AgentToolBackend routes non-system dynamic tools to the registered domain"
   assert.deepEqual(payload.snapshot?.allowed_actions, ["request_bdd", "request_user_input"]);
 });
 
-test("AgentTaskBackend reads and routes tasks through the shared task store", () => {
-  const appServer = createFakeAppServer();
+test("AgentTaskBackend reads and routes tasks through the shared task store", async () => {
+  let verifier: ScoutAgent | undefined;
+  let assignedTaskId: string | undefined;
+  let requestIssued = false;
+  const appServer = createFakeAppServer({
+    onRunTurn: async (turn) => {
+      if (requestIssued || turn.prompt !== "Verify this behavior." || !verifier || !assignedTaskId) return;
+      requestIssued = true;
+      verifier.runner.requestHumanInput({
+        taskId: assignedTaskId,
+        request: {
+          requestId: "input-1",
+          agentId: verifier.agentId,
+          taskId: assignedTaskId,
+          kind: "prompt_required",
+          question: "Need expected result.",
+          createdAt: new Date().toISOString(),
+          status: "pending",
+        },
+      });
+    },
+  });
   const fixture = createAgentFixture("task-store-route", appServer);
   const domain = createStaticDomain("domain-task-store", []);
   const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
@@ -241,35 +266,47 @@ test("AgentTaskBackend reads and routes tasks through the shared task store", ()
     prompt: "Verify this behavior.",
     isBackgrounded: true,
   });
-  const verifier = fixture.registry.resolveAgent(task.agentId);
+  verifier = fixture.registry.resolveAgent(task.agentId);
+  assignedTaskId = task.taskId;
   assert.equal(verifier.agentId, `${ScoutAgentRoles.Verifier}-${task.taskId}`);
-  verifier.runner.requestHumanInput({
-    taskId: task.taskId,
-    request: {
-      requestId: "input-1",
-      agentId: verifier.agentId,
-      taskId: task.taskId,
-      kind: "prompt_required",
-      question: "Need expected result.",
-      createdAt: new Date().toISOString(),
-      status: "pending",
-    },
-  });
+  await (verifier.runner as WorkerRunner).runTasksToIdle();
+  assert.equal(fixture.taskStore.getTask(task.taskId)?.status, AgentTaskStatuses.WaitingForHumanInput);
 
   const resumed = agentBackend.task.sendAgentMessage({
     target: task.taskId,
     message: "用户补充了 expected result。",
   });
 
-  assert.equal(fixture.taskStore.getTask(task.taskId)?.status, "running");
-  assert.equal(resumed.humanInputRequest, undefined);
+  assert.equal(fixture.taskStore.getTask(task.taskId)?.status, AgentTaskStatuses.Running);
+  assert.equal(resumed.steps?.[0]?.status, AgentTaskStepStatuses.WaitingForHumanInput);
+  assert.equal(resumed.steps?.[0]?.humanInputRequest?.requestId, "input-1");
   assert.equal(fixture.taskStore.listTasks().length, 1);
   assert.equal(fixture.taskStore.listTasks()[0]?.taskId, task.taskId);
-  assert.equal(fixture.taskStore.listTasks()[0]?.status, "running");
+  assert.equal(fixture.taskStore.listTasks()[0]?.status, AgentTaskStatuses.Running);
 });
 
-test("AgentTaskBackend handles human input response without resuming worker task", () => {
-  const appServer = createFakeAppServer();
+test("AgentTaskBackend stores human input request and response on the current worker step", async () => {
+  let verifier: ScoutAgent | undefined;
+  let assignedTaskId: string | undefined;
+  let requestIssued = false;
+  const appServer = createFakeAppServer({
+    onRunTurn: async (turn) => {
+      if (requestIssued || turn.prompt !== "Verify this behavior." || !verifier || !assignedTaskId) return;
+      requestIssued = true;
+      verifier.runner.requestHumanInput({
+        taskId: assignedTaskId,
+        request: {
+          requestId: "input-1",
+          agentId: verifier.agentId,
+          taskId: assignedTaskId,
+          kind: "prompt_required",
+          question: "Need expected result.",
+          createdAt: new Date().toISOString(),
+          status: "pending",
+        },
+      });
+    },
+  });
   const fixture = createAgentFixture("human-input-response", appServer);
   const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
   const verifierCommit = createAssetCommit(verifierMount);
@@ -309,20 +346,11 @@ test("AgentTaskBackend handles human input response without resuming worker task
     prompt: "Verify this behavior.",
     isBackgrounded: true,
   });
-  const verifier = fixture.registry.resolveAgent(task.agentId);
+  verifier = fixture.registry.resolveAgent(task.agentId);
+  assignedTaskId = task.taskId;
   assert.equal(verifier.agentId, `${ScoutAgentRoles.Verifier}-${task.taskId}`);
-  verifier.runner.requestHumanInput({
-    taskId: task.taskId,
-    request: {
-      requestId: "input-1",
-      agentId: verifier.agentId,
-      taskId: task.taskId,
-      kind: "prompt_required",
-      question: "Need expected result.",
-      createdAt: new Date().toISOString(),
-      status: "pending",
-    },
-  });
+  await (verifier.runner as WorkerRunner).runTasksToIdle();
+  assert.equal(fixture.taskStore.getTask(task.taskId)?.status, AgentTaskStatuses.WaitingForHumanInput);
 
   const updated = agentBackend.task.handleHumanInputResponse({
     taskId: task.taskId,
@@ -330,15 +358,37 @@ test("AgentTaskBackend handles human input response without resuming worker task
     response: "Expected result is A.",
   });
 
-  assert.equal(updated.status, "waiting_for_human_input");
-  assert.equal(updated.humanInputRequest?.status, "answered");
-  assert.equal(updated.humanInputRequests?.[0]?.status, "answered");
-  assert.equal(updated.humanInputResponses?.[0]?.response, "Expected result is A.");
+  assert.equal(updated.status, AgentTaskStatuses.Running);
+  assert.equal(updated.steps?.length, 1);
+  assert.equal(updated.steps?.[0]?.status, AgentTaskStepStatuses.WaitingForHumanInput);
+  assert.equal(updated.steps?.[0]?.humanInputRequest?.requestId, "input-1");
+  assert.equal(updated.steps?.[0]?.humanInputRequest?.status, "answered");
+  assert.equal(updated.steps?.[0]?.humanInputResponse?.response, "Expected result is A.");
   assert.equal(verifier.runner.snapshot().pendingMessageCount, 0);
 });
 
 test("AgentOrchestrator maps task human input events to system interrupts", async () => {
-  const appServer = createFakeAppServer();
+  let verifier: ScoutAgent | undefined;
+  let assignedTaskId: string | undefined;
+  let requestIssued = false;
+  const appServer = createFakeAppServer({
+    onRunTurn: async (turn) => {
+      if (requestIssued || turn.prompt !== "Need human input" || !verifier || !assignedTaskId) return;
+      requestIssued = true;
+      verifier.runner.requestHumanInput({
+        taskId: assignedTaskId,
+        request: {
+          requestId: "input-1",
+          agentId: verifier.agentId,
+          taskId: assignedTaskId,
+          kind: "prompt_required",
+          question: "Need expected result.",
+          createdAt: new Date().toISOString(),
+          status: "pending",
+        },
+      });
+    },
+  });
   const fixture = createAgentFixture("orchestrator-human-input", appServer);
   const domain = createStaticDomain("domain-orchestrator-human-input", []);
   const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
@@ -396,25 +446,15 @@ test("AgentOrchestrator maps task human input events to system interrupts", asyn
     prompt: "Need human input",
     isBackgrounded: true,
   });
-  const verifier = fixture.registry.resolveAgent(task.agentId);
+  verifier = fixture.registry.resolveAgent(task.agentId);
+  assignedTaskId = task.taskId;
   assert.equal(verifier.agentId, `${ScoutAgentRoles.Verifier}-${task.taskId}`);
   const orchestrator = new AgentOrchestrator({
     eventBus,
   });
   orchestrator.start();
 
-  verifier.runner.requestHumanInput({
-    taskId: task.taskId,
-    request: {
-      requestId: "input-1",
-      agentId: verifier.agentId,
-      taskId: task.taskId,
-      kind: "prompt_required",
-      question: "Need expected result.",
-      createdAt: new Date().toISOString(),
-      status: "pending",
-    },
-  });
+  await (verifier.runner as WorkerRunner).runTasksToIdle();
   await waitFor(() => {
     const coordinatorInterruptKeys = readCoordinatorInterruptKeys(appServer.turnInputs);
     return coordinatorInterruptKeys.includes(SystemEvents.interrupt.raised.routeKey)
@@ -438,7 +478,9 @@ test("AgentOrchestrator maps task human input events to system interrupts", asyn
   assert.deepEqual(interactionPort.requests.map((request) => request.id), ["input-1"]);
   const storedTask = fixture.taskStore.getTask(task.taskId);
   assert.ok(storedTask);
-  assert.equal(storedTask.humanInputResponses?.[0]?.response, "Expected result is A.");
+  assert.equal(storedTask.status, AgentTaskStatuses.Running);
+  assert.equal(storedTask.steps?.[0]?.humanInputRequest?.status, "answered");
+  assert.equal(storedTask.steps?.[0]?.humanInputResponse?.response, "Expected result is A.");
   const coordinatorPrompts = appServer.turnInputs
     .map((turn) => turn.prompt)
     .filter((prompt): prompt is string => isCoordinatorMessagesPrompt(prompt));
@@ -460,7 +502,7 @@ test("AgentTaskStore snapshots are immutable from callers", () => {
     role: ScoutAgentRoles.Verifier,
     description: "Immutable task",
     initialPrompt: "Do work",
-    status: "queued",
+    status: AgentTaskStatuses.Queued,
     isBackgrounded: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -469,7 +511,7 @@ test("AgentTaskStore snapshots are immutable from callers", () => {
   task.status = "failed";
   const stored = fixture.taskStore.getTask("task-immutable");
 
-  assert.equal(stored?.status, "queued");
+  assert.equal(stored?.status, AgentTaskStatuses.Queued);
 });
 
 function createAgentFixture(
@@ -678,7 +720,9 @@ function isCoordinatorMessagesPrompt(prompt: string | undefined): prompt is stri
   }
 }
 
-function createFakeAppServer(): ScoutAgentOptions["appServer"] & {
+function createFakeAppServer(options: {
+  onRunTurn?: (turn: { prompt?: string }) => void | Promise<void>;
+} = {}): ScoutAgentOptions["appServer"] & {
   handler?: DynamicToolCallHandler;
   turnInputs: Array<{ prompt?: string }>;
 } {
@@ -712,8 +756,9 @@ function createFakeAppServer(): ScoutAgentOptions["appServer"] & {
         params,
       };
     },
-    runTurn: async (input: { prompt?: string }) => {
-      appServer.turnInputs.push(input);
+    runTurn: async (turnInput: { prompt?: string }) => {
+      appServer.turnInputs.push(turnInput);
+      await options.onRunTurn?.(turnInput);
       return {
         finalResponse: "",
         response: {},

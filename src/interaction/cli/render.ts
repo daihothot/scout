@@ -54,10 +54,6 @@ export function renderPlan(plan: unknown): string {
     if (!stepObject) continue;
     lines.push(`  ${renderPlanStatus(readString(stepObject, "status"))} ${readString(stepObject, "step") ?? ""}`);
   }
-  const streaming = readString(object, "streaming");
-  if (steps.length === 0 && streaming) {
-    lines.push(`  ${streaming}`);
-  }
   return lines.join("\n");
 }
 
