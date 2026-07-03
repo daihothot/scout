@@ -20,7 +20,6 @@ export function buildAssetCommit(options: BuildAssetCommitOptions): AssetCommit 
     issues: options.mount.issues,
     trustedRoots: options.mount.trustedRoots,
     writableRoots: options.mount.writableRoots,
-    mcpServerBindings: options.mount.mcpServerBindings,
     shellTools: options.mount.shellTools,
     mcpServers: options.mount.mcpServers,
     skills: options.mount.skills,

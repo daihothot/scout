@@ -1,52 +1,37 @@
 import { execFile } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { CodexMount } from "../../asset-store/types.js";
-import { collectMountTrustedRoots } from "../../asset-store/preflight.js";
 import { buildMountShellEnvironment } from "../../asset-store/mount-macros.js";
-import { CodexAppServerClient } from "./app-server-client.js";
+import type { CodexAppServerClient } from "./app-server-client.js";
 import type { AgentServerPreflightResult } from "../types.js";
 
 const execFileAsync = promisify(execFile);
 
-export async function preflightCodexMount(mount: CodexMount): Promise<AgentServerPreflightResult> {
-  const isolatedHome = mkdtempSync(join(tmpdir(), "scout-runtime-home-"));
-  const isolatedCodexHome = join(isolatedHome, ".codex");
-  mkdirSync(isolatedCodexHome, { recursive: true });
-  writeFileSync(join(isolatedCodexHome, "config.toml"), buildIsolatedConfig({
-    mountRoots: [mount.mountRoot],
-    trustedRoots: collectMountTrustedRoots(mount),
-  }), "utf8");
-
+export async function preflightCodexAppServerMount(input: {
+  mount: CodexMount;
+  appServer: CodexAppServerClient;
+}): Promise<AgentServerPreflightResult> {
+  const { mount, appServer } = input;
   const result: AgentServerPreflightResult = {
     status: "failed",
-    isolatedHome,
-    isolatedCodexHome,
   };
-  const client = new CodexAppServerClient({
-    home: isolatedHome,
-    codexHome: isolatedCodexHome,
-    logPrefix: "scout runtime app-server",
-  });
 
   try {
-    await client.startSession();
-    const configRead = await client.request("config/read", {
+    const configRead = await appServer.request("config/read", {
       cwd: mount.mountRoot,
       includeLayers: true,
     });
     result.configLayers = readConfigLayers(configRead);
-    result.skillsList = await client.request("skills/list", {
+    result.skillsList = await appServer.request("skills/list", {
       cwds: [mount.mountRoot],
       forceReload: true,
     });
-    result.pluginList = await client.request("plugin/list", {
+    result.pluginList = await appServer.request("plugin/list", {
       cwds: [mount.mountRoot],
     });
     if (mount.plugins.length > 0) {
-      result.pluginInstalled = await client.request("plugin/installed", {
+      result.pluginInstalled = await appServer.request("plugin/installed", {
         cwds: [mount.mountRoot],
         installSuggestionPluginNames: mount.plugins,
       });
@@ -57,7 +42,7 @@ export async function preflightCodexMount(mount: CodexMount): Promise<AgentServe
       });
       if (result.pluginGate.plugins.some((plugin) => !plugin.installedBefore || !plugin.enabledBefore)) {
         result.pluginInstall = await Promise.all(mount.plugins.map((pluginName) =>
-          client.request("plugin/install", {
+          appServer.request("plugin/install", {
             marketplacePath: result.pluginGate?.marketplacePath ?? join(mount.mountRoot, ".agents", "plugins", "marketplace.json"),
             pluginName,
           }).catch((error: unknown) => ({
@@ -65,7 +50,7 @@ export async function preflightCodexMount(mount: CodexMount): Promise<AgentServe
             error: error instanceof Error ? error.message : String(error),
           }))
         ));
-        result.pluginInstalledAfterInstall = await client.request("plugin/installed", {
+        result.pluginInstalledAfterInstall = await appServer.request("plugin/installed", {
           cwds: [mount.mountRoot],
           installSuggestionPluginNames: mount.plugins,
         });
@@ -77,7 +62,7 @@ export async function preflightCodexMount(mount: CodexMount): Promise<AgentServe
         });
       }
     }
-    result.hooksList = await client.request("hooks/list", {
+    result.hooksList = await appServer.request("hooks/list", {
       cwds: [mount.mountRoot],
     }).catch((error: unknown) => ({
       warning: error instanceof Error ? error.message : String(error),
@@ -87,8 +72,6 @@ export async function preflightCodexMount(mount: CodexMount): Promise<AgentServe
     result.status = preflightPassed(result) ? "passed" : "failed";
   } catch (error) {
     result.error = error instanceof Error ? error.stack ?? error.message : String(error);
-  } finally {
-    client.close();
   }
 
   return result;
@@ -198,56 +181,4 @@ function readArrayOrUndefined(value: unknown): unknown[] | undefined {
 
 function readBoolean(object: Record<string, unknown> | undefined, key: string): boolean {
   return typeof object?.[key] === "boolean" ? object[key] : false;
-}
-
-function buildIsolatedConfig(input: { mountRoots: string[]; trustedRoots: string[] }): string {
-  const homeConfig = readHomeProviderConfig();
-  const mountRoots = [...new Set(input.mountRoots.map((root) => resolve(root)))];
-  const lines = [
-    'model = "gpt-5.4-mini"',
-    'model_provider = "GuruOpenAI"',
-    "",
-    "[features]",
-    "shell_snapshot = false",
-    "",
-    "[model_providers.GuruOpenAI]",
-    'name = "GuruOpenAI"',
-    `base_url = "${escapeToml(homeConfig.baseUrl ?? "https://api.openai.com/v1")}"`,
-    `env_key = "${escapeToml(homeConfig.envKey ?? "OPENAI_API_KEY")}"`,
-    'wire_api = "responses"',
-    "",
-  ];
-  for (const mountRoot of mountRoots) {
-    lines.push(
-      `[projects."${escapeToml(mountRoot)}"]`,
-      'trust_level = "trusted"',
-      "",
-    );
-  }
-  for (const trustedRoot of input.trustedRoots) {
-    if (mountRoots.includes(resolve(trustedRoot))) continue;
-    lines.push(
-      `[projects."${escapeToml(resolve(trustedRoot))}"]`,
-      'trust_level = "trusted"',
-      "",
-    );
-  }
-  return lines.join("\n");
-}
-
-function readHomeProviderConfig(): { baseUrl?: string; envKey?: string } {
-  try {
-    const text = readFileSync(join(homedir(), ".codex", "config.toml"), "utf8");
-    const block = text.match(/^\[model_providers\.GuruOpenAI\]\n([\s\S]*?)(?=^\[|\z)/m)?.[1] ?? "";
-    return {
-      baseUrl: block.match(/^base_url\s*=\s*"([^"]*)"/m)?.[1],
-      envKey: block.match(/^env_key\s*=\s*"([^"]*)"/m)?.[1],
-    };
-  } catch {
-    return {};
-  }
-}
-
-function escapeToml(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
 }

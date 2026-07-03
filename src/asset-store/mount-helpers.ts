@@ -21,7 +21,6 @@ export interface MaterializeMcpServersOptions {
   mcpServers: McpServersFile;
   assetsRoot: string;
   dynamicValues: Record<string, string | undefined>;
-  mcpServerBindings: Record<string, Record<string, string>>;
 }
 
 export interface GenerateCodexConfigOptions {
@@ -39,15 +38,8 @@ export function buildMountDynamicValues(input: MountDynamicValuesInput): Record<
 
 export function materializeMcpServers(options: MaterializeMcpServersOptions): MaterializedMcpServer[] {
   return Object.entries(options.mcpServers.servers).flatMap(([name, server]) => {
-    const bindings = options.mcpServerBindings[name] ?? {};
-    if (!mcpServerBindingSatisfied(server.requiredBindings ?? [], bindings)) {
-      return [];
-    }
     const wrapperPath = join(options.mountRoot, "mcp", name);
-    const dynamicValues = {
-      ...options.dynamicValues,
-      ...Object.fromEntries(Object.entries(bindings).map(([key, value]) => [`binding.${key}`, value])),
-    };
+    const dynamicValues = options.dynamicValues;
     const command = resolveCommand(resolveDynamicValue(server.command, dynamicValues), options.assetsRoot);
     const args = (server.args ?? [])
       .map((arg) => resolveDynamicValue(arg, dynamicValues))
@@ -82,7 +74,6 @@ export function materializeMcpServers(options: MaterializeMcpServersOptions): Ma
       args,
       cwd,
       env,
-      bindings,
       trustedRoots,
       writableRoots,
       smoke: server.smoke
@@ -203,10 +194,6 @@ export function generateCodexConfig(input: GenerateCodexConfigOptions): string {
   }
 
   return lines.join("\n");
-}
-
-function mcpServerBindingSatisfied(requiredBindings: string[], bindings: Record<string, string>): boolean {
-  return requiredBindings.every((key) => typeof bindings[key] === "string" && bindings[key].trim().length > 0);
 }
 
 function resolveDynamicEnv(

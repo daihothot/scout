@@ -45,6 +45,7 @@ export interface AppServerCommandExecutionItem extends AppServerBaseItem {
 
 export interface AppServerDynamicToolCallItem extends AppServerBaseItem {
   type: "dynamicToolCall";
+  namespace?: string | null;
   tool: string;
   arguments?: unknown;
   status: AppServerItemStatus;
@@ -884,10 +885,12 @@ function normalizeItem(value: unknown): AppServerItem | undefined {
         durationMs: readNumberOrNull(raw, "durationMs"),
       };
     case "dynamicToolCall":
+      const rawNamespace = readString(raw, "namespace");
       return {
         ...raw,
         id,
         type,
+        namespace: rawNamespace ?? null,
         tool: readString(raw, "tool") ?? "dynamic tool",
         arguments: raw.arguments,
         status: readStatus(raw),

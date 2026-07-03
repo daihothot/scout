@@ -42,12 +42,10 @@ export interface MaterializeOptions {
   agentId: string;
   parentAssetCommitId?: string;
   cleanRunRoot?: boolean;
-  mcpServerBindings?: Record<string, Record<string, string>>;
 }
 
 export function materializeCodexMount(options: MaterializeOptions): CodexMount {
   const repoRoot = resolve(options.repoRoot);
-  const mcpServerBindings = normalizeMcpServerBindings(options.mcpServerBindings ?? {});
   const assetsRoot = join(repoRoot, "assets", "codex");
   const runId = options.runId ?? `run-${new Date().toISOString().replace(/[-:.]/g, "").slice(0, 15)}`;
   const runRoot = join(repoRoot, "run", runId);
@@ -99,7 +97,6 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     `agentProfile:${JSON.stringify(agentProfile)}`,
     `resource:${resourceHash}`,
     `run:${runId}`,
-    `mcpBindings:${JSON.stringify(mcpServerBindings)}`,
   ].join("\n"));
   const mountHash = sha256Text(`assetCommit:${assetCommitHash}`);
   const mountId = `m_${mountHash.slice(0, 16)}`;
@@ -115,7 +112,6 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
       artifactRoot,
       assetCommitId,
     }),
-    mcpServerBindings,
   });
   const trustedRoots = resolveAgentProfileRoots({
     roots: agentProfile.trustedRoots,
@@ -159,7 +155,6 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     parentAssetCommitId: options.parentAssetCommitId,
     mountId,
     mountRoot,
-    mcpServerBindings,
     trustedRoots,
     writableRoots,
     resourceHash,
@@ -191,7 +186,6 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     issues: shellMaterialization.issues,
     trustedRoots,
     writableRoots,
-    mcpServerBindings,
     shellTools: shellMaterialization.shellTools,
     mcpServers: materializedMcpServers,
     skills: skillNames,
@@ -199,24 +193,6 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     manifestPath,
     resourceHash,
   };
-}
-
-function normalizeMcpServerBindings(
-  bindings: Record<string, Record<string, string>>,
-): Record<string, Record<string, string>> {
-  return Object.fromEntries(
-    Object.entries(bindings)
-      .map(([server, serverBindings]) => [
-        server,
-        Object.fromEntries(
-          Object.entries(serverBindings)
-            .map(([key, value]) => [key, value.trim()] as const)
-            .filter((entry) => entry[0].trim().length > 0 && entry[1].length > 0),
-        ),
-      ] as const)
-      .filter((entry) => entry[0].trim().length > 0 && Object.keys(entry[1]).length > 0)
-      .sort(([left], [right]) => left.localeCompare(right)),
-  );
 }
 
 function sanitizeAgentId(agentId: string): string {
@@ -486,7 +462,6 @@ function buildMountManifest(input: {
   parentAssetCommitId?: string;
   mountId: string;
   mountRoot: string;
-  mcpServerBindings: Record<string, Record<string, string>>;
   trustedRoots: string[];
   writableRoots: string[];
   issues: MountMaterializationIssue[];
@@ -549,7 +524,6 @@ function buildMountManifest(input: {
     mountId: input.mountId,
     agentProfile: input.agentProfile,
     mountRoot: ".",
-    mcpServerBindings: input.mcpServerBindings,
     trustedRoots: input.trustedRoots.map((root) => relativeOrSelf(input.mountRoot, root)),
     writableRoots: input.writableRoots.map((root) => relativeOrSelf(input.mountRoot, root)),
     resourceHash: input.resourceHash,
@@ -628,7 +602,6 @@ function buildMountManifest(input: {
       args: server.args,
       cwd: server.cwd,
       env: server.env,
-      bindings: server.bindings,
       trustedRoots: server.trustedRoots,
       writableRoots: server.writableRoots,
       smoke: server.smoke,

@@ -16,7 +16,9 @@ import { ResearcherAgent } from "../../src/agent/roles/researcher-agent.js";
 import type { ScoutAgent, ScoutAgentOptions } from "../../src/agent/core/scout-agent.js";
 import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 import {
-  SYSTEM_TOOL_NAMESPACE,
+  SYSTEM_AGENT_TOOL_NAMESPACE,
+  SYSTEM_HUMAN_INPUT_TOOL_NAMESPACE,
+  SYSTEM_SEND_MESSAGE_TOOL_NAMESPACE,
 } from "../../src/agent/tools/system-tools.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
@@ -64,14 +66,14 @@ test("AgentBuilder creates a coordinator with system and single-domain tools", (
   assert.ok(agent instanceof CoordinatorAgent);
   assert.equal(agent.runner.runnerKind, "coordinator");
   assert.equal(fixture.registry.listAgents()[0], agent);
-  assert.ok(tools.some((tool) => tool.namespace === SYSTEM_TOOL_NAMESPACE && tool.name === "AgentTool"));
-  assert.ok(tools.some((tool) => tool.namespace === SYSTEM_TOOL_NAMESPACE && tool.name === "SendMessage"));
-  assert.ok(tools.some((tool) => tool.namespace === SYSTEM_TOOL_NAMESPACE && tool.name === "RequestHumanInput"));
+  assert.ok(tools.some((tool) => tool.namespace === SYSTEM_AGENT_TOOL_NAMESPACE && tool.name === "AgentTool"));
+  assert.ok(tools.some((tool) => tool.namespace === SYSTEM_SEND_MESSAGE_TOOL_NAMESPACE && tool.name === "SendMessage"));
+  assert.ok(tools.some((tool) => tool.namespace === SYSTEM_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RequestHumanInput"));
   assert.ok(tools.some((tool) => tool.namespace === "domain-a" && tool.name === "DomainProbe"));
   assert.equal(tools.some((tool) => tool.namespace === "domain-b"), false);
 });
 
-test("AgentBuilder creates and reuses workers while preserving domain tool scope", () => {
+test("AgentBuilder creates one worker role while preserving domain tool scope", () => {
   const fixture = createAgentFixture("builder-worker");
   const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
   const researcherCommit = createAssetCommit(researcherMount);
@@ -89,14 +91,13 @@ test("AgentBuilder creates and reuses workers while preserving domain tool scope
     },
   });
 
-  const agent = builder.getOrCreateWorker({ role: ScoutAgentRoles.Researcher });
+  const agent = builder.buildWorker(ScoutAgentRoles.Researcher);
   const tools = agent.spec.dynamicTools ?? [];
 
   assert.ok(agent instanceof ResearcherAgent);
   assert.equal(agent.runner.runnerKind, "worker");
-  assert.equal(builder.getOrCreateWorker({ role: ScoutAgentRoles.Researcher }), agent);
   assert.equal(fixture.registry.resolveAgent(ScoutAgentRoles.Researcher), agent);
-  assert.ok(tools.some((tool) => tool.namespace === SYSTEM_TOOL_NAMESPACE && tool.name === "RequestHumanInput"));
+  assert.ok(tools.some((tool) => tool.namespace === SYSTEM_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RequestHumanInput"));
   assert.deepEqual(tools.filter((tool) => tool.namespace !== "domain-worker").map((tool) => tool.name), ["RequestHumanInput"]);
   assert.equal(tools.some((tool) => tool.name === "AgentTool"), false);
   assert.equal(tools.some((tool) => tool.name === "SendMessage"), false);
@@ -150,7 +151,6 @@ test("AgentToolBackend routes non-system dynamic tools to the registered domain"
     runId: "run-domain-route",
   });
   const registry = fixture.registry;
-  let builder: AgentBuilder | undefined;
   const agentBackend = new AgentBackend({
     appServer,
     runId: "run-domain-route",
@@ -158,15 +158,14 @@ test("AgentToolBackend routes non-system dynamic tools to the registered domain"
     taskStore: fixture.taskStore,
     eventBus: fixture.options.eventBus,
     agentProvider: {
-      getOrCreateWorker(input): ScoutAgent {
-        if (!builder) throw new Error("AgentBuilder is not initialized.");
-        return builder.getOrCreateWorker(input);
+      resolveWorker(input): ScoutAgent {
+        return registry.resolveAgent(input.role);
       },
     },
     logger: fixture.options.logger,
     domain,
   });
-  builder = new AgentBuilder({
+  const builder = new AgentBuilder({
     domain,
     registry,
     taskStore: fixture.taskStore,
@@ -230,7 +229,6 @@ test("AgentTaskBackend reads and routes tasks through the shared task store", as
   const domain = createStaticDomain("domain-task-store", []);
   const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
   const verifierCommit = createAssetCommit(verifierMount);
-  let builder: AgentBuilder | undefined;
   const agentBackend = new AgentBackend({
     appServer,
     runId: "run-task-store-route",
@@ -238,15 +236,14 @@ test("AgentTaskBackend reads and routes tasks through the shared task store", as
     taskStore: fixture.taskStore,
     eventBus: fixture.options.eventBus,
     agentProvider: {
-      getOrCreateWorker(input): ScoutAgent {
-        if (!builder) throw new Error("AgentBuilder is not initialized.");
-        return builder.getOrCreateWorker(input);
+      resolveWorker(input): ScoutAgent {
+        return fixture.registry.resolveAgent(input.role);
       },
     },
     logger: fixture.options.logger,
     domain,
   });
-  builder = new AgentBuilder({
+  const builder = new AgentBuilder({
     domain,
     registry: fixture.registry,
     taskStore: fixture.taskStore,
@@ -259,6 +256,8 @@ test("AgentTaskBackend reads and routes tasks through the shared task store", as
       },
     },
   });
+  verifier = builder.buildWorker(ScoutAgentRoles.Verifier);
+  await verifier.start();
 
   const task = agentBackend.task.assignAgentTask({
     description: "Verify BDD",
@@ -266,9 +265,8 @@ test("AgentTaskBackend reads and routes tasks through the shared task store", as
     prompt: "Verify this behavior.",
     isBackgrounded: true,
   });
-  verifier = fixture.registry.resolveAgent(task.agentId);
   assignedTaskId = task.taskId;
-  assert.equal(verifier.agentId, `${ScoutAgentRoles.Verifier}-${task.taskId}`);
+  assert.equal(verifier.agentId, ScoutAgentRoles.Verifier);
   await (verifier.runner as WorkerRunner).runTasksToIdle();
   assert.equal(fixture.taskStore.getTask(task.taskId)?.status, AgentTaskStatuses.WaitingForHumanInput);
 
@@ -310,7 +308,6 @@ test("AgentTaskBackend stores human input request and response on the current wo
   const fixture = createAgentFixture("human-input-response", appServer);
   const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
   const verifierCommit = createAssetCommit(verifierMount);
-  let builder: AgentBuilder | undefined;
   const agentBackend = new AgentBackend({
     appServer,
     runId: "run-human-input-response",
@@ -318,15 +315,14 @@ test("AgentTaskBackend stores human input request and response on the current wo
     taskStore: fixture.taskStore,
     eventBus: fixture.options.eventBus,
     agentProvider: {
-      getOrCreateWorker(input): ScoutAgent {
-        if (!builder) throw new Error("AgentBuilder is not initialized.");
-        return builder.getOrCreateWorker(input);
+      resolveWorker(input): ScoutAgent {
+        return fixture.registry.resolveAgent(input.role);
       },
     },
     logger: fixture.options.logger,
     domain: createStaticDomain("domain-human-input-response", []),
   });
-  builder = new AgentBuilder({
+  const builder = new AgentBuilder({
     domain: createStaticDomain("domain-human-input-response", []),
     registry: fixture.registry,
     taskStore: fixture.taskStore,
@@ -339,6 +335,8 @@ test("AgentTaskBackend stores human input request and response on the current wo
       },
     },
   });
+  verifier = builder.buildWorker(ScoutAgentRoles.Verifier);
+  await verifier.start();
 
   const task = agentBackend.task.assignAgentTask({
     description: "Verify BDD",
@@ -346,9 +344,8 @@ test("AgentTaskBackend stores human input request and response on the current wo
     prompt: "Verify this behavior.",
     isBackgrounded: true,
   });
-  verifier = fixture.registry.resolveAgent(task.agentId);
   assignedTaskId = task.taskId;
-  assert.equal(verifier.agentId, `${ScoutAgentRoles.Verifier}-${task.taskId}`);
+  assert.equal(verifier.agentId, ScoutAgentRoles.Verifier);
   await (verifier.runner as WorkerRunner).runTasksToIdle();
   assert.equal(fixture.taskStore.getTask(task.taskId)?.status, AgentTaskStatuses.WaitingForHumanInput);
 
@@ -402,7 +399,6 @@ test("AgentOrchestrator maps task human input events to system interrupts", asyn
   eventBus.subscribe<SystemInterruptEventPayload>(SystemEvents.interrupt, (event) => {
     interruptEvents.push(event);
   });
-  let builder: AgentBuilder | undefined;
   const agentBackend = new AgentBackend({
     appServer,
     runId: "run-orchestrator-human-input",
@@ -410,15 +406,14 @@ test("AgentOrchestrator maps task human input events to system interrupts", asyn
     taskStore: fixture.taskStore,
     eventBus,
     agentProvider: {
-      getOrCreateWorker(input): ScoutAgent {
-        if (!builder) throw new Error("AgentBuilder is not initialized.");
-        return builder.getOrCreateWorker(input);
+      resolveWorker(input): ScoutAgent {
+        return fixture.registry.resolveAgent(input.role);
       },
     },
     logger: fixture.options.logger,
     domain,
   });
-  builder = new AgentBuilder({
+  const builder = new AgentBuilder({
     domain,
     registry: fixture.registry,
     taskStore: fixture.taskStore,
@@ -433,6 +428,8 @@ test("AgentOrchestrator maps task human input events to system interrupts", asyn
   });
   const coordinator = builder.buildCoordinator();
   await coordinator.start();
+  verifier = builder.buildWorker(ScoutAgentRoles.Verifier);
+  await verifier.start();
   const interactionPort = new CapturingInteractionPort("Expected result is A.");
   const interactionGateway = new InteractionGateway({
     eventBus,
@@ -446,9 +443,8 @@ test("AgentOrchestrator maps task human input events to system interrupts", asyn
     prompt: "Need human input",
     isBackgrounded: true,
   });
-  verifier = fixture.registry.resolveAgent(task.agentId);
   assignedTaskId = task.taskId;
-  assert.equal(verifier.agentId, `${ScoutAgentRoles.Verifier}-${task.taskId}`);
+  assert.equal(verifier.agentId, ScoutAgentRoles.Verifier);
   const orchestrator = new AgentOrchestrator({
     eventBus,
   });
@@ -607,7 +603,6 @@ function createMount(root: string, role: string): CodexMount {
     issues: [],
     trustedRoots: [root],
     writableRoots: [artifactRoot],
-    mcpServerBindings: {},
     shellTools: [],
     mcpServers: [],
     skills: [],

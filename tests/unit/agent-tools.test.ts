@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  SYSTEM_TOOL_NAMESPACE,
+  SYSTEM_AGENT_TOOL_NAMESPACE,
+  SYSTEM_HUMAN_INPUT_TOOL_NAMESPACE,
+  SYSTEM_SEND_MESSAGE_TOOL_NAMESPACE,
   buildAgentToolDynamicTool,
   buildRequestHumanInputDynamicTool,
   buildSendMessageDynamicTool,
@@ -14,9 +16,9 @@ test("agent dynamic tool specs expose stable namespaces and required fields", ()
   const sendMessageTool = buildSendMessageDynamicTool();
   const humanInputTool = buildRequestHumanInputDynamicTool();
 
-  assert.equal(agentTool.namespace, SYSTEM_TOOL_NAMESPACE);
-  assert.equal(sendMessageTool.namespace, SYSTEM_TOOL_NAMESPACE);
-  assert.equal(humanInputTool.namespace, SYSTEM_TOOL_NAMESPACE);
+  assert.equal(agentTool.namespace, SYSTEM_AGENT_TOOL_NAMESPACE);
+  assert.equal(sendMessageTool.namespace, SYSTEM_SEND_MESSAGE_TOOL_NAMESPACE);
+  assert.equal(humanInputTool.namespace, SYSTEM_HUMAN_INPUT_TOOL_NAMESPACE);
   assert.deepEqual(readRequired(agentTool.inputSchema), ["description", "subagent_type", "prompt"]);
   assert.deepEqual(readRequired(sendMessageTool.inputSchema), ["to", "message"]);
   assert.deepEqual(readRequired(humanInputTool.inputSchema), ["question"]);

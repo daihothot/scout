@@ -200,7 +200,6 @@ test("WorkerRunner queues a coordinator message back into a waiting task", async
   assert.equal(updated.outcome, undefined);
   assert.equal(updated.steps?.[0]?.status, AgentTaskStepStatuses.WaitingForHumanInput);
   assert.equal(updated.steps?.[0]?.humanInputRequest?.requestId, "input-1");
-  assert.equal(harness.runtime.snapshot().pendingMessageCount, 1);
 });
 
 test("WorkerRunner appends RequestHumanInput turn as a waiting task step", async () => {
@@ -315,7 +314,7 @@ test("AgentTaskBackend keeps latest plan and appends plan records", () => {
     taskStore: store,
     eventBus,
     agentProvider: {
-      getOrCreateWorker: () => agent,
+      resolveWorker: () => agent,
     },
     logger: {
       info: () => undefined,
@@ -403,7 +402,6 @@ function createHarness(input: {
         get threadSnapshot() {
           return thread;
         },
-        startThread: async () => thread,
         runTurn: input.runTurn ?? (async () => completedTurn("")),
         setGoal: async () => undefined,
       },

@@ -146,7 +146,7 @@ export class ScoutAgent {
       response: started.response,
     };
     this.registry.bindThread(this.agentId, this.thread.threadId);
-    this.checkThread(this.thread);
+    await this.checkThread(this.thread);
     return this.thread;
   }
 
@@ -309,15 +309,14 @@ export class ScoutAgent {
           return agent.threadSnapshot;
         },
         logger: this.logger,
-        startThread: () => agent.start(),
         runTurn: (turnInput) => agent.runTurn(turnInput),
         setGoal: (goalInput) => agent.setGoal(goalInput),
       },
     });
   }
 
-  private checkThread(thread: AgentThreadSnapshot): void {
-    if (this.threadPreflightPromise) return;
+  private async checkThread(thread: AgentThreadSnapshot): Promise<void> {
+    if (this.threadPreflightPromise) return this.threadPreflightPromise;
     this.threadPreflightPromise = runThreadPreflight({
       agentId: this.agentId,
       thread,
@@ -352,6 +351,7 @@ export class ScoutAgent {
           },
         });
       });
+    return this.threadPreflightPromise;
   }
 
   private defaultWritableRoots(): string[] {

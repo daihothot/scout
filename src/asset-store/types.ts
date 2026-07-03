@@ -18,7 +18,6 @@ export interface McpServersFile {
     args?: string[];
     cwd?: string;
     env?: Record<string, string>;
-    requiredBindings?: string[];
     trustedRoots?: string[];
     writableRoots?: string[];
     smoke?: {
@@ -35,7 +34,6 @@ export interface MaterializedMcpServer {
   args: string[];
   cwd?: string;
   env?: Record<string, string>;
-  bindings: Record<string, string>;
   trustedRoots: string[];
   writableRoots: string[];
   smoke?: {
@@ -80,7 +78,6 @@ export interface CodexMount {
   issues: MountMaterializationIssue[];
   trustedRoots: string[];
   writableRoots: string[];
-  mcpServerBindings: Record<string, Record<string, string>>;
   shellTools: ShellToolContract[];
   mcpServers: MaterializedMcpServer[];
   skills: string[];
@@ -102,7 +99,6 @@ export interface AssetCommit {
   issues: MountMaterializationIssue[];
   trustedRoots: string[];
   writableRoots: string[];
-  mcpServerBindings: Record<string, Record<string, string>>;
   shellTools: ShellToolContract[];
   mcpServers: MaterializedMcpServer[];
   skills: string[];
@@ -121,7 +117,6 @@ export interface MountManifest {
   mountId: string;
   agentProfile: AgentProfile;
   mountRoot: string;
-  mcpServerBindings: Record<string, Record<string, string>>;
   trustedRoots: string[];
   writableRoots: string[];
   resourceHash: string;
