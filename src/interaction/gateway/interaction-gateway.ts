@@ -12,8 +12,8 @@ import { SystemEvents } from "../../system/events/index.js";
 import { renderHumanInputPrompt } from "../protocol/index.js";
 import type { RuntimeInteractionPort } from "../port.js";
 import type {
-  AgentMessageProducedPayload,
-} from "../../agent/runner/runner-events.js";
+  CoordinatorMessageProducedPayload,
+} from "../../agent/runner/coordinator/coordinator-runner-events.js";
 import type {
   InteractionDisclosureRequestedPayload,
   InteractionHumanInputReceivedPayload,
@@ -60,8 +60,8 @@ export class InteractionGateway {
         SystemEvents.task.humanInputRequested,
         (event) => this.handleHumanInputRequest(event),
       ),
-      this.eventBus.subscribe<AgentMessageProducedPayload>(
-        SystemEvents.agent.messageProduced,
+      this.eventBus.subscribe<CoordinatorMessageProducedPayload>(
+        SystemEvents.coordinator.messageProduced,
         (event) => this.handleAgentMessageProduced(event),
       ),
     );
@@ -124,7 +124,7 @@ export class InteractionGateway {
     }
   }
 
-  private async handleAgentMessageProduced(event: ScoutEvent<AgentMessageProducedPayload>): Promise<void> {
+  private async handleAgentMessageProduced(event: ScoutEvent<CoordinatorMessageProducedPayload>): Promise<void> {
     try {
       await this.interactionPort.publishAgentMessage(event.payload.text, event.payload.data);
     } catch (error) {

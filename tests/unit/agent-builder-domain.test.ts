@@ -41,9 +41,9 @@ import type {
 } from "../../src/interaction/index.js";
 import { InteractionGateway } from "../../src/interaction/index.js";
 import type { AgentTaskSystemEvent } from "../../src/agent/task/task-events.js";
-import type { SystemInterruptEventPayload } from "../../src/agent/orchestration/interrupt-events.js";
+import type { SystemInterruptEventPayload } from "../../src/agent/orchestration/orchestrator-events.js";
 import type { ScoutEvent } from "../../src/core/events/index.js";
-import type { WorkerRunner } from "../../src/agent/runner/worker-runner.js";
+import type { WorkerRunner } from "../../src/agent/runner/worker/worker-runner.js";
 import {
   AgentTaskStatuses,
   AgentTaskStepStatuses,

@@ -1,7 +1,10 @@
 import { event } from "../../core/events/index.js";
 import { SystemEvents } from "../../system/events/catalog.js";
 
-const interruptEventCatalog = {
+const orchestratorEventCatalog = {
+  system: {
+    dispatchRequested: event(),
+  },
   interrupt: {
     raised: event(),
     resolved: event(),
@@ -10,9 +13,9 @@ const interruptEventCatalog = {
   },
 } as const;
 
-SystemEvents.add(interruptEventCatalog);
+SystemEvents.add(orchestratorEventCatalog);
 
-export type SystemInterruptEventCatalog = typeof interruptEventCatalog;
+export type OrchestratorEventCatalog = typeof orchestratorEventCatalog;
 
 export type SystemInterruptKind =
   | "human_input"
@@ -28,4 +31,12 @@ export interface SystemInterruptEventPayload {
   agentId?: string;
   turnId?: string;
   requestId?: string;
+}
+
+export interface SystemDispatchRequestedPayload {
+  dispatchId: string;
+  reason: "runtime_events" | "system_interrupt" | "system_error" | "system_message";
+  systemMessage?: string;
+  createdAt: string;
+  data?: unknown;
 }

@@ -11,7 +11,7 @@ import type {
   AgentTaskSystemEvent,
   AgentTaskSystemEventPayload,
 } from "../task/task-events.js";
-import type { SystemInterruptEventPayload } from "./interrupt-events.js";
+import type { SystemInterruptEventPayload } from "./orchestrator-events.js";
 
 export interface AgentOrchestratorOptions {
   eventBus: EventBus;

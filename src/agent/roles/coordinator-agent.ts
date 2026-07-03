@@ -3,7 +3,7 @@ import {
   ScoutAgent,
   type ScoutAgentOptions,
 } from "../core/scout-agent.js";
-import type { CoordinatorRunner } from "../runner/coordinator-runner.js";
+import type { CoordinatorRunner } from "../runner/coordinator/coordinator-runner.js";
 import { readRoleAgentInstructions } from "./instructions.js";
 
 export class CoordinatorAgent extends ScoutAgent {
