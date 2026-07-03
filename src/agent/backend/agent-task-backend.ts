@@ -307,6 +307,7 @@ export class AgentTaskBackend {
     const updated: AgentTaskState = {
       ...task,
       plan,
+      planRecords: [...(task.planRecords ?? []), plan],
       updatedAt: new Date().toISOString(),
     };
     this.taskStore.updateTask(updated.taskId, () => updated);

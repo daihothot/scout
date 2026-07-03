@@ -19,13 +19,16 @@ import type {
   AgentTaskStepEventPayload,
   AgentTaskTerminalEventPayload,
 } from "../task/task-events.js";
-import type {
-  AgentTaskOutcome,
-  AgentTaskStep,
-  AgentTaskState,
-  AgentHumanInputRequest,
-  AgentHumanInputResponse,
-  AssignAgentTaskInput,
+import {
+  AgentTaskStatuses,
+  AgentTaskStepStatuses,
+  AgentTaskOutcomeStatuses,
+  type AgentHumanInputRequest,
+  type AgentHumanInputResponse,
+  type AgentTaskOutcome,
+  type AgentTaskStep,
+  type AgentTaskState,
+  type AssignAgentTaskInput,
 } from "../task/types.js";
 import type {
   ScoutAgentTurnInput,
@@ -112,7 +115,7 @@ export class WorkerRunner extends AgentRunner {
       role: this.host.role,
       description: input.description,
       initialPrompt: input.prompt,
-      status: "queued",
+      status: AgentTaskStatuses.Queued,
       isBackgrounded: input.isBackgrounded ?? true,
       createdAt: now,
       updatedAt: now,
@@ -135,10 +138,10 @@ export class WorkerRunner extends AgentRunner {
     this.pendingMessages = [...this.pendingMessages, input.message];
     const updated = this.updateTask(task.taskId, (currentTask) => ({
       ...currentTask,
-      status: currentTask.status === "waiting_for_human_input" ? "running" : currentTask.status,
-      humanInputRequest: undefined,
+      status: currentTask.status === AgentTaskStatuses.WaitingForHumanInput ? AgentTaskStatuses.Running : currentTask.status,
       updatedAt: new Date().toISOString(),
     }));
+    this.activeTask = updated;
     this.eventBus.publish(SystemEvents.task.messageQueued, {
       task: updated,
       data: {
@@ -156,7 +159,7 @@ export class WorkerRunner extends AgentRunner {
     this.pendingMessages = [];
     const stopped = this.updateTask(taskId, (current) => ({
       ...current,
-      status: "stopped",
+      status: AgentTaskStatuses.Stopped,
       error: reason,
       finishedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -219,7 +222,6 @@ export class WorkerRunner extends AgentRunner {
         evidenceRefs: [...input.outcome.evidenceRefs],
         emittedAt,
       },
-      humanInputRequest: undefined,
       finishedAt: emittedAt,
       updatedAt: emittedAt,
     }));
@@ -255,13 +257,19 @@ export class WorkerRunner extends AgentRunner {
       ...input.request,
       status: input.request.status ?? "pending",
     } satisfies AgentHumanInputRequest;
-    const waiting = this.updateTask(task.taskId, (current) => ({
-      ...current,
-      status: "waiting_for_human_input",
-      humanInputRequest: { ...request },
-      humanInputRequests: [...(current.humanInputRequests ?? []), request],
+    const waiting = this.updateTask(task.taskId, (current) => this.updateLatestTaskStep({
+      task: {
+        ...current,
+        status: AgentTaskStatuses.WaitingForHumanInput,
+      },
+      update: (step) => ({
+        ...step,
+        status: AgentTaskStepStatuses.WaitingForHumanInput,
+        humanInputRequest: { ...request },
+      }),
       updatedAt,
     }));
+    this.activeTask = waiting;
     this.eventBus.publish(SystemEvents.task.humanInputRequested, {
       task: waiting,
       request,
@@ -272,25 +280,31 @@ export class WorkerRunner extends AgentRunner {
 
   applyHumanInputResponse(input: AgentHumanInputResponse): AgentTaskState {
     const task = this.getTask(input.taskId);
-    const updated = this.updateTask(task.taskId, (current) => ({
-      ...current,
-      humanInputRequest: current.humanInputRequest?.requestId === input.requestId
-        ? {
-          ...current.humanInputRequest,
-          status: "answered",
-        }
-        : current.humanInputRequest,
-      humanInputRequests: (current.humanInputRequests ?? []).map((request) =>
-        request.requestId === input.requestId ? { ...request, status: "answered" } : request
-      ),
-      humanInputResponses: [...(current.humanInputResponses ?? []), { ...input }],
+    const updated = this.updateTask(task.taskId, (current) => this.updateLatestTaskStep({
+      task: {
+        ...current,
+        status: current.status === AgentTaskStatuses.WaitingForHumanInput ? AgentTaskStatuses.Running : current.status,
+      },
+      update: (step) => ({
+        ...step,
+        humanInputRequest: step.humanInputRequest?.requestId === input.requestId
+          ? {
+            ...step.humanInputRequest,
+            status: "answered",
+          }
+          : step.humanInputRequest,
+        humanInputResponse: { ...input },
+      }),
       updatedAt: new Date().toISOString(),
     }));
+    this.activeTask = updated;
     return cloneTaskState(updated);
   }
 
   hasRunningTasks(): boolean {
-    return this.listTasks().some((task) => task.status === "queued" || task.status === "running");
+    return this.listTasks().some((task) =>
+      task.status === AgentTaskStatuses.Queued || task.status === AgentTaskStatuses.Running
+    );
   }
 
   async runTasksToIdle(): Promise<void> {
@@ -307,10 +321,10 @@ export class WorkerRunner extends AgentRunner {
 
   private takeTaskTick(): AgentTaskState | undefined {
     if (this.activeTask) {
-      if (this.activeTask.status === "queued") {
+      if (this.activeTask.status === AgentTaskStatuses.Queued) {
         return this.activeTask;
       }
-      if (this.activeTask.status !== "running") {
+      if (this.activeTask.status !== AgentTaskStatuses.Running) {
         return undefined;
       }
       if (this.countPendingMessages(this.activeTask.taskId) > 0) {
@@ -326,7 +340,7 @@ export class WorkerRunner extends AgentRunner {
     this.ensureOwnedTask(taskId);
     let task = activeTask;
     this.activeTask = task;
-    if (task.status === "stopped") {
+    if (task.status === AgentTaskStatuses.Stopped) {
       return;
     }
     const hadStarted = Boolean(task.startedAt);
@@ -373,52 +387,53 @@ export class WorkerRunner extends AgentRunner {
       pendingMessages,
     });
 
-    const running = this.updateTask(taskId, (current) => ({
-      ...current,
-      status: "running",
-      updatedAt: new Date().toISOString(),
+    const running = this.updateTask(taskId, (current) => this.appendTaskStep({
+      task: {
+        ...current,
+        status: AgentTaskStatuses.Running,
+      },
+      prompt,
+      startedAt: new Date().toISOString(),
     }));
     this.activeTask = running;
     this.eventBus.publish(SystemEvents.task.stepStarted, {
       task: running,
       prompt,
+      step: latestTaskStep(running),
     } satisfies AgentTaskStepEventPayload);
 
     const startedAt = Date.now();
     const outcome = await this.host.runTurn({
       prompt,
-      collaborationModeId: "plan",
       sandbox: this.host.spec.sandbox === "workspace-write" ? "workspaceWrite" : "readOnly",
     });
     const durationMs = Date.now() - startedAt;
     const latest = this.getTask(taskId);
-    if (latest.status === "stopped") {
+    if (latest.status === AgentTaskStatuses.Stopped) {
       this.activeTask = latest;
       return;
     }
-    if (latest.status === "waiting_for_human_input") {
-      const waiting = this.updateTask(taskId, (current) => this.appendTaskStep({
+    if (latest.status === AgentTaskStatuses.WaitingForHumanInput) {
+      const waiting = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
         task: current,
         outcome,
-        prompt,
         durationMs,
-        status: "waiting_for_human_input",
+        status: AgentTaskStepStatuses.WaitingForHumanInput,
       }));
       this.activeTask = waiting;
       this.eventBus.publish(SystemEvents.task.stepCompleted, {
         task: waiting,
         step: latestTaskStep(waiting),
-        data: { reason: "waiting_for_human_input" },
+        data: { reason: AgentTaskStatuses.WaitingForHumanInput },
       } satisfies AgentTaskStepEventPayload);
       return;
     }
     if (isTerminalTaskStatus(latest.status)) {
-      const updated = this.updateTask(taskId, (current) => this.appendTaskStep({
+      const updated = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
         task: current,
         outcome,
-        prompt,
         durationMs,
-        status: outcome.turn.status === "failed" ? "failed" : "completed",
+        status: outcome.turn.status === "failed" ? AgentTaskStepStatuses.Failed : AgentTaskStepStatuses.Completed,
       }));
       this.activeTask = updated;
       this.eventBus.publish(SystemEvents.task.stepCompleted, {
@@ -435,12 +450,11 @@ export class WorkerRunner extends AgentRunner {
         data: { output: outcome.finalResponse ?? "" },
       } satisfies AgentTaskEventPayload);
       if (this.countPendingMessages(taskId) > 0) {
-        const stillRunning = this.updateTask(taskId, (current) => this.appendTaskStep({
+        const stillRunning = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
           task: current,
           outcome,
-          prompt,
           durationMs,
-          status: "completed",
+          status: AgentTaskStepStatuses.Completed,
         }));
         this.activeTask = stillRunning;
         this.eventBus.publish(SystemEvents.task.stepCompleted, {
@@ -451,12 +465,11 @@ export class WorkerRunner extends AgentRunner {
         } satisfies AgentTaskStepEventPayload);
         return;
       }
-      const stillRunning = this.updateTask(taskId, (current) => this.appendTaskStep({
+      const stillRunning = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
         task: current,
         outcome,
-        prompt,
         durationMs,
-        status: "completed",
+        status: AgentTaskStepStatuses.Completed,
       }));
       this.activeTask = stillRunning;
       this.eventBus.publish(SystemEvents.task.stepCompleted, {
@@ -468,13 +481,13 @@ export class WorkerRunner extends AgentRunner {
       return { continueAfterMs: this.tickIntervalMs, continueWith: stillRunning };
     }
 
-    const failed = this.updateTask(taskId, (current) => this.appendTaskStep({
+    const failed = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
       task: {
         ...current,
-        status: "failed",
+        status: AgentTaskStatuses.Failed,
         error: outcome.turn.error,
         outcome: current.outcome ?? {
-          status: "failed",
+          status: AgentTaskOutcomeStatuses.Failed,
           summary: outcome.turn.error ?? "Agent turn failed.",
           artifactRefs: [],
           evidenceRefs: [],
@@ -484,9 +497,8 @@ export class WorkerRunner extends AgentRunner {
         finishedAt: new Date().toISOString(),
       },
       outcome,
-      prompt,
       durationMs,
-      status: "failed",
+      status: AgentTaskStepStatuses.Failed,
     }));
     this.activeTask = failed;
     this.eventBus.publish(SystemEvents.task.failed, {
@@ -514,10 +526,10 @@ export class WorkerRunner extends AgentRunner {
     const taskId = this.activeTask.taskId;
     const failed = this.updateTask(taskId, (current) => ({
       ...current,
-      status: "failed",
+      status: AgentTaskStatuses.Failed,
       error: error instanceof Error ? error.stack ?? error.message : String(error),
       outcome: current.outcome ?? {
-        status: "failed",
+        status: AgentTaskOutcomeStatuses.Failed,
         summary: error instanceof Error ? error.message : String(error),
         artifactRefs: [],
         evidenceRefs: [],
@@ -540,38 +552,72 @@ export class WorkerRunner extends AgentRunner {
 
   private appendTaskStep(input: {
     task: AgentTaskState;
-    outcome: ScoutAgentTurnOutcome;
     prompt: string;
+    startedAt: string;
+  }): AgentTaskState {
+    const step: AgentTaskStep = {
+      stepId: `${input.task.taskId}-step-${String((input.task.steps?.length ?? 0) + 1).padStart(4, "0")}`,
+      taskId: input.task.taskId,
+      status: AgentTaskStepStatuses.Running,
+      prompt: input.prompt,
+      toolCalls: [],
+      startedAt: input.startedAt,
+    };
+    return {
+      ...input.task,
+      steps: [...(input.task.steps ?? []), step],
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private completeLatestTaskStep(input: {
+    task: AgentTaskState;
+    outcome: ScoutAgentTurnOutcome;
     durationMs: number;
     status: AgentTaskStep["status"];
     protocolWarnings?: string[];
     error?: string;
   }): AgentTaskState {
-    const step: AgentTaskStep = {
-      stepId: `${input.task.taskId}-step-${String((input.task.steps?.length ?? 0) + 1).padStart(4, "0")}`,
-      taskId: input.task.taskId,
-      turnId: input.outcome.turn.turnId,
-      status: input.status,
-      prompt: input.prompt,
-      finalResponse: input.outcome.finalResponse,
-      toolCalls: input.outcome.toolCalls ?? [],
-      startedAt: input.outcome.turn.startedAt,
-      finishedAt: input.outcome.turn.finishedAt,
-      durationMs: input.durationMs,
-      protocolWarnings: input.protocolWarnings,
-      error: input.error ?? input.outcome.turn.error,
-    };
-    return {
-      ...input.task,
-      status: input.status === "completed" ? input.task.status : input.status,
-      result: input.outcome.finalResponse ?? input.task.result,
-      steps: [...(input.task.steps ?? []), step],
-      updatedAt: new Date().toISOString(),
+    return this.updateLatestTaskStep({
+      task: {
+        ...input.task,
+        status: input.status === AgentTaskStepStatuses.Completed ? input.task.status : input.status,
+        result: input.outcome.finalResponse ?? input.task.result,
+      },
+      update: (step) => ({
+        ...step,
+        turnId: input.outcome.turn.turnId,
+        status: input.status,
+        finalResponse: input.outcome.finalResponse,
+        toolCalls: input.outcome.toolCalls ?? [],
+        finishedAt: input.outcome.turn.finishedAt,
+        durationMs: input.durationMs,
+        protocolWarnings: input.protocolWarnings,
+        error: input.error ?? input.outcome.turn.error,
+      }),
       usage: {
         ...input.task.usage,
         durationMs: (input.task.usage?.durationMs ?? 0) + input.durationMs,
-        toolUses: (input.task.usage?.toolUses ?? 0) + step.toolCalls.length,
+        toolUses: (input.task.usage?.toolUses ?? 0) + (input.outcome.toolCalls?.length ?? 0),
       },
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  private updateLatestTaskStep(input: {
+    task: AgentTaskState;
+    update: (step: AgentTaskStep) => AgentTaskStep;
+    usage?: AgentTaskState["usage"];
+    updatedAt: string;
+  }): AgentTaskState {
+    const steps = input.task.steps ?? [];
+    const latest = steps[steps.length - 1];
+    if (!latest) throw new Error(`Task ${input.task.taskId} has no current step.`);
+    return {
+      ...input.task,
+      steps: [...steps.slice(0, -1), input.update(latest)],
+      usage: input.usage ?? input.task.usage,
+      updatedAt: input.updatedAt,
     };
   }
 
@@ -647,10 +693,10 @@ export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
 }
 
 export function isTerminalTaskStatus(status: AgentTaskState["status"]): boolean {
-  return status === "complete"
-    || status === "blocked"
-    || status === "failed"
-    || status === "stopped";
+  return status === AgentTaskStatuses.Complete
+    || status === AgentTaskStatuses.Blocked
+    || status === AgentTaskStatuses.Failed
+    || status === AgentTaskStatuses.Stopped;
 }
 
 function latestTaskStep(task: AgentTaskState): AgentTaskStep | undefined {

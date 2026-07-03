@@ -1,11 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { AgentTaskBackend } from "../../src/agent/backend/agent-task-backend.js";
+import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import { WorkerRunner } from "../../src/agent/runner/worker-runner.js";
 import { AgentTaskStore } from "../../src/agent/task/agent-task-store.js";
 import { ScoutAgentRoles, ScoutAgentPhases } from "../../src/agent/thread/types.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import type {
   AgentTaskState,
+} from "../../src/agent/task/types.js";
+import {
+  AgentTaskOutcomeStatuses,
+  AgentTaskStatuses,
+  AgentTaskStepStatuses,
 } from "../../src/agent/task/types.js";
 import type {
   AgentTaskEventPayload,
@@ -16,8 +23,14 @@ import { SystemEvents } from "../../src/system/events/index.js";
 import type {
   ScoutAgentTurnInput,
   ScoutAgentTurnOutcome,
+  ScoutAgent,
 } from "../../src/agent/core/scout-agent.js";
 import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
+import type {
+  AppServerPlanState,
+  AppServerResolvedTimelineEntry,
+  AppServerTimelineEntry,
+} from "../../src/agent-server/codex/app-server-event-store.js";
 
 test("WorkerRunner keeps task running and schedules a tick when a turn completes without TaskResult", async () => {
   const harness = createHarness({
@@ -33,11 +46,11 @@ test("WorkerRunner keeps task running and schedules a tick when a turn completes
   await harness.runtime.runTasksToIdle();
 
   const task = harness.runtime.getTaskSnapshot("task-1");
-  assert.equal(task?.status, "running");
+  assert.equal(task?.status, AgentTaskStatuses.Running);
   assert.equal(task?.outcome, undefined);
   assert.equal(task?.result, "worker response without task result");
   assert.equal(task?.steps?.length, 1);
-  assert.equal(task?.steps?.[0]?.status, "completed");
+  assert.equal(task?.steps?.[0]?.status, AgentTaskStepStatuses.Completed);
   assert.equal(task?.steps?.[0]?.finalResponse, "worker response without task result");
   assert.equal(harness.terminalTasks.length, 0);
   assert.ok(harness.events.some((event) =>
@@ -86,7 +99,7 @@ test("WorkerRunner ticks a running task even when no message is queued", async (
   });
 
   const task = harness.runtime.getTaskSnapshot("task-1");
-  assert.equal(task?.status, "waiting_for_human_input");
+  assert.equal(task?.status, AgentTaskStatuses.WaitingForHumanInput);
   assert.equal(task?.steps?.length, 2);
   assert.equal(turnPrompts[0], "Initial task prompt");
   const tickPrompt = JSON.parse(turnPrompts[1] ?? "{}") as {
@@ -102,7 +115,7 @@ test("WorkerRunner ticks a running task even when no message is queued", async (
   ));
   assert.ok(harness.events.some((event) =>
     SystemEvents.task.stepCompleted.is(event)
-    && readReason("data" in event.payload ? event.payload.data : undefined) === "waiting_for_human_input"
+    && readReason("data" in event.payload ? event.payload.data : undefined) === AgentTaskStatuses.WaitingForHumanInput
   ));
 });
 
@@ -118,15 +131,15 @@ test("WorkerRunner accepts explicit outcome as terminal state", () => {
   const completed = harness.runtime.completeTaskWithOutcome({
     taskId: "task-1",
     outcome: {
-      status: "complete",
+      status: AgentTaskOutcomeStatuses.Complete,
       summary: "Scenario is supported.",
       artifactRefs: ["artifact://report"],
       evidenceRefs: ["evidence://line-1"],
     },
   });
 
-  assert.equal(completed.status, "complete");
-  assert.equal(completed.outcome?.status, "complete");
+  assert.equal(completed.status, AgentTaskStatuses.Complete);
+  assert.equal(completed.outcome?.status, AgentTaskOutcomeStatuses.Complete);
   assert.deepEqual(completed.outcome?.evidenceRefs, ["evidence://line-1"]);
   assert.equal(harness.terminalTasks.length, 1);
 });
@@ -150,36 +163,43 @@ test("WorkerRunner rejects a second task", () => {
   }, /already owns task task-1/);
 });
 
-test("WorkerRunner queues human input response back into waiting task", () => {
-  const harness = createHarness();
+test("WorkerRunner queues a coordinator message back into a waiting task", async () => {
+  let runtime: WorkerRunner | undefined;
+  const harness = createHarness({
+    runTurn: async () => {
+      runtime?.requestHumanInput({
+        taskId: "task-1",
+        request: {
+          requestId: "input-1",
+          agentId: "verifier",
+          taskId: "task-1",
+          kind: "prompt_required",
+          question: "A or B?",
+          createdAt: new Date().toISOString(),
+          status: "pending",
+        },
+      });
+      return completedTurn("", "turn-1");
+    },
+  });
+  runtime = harness.runtime;
   harness.runtime.assignTask({
     taskId: "task-1",
     description: "Choose option",
     subagentType: ScoutAgentRoles.Verifier,
     prompt: "Need human input",
   });
-  harness.runtime.requestHumanInput({
-    taskId: "task-1",
-    request: {
-      requestId: "input-1",
-      agentId: "verifier",
-      taskId: "task-1",
-      kind: "prompt_required",
-      question: "A or B?",
-      createdAt: new Date().toISOString(),
-      status: "pending",
-    },
-  });
+  await harness.runtime.runTasksToIdle();
 
   const updated = harness.runtime.queueMessage({
     taskId: "task-1",
     message: "User picked A.",
   });
 
-  assert.equal(updated.status, "running");
-  assert.equal(updated.humanInputRequest, undefined);
+  assert.equal(updated.status, AgentTaskStatuses.Running);
   assert.equal(updated.outcome, undefined);
-  assert.equal(updated.humanInputRequests?.[0]?.status, "pending");
+  assert.equal(updated.steps?.[0]?.status, AgentTaskStepStatuses.WaitingForHumanInput);
+  assert.equal(updated.steps?.[0]?.humanInputRequest?.requestId, "input-1");
   assert.equal(harness.runtime.snapshot().pendingMessageCount, 1);
 });
 
@@ -214,13 +234,113 @@ test("WorkerRunner appends RequestHumanInput turn as a waiting task step", async
   await harness.runtime.runTasksToIdle();
 
   const task = harness.runtime.getTaskSnapshot("task-1");
-  assert.equal(task?.status, "waiting_for_human_input");
+  assert.equal(task?.status, AgentTaskStatuses.WaitingForHumanInput);
   assert.equal(task?.outcome, undefined);
-  assert.equal(task?.humanInputRequest?.requestId, "input-1");
-  assert.equal(task?.humanInputRequests?.[0]?.status, "pending");
   assert.equal(task?.steps?.length, 1);
-  assert.equal(task?.steps?.[0]?.status, "waiting_for_human_input");
+  assert.equal(task?.steps?.[0]?.status, AgentTaskStepStatuses.WaitingForHumanInput);
+  assert.equal(task?.steps?.[0]?.humanInputRequest?.requestId, "input-1");
+  assert.equal(task?.steps?.[0]?.humanInputRequest?.status, "pending");
   assert.equal(harness.terminalTasks.length, 0);
+});
+
+test("WorkerRunner stores human input request and response on the interrupted task step", async () => {
+  let runtime: WorkerRunner | undefined;
+  let turnCount = 0;
+  const harness = createHarness({
+    runTurn: async () => {
+      turnCount += 1;
+      if (turnCount === 1) {
+        runtime?.requestHumanInput({
+          taskId: "task-1",
+          request: {
+            requestId: "input-1",
+            agentId: "verifier",
+            taskId: "task-1",
+            turnId: "turn-1",
+            kind: "prompt_required",
+            question: "A or B?",
+            createdAt: new Date().toISOString(),
+            status: "pending",
+          },
+        });
+        return completedTurn("waiting", "turn-1");
+      }
+      return completedTurn("resumed", "turn-2");
+    },
+  });
+  runtime = harness.runtime;
+
+  harness.runtime.assignTask({
+    taskId: "task-1",
+    description: "Choose option",
+    subagentType: ScoutAgentRoles.Verifier,
+    prompt: "Need human input",
+  });
+  await harness.runtime.runTasksToIdle();
+
+  harness.runtime.applyHumanInputResponse({
+    requestId: "input-1",
+    agentId: "verifier",
+    taskId: "task-1",
+    response: "User picked A.",
+    createdAt: new Date().toISOString(),
+  });
+  harness.runtime.queueMessage({
+    taskId: "task-1",
+    message: "User picked A.",
+  });
+  await harness.runtime.runTasksToIdle();
+
+  const task = harness.runtime.getTaskSnapshot("task-1");
+  assert.equal(task?.steps?.length, 2);
+  assert.equal(task?.steps?.[0]?.humanInputRequest?.requestId, "input-1");
+  assert.equal(task?.steps?.[0]?.humanInputRequest?.status, "answered");
+  assert.equal(task?.steps?.[0]?.humanInputResponse?.requestId, "input-1");
+  assert.equal(task?.steps?.[0]?.humanInputResponse?.response, "User picked A.");
+  assert.equal(task?.steps?.[1]?.humanInputResponse, undefined);
+});
+
+test("AgentTaskBackend keeps latest plan and appends plan records", () => {
+  const eventBus = new InMemoryEventBus();
+  const store = new AgentTaskStore();
+  const registry = new AgentRegistry();
+  const agent = createScoutAgentStub("verifier");
+  registry.registerAgent(agent);
+  store.addTask(taskState({
+    taskId: "task-1",
+    agentId: "verifier",
+  }));
+  const backend = new AgentTaskBackend({
+    registry,
+    taskStore: store,
+    eventBus,
+    agentProvider: {
+      getOrCreateWorker: () => agent,
+    },
+    logger: {
+      info: () => undefined,
+      warn: () => undefined,
+    },
+  });
+  const firstPlan = planState("turn-1", "first", "inProgress");
+  const secondPlan = planState("turn-2", "second", "completed");
+
+  backend.consumeAppServerTimelineEntry(
+    agent,
+    planTimelineEntry(1, "turn-1"),
+    resolvedPlanEntry(firstPlan),
+  );
+  backend.consumeAppServerTimelineEntry(
+    agent,
+    planTimelineEntry(2, "turn-2"),
+    resolvedPlanEntry(secondPlan),
+  );
+
+  const task = store.getTask("task-1");
+  assert.equal(task?.plan?.turnId, "turn-2");
+  assert.equal(task?.plan?.explanation, "second");
+  assert.deepEqual(task?.planRecords?.map((plan) => plan.turnId), ["turn-1", "turn-2"]);
+  assert.deepEqual(task?.planRecords?.map((plan) => plan.steps[0]?.status), ["inProgress", "completed"]);
 });
 
 function createHarness(input: {
@@ -293,14 +413,80 @@ function createHarness(input: {
   };
 }
 
-function completedTurn(finalResponse: string): ScoutAgentTurnOutcome {
+function createScoutAgentStub(agentId: string): ScoutAgent {
+  return {
+    agentId,
+    role: ScoutAgentRoles.Verifier,
+    phases: [ScoutAgentPhases.Verify],
+    runner: {
+      hasRunningTasks: () => true,
+    },
+  } as unknown as ScoutAgent;
+}
+
+function taskState(input: {
+  taskId: string;
+  agentId: string;
+}): AgentTaskState {
+  const now = new Date().toISOString();
+  return {
+    type: "local_agent",
+    taskId: input.taskId,
+    agentId: input.agentId,
+    role: ScoutAgentRoles.Verifier,
+    description: "Verify plan updates",
+    initialPrompt: "Verify plan updates",
+    status: AgentTaskStatuses.Running,
+    isBackgrounded: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function planState(turnId: string, explanation: string, status: string): AppServerPlanState {
+  return {
+    turnId,
+    explanation,
+    steps: [
+      {
+        step: "step-one",
+        status,
+        raw: {
+          step: "step-one",
+          status,
+        },
+      },
+    ],
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function planTimelineEntry(seq: number, turnId: string): AppServerTimelineEntry {
+  return {
+    seq,
+    receivedAt: new Date().toISOString(),
+    stream: "plan",
+    kind: "plan_updated",
+    threadId: "thread-1",
+    turnId,
+  };
+}
+
+function resolvedPlanEntry(plan: AppServerPlanState): AppServerResolvedTimelineEntry {
+  return {
+    entry: planTimelineEntry(0, plan.turnId ?? "turn"),
+    plan,
+  };
+}
+
+function completedTurn(finalResponse: string, turnId = "turn-1"): ScoutAgentTurnOutcome {
   return {
     turn: {
       invocationId: "invocation-1",
       agentId: "verifier",
       role: ScoutAgentRoles.Verifier,
       threadId: "thread-1",
-      turnId: "turn-1",
+      turnId,
       startedAt: new Date().toISOString(),
       finishedAt: new Date().toISOString(),
       status: "completed",

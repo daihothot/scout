@@ -1,9 +1,13 @@
-import type { AgentTaskState, AgentTaskStatus } from "./types.js";
+import {
+  AgentTaskStatuses,
+  type AgentTaskState,
+  type AgentTaskStatus,
+} from "./types.js";
 
 export const ActiveAgentTaskStatuses = [
-  "queued",
-  "running",
-  "waiting_for_human_input",
+  AgentTaskStatuses.Queued,
+  AgentTaskStatuses.Running,
+  AgentTaskStatuses.WaitingForHumanInput,
 ] as const satisfies AgentTaskStatus[];
 
 export class AgentTaskStore {
@@ -55,7 +59,9 @@ export class AgentTaskStore {
   }
 
   hasRunningTasks(): boolean {
-    return [...this.tasks.values()].some((task) => task.status === "queued" || task.status === "running");
+    return [...this.tasks.values()].some((task) =>
+      task.status === AgentTaskStatuses.Queued || task.status === AgentTaskStatuses.Running
+    );
   }
 
   hasOpenTasks(): boolean {
@@ -63,7 +69,7 @@ export class AgentTaskStore {
   }
 
   hasWaitingHumanInputTasks(): boolean {
-    return [...this.tasks.values()].some((task) => task.status === "waiting_for_human_input");
+    return [...this.tasks.values()].some((task) => task.status === AgentTaskStatuses.WaitingForHumanInput);
   }
 }
 
@@ -76,17 +82,13 @@ export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
     ...task,
     usage: task.usage ? { ...task.usage } : undefined,
     thread: task.thread ? { ...task.thread } : undefined,
-    humanInputRequest: task.humanInputRequest ? {
-      ...task.humanInputRequest,
-      options: task.humanInputRequest.options ? [...task.humanInputRequest.options] : undefined,
-    } : undefined,
-    humanInputRequests: task.humanInputRequests?.map((request) => ({
-      ...request,
-      options: request.options ? [...request.options] : undefined,
-    })),
-    humanInputResponses: task.humanInputResponses?.map((response) => ({ ...response })),
     steps: task.steps?.map((step) => ({
       ...step,
+      humanInputRequest: step.humanInputRequest ? {
+        ...step.humanInputRequest,
+        options: step.humanInputRequest.options ? [...step.humanInputRequest.options] : undefined,
+      } : undefined,
+      humanInputResponse: step.humanInputResponse ? { ...step.humanInputResponse } : undefined,
       toolCalls: step.toolCalls.map((toolCall) => ({ ...toolCall })),
       protocolWarnings: step.protocolWarnings ? [...step.protocolWarnings] : undefined,
     })),

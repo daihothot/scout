@@ -26,7 +26,6 @@ export interface ScoutAgentTurnInput {
   timeoutMs?: number;
   sandbox?: "readOnly" | "workspaceWrite";
   writableRoots?: string[];
-  collaborationModeId?: string;
   onStatusMessage?: (message: string) => void;
 }
 
@@ -175,7 +174,6 @@ export class ScoutAgent {
         prompt: input.prompt,
         timeoutMs: input.timeoutMs,
         sandbox: input.sandbox,
-        collaborationModeId: input.collaborationModeId,
         writableRoots: input.writableRoots ?? this.defaultWritableRoots(),
         onStatusMessage: input.onStatusMessage,
       });
