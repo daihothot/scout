@@ -1,24 +1,27 @@
-import type { Logger } from "../../core/logging/index.js";
+import type { Logger } from "../../../core/logging/index.js";
 import {
-  getAgentPendingMessageAttachments,
-  renderAttachmentsForPrompt,
-} from "./attachments.js";
+  composeTaskTurnInput,
+} from "../../context/attachments.js";
+import {
+  getWorkerPendingMessageAttachments,
+  worker,
+} from "./worker-attachments.js";
 import {
   AgenticLoop,
   type AgenticTickContinuation,
-} from "../core/agentic-loop.js";
+} from "../../core/agentic-loop.js";
 import {
   AgentTaskStore,
   cloneAgentTaskState as cloneTaskState,
-} from "../task/agent-task-store.js";
-import type { EventBus } from "../../core/events/index.js";
-import { SystemEvents } from "../../system/events/index.js";
+} from "../../task/agent-task-store.js";
+import type { EventBus } from "../../../core/events/index.js";
+import { SystemEvents } from "../../../system/events/index.js";
 import type {
   AgentTaskEventPayload,
   AgentHumanInputRequestedEventPayload,
   AgentTaskStepEventPayload,
   AgentTaskTerminalEventPayload,
-} from "../task/task-events.js";
+} from "../../task/task-events.js";
 import {
   AgentTaskStatuses,
   AgentTaskStepStatuses,
@@ -29,13 +32,13 @@ import {
   type AgentTaskStep,
   type AgentTaskState,
   type AssignAgentTaskInput,
-} from "../task/types.js";
+} from "../../task/types.js";
 import type {
   ScoutAgentTurnInput,
   ScoutAgentTurnOutcome,
-} from "../core/scout-agent.js";
-import type { AgentThreadSnapshot, AgentThreadSpec } from "../thread/types.js";
-import { AgentRunner } from "./types.js";
+} from "../../core/scout-agent.js";
+import type { AgentThreadSnapshot, AgentThreadSpec } from "../../thread/types.js";
+import { AgentRunner } from "../types.js";
 
 export interface WorkerRunnerSnapshot {
   tasks: AgentTaskState[];
@@ -338,7 +341,6 @@ export class WorkerRunner extends AgentRunner {
     const taskId = activeTask.taskId;
     this.ensureOwnedTask(taskId);
     let task = activeTask;
-    this.activeTask = task;
     if (task.status === AgentTaskStatuses.Stopped) {
       return;
     }
@@ -360,7 +362,6 @@ export class WorkerRunner extends AgentRunner {
         startedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }));
-      this.activeTask = task;
       this.eventBus.publish(SystemEvents.task.threadAttached, {
         task,
         data: { threadId: thread.threadId },
@@ -382,11 +383,13 @@ export class WorkerRunner extends AgentRunner {
         },
       } satisfies AgentTaskEventPayload);
     }
-    const prompt = this.renderTaskPrompt({
+    const promptSections = this.buildTaskTurnSections({
       task,
-      includeInitialPrompt: !hadStarted,
       initialPrompt,
-      pendingMessages,
+    });
+    const prompt = composeTaskTurnInput({
+      sections: promptSections,
+      attachments: getWorkerPendingMessageAttachments({ messages: pendingMessages }),
     });
 
     const running = this.updateTask(taskId, (current) => this.appendTaskStep({
@@ -623,24 +626,6 @@ export class WorkerRunner extends AgentRunner {
     };
   }
 
-  private renderTaskPrompt(input: {
-    task: AgentTaskState;
-    includeInitialPrompt: boolean;
-    initialPrompt?: string;
-    pendingMessages: string[];
-  }): string {
-    const attachments = getAgentPendingMessageAttachments({ messages: input.pendingMessages });
-    const renderedAttachments = attachments.length > 0 ? renderAttachmentsForPrompt(attachments) : "";
-    if (input.includeInitialPrompt && renderedAttachments) {
-      return [input.initialPrompt, renderedAttachments].filter(Boolean).join("\n\n");
-    }
-    if (input.includeInitialPrompt) {
-      if (!input.initialPrompt) throw new Error(`Task ${input.task.taskId} has no initial prompt.`);
-      return input.initialPrompt;
-    }
-    return renderedAttachments || renderTaskTickPrompt(input.task);
-  }
-
   private resolveMessageTarget(taskId: string | undefined): AgentTaskState {
     if (!this.activeTask) {
       throw new Error(`Agent ${this.host.agentId} has no active task for SendMessage.`);
@@ -688,6 +673,22 @@ export class WorkerRunner extends AgentRunner {
       throw new Error(`Worker runner ${this.host.agentId} owns task ${this.activeTask?.taskId ?? "<none>"}, not ${taskId}.`);
     }
   }
+
+  private buildTaskTurnSections(input: {
+    task: AgentTaskState;
+    initialPrompt?: string;
+  }): string[] {
+    if (input.initialPrompt !== undefined) {
+      if (!input.initialPrompt) throw new Error(`Task ${input.task.taskId} has no initial prompt.`);
+      return [input.initialPrompt];
+    }
+    return [worker.turn.task_tick({
+      taskId: input.task.taskId,
+      status: input.task.status,
+      description: input.task.description,
+      latestStepId: latestTaskStep(input.task)?.stepId,
+    })];
+  }
 }
 
 export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
@@ -703,17 +704,4 @@ export function isTerminalTaskStatus(status: AgentTaskState["status"]): boolean 
 
 function latestTaskStep(task: AgentTaskState): AgentTaskStep | undefined {
   return task.steps?.[task.steps.length - 1];
-}
-
-function renderTaskTickPrompt(task: AgentTaskState): string {
-  return JSON.stringify({
-    type: "task_tick",
-    task: {
-      taskId: task.taskId,
-      status: task.status,
-      description: task.description,
-      latestStepId: latestTaskStep(task)?.stepId,
-    },
-    instruction: "continue_current_task",
-  });
 }

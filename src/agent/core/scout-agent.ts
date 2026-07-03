@@ -7,8 +7,8 @@ import type { AssetCommit, CodexMount } from "../../asset-store/types.js";
 import type { EventBus } from "../../core/events/index.js";
 import type { Logger } from "../../core/logging/index.js";
 import type { RunContextBundle } from "../../run/types.js";
-import { CoordinatorRunner } from "../runner/coordinator-runner.js";
-import { WorkerRunner } from "../runner/worker-runner.js";
+import { CoordinatorRunner } from "../runner/coordinator/coordinator-runner.js";
+import { WorkerRunner } from "../runner/worker/worker-runner.js";
 import { AgentRunner } from "../runner/types.js";
 import type { AgentTaskStore } from "../task/agent-task-store.js";
 import type {
@@ -151,7 +151,10 @@ export class ScoutAgent {
   }
 
   async runTurn(input: ScoutAgentTurnInput): Promise<ScoutAgentTurnOutcome> {
-    const thread = await this.start();
+    const thread = this.thread;
+    if (!thread) {
+      throw new Error(`Agent ${this.agentId} thread is not started.`);
+    }
     const invocationId = this.nextInvocationId(thread.threadId);
     const startedAt = new Date().toISOString();
 

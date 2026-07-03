@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentTaskBackend } from "../../src/agent/backend/agent-task-backend.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
-import { WorkerRunner } from "../../src/agent/runner/worker-runner.js";
+import { WorkerRunner } from "../../src/agent/runner/worker/worker-runner.js";
 import { AgentTaskStore } from "../../src/agent/task/agent-task-store.js";
 import { ScoutAgentRoles, ScoutAgentPhases } from "../../src/agent/thread/types.js";
 import type { Logger } from "../../src/core/logging/index.js";

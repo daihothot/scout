@@ -1,22 +1,20 @@
 import type {
   ScoutAgentTurnInput,
   ScoutAgentTurnOutcome,
-} from "../core/scout-agent.js";
+} from "../../core/scout-agent.js";
 import type {
   EventBus,
   ScoutEvent,
-} from "../../core/events/index.js";
-import { EventMailbox } from "../../core/events/index.js";
-import { SystemEvents } from "../../system/events/index.js";
-import { AgenticLoop } from "../core/agentic-loop.js";
-import type {
-  SystemInterruptEventPayload,
-} from "../orchestration/interrupt-events.js";
+} from "../../../core/events/index.js";
+import { EventMailbox } from "../../../core/events/index.js";
+import { SystemEvents } from "../../../system/events/index.js";
+import { AgenticLoop } from "../../core/agentic-loop.js";
 import type {
   SystemDispatchRequestedPayload,
-} from "./runner-events.js";
-import type { UserMessageSubmittedPayload } from "../../interaction/gateway/interaction-events.js";
-import { AgentRunner } from "./types.js";
+  SystemInterruptEventPayload,
+} from "../../orchestration/orchestrator-events.js";
+import type { UserMessageSubmittedPayload } from "../../../interaction/gateway/interaction-events.js";
+import { AgentRunner } from "../types.js";
 
 export interface CoordinatorRunnerHost {
   readonly agentId: string;
@@ -76,7 +74,7 @@ export class CoordinatorRunner extends AgentRunner {
       throw new Error(`Coordinator runner ${this.agentId} is stopped.${this.stopReason ? ` Reason: ${this.stopReason}` : ""}`);
     }
     return this.host.runTurn({
-      prompt: renderCoordinatorMailboxInput({
+      prompt: composeCoordinatorMailboxInput({
         messages: events.map(toRunnerInputMessage),
       }),
       sandbox: "workspaceWrite",
@@ -85,7 +83,7 @@ export class CoordinatorRunner extends AgentRunner {
   }
 
   private publishOutcome(outcome: ScoutAgentTurnOutcome): void {
-    this.eventBus.publish(SystemEvents.agent.turnCompleted, {
+    this.eventBus.publish(SystemEvents.coordinator.turnCompleted, {
       agentId: this.agentId,
       threadId: outcome.turn.threadId,
       turnId: outcome.turn.turnId,
@@ -95,7 +93,7 @@ export class CoordinatorRunner extends AgentRunner {
     });
     const text = outcome.finalResponse?.trim();
     if (!text) return;
-    this.eventBus.publish(SystemEvents.agent.messageProduced, {
+    this.eventBus.publish(SystemEvents.coordinator.messageProduced, {
       messageId: `${outcome.turn.invocationId}-message`,
       agentId: this.agentId,
       threadId: outcome.turn.threadId,
@@ -106,7 +104,7 @@ export class CoordinatorRunner extends AgentRunner {
   }
 
   private publishFailure(error: unknown): void {
-    this.eventBus.publish(SystemEvents.agent.messageProduced, {
+    this.eventBus.publish(SystemEvents.coordinator.messageProduced, {
       messageId: `${this.agentId}-runner-error-${Date.now()}`,
       agentId: this.agentId,
       threadId: this.host.threadId,
@@ -152,7 +150,7 @@ type RunnerInputMessage =
     interrupt: ScoutEvent<SystemInterruptEventPayload>;
   };
 
-function renderCoordinatorMailboxInput(input: { messages: RunnerInputMessage[] }): string {
+function composeCoordinatorMailboxInput(input: { messages: RunnerInputMessage[] }): string {
   return JSON.stringify({
     type: "coordinator_messages",
     messages: input.messages.map((message) => {
