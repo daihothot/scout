@@ -4,14 +4,14 @@ import type {
 } from "../../agent-server/types.js";
 import type { ScoutDomain } from "../../domain/index.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
-import { ScoutAgentRoles } from "../model/types.js";
+import { ScoutAgentRoles } from "../thread/types.js";
 import {
   SYSTEM_TOOL_NAMESPACE,
   parseSystemDynamicToolCall,
   type RequestHumanInputToolCall,
   type SystemToolCall,
 } from "../tools/system-tools.js";
-import type { AgentRegistry } from "../lifecycle/agent-registry.js";
+import type { AgentRegistry } from "../core/agent-registry.js";
 import type { AgentTaskBackend } from "./agent-task-backend.js";
 
 export interface AgentToolBackendOptions {
@@ -197,13 +197,11 @@ export class AgentToolBackend {
       case "RequestHumanInput":
         return this.handleRequestHumanInputToolCall(call, input, caller);
       case "AgentTool": {
-        this.requireCoordinatorToolCaller(caller, call.tool);
         const task = this.taskBackend.assignAgentTask({
           agentId: call.agent_id,
           description: call.description,
           subagentType: call.subagent_type,
           prompt: call.prompt,
-          parentTaskId: caller.threadId ?? caller.agentId,
           isBackgrounded: true,
         });
         return {
@@ -215,7 +213,6 @@ export class AgentToolBackend {
         };
       }
       case "SendMessage": {
-        this.requireCoordinatorToolCaller(caller, call.tool);
         const task = this.taskBackend.sendAgentMessage({
           target: call.to,
           message: call.message,
@@ -228,12 +225,6 @@ export class AgentToolBackend {
       }
       default:
         throw new Error(`Unsupported system tool: ${String((call as { tool?: unknown }).tool)}`);
-    }
-  }
-
-  private requireCoordinatorToolCaller(caller: ScoutAgent, tool: string): void {
-    if (caller.role !== ScoutAgentRoles.Coordinator) {
-      throw new Error(`${tool} is only available to coordinator threads. Caller role: ${caller.role}`);
     }
   }
 }

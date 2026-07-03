@@ -24,7 +24,7 @@ import type {
   AgentHumanInputResponse,
   SendAgentMessageInput,
 } from "../task/types.js";
-import type { AgentRegistry } from "../lifecycle/agent-registry.js";
+import type { AgentRegistry } from "../core/agent-registry.js";
 import type {
   AgentProvider,
   AssignBackendAgentTaskInput,
@@ -59,15 +59,19 @@ export class AgentTaskBackend {
   }
 
   assignAgentTask(input: AssignBackendAgentTaskInput): AgentTaskState {
+    const taskId = this.nextTaskId();
     const agent = input.agentId
       ? this.registry.resolveAgent(input.agentId)
-      : this.agentProvider.getOrCreateWorker({ role: input.subagentType });
+      : this.agentProvider.getOrCreateWorker({
+        role: input.subagentType,
+        agentId: this.agentIdForTask(input.subagentType, taskId),
+      });
     if (agent.role !== input.subagentType) {
       throw new Error(`Agent ${agent.agentId} is ${agent.role}, not ${input.subagentType}.`);
     }
     const task = agent.runner.assignTask({
       ...input,
-      taskId: this.nextTaskId(),
+      taskId,
       agentId: agent.agentId,
     });
     return task;
@@ -94,7 +98,8 @@ export class AgentTaskBackend {
     response: string;
   }): AgentTaskState {
     const target = this.resolveTaskTarget(input.taskId);
-    const current = this.taskStore.requireTask(target.taskId);
+    const current = this.taskStore.getTask(target.taskId);
+    if (!current) throw new Error(`Unknown agent task: ${target.taskId}`);
     const response: AgentHumanInputResponse = {
       requestId: input.requestId,
       agentId: current.agentId,
@@ -114,7 +119,9 @@ export class AgentTaskBackend {
   }
 
   getAgentTask(taskId: string): AgentTaskState {
-    return this.taskStore.requireTask(taskId);
+    const task = this.taskStore.getTask(taskId);
+    if (!task) throw new Error(`Unknown agent task: ${taskId}`);
+    return task;
   }
 
   hasRunningAgentTasks(): boolean {
@@ -185,7 +192,12 @@ export class AgentTaskBackend {
 
   resolveAgentTask(agent: ScoutAgent, taskId: string | undefined, context: string): AgentTaskState {
     if (taskId) {
-      return this.taskStore.requireAgentTask(agent.agentId, taskId);
+      const task = this.taskStore.getTask(taskId);
+      if (!task) throw new Error(`Unknown agent task: ${taskId}`);
+      if (task.agentId !== agent.agentId) {
+        throw new Error(`Task ${taskId} does not belong to agent ${agent.agentId}.`);
+      }
+      return task;
     }
     const active = this.taskStore.findActiveTaskForAgent(agent.agentId);
     if (!active) throw new Error(`Agent ${agent.agentId} has no active task for ${context}.`);
@@ -247,6 +259,10 @@ export class AgentTaskBackend {
   private nextTaskId(): string {
     this.taskSequence += 1;
     return `agent-task-${String(this.taskSequence).padStart(4, "0")}`;
+  }
+
+  private agentIdForTask(role: string, taskId: string): string {
+    return `${role}-${taskId}`;
   }
 
   private applyGoalUpdate(

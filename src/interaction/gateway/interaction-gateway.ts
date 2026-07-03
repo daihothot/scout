@@ -179,6 +179,5 @@ export class InteractionGateway {
 
 function shouldNotifyTaskEvent(event: AgentTaskSystemEvent): boolean {
   return SystemEvents.task.terminal.is(event)
-    || SystemEvents.task.humanInputRequested.is(event)
-    || SystemEvents.task.humanInputResponded.is(event);
+    || SystemEvents.task.humanInputRequested.is(event);
 }

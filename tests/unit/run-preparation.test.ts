@@ -10,7 +10,7 @@ import {
 } from "../../src/agent-server/codex/app-server-factory.js";
 import type { AgentServerPreflightResult } from "../../src/agent-server/types.js";
 import type { CodexMount } from "../../src/asset-store/index.js";
-import { ScoutAgentRoles } from "../../src/agent/model/types.js";
+import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 
 const repoRoot = process.cwd();
 

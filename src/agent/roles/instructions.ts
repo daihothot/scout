@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ScoutAgentOptions } from "../core/scout-agent.js";
-import type { ScoutAgentRole } from "../model/types.js";
+import type { ScoutAgentRole } from "../thread/types.js";
 
 const AGENTS_DIR = "agents";
 const WORKER_INSTRUCTIONS_FILE = "worker.AGENTS.md";

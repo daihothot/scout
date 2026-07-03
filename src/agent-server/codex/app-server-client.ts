@@ -80,6 +80,11 @@ export interface ThreadStartOptions {
   dynamicTools?: DynamicToolSpec[];
 }
 
+export interface ThreadStartResult {
+  threadId: string;
+  response: unknown;
+}
+
 export interface TurnStartOptions {
   threadId: string;
   prompt: string;
@@ -215,7 +220,7 @@ export class CodexAppServerClient {
     this.notify("initialized");
   }
 
-  async startThread(options: ThreadStartOptions): Promise<{ threadId: string; response: unknown }> {
+  async startThread(options: ThreadStartOptions): Promise<ThreadStartResult> {
     const response = await this.request("thread/start", cleanUndefined({
       model: options.model ?? "gpt-5.4-mini",
       modelProvider: options.modelProvider ?? "GuruOpenAI",

@@ -14,7 +14,7 @@ import type {
   AgentTaskSystemEvent,
 } from "../../src/agent/task/task-events.js";
 import type { ScoutEvent } from "../../src/core/events/index.js";
-import { ScoutAgentRoles } from "../../src/agent/model/types.js";
+import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 
@@ -171,8 +171,7 @@ function task(input: Partial<AgentTaskState> = {}): AgentTaskState {
     agentId: "verifier",
     role: ScoutAgentRoles.Verifier,
     description: "验证 <BDD>",
-    prompt: "验证",
-    selectedAgent: ScoutAgentRoles.Verifier,
+    initialPrompt: "验证 <BDD>",
     status: "running",
     isBackgrounded: true,
     createdAt: "2026-06-29T00:00:00.000Z",

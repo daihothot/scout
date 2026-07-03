@@ -1,4 +1,4 @@
-import type { ScoutAgent } from "../core/scout-agent.js";
+import type { ScoutAgent } from "./scout-agent.js";
 
 export interface AgentRegistryLogger {
   info(input: unknown): void;

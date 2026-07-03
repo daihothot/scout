@@ -1,6 +1,6 @@
 import { event } from "../../core/events/index.js";
 import { SystemEvents } from "../../system/events/catalog.js";
-import type { ScoutAgentTurnLog } from "../core/scout-agent.js";
+import type { ScoutAgentTurnResult } from "../core/scout-agent.js";
 
 const runnerEventCatalog = {
   system: {
@@ -38,7 +38,7 @@ export interface AgentTurnCompletedPayload {
   agentId: string;
   threadId?: string;
   turnId?: string;
-  status: ScoutAgentTurnLog["status"];
+  status: ScoutAgentTurnResult["status"];
   completedAt: string;
-  turn: ScoutAgentTurnLog;
+  turn: ScoutAgentTurnResult;
 }

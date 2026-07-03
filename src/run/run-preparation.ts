@@ -15,7 +15,7 @@ import { writeJsonFile } from "../core/fs.js";
 import {
   ScoutAgentRoles,
   type ScoutAgentRole,
-} from "../agent/model/types.js";
+} from "../agent/thread/types.js";
 
 export const RunAgentRoles = [
   ScoutAgentRoles.Coordinator,

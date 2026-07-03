@@ -47,8 +47,5 @@ function renderTaskSummary(task: AgentTaskState): string {
   if (task.status === "waiting_for_human_input") {
     return `Agent "${task.description}" is waiting for human input`;
   }
-  if (task.status === "waiting_for_coordinator") {
-    return `Agent "${task.description}" is waiting for Coordinator`;
-  }
   return `Agent "${task.description}" is running`;
 }

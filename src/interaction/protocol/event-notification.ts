@@ -1,6 +1,5 @@
 import type {
   AgentHumanInputRequestedEventPayload,
-  AgentHumanInputRespondedEventPayload,
   AgentTaskEventPayload,
   AgentTaskSystemEvent,
 } from "../../agent/task/task-events.js";
@@ -8,7 +7,6 @@ import { SystemEvents } from "../../system/events/index.js";
 import { renderTaskNotificationXml } from "./task-notification.js";
 import {
   renderHumanInputRequestNotification,
-  renderHumanInputResponse,
 } from "./human-input.js";
 import { escapeXml } from "./xml.js";
 
@@ -22,13 +20,6 @@ export function renderEventNotification(event: AgentTaskSystemEvent): string {
     return `${renderHumanInputRequestNotification({
       task: payload.task,
       request: payload.request,
-    })}\n`;
-  }
-  if (SystemEvents.task.humanInputResponded.is(event)) {
-    const payload = event.payload as AgentHumanInputRespondedEventPayload;
-    return `${renderHumanInputResponse({
-      eventId: event.id,
-      response: payload.response,
     })}\n`;
   }
   return [

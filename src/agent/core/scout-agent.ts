@@ -15,8 +15,10 @@ import type {
   AgentTaskStepToolCall,
   AgentTaskState,
 } from "../task/types.js";
-import { ScoutAgentRoles, type AgentThreadSnapshot, type AgentThreadSpec } from "../model/types.js";
-import type { ScoutAgentThreadPreflightSnapshot } from "../lifecycle/thread-preflight.js";
+import { ScoutAgentRoles } from "../thread/types.js";
+import type { AgentThreadSnapshot, AgentThreadSpec } from "../thread/types.js";
+import { runThreadPreflight } from "../thread/thread-preflight.js";
+import type { AgentRegistry } from "./agent-registry.js";
 
 export interface ScoutAgentTurnInput {
   prompt: string;
@@ -28,7 +30,7 @@ export interface ScoutAgentTurnInput {
   onStatusMessage?: (message: string) => void;
 }
 
-export interface ScoutAgentTurnLog {
+export interface ScoutAgentTurnResult {
   invocationId: string;
   agentId: string;
   role: AgentThreadSpec["role"];
@@ -42,7 +44,7 @@ export interface ScoutAgentTurnLog {
 }
 
 export interface ScoutAgentTurnOutcome {
-  turn: ScoutAgentTurnLog;
+  turn: ScoutAgentTurnResult;
   finalResponse?: string;
   toolCalls?: AgentTaskStepToolCall[];
   plan?: AppServerPlanState;
@@ -53,7 +55,7 @@ export interface ScoutAgentSnapshot {
   agentId: string;
   thread?: AgentThreadSnapshot;
   tasks: AgentTaskState[];
-  activeTaskId?: string;
+  activeTask?: AgentTaskState;
   pendingMessageCount: number;
 }
 
@@ -67,6 +69,7 @@ export interface ScoutAgentOptions {
   logger: Logger;
   taskStore: AgentTaskStore;
   eventBus: EventBus;
+  registry: AgentRegistry;
   dynamicTools?: AgentThreadSpec["dynamicTools"];
 }
 
@@ -79,12 +82,10 @@ export class ScoutAgent {
   protected readonly assetCommit: AssetCommit;
   protected readonly logger: Logger;
   protected readonly eventBus: EventBus;
+  protected readonly registry: AgentRegistry;
   readonly runner: AgentRunner;
   private thread?: AgentThreadSnapshot;
-  private threadPreflightRunner?: (agent: ScoutAgent) => Promise<{
-    thread: AgentThreadSnapshot;
-    preflight: ScoutAgentThreadPreflightSnapshot;
-  }>;
+  private threadPreflightPromise?: Promise<void>;
   private invocationSequence = 0;
 
   constructor(input: ScoutAgentOptions & {
@@ -98,6 +99,7 @@ export class ScoutAgent {
     this.assetCommit = input.assetCommit;
     this.logger = input.logger;
     this.eventBus = input.eventBus;
+    this.registry = input.registry;
     this.logger.registerAgentLogRoot(this.agentId, input.agentMount.logsRoot);
 
     const agent = this;
@@ -124,13 +126,6 @@ export class ScoutAgent {
     return this.agentMount;
   }
 
-  setThreadPreflightRunner(runner: (agent: ScoutAgent) => Promise<{
-    thread: AgentThreadSnapshot;
-    preflight: ScoutAgentThreadPreflightSnapshot;
-  }>): void {
-    this.threadPreflightRunner = runner;
-  }
-
   async start(): Promise<AgentThreadSnapshot> {
     if (this.thread) return this.thread;
     const started = await this.appServer.startThread({
@@ -147,24 +142,13 @@ export class ScoutAgent {
       dynamicTools: this.spec.dynamicTools,
     });
     this.thread = {
-      role: this.spec.role,
-      phases: this.spec.phases,
       threadId: started.threadId,
-      request: this.spec,
-      effective: readEffectiveThreadConfig(started.response),
+      spec: this.spec,
       response: started.response,
     };
+    this.registry.bindThread(this.agentId, this.thread.threadId);
+    this.checkThread(this.thread);
     return this.thread;
-  }
-
-  async startWithPreflight(): Promise<{
-    thread: AgentThreadSnapshot;
-    preflight: ScoutAgentThreadPreflightSnapshot;
-  }> {
-    if (!this.threadPreflightRunner) {
-      throw new Error(`Agent ${this.agentId} has no thread preflight runner.`);
-    }
-    return this.threadPreflightRunner(this);
   }
 
   async runTurn(input: ScoutAgentTurnInput): Promise<ScoutAgentTurnOutcome> {
@@ -176,12 +160,12 @@ export class ScoutAgent {
       module: "agent",
       event: "turn_started",
       agentId: this.agentId,
-      data: {
-        invocationId,
-        role: thread.role,
-        threadId: thread.threadId,
-        prompt: input.prompt,
-        outputContract: input.outputContract,
+        data: {
+          invocationId,
+          role: thread.spec.role,
+          threadId: thread.threadId,
+          prompt: input.prompt,
+          outputContract: input.outputContract,
       },
     });
 
@@ -201,7 +185,7 @@ export class ScoutAgent {
         agentId: this.agentId,
         data: {
           invocationId,
-          role: thread.role,
+          role: thread.spec.role,
           threadId: thread.threadId,
           turnId: result.turnId,
           tokenUsage: result.eventStoreSnapshot?.threads[thread.threadId]?.tokenUsage,
@@ -210,10 +194,10 @@ export class ScoutAgent {
           droppedTimelineCount: result.eventStoreSnapshot?.droppedTimelineCount ?? 0,
         },
       });
-      const turn: ScoutAgentTurnLog = {
+      const turn: ScoutAgentTurnResult = {
         invocationId,
         agentId: this.agentId,
-        role: thread.role,
+        role: thread.spec.role,
         threadId: thread.threadId,
         turnId: result.turnId,
         startedAt,
@@ -238,10 +222,10 @@ export class ScoutAgent {
         goal: result.goal,
       };
     } catch (error) {
-      const turn: ScoutAgentTurnLog = {
+      const turn: ScoutAgentTurnResult = {
         invocationId,
         agentId: this.agentId,
-        role: thread.role,
+        role: thread.spec.role,
         threadId: thread.threadId,
         startedAt,
         finishedAt: new Date().toISOString(),
@@ -327,11 +311,49 @@ export class ScoutAgent {
           return agent.threadSnapshot;
         },
         logger: this.logger,
-        startWithPreflight: () => agent.startWithPreflight(),
+        startThread: () => agent.start(),
         runTurn: (turnInput) => agent.runTurn(turnInput),
         setGoal: (goalInput) => agent.setGoal(goalInput),
       },
     });
+  }
+
+  private checkThread(thread: AgentThreadSnapshot): void {
+    if (this.threadPreflightPromise) return;
+    this.threadPreflightPromise = runThreadPreflight({
+      agentId: this.agentId,
+      thread,
+      mount: this.agentMount,
+      appServer: this.appServer,
+    })
+      .then((threadPreflight) => {
+        if (this.thread?.threadId === thread.threadId) {
+          this.thread = {
+            ...this.thread,
+            threadPreflight,
+          };
+        }
+        this.logger.info({
+          module: "agent.thread",
+          event: "thread_preflight_completed",
+          agentId: this.agentId,
+          data: {
+            threadId: thread.threadId,
+            status: threadPreflight.result.status,
+          },
+        });
+      })
+      .catch((error) => {
+        this.logger.error({
+          module: "agent.thread",
+          event: "thread_preflight_failed",
+          agentId: this.agentId,
+          data: {
+            threadId: thread.threadId,
+            error: error instanceof Error ? error.stack ?? error.message : String(error),
+          },
+        });
+      });
   }
 
   private defaultWritableRoots(): string[] {
@@ -378,37 +400,6 @@ function extractToolCalls(progressItems: NonNullable<Awaited<ReturnType<CodexApp
   });
 }
 
-function readEffectiveThreadConfig(response: unknown): AgentThreadSnapshot["effective"] {
-  const root = readObject(response);
-  const sandbox = readObjectOrUndefined(root.sandbox);
-  return {
-    approvalPolicy: readOptionalString(root, "approvalPolicy"),
-    sandboxType: sandbox ? readOptionalString(sandbox, "type") : undefined,
-    sandboxNetworkAccess: sandbox ? readOptionalBoolean(sandbox, "networkAccess") : undefined,
-    reasoningEffort: readOptionalString(root, "reasoningEffort"),
-    cwd: readOptionalString(root, "cwd"),
-  };
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readObject(value: unknown): Record<string, unknown> {
-  if (!isPlainObject(value)) {
-    throw new Error("Expected object.");
-  }
-  return value;
-}
-
-function readObjectOrUndefined(value: unknown): Record<string, unknown> | undefined {
-  return isPlainObject(value) ? value : undefined;
-}
-
 function readOptionalString(object: Record<string, unknown>, key: string): string | undefined {
   return typeof object[key] === "string" ? object[key] : undefined;
-}
-
-function readOptionalBoolean(object: Record<string, unknown>, key: string): boolean | undefined {
-  return typeof object[key] === "boolean" ? object[key] : undefined;
 }

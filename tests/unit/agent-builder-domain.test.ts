@@ -9,8 +9,7 @@ import {
   type PreparedAgentInputs,
 } from "../../src/agent/builder/agent-builder.js";
 import { AgentBackend } from "../../src/agent/backend/agent-backend.js";
-import { AgentRegistry } from "../../src/agent/lifecycle/agent-registry.js";
-import { AgentThreadLifecycle } from "../../src/agent/lifecycle/agent-thread-lifecycle.js";
+import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import { AgentTaskStore } from "../../src/agent/task/agent-task-store.js";
 import { CoordinatorAgent } from "../../src/agent/roles/coordinator-agent.js";
 import { ResearcherAgent } from "../../src/agent/roles/researcher-agent.js";
@@ -19,7 +18,8 @@ import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestra
 import {
   SYSTEM_TOOL_NAMESPACE,
 } from "../../src/agent/tools/system-tools.js";
-import { ScoutAgentRoles, type AgentDynamicToolSpec } from "../../src/agent/model/types.js";
+import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
+import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import type { DynamicToolCallHandler } from "../../src/agent-server/types.js";
@@ -48,7 +48,6 @@ test("AgentBuilder creates a coordinator with system and single-domain tools", (
   const builder = new AgentBuilder({
     domain: createStaticDomain("domain-a", [domainTool]),
     registry: fixture.registry,
-    lifecycle: fixture.lifecycle,
     taskStore: fixture.taskStore,
     runtime: fixture.runtime,
     preparedAgents: fixture.preparedAgents,
@@ -74,7 +73,6 @@ test("AgentBuilder creates and reuses workers while preserving domain tool scope
   const builder = new AgentBuilder({
     domain: createStaticDomain("domain-worker", [buildDomainTool("domain-worker")]),
     registry: fixture.registry,
-    lifecycle: fixture.lifecycle,
     taskStore: fixture.taskStore,
     runtime: fixture.runtime,
     preparedAgents: {
@@ -100,12 +98,11 @@ test("AgentBuilder creates and reuses workers while preserving domain tool scope
   assert.ok(tools.some((tool) => tool.namespace === "domain-worker" && tool.name === "DomainProbe"));
 });
 
-test("AgentRegistry indexes registered agents and thread bindings without owning lifecycle", () => {
+test("AgentRegistry indexes registered agents and thread bindings without owning thread startup", () => {
   const fixture = createAgentFixture("registry-bind");
   const builder = new AgentBuilder({
     domain: createStaticDomain("domain-registry", []),
     registry: fixture.registry,
-    lifecycle: fixture.lifecycle,
     taskStore: fixture.taskStore,
     runtime: fixture.runtime,
     preparedAgents: fixture.preparedAgents,
@@ -120,26 +117,25 @@ test("AgentRegistry indexes registered agents and thread bindings without owning
   assert.equal(fixture.registry.listAgents().length, 1);
 });
 
-test("AgentThreadLifecycle starts a thread, runs preflight, and binds it to registry", async () => {
+test("ScoutAgent starts a thread, runs preflight, and binds it to registry", async () => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("lifecycle-start", appServer);
+  const fixture = createAgentFixture("thread-start", appServer);
   const builder = new AgentBuilder({
-    domain: createStaticDomain("domain-lifecycle", []),
+    domain: createStaticDomain("domain-thread", []),
     registry: fixture.registry,
-    lifecycle: fixture.lifecycle,
     taskStore: fixture.taskStore,
     runtime: fixture.runtime,
     preparedAgents: fixture.preparedAgents,
   });
   const agent = builder.buildCoordinator();
 
-  const { thread, preflight } = await agent.startWithPreflight();
+  const thread = await agent.start();
 
   assert.equal(thread.threadId, "thread-test");
-  assert.equal(preflight.result.status, "passed");
+  assert.deepEqual(thread.response, { thread: { id: "thread-test" } });
   assert.equal(fixture.registry.resolveAgentByThreadId("thread-test"), agent);
-  assert.deepEqual(fixture.lifecycle.listStartedAgents().map((item) => item.threadId), ["thread-test"]);
-  assert.deepEqual(fixture.lifecycle.listThreadPreflights().map((item) => item.threadId), ["thread-test"]);
+  await waitFor(() => agent.threadSnapshot?.threadPreflight?.result.status === "passed");
+  assert.equal(agent.threadSnapshot?.threadPreflight?.threadId, "thread-test");
 });
 
 test("AgentToolBackend routes non-system dynamic tools to the registered domain", async () => {
@@ -149,7 +145,6 @@ test("AgentToolBackend routes non-system dynamic tools to the registered domain"
     runId: "run-domain-route",
   });
   const registry = fixture.registry;
-  const lifecycle = fixture.lifecycle;
   let builder: AgentBuilder | undefined;
   const agentBackend = new AgentBackend({
     appServer,
@@ -169,7 +164,6 @@ test("AgentToolBackend routes non-system dynamic tools to the registered domain"
   builder = new AgentBuilder({
     domain,
     registry,
-    lifecycle,
     taskStore: fixture.taskStore,
     runtime: {
       ...fixture.runtime,
@@ -230,7 +224,6 @@ test("AgentTaskBackend reads and routes tasks through the shared task store", ()
   builder = new AgentBuilder({
     domain,
     registry: fixture.registry,
-    lifecycle: fixture.lifecycle,
     taskStore: fixture.taskStore,
     runtime: fixture.runtime,
     preparedAgents: {
@@ -248,7 +241,8 @@ test("AgentTaskBackend reads and routes tasks through the shared task store", ()
     prompt: "Verify this behavior.",
     isBackgrounded: true,
   });
-  const verifier = fixture.registry.resolveAgent(ScoutAgentRoles.Verifier);
+  const verifier = fixture.registry.resolveAgent(task.agentId);
+  assert.equal(verifier.agentId, `${ScoutAgentRoles.Verifier}-${task.taskId}`);
   verifier.runner.requestHumanInput({
     taskId: task.taskId,
     request: {
@@ -298,7 +292,6 @@ test("AgentTaskBackend handles human input response without resuming worker task
   builder = new AgentBuilder({
     domain: createStaticDomain("domain-human-input-response", []),
     registry: fixture.registry,
-    lifecycle: fixture.lifecycle,
     taskStore: fixture.taskStore,
     runtime: fixture.runtime,
     preparedAgents: {
@@ -316,7 +309,8 @@ test("AgentTaskBackend handles human input response without resuming worker task
     prompt: "Verify this behavior.",
     isBackgrounded: true,
   });
-  const verifier = fixture.registry.resolveAgent(ScoutAgentRoles.Verifier);
+  const verifier = fixture.registry.resolveAgent(task.agentId);
+  assert.equal(verifier.agentId, `${ScoutAgentRoles.Verifier}-${task.taskId}`);
   verifier.runner.requestHumanInput({
     taskId: task.taskId,
     request: {
@@ -336,7 +330,7 @@ test("AgentTaskBackend handles human input response without resuming worker task
     response: "Expected result is A.",
   });
 
-  assert.equal(updated.status, "waiting_for_coordinator");
+  assert.equal(updated.status, "waiting_for_human_input");
   assert.equal(updated.humanInputRequest?.status, "answered");
   assert.equal(updated.humanInputRequests?.[0]?.status, "answered");
   assert.equal(updated.humanInputResponses?.[0]?.response, "Expected result is A.");
@@ -377,7 +371,6 @@ test("AgentOrchestrator maps task human input events to system interrupts", asyn
   builder = new AgentBuilder({
     domain,
     registry: fixture.registry,
-    lifecycle: fixture.lifecycle,
     taskStore: fixture.taskStore,
     runtime: fixture.runtime,
     preparedAgents: {
@@ -389,7 +382,7 @@ test("AgentOrchestrator maps task human input events to system interrupts", asyn
     },
   });
   const coordinator = builder.buildCoordinator();
-  await coordinator.startWithPreflight();
+  await coordinator.start();
   const interactionPort = new CapturingInteractionPort("Expected result is A.");
   const interactionGateway = new InteractionGateway({
     eventBus,
@@ -403,7 +396,8 @@ test("AgentOrchestrator maps task human input events to system interrupts", asyn
     prompt: "Need human input",
     isBackgrounded: true,
   });
-  const verifier = fixture.registry.resolveAgent(ScoutAgentRoles.Verifier);
+  const verifier = fixture.registry.resolveAgent(task.agentId);
+  assert.equal(verifier.agentId, `${ScoutAgentRoles.Verifier}-${task.taskId}`);
   const orchestrator = new AgentOrchestrator({
     eventBus,
   });
@@ -442,7 +436,9 @@ test("AgentOrchestrator maps task human input events to system interrupts", asyn
   assert.equal("request" in interruptRaised.payload, false);
   assert.equal("response" in interruptResolved.payload, false);
   assert.deepEqual(interactionPort.requests.map((request) => request.id), ["input-1"]);
-  assert.equal(fixture.taskStore.requireTask(task.taskId).humanInputResponses?.[0]?.response, "Expected result is A.");
+  const storedTask = fixture.taskStore.getTask(task.taskId);
+  assert.ok(storedTask);
+  assert.equal(storedTask.humanInputResponses?.[0]?.response, "Expected result is A.");
   const coordinatorPrompts = appServer.turnInputs
     .map((turn) => turn.prompt)
     .filter((prompt): prompt is string => isCoordinatorMessagesPrompt(prompt));
@@ -463,8 +459,7 @@ test("AgentTaskStore snapshots are immutable from callers", () => {
     agentId: "agent-1",
     role: ScoutAgentRoles.Verifier,
     description: "Immutable task",
-    prompt: "Do work",
-    selectedAgent: ScoutAgentRoles.Verifier,
+    initialPrompt: "Do work",
     status: "queued",
     isBackgrounded: true,
     createdAt: new Date().toISOString(),
@@ -472,9 +467,9 @@ test("AgentTaskStore snapshots are immutable from callers", () => {
   });
 
   task.status = "failed";
-  const stored = fixture.taskStore.requireTask("task-immutable");
+  const stored = fixture.taskStore.getTask("task-immutable");
 
-  assert.equal(stored.status, "queued");
+  assert.equal(stored?.status, "queued");
 });
 
 function createAgentFixture(
@@ -488,7 +483,6 @@ function createAgentFixture(
   runtime: AgentBuilderRuntime;
   preparedAgents: PreparedAgentInputs;
   registry: AgentRegistry;
-  lifecycle: AgentThreadLifecycle;
   taskStore: AgentTaskStore;
 } {
   const root = mkdtempSync(join(tmpdir(), `scout-${name}-`));
@@ -496,6 +490,9 @@ function createAgentFixture(
   const assetCommit = createAssetCommit(mount);
   const taskStore = new AgentTaskStore();
   const eventBus = new InMemoryEventBus();
+  const registry = new AgentRegistry({
+    logger: createNoopLogger(),
+  });
   const options: ScoutAgentOptions = {
     repoRoot: root,
     appServer: appServer as ScoutAgentOptions["appServer"],
@@ -508,15 +505,8 @@ function createAgentFixture(
     logger: createNoopLogger(),
     taskStore,
     eventBus,
-  };
-  const registry = new AgentRegistry({
-    logger: options.logger,
-  });
-  const lifecycle = new AgentThreadLifecycle({
-    appServer: options.appServer,
     registry,
-    logger: options.logger,
-  });
+  };
   const runtime = {
     repoRoot: options.repoRoot,
     appServer: options.appServer,
@@ -538,7 +528,6 @@ function createAgentFixture(
     runtime,
     preparedAgents,
     registry,
-    lifecycle,
     taskStore,
   };
 }
@@ -704,7 +693,9 @@ function createFakeAppServer(): ScoutAgentOptions["appServer"] & {
     },
     startThread: async () => ({
       threadId: "thread-test",
-      response: {},
+      response: {
+        thread: { id: "thread-test" },
+      },
     }),
     startSession: async () => undefined,
     close: () => undefined,
