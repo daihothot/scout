@@ -1,5 +1,3 @@
-import type { ContextKey } from "../../core/context/index.js";
-
 export type AgentAttachmentOrigin =
   | {
     kind: "coordinator";
@@ -9,7 +7,6 @@ export type AgentAttachmentOrigin =
   };
 
 export interface AgentAttachment {
-  key?: ContextKey;
   prompt: string;
   origin: AgentAttachmentOrigin;
   isMeta: boolean;
