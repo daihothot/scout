@@ -3,11 +3,13 @@ import {
   getAgentPendingMessageAttachments,
   renderAttachmentsForPrompt,
 } from "./attachments.js";
-import { AgenticLoop } from "../core/agentic-loop.js";
+import {
+  AgenticLoop,
+  type AgenticTickContinuation,
+} from "../core/agentic-loop.js";
 import {
   AgentTaskStore,
   cloneAgentTaskState as cloneTaskState,
-  isActiveAgentTaskStatus,
 } from "../task/agent-task-store.js";
 import type { EventBus } from "../../core/events/index.js";
 import { SystemEvents } from "../../system/events/index.js";
@@ -29,13 +31,12 @@ import type {
   ScoutAgentTurnInput,
   ScoutAgentTurnOutcome,
 } from "../core/scout-agent.js";
-import type { ScoutAgentThreadPreflightSnapshot } from "../lifecycle/thread-preflight.js";
-import type { AgentThreadSnapshot, AgentThreadSpec } from "../model/types.js";
+import type { AgentThreadSnapshot, AgentThreadSpec } from "../thread/types.js";
 import { AgentRunner } from "./types.js";
 
 export interface WorkerRunnerSnapshot {
   tasks: AgentTaskState[];
-  activeTaskId?: string;
+  activeTask?: AgentTaskState;
   pendingMessageCount: number;
 }
 
@@ -45,10 +46,7 @@ export interface WorkerRunnerHost {
   readonly spec: AgentThreadSpec;
   readonly threadSnapshot?: AgentThreadSnapshot;
   readonly logger: Logger;
-  startWithPreflight(): Promise<{
-    thread: AgentThreadSnapshot;
-    preflight: ScoutAgentThreadPreflightSnapshot;
-  }>;
+  startThread(): Promise<AgentThreadSnapshot>;
   runTurn(input: ScoutAgentTurnInput): Promise<ScoutAgentTurnOutcome>;
   setGoal(input: {
     objective: string;
@@ -60,6 +58,7 @@ export interface WorkerRunnerOptions {
   host: WorkerRunnerHost;
   store: AgentTaskStore;
   eventBus: EventBus;
+  tickIntervalMs?: number;
 }
 
 export class WorkerRunner extends AgentRunner {
@@ -67,10 +66,10 @@ export class WorkerRunner extends AgentRunner {
   private readonly host: WorkerRunnerHost;
   private readonly store: AgentTaskStore;
   private readonly eventBus: EventBus;
-  private readonly loop: AgenticLoop<string>;
-  private readonly taskQueue: string[] = [];
-  private readonly pendingMessages = new Map<string, string[]>();
-  private activeTaskId?: string;
+  private readonly loop: AgenticLoop<AgentTaskState>;
+  private readonly tickIntervalMs: number;
+  private pendingMessages: string[] = [];
+  private activeTask?: AgentTaskState;
   private stopped = false;
 
   constructor(options: WorkerRunnerOptions) {
@@ -78,11 +77,13 @@ export class WorkerRunner extends AgentRunner {
     this.host = options.host;
     this.store = options.store;
     this.eventBus = options.eventBus;
-    this.loop = new AgenticLoop<string>({
+    this.tickIntervalMs = options.tickIntervalMs ?? 1000;
+    this.loop = new AgenticLoop<AgentTaskState>({
       agentId: this.host.agentId,
       handlers: {
-        takeStep: () => this.takeTaskStep(),
-        runStep: (taskId) => this.runTaskStep(taskId),
+        loopKind: "tick",
+        takeTick: () => this.takeTaskTick(),
+        runTick: (task) => this.runTaskTick(task),
         isStopped: () => this.stopped,
         onError: (error) => this.failActiveTask(error),
       },
@@ -100,6 +101,9 @@ export class WorkerRunner extends AgentRunner {
     if (input.subagentType !== this.host.role) {
       throw new Error(`Cannot assign ${input.subagentType} task to ${this.host.role} agent ${this.host.agentId}.`);
     }
+    if (this.activeTask) {
+      throw new Error(`Worker runner ${this.host.agentId} already owns task ${this.activeTask.taskId}.`);
+    }
     const now = new Date().toISOString();
     const task: AgentTaskState = {
       type: "local_agent",
@@ -107,20 +111,17 @@ export class WorkerRunner extends AgentRunner {
       agentId: this.host.agentId,
       role: this.host.role,
       description: input.description,
-      prompt: input.prompt,
-      selectedAgent: this.host.role,
+      initialPrompt: input.prompt,
       status: "queued",
       isBackgrounded: input.isBackgrounded ?? true,
       createdAt: now,
       updatedAt: now,
-      parentTaskId: input.parentTaskId,
       thread: this.host.threadSnapshot,
     };
     const stored = this.store.addTask(task);
-    this.taskQueue.push(task.taskId);
+    this.activeTask = stored;
     this.eventBus.publish(SystemEvents.task.assigned, {
       task: stored,
-      data: { prompt: input.prompt },
     } satisfies AgentTaskEventPayload);
     this.loop.schedule();
     return stored;
@@ -131,13 +132,10 @@ export class WorkerRunner extends AgentRunner {
     if (isTerminalTaskStatus(task.status)) {
       throw new Error(`Cannot queue message for terminal task ${task.taskId}. Status: ${task.status}`);
     }
-    const current = this.pendingMessages.get(task.taskId) ?? [];
-    this.pendingMessages.set(task.taskId, [...current, input.message]);
+    this.pendingMessages = [...this.pendingMessages, input.message];
     const updated = this.updateTask(task.taskId, (currentTask) => ({
       ...currentTask,
-      status: currentTask.status === "waiting_for_human_input" || currentTask.status === "waiting_for_coordinator"
-        ? "running"
-        : currentTask.status,
+      status: currentTask.status === "waiting_for_human_input" ? "running" : currentTask.status,
       humanInputRequest: undefined,
       updatedAt: new Date().toISOString(),
     }));
@@ -155,8 +153,7 @@ export class WorkerRunner extends AgentRunner {
   stopTask(taskId: string, reason = "任务已被 Coordinator 停止。"): AgentTaskState {
     const task = this.getTask(taskId);
     if (isTerminalTaskStatus(task.status)) return cloneTaskState(task);
-    this.removeFromTaskQueue(taskId);
-    this.pendingMessages.delete(taskId);
+    this.pendingMessages = [];
     const stopped = this.updateTask(taskId, (current) => ({
       ...current,
       status: "stopped",
@@ -164,9 +161,7 @@ export class WorkerRunner extends AgentRunner {
       finishedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }));
-    if (this.activeTaskId === taskId) {
-      this.activeTaskId = undefined;
-    }
+    this.activeTask = stopped;
     this.eventBus.publish(SystemEvents.task.stopped, {
       task: stopped,
       data: { reason },
@@ -187,6 +182,7 @@ export class WorkerRunner extends AgentRunner {
         this.stopTask(task.taskId, reason);
       }
     }
+    this.loop.stop();
   }
 
   stop(reason?: string): void {
@@ -198,7 +194,8 @@ export class WorkerRunner extends AgentRunner {
   }
 
   getTaskSnapshot(taskId: string): AgentTaskState | undefined {
-    return this.store.getAgentTask(this.host.agentId, taskId);
+    if (this.activeTask?.taskId !== taskId) return undefined;
+    return this.store.getTask(taskId);
   }
 
   completeTaskWithOutcome(input: {
@@ -226,11 +223,8 @@ export class WorkerRunner extends AgentRunner {
       finishedAt: emittedAt,
       updatedAt: emittedAt,
     }));
-    this.removeFromTaskQueue(task.taskId);
-    this.pendingMessages.delete(task.taskId);
-    if (this.activeTaskId === task.taskId) {
-      this.activeTaskId = undefined;
-    }
+    this.pendingMessages = [];
+    this.activeTask = completed;
     this.eventBus.publish(SystemEvents.task.outcomeAccepted, {
       task: completed,
       data: {
@@ -290,7 +284,6 @@ export class WorkerRunner extends AgentRunner {
         request.requestId === input.requestId ? { ...request, status: "answered" } : request
       ),
       humanInputResponses: [...(current.humanInputResponses ?? []), { ...input }],
-      status: current.status === "waiting_for_human_input" ? "waiting_for_coordinator" : current.status,
       updatedAt: new Date().toISOString(),
     }));
     return cloneTaskState(updated);
@@ -307,31 +300,43 @@ export class WorkerRunner extends AgentRunner {
   snapshot(): WorkerRunnerSnapshot {
     return {
       tasks: this.listTasks(),
-      activeTaskId: this.activeTaskId,
-      pendingMessageCount: [...this.pendingMessages.values()].reduce((sum, messages) => sum + messages.length, 0),
+      activeTask: this.activeTask ? cloneTaskState(this.activeTask) : undefined,
+      pendingMessageCount: this.pendingMessages.length,
     };
   }
 
-  private takeTaskStep(): string | undefined {
-    if (this.activeTaskId) {
-      return this.countPendingMessages(this.activeTaskId) > 0 ? this.activeTaskId : undefined;
+  private takeTaskTick(): AgentTaskState | undefined {
+    if (this.activeTask) {
+      if (this.activeTask.status === "queued") {
+        return this.activeTask;
+      }
+      if (this.activeTask.status !== "running") {
+        return undefined;
+      }
+      if (this.countPendingMessages(this.activeTask.taskId) > 0) {
+        return this.activeTask;
+      }
+      return undefined;
     }
-    const taskId = this.dequeueNextTaskId();
-    if (!taskId) return undefined;
-    this.activeTaskId = taskId;
-    return taskId;
+    return undefined;
   }
 
-  private async runTaskStep(taskId: string): Promise<void> {
-    let task = this.getTask(taskId);
+  private async runTaskTick(activeTask: AgentTaskState): Promise<void | AgenticTickContinuation<AgentTaskState>> {
+    const taskId = activeTask.taskId;
+    this.ensureOwnedTask(taskId);
+    let task = activeTask;
+    this.activeTask = task;
     if (task.status === "stopped") {
-      this.activeTaskId = undefined;
       return;
     }
     const hadStarted = Boolean(task.startedAt);
-    const { thread } = await this.host.startWithPreflight();
+    const initialPrompt = hadStarted ? undefined : task.initialPrompt;
+    const thread = await this.host.startThread();
     if (!hadStarted) {
-      const goal = await this.host.setGoal({ objective: task.prompt });
+      if (!initialPrompt) {
+        throw new Error(`Task ${taskId} has no initial prompt.`);
+      }
+      const goal = await this.host.setGoal({ objective: initialPrompt });
       task = this.updateTask(taskId, (current) => ({
         ...current,
         thread,
@@ -339,6 +344,7 @@ export class WorkerRunner extends AgentRunner {
         startedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }));
+      this.activeTask = task;
       this.eventBus.publish(SystemEvents.task.threadAttached, {
         task,
         data: { threadId: thread.threadId },
@@ -354,7 +360,7 @@ export class WorkerRunner extends AgentRunner {
     const pendingMessages = this.drainPendingMessages(taskId);
     if (pendingMessages.length > 0) {
       this.eventBus.publish(SystemEvents.task.pendingMessagesDrained, {
-        task: this.getTask(taskId),
+        task,
         data: {
           messages: pendingMessages,
         },
@@ -363,6 +369,7 @@ export class WorkerRunner extends AgentRunner {
     const prompt = this.renderTaskPrompt({
       task,
       includeInitialPrompt: !hadStarted,
+      initialPrompt,
       pendingMessages,
     });
 
@@ -371,6 +378,7 @@ export class WorkerRunner extends AgentRunner {
       status: "running",
       updatedAt: new Date().toISOString(),
     }));
+    this.activeTask = running;
     this.eventBus.publish(SystemEvents.task.stepStarted, {
       task: running,
       prompt,
@@ -385,7 +393,7 @@ export class WorkerRunner extends AgentRunner {
     const durationMs = Date.now() - startedAt;
     const latest = this.getTask(taskId);
     if (latest.status === "stopped") {
-      this.activeTaskId = undefined;
+      this.activeTask = latest;
       return;
     }
     if (latest.status === "waiting_for_human_input") {
@@ -396,6 +404,7 @@ export class WorkerRunner extends AgentRunner {
         durationMs,
         status: "waiting_for_human_input",
       }));
+      this.activeTask = waiting;
       this.eventBus.publish(SystemEvents.task.stepCompleted, {
         task: waiting,
         step: latestTaskStep(waiting),
@@ -411,7 +420,7 @@ export class WorkerRunner extends AgentRunner {
         durationMs,
         status: outcome.turn.status === "failed" ? "failed" : "completed",
       }));
-      this.activeTaskId = undefined;
+      this.activeTask = updated;
       this.eventBus.publish(SystemEvents.task.stepCompleted, {
         task: updated,
         step: latestTaskStep(updated),
@@ -426,16 +435,14 @@ export class WorkerRunner extends AgentRunner {
         data: { output: outcome.finalResponse ?? "" },
       } satisfies AgentTaskEventPayload);
       if (this.countPendingMessages(taskId) > 0) {
-        const stillRunning = this.updateTask(taskId, (current) => ({
-          ...current,
-          status: "running",
-          result: outcome.finalResponse,
-          updatedAt: new Date().toISOString(),
-          usage: {
-            ...current.usage,
-            durationMs: (current.usage?.durationMs ?? 0) + durationMs,
-          },
+        const stillRunning = this.updateTask(taskId, (current) => this.appendTaskStep({
+          task: current,
+          outcome,
+          prompt,
+          durationMs,
+          status: "completed",
         }));
+        this.activeTask = stillRunning;
         this.eventBus.publish(SystemEvents.task.stepCompleted, {
           task: stillRunning,
           step: latestTaskStep(stillRunning),
@@ -444,21 +451,21 @@ export class WorkerRunner extends AgentRunner {
         } satisfies AgentTaskStepEventPayload);
         return;
       }
-      const waiting = this.updateTask(taskId, (current) => this.appendTaskStep({
+      const stillRunning = this.updateTask(taskId, (current) => this.appendTaskStep({
         task: current,
         outcome,
         prompt,
         durationMs,
-        status: "waiting_for_coordinator",
-        protocolWarnings: ["Agent turn completed without a terminal domain state or RequestHumanInput."],
+        status: "completed",
       }));
+      this.activeTask = stillRunning;
       this.eventBus.publish(SystemEvents.task.stepCompleted, {
-        task: waiting,
-        step: latestTaskStep(waiting),
+        task: stillRunning,
+        step: latestTaskStep(stillRunning),
         output: outcome.finalResponse ?? "",
-        data: { reason: "waiting_for_coordinator" },
+        data: { reason: "tick_scheduled" },
       } satisfies AgentTaskStepEventPayload);
-      return;
+      return { continueAfterMs: this.tickIntervalMs, continueWith: stillRunning };
     }
 
     const failed = this.updateTask(taskId, (current) => this.appendTaskStep({
@@ -481,7 +488,7 @@ export class WorkerRunner extends AgentRunner {
       durationMs,
       status: "failed",
     }));
-    this.activeTaskId = undefined;
+    this.activeTask = failed;
     this.eventBus.publish(SystemEvents.task.failed, {
       task: failed,
     } satisfies AgentTaskEventPayload);
@@ -493,8 +500,7 @@ export class WorkerRunner extends AgentRunner {
   }
 
   private failActiveTask(error: unknown): void {
-    const taskId = this.activeTaskId ?? this.dequeueNextTaskId();
-    if (!taskId) {
+    if (!this.activeTask) {
       this.host.logger.error({
         module: "agent",
         event: "agent_loop_failed_without_task",
@@ -505,6 +511,7 @@ export class WorkerRunner extends AgentRunner {
       });
       return;
     }
+    const taskId = this.activeTask.taskId;
     const failed = this.updateTask(taskId, (current) => ({
       ...current,
       status: "failed",
@@ -520,7 +527,7 @@ export class WorkerRunner extends AgentRunner {
       finishedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }));
-    this.activeTaskId = undefined;
+    this.activeTask = failed;
     this.eventBus.publish(SystemEvents.task.failed, {
       task: failed,
     } satisfies AgentTaskEventPayload);
@@ -538,6 +545,7 @@ export class WorkerRunner extends AgentRunner {
     durationMs: number;
     status: AgentTaskStep["status"];
     protocolWarnings?: string[];
+    error?: string;
   }): AgentTaskState {
     const step: AgentTaskStep = {
       stepId: `${input.task.taskId}-step-${String((input.task.steps?.length ?? 0) + 1).padStart(4, "0")}`,
@@ -551,7 +559,7 @@ export class WorkerRunner extends AgentRunner {
       finishedAt: input.outcome.turn.finishedAt,
       durationMs: input.durationMs,
       protocolWarnings: input.protocolWarnings,
-      error: input.outcome.turn.error,
+      error: input.error ?? input.outcome.turn.error,
     };
     return {
       ...input.task,
@@ -570,58 +578,67 @@ export class WorkerRunner extends AgentRunner {
   private renderTaskPrompt(input: {
     task: AgentTaskState;
     includeInitialPrompt: boolean;
+    initialPrompt?: string;
     pendingMessages: string[];
   }): string {
     const attachments = getAgentPendingMessageAttachments({ messages: input.pendingMessages });
     const renderedAttachments = attachments.length > 0 ? renderAttachmentsForPrompt(attachments) : "";
     if (input.includeInitialPrompt && renderedAttachments) {
-      return [input.task.prompt, renderedAttachments].join("\n\n");
+      return [input.initialPrompt, renderedAttachments].filter(Boolean).join("\n\n");
     }
-    if (input.includeInitialPrompt) return input.task.prompt;
-    return renderedAttachments || input.task.prompt;
+    if (input.includeInitialPrompt) {
+      if (!input.initialPrompt) throw new Error(`Task ${input.task.taskId} has no initial prompt.`);
+      return input.initialPrompt;
+    }
+    return renderedAttachments || renderTaskTickPrompt(input.task);
   }
 
   private resolveMessageTarget(taskId: string | undefined): AgentTaskState {
-    if (taskId) return this.getTask(taskId);
-    if (this.activeTaskId) return this.getTask(this.activeTaskId);
-    const queued = this.listTasks().find((task) => isActiveAgentTaskStatus(task.status));
-    if (queued) return queued;
-    throw new Error(`Agent ${this.host.agentId} has no active task for SendMessage.`);
-  }
-
-  private dequeueNextTaskId(): string | undefined {
-    while (this.taskQueue.length > 0) {
-      const taskId = this.taskQueue.shift();
-      if (taskId && this.store.getAgentTask(this.host.agentId, taskId)?.status === "queued") return taskId;
+    if (!this.activeTask) {
+      throw new Error(`Agent ${this.host.agentId} has no active task for SendMessage.`);
     }
-    return undefined;
-  }
-
-  private removeFromTaskQueue(taskId: string): void {
-    const index = this.taskQueue.indexOf(taskId);
-    if (index >= 0) this.taskQueue.splice(index, 1);
+    if (taskId && taskId !== this.activeTask.taskId) {
+      throw new Error(`Worker runner ${this.host.agentId} owns task ${this.activeTask.taskId}, not ${taskId}.`);
+    }
+    if (taskId) return this.getTask(taskId);
+    return this.activeTask;
   }
 
   private drainPendingMessages(taskId: string): string[] {
-    const messages = this.pendingMessages.get(taskId) ?? [];
-    this.pendingMessages.delete(taskId);
+    this.ensureOwnedTask(taskId);
+    const messages = this.pendingMessages;
+    this.pendingMessages = [];
     return messages;
   }
 
   private countPendingMessages(taskId: string): number {
-    return this.pendingMessages.get(taskId)?.length ?? 0;
+    this.ensureOwnedTask(taskId);
+    return this.pendingMessages.length;
   }
 
   private getTask(taskId: string): AgentTaskState {
-    return this.store.requireAgentTask(this.host.agentId, taskId);
+    this.ensureOwnedTask(taskId);
+    const task = this.store.getTask(taskId);
+    if (!task) throw new Error(`Unknown agent task: ${taskId}`);
+    if (task.agentId !== this.host.agentId) {
+      throw new Error(`Task ${taskId} does not belong to agent ${this.host.agentId}.`);
+    }
+    return task;
   }
 
   private updateTask(taskId: string, update: (task: AgentTaskState) => AgentTaskState): AgentTaskState {
+    this.ensureOwnedTask(taskId);
     const current = this.getTask(taskId);
     if (current.agentId !== this.host.agentId) {
       throw new Error(`Task ${taskId} does not belong to agent ${this.host.agentId}.`);
     }
     return this.store.updateTask(taskId, update);
+  }
+
+  private ensureOwnedTask(taskId: string): void {
+    if (this.activeTask?.taskId !== taskId) {
+      throw new Error(`Worker runner ${this.host.agentId} owns task ${this.activeTask?.taskId ?? "<none>"}, not ${taskId}.`);
+    }
   }
 }
 
@@ -638,4 +655,17 @@ export function isTerminalTaskStatus(status: AgentTaskState["status"]): boolean 
 
 function latestTaskStep(task: AgentTaskState): AgentTaskStep | undefined {
   return task.steps?.[task.steps.length - 1];
+}
+
+function renderTaskTickPrompt(task: AgentTaskState): string {
+  return JSON.stringify({
+    type: "task_tick",
+    task: {
+      taskId: task.taskId,
+      status: task.status,
+      description: task.description,
+      latestStepId: latestTaskStep(task)?.stepId,
+    },
+    instruction: "continue_current_task",
+  });
 }

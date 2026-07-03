@@ -8,11 +8,10 @@ import type {
   ScoutAgent,
   ScoutAgentOptions,
 } from "../core/scout-agent.js";
-import type { AgentThreadLifecycle } from "../lifecycle/agent-thread-lifecycle.js";
-import type { AgentRegistry } from "../lifecycle/agent-registry.js";
+import type { AgentRegistry } from "../core/agent-registry.js";
 import { buildSystemDynamicTools } from "../tools/tool-profiles.js";
-import type { ScoutAgentRole } from "../model/types.js";
-import { ScoutAgentRoles } from "../model/types.js";
+import type { ScoutAgentRole } from "../thread/types.js";
+import { ScoutAgentRoles } from "../thread/types.js";
 import type { AgentTaskStore } from "../task/agent-task-store.js";
 
 export interface AgentBuilderRuntime {
@@ -31,7 +30,6 @@ export type PreparedAgentInputs = Partial<Record<ScoutAgentRole, {
 export interface AgentBuilderOptions {
   domain: ScoutDomain;
   registry: AgentRegistry;
-  lifecycle: AgentThreadLifecycle;
   taskStore: AgentTaskStore;
   runtime: AgentBuilderRuntime;
   preparedAgents: PreparedAgentInputs;
@@ -97,6 +95,7 @@ export class AgentBuilder {
       logger: this.options.runtime.logger,
       taskStore: this.options.taskStore,
       eventBus: this.options.runtime.eventBus,
+      registry: this.options.registry,
     };
   }
 
@@ -110,7 +109,6 @@ export class AgentBuilder {
   }
 
   private registerAgent(agent: ScoutAgent): ScoutAgent {
-    agent.setThreadPreflightRunner((target) => this.options.lifecycle.startWithPreflight(target));
     return this.options.registry.registerAgent(agent);
   }
 }

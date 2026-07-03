@@ -1,3 +1,9 @@
+import type {
+  AgentDynamicToolSpec,
+  AgentJsonValue,
+} from "../tools/types.js";
+import type { ScoutAgentThreadPreflightSnapshot } from "./thread-preflight.js";
+
 export const ScoutAgentRoles = {
   Coordinator: "coordinator",
   Researcher: "researcher",
@@ -16,22 +22,6 @@ export const ScoutAgentPhases = {
 
 export type ScoutAgentPhase = typeof ScoutAgentPhases[keyof typeof ScoutAgentPhases];
 
-export type AgentJsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | AgentJsonValue[]
-  | { [key: string]: AgentJsonValue };
-
-export interface AgentDynamicToolSpec {
-  namespace?: string;
-  name: string;
-  description: string;
-  inputSchema: AgentJsonValue;
-  deferLoading?: boolean;
-}
-
 export interface AgentThreadSpec {
   role: ScoutAgentRole;
   phases: ScoutAgentPhase[];
@@ -46,16 +36,8 @@ export interface AgentThreadSpec {
 }
 
 export interface AgentThreadSnapshot {
-  role: ScoutAgentRole;
-  phases: ScoutAgentPhase[];
   threadId: string;
-  request: AgentThreadSpec;
-  effective: {
-    approvalPolicy?: string;
-    sandboxType?: string;
-    sandboxNetworkAccess?: boolean;
-    reasoningEffort?: string;
-    cwd?: string;
-  };
+  spec: AgentThreadSpec;
   response: unknown;
+  threadPreflight?: ScoutAgentThreadPreflightSnapshot;
 }

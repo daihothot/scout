@@ -1,5 +1,5 @@
 import { ScoutAgent, type ScoutAgentOptions } from "../core/scout-agent.js";
-import { ScoutAgentPhases, ScoutAgentRoles } from "../model/types.js";
+import { ScoutAgentPhases, ScoutAgentRoles } from "../thread/types.js";
 import { readWorkerRoleInstructions } from "./instructions.js";
 
 export class VerifierAgent extends ScoutAgent {

@@ -3,12 +3,11 @@ import type {
   AssetCommit,
   CodexMount,
 } from "../asset-store/index.js";
-import type { ScoutAgentRole } from "../agent/model/types.js";
-import { ScoutAgentRoles } from "../agent/model/types.js";
+import type { ScoutAgentRole } from "../agent/thread/types.js";
+import { ScoutAgentRoles } from "../agent/thread/types.js";
 import { AgentBuilder } from "../agent/builder/agent-builder.js";
 import { AgentBackend } from "../agent/backend/agent-backend.js";
-import { AgentRegistry } from "../agent/lifecycle/agent-registry.js";
-import { AgentThreadLifecycle } from "../agent/lifecycle/agent-thread-lifecycle.js";
+import { AgentRegistry } from "../agent/core/agent-registry.js";
 import { AgentOrchestrator } from "../agent/orchestration/agent-orchestrator.js";
 import type { ScoutAgent } from "../agent/core/scout-agent.js";
 import { AgentTaskStore } from "../agent/task/agent-task-store.js";
@@ -23,8 +22,11 @@ import {
 } from "../interaction/index.js";
 import { prepareRunEnvironment, type PreparedRun } from "./run-preparation.js";
 import type { CreateCodexAppServerClientOptions } from "../agent-server/codex/app-server-factory.js";
-import { buildRunContextBundle } from "./types.js";
-import type { ScoutRunOptions, ScoutRunResult } from "./run-types.js";
+import {
+  buildRunContextBundle,
+  type ScoutRunOptions,
+  type ScoutRunResult,
+} from "./types.js";
 
 export class RunManager {
   async prepareRun(options: ScoutRunOptions): Promise<ScoutRunResult> {
@@ -92,11 +94,6 @@ export class RunManager {
     const registry = new AgentRegistry({
       logger: runtimeLogger,
     });
-    const lifecycle = new AgentThreadLifecycle({
-      appServer,
-      registry,
-      logger: runtimeLogger,
-    });
     const taskStore = new AgentTaskStore();
     let agentBuilder: AgentBuilder | undefined;
     const agentBackend = new AgentBackend({
@@ -116,7 +113,6 @@ export class RunManager {
     });
     agentBuilder = new AgentBuilder({
       registry,
-      lifecycle,
       domain,
       taskStore,
       runtime: {
@@ -133,7 +129,7 @@ export class RunManager {
     try {
       await agentBackend.domain.start?.();
       await appServer.startSession();
-      await coordinatorAgent.startWithPreflight();
+      await coordinatorAgent.start();
       const orchestrator = new AgentOrchestrator({
         eventBus,
       });

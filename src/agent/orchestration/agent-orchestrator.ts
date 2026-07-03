@@ -39,8 +39,9 @@ export class AgentOrchestrator {
     this.loop = new AgenticLoop<ScoutEvent[]>({
       agentId: "agent-orchestrator",
       handlers: {
-        takeStep: () => this.mailbox.takeAll(),
-        runStep: (events) => this.handleNextEventBatch(events),
+        loopKind: "mailbox",
+        takeMailboxStep: () => this.mailbox.takeAll(),
+        runMailboxStep: (events) => this.runMailboxStep(events),
         isStopped: () => this.stopped,
         onError: (error) => this.handleLoopError(error),
       },
@@ -70,7 +71,7 @@ export class AgentOrchestrator {
     };
   }
 
-  private async handleNextEventBatch(events: ScoutEvent[]): Promise<void> {
+  private async runMailboxStep(events: ScoutEvent[]): Promise<void> {
     for (const event of events) {
       this.handleSystemObservation(event);
     }

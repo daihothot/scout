@@ -44,8 +44,9 @@ export class CoordinatorRunner extends AgentRunner {
     this.loop = new AgenticLoop<ScoutEvent[]>({
       agentId: this.host.agentId,
       handlers: {
-        takeStep: () => this.mailbox.takeAll(),
-        runStep: (events) => this.runMailboxStep(events),
+        loopKind: "mailbox",
+        takeMailboxStep: () => this.mailbox.takeAll(),
+        runMailboxStep: (events) => this.runMailboxStep(events),
         isStopped: () => this.stopped,
         onError: (error) => this.publishFailure(error),
       },

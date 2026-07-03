@@ -1,10 +1,10 @@
 import type { CodexAppServerClient } from "../../agent-server/codex/app-server-client.js";
 import type { EventBus } from "../../core/events/index.js";
-import type { ScoutAgentRole } from "../model/types.js";
-import { ScoutAgentRoles } from "../model/types.js";
+import type { ScoutAgentRole } from "../thread/types.js";
+import { ScoutAgentRoles } from "../thread/types.js";
 import type { AssignAgentTaskInput } from "../task/types.js";
 import type { ScoutDomain } from "../../domain/index.js";
-import type { AgentRegistry } from "../lifecycle/agent-registry.js";
+import type { AgentRegistry } from "../core/agent-registry.js";
 import type { Logger } from "../../core/logging/index.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import type { AgentTaskStore } from "../task/agent-task-store.js";

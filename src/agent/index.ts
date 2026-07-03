@@ -1,8 +1,8 @@
-export * from "./model/types.js";
+export * from "./thread/types.js";
 export * from "./core/scout-agent.js";
 export * from "./backend/agent-backend.js";
-export * from "./lifecycle/agent-registry.js";
-export * from "./lifecycle/agent-thread-lifecycle.js";
+export * from "./core/agent-registry.js";
+export * from "./thread/thread-preflight.js";
 export * from "./backend/agent-task-backend.js";
 export * from "./backend/agent-tool-backend.js";
 export * from "./backend/types.js";
@@ -15,3 +15,4 @@ export * from "./roles/verifier-agent.js";
 export * from "./roles/validator-agent.js";
 export * from "./task/index.js";
 export * from "./tools/system-tools.js";
+export * from "./tools/types.js";

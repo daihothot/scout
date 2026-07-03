@@ -4,7 +4,6 @@ export const ActiveAgentTaskStatuses = [
   "queued",
   "running",
   "waiting_for_human_input",
-  "waiting_for_coordinator",
 ] as const satisfies AgentTaskStatus[];
 
 export class AgentTaskStore {
@@ -25,24 +24,6 @@ export class AgentTaskStore {
   getTask(taskId: string): AgentTaskState | undefined {
     const task = this.tasks.get(taskId);
     return task ? cloneAgentTaskState(task) : undefined;
-  }
-
-  requireTask(taskId: string): AgentTaskState {
-    const task = this.getTask(taskId);
-    if (!task) throw new Error(`Unknown agent task: ${taskId}`);
-    return task;
-  }
-
-  getAgentTask(agentId: string, taskId: string): AgentTaskState | undefined {
-    const task = this.tasks.get(taskId);
-    if (!task || task.agentId !== agentId) return undefined;
-    return cloneAgentTaskState(task);
-  }
-
-  requireAgentTask(agentId: string, taskId: string): AgentTaskState {
-    const task = this.getAgentTask(agentId, taskId);
-    if (!task) throw new Error(`Task ${taskId} does not belong to agent ${agentId}.`);
-    return task;
   }
 
   updateTask(taskId: string, update: (task: AgentTaskState) => AgentTaskState): AgentTaskState {

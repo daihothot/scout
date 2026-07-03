@@ -2,13 +2,13 @@ import type {
   AppServerPlanState,
   AppServerThreadGoalState,
 } from "../../agent-server/codex/app-server-event-store.js";
-import type { AgentThreadSnapshot, ScoutAgentRole } from "../model/types.js";
+import type { ScoutAgentRole } from "../thread/types.js";
+import type { AgentThreadSnapshot } from "../thread/types.js";
 
 export type AgentTaskStatus =
   | "queued"
   | "running"
   | "waiting_for_human_input"
-  | "waiting_for_coordinator"
   | "complete"
   | "blocked"
   | "failed"
@@ -58,7 +58,7 @@ export interface AgentTaskStep {
   stepId: string;
   taskId: string;
   turnId?: string;
-  status: "completed" | "waiting_for_human_input" | "waiting_for_coordinator" | "failed";
+  status: "completed" | "waiting_for_human_input" | "failed";
   prompt: string;
   finalResponse?: string;
   toolCalls: AgentTaskStepToolCall[];
@@ -83,15 +83,13 @@ export interface AgentTaskState {
   agentId: string;
   role: ScoutAgentRole;
   description: string;
-  prompt: string;
-  selectedAgent: ScoutAgentRole;
+  initialPrompt: string;
   status: AgentTaskStatus;
   isBackgrounded: boolean;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;
   finishedAt?: string;
-  parentTaskId?: string;
   thread?: AgentThreadSnapshot;
   result?: string;
   error?: string;
@@ -111,7 +109,6 @@ export interface AssignAgentTaskInput {
   description: string;
   subagentType: ScoutAgentRole;
   prompt: string;
-  parentTaskId?: string;
   isBackgrounded?: boolean;
 }
 

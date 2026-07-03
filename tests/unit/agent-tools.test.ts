@@ -7,7 +7,7 @@ import {
   buildSendMessageDynamicTool,
   parseSystemDynamicToolCall,
 } from "../../src/agent/tools/system-tools.js";
-import { ScoutAgentRoles } from "../../src/agent/model/types.js";
+import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 
 test("agent dynamic tool specs expose stable namespaces and required fields", () => {
   const agentTool = buildAgentToolDynamicTool();

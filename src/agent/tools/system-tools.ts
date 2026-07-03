@@ -1,5 +1,6 @@
-import type { AgentDynamicToolSpec, AgentJsonValue, ScoutAgentRole } from "../model/types.js";
-import { ScoutAgentRoles } from "../model/types.js";
+import type { AgentDynamicToolSpec, AgentJsonValue } from "./types.js";
+import type { ScoutAgentRole } from "../thread/types.js";
+import { ScoutAgentRoles } from "../thread/types.js";
 
 export const SYSTEM_TOOL_NAMESPACE = "scout";
 

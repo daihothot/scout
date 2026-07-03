@@ -1,4 +1,4 @@
-import type { AgentDynamicToolSpec } from "../model/types.js";
+import type { AgentDynamicToolSpec } from "./types.js";
 import {
   buildAgentToolDynamicTool,
   buildRequestHumanInputDynamicTool,

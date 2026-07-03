@@ -1,4 +1,5 @@
-import type { AgentDynamicToolSpec, ScoutAgentRole } from "../../agent/model/types.js";
+import type { ScoutAgentRole } from "../../agent/thread/types.js";
+import type { AgentDynamicToolSpec } from "../../agent/tools/types.js";
 import type {
   ScoutDomain,
   ScoutDomainDynamicToolCall,

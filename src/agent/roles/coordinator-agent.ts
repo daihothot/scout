@@ -1,4 +1,4 @@
-import { ScoutAgentPhases, ScoutAgentRoles } from "../model/types.js";
+import { ScoutAgentPhases, ScoutAgentRoles } from "../thread/types.js";
 import {
   ScoutAgent,
   type ScoutAgentOptions,

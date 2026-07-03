@@ -9,7 +9,7 @@ export type AgentRunnerKind = "coordinator" | "worker";
 
 export interface AgentRunnerSnapshot {
   tasks: AgentTaskState[];
-  activeTaskId?: string;
+  activeTask?: AgentTaskState;
   pendingMessageCount: number;
 }
 
