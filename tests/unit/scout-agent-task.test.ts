@@ -8,6 +8,7 @@ import { ScoutAgentRoles, ScoutAgentPhases } from "../../src/agent/thread/types.
 import type { Logger } from "../../src/core/logging/index.js";
 import type {
   AgentTaskState,
+  AssignAgentTaskInput,
 } from "../../src/agent/task/types.js";
 import {
   AgentTaskOutcomeStatuses,
@@ -28,6 +29,7 @@ import type {
   ScoutAgentTurnOutcome,
   ScoutAgent,
 } from "../../src/agent/core/scout-agent.js";
+import type { WorkerAgent } from "../../src/agent/roles/worker-agent.js";
 import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
 import type {
   AppServerPlanState,
@@ -36,10 +38,16 @@ import type {
   AppServerTimelineEntry,
 } from "../../src/agent-server/codex/app-server-event-store.js";
 
-test("WorkerRunner keeps task running and schedules a tick when a turn completes without TaskResult", async () => {
+test("WorkerRunner keeps task running and schedules a tick when a turn completes without terminal outcome", async () => {
   let runtime: WorkerRunner | undefined;
   let turnCount = 0;
   const harness = createHarness({
+    taskInput: {
+      taskId: "task-1",
+      description: "Verify behavior",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Verify BDD"),
+    },
     runTurn: async () => {
       turnCount += 1;
       if (turnCount === 2) {
@@ -62,12 +70,6 @@ test("WorkerRunner keeps task running and schedules a tick when a turn completes
   });
   runtime = harness.runtime;
 
-  harness.runtime.assignTask({
-    taskId: "task-1",
-    description: "Verify behavior",
-    subagentType: ScoutAgentRoles.Verifier,
-    prompt: agent.turn.message("Verify BDD"),
-  });
   await harness.runtime.runTasksToIdle();
   await waitFor(() =>
     harness.runtime.getTaskSnapshot("task-1")?.status === AgentTaskStatuses.WaitingForHumanInput
@@ -92,6 +94,12 @@ test("WorkerRunner ticks a running task even when no message is queued", async (
   let runtime: WorkerRunner | undefined;
   const turnPrompts: string[] = [];
   const harness = createHarness({
+    taskInput: {
+      taskId: "task-1",
+      description: "Observe task",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Initial task prompt"),
+    },
     runTurn: async (turn) => {
       turnPrompts.push(turn.prompt);
       if (turnPrompts.length === 2) {
@@ -113,13 +121,6 @@ test("WorkerRunner ticks a running task even when no message is queued", async (
     },
   });
   runtime = harness.runtime;
-
-  harness.runtime.assignTask({
-    taskId: "task-1",
-    description: "Observe task",
-    subagentType: ScoutAgentRoles.Verifier,
-    prompt: agent.turn.message("Initial task prompt"),
-  });
 
   await waitFor(async () => {
     await harness.runtime.runTasksToIdle();
@@ -154,12 +155,13 @@ test("WorkerRunner ticks a running task even when no message is queued", async (
 });
 
 test("WorkerRunner accepts explicit outcome as terminal state", () => {
-  const harness = createHarness();
-  harness.runtime.assignTask({
-    taskId: "task-1",
-    description: "Verify behavior",
-    subagentType: ScoutAgentRoles.Verifier,
-    prompt: agent.turn.message("Verify BDD"),
+  const harness = createHarness({
+    taskInput: {
+      taskId: "task-1",
+      description: "Verify behavior",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Verify BDD"),
+    },
   });
 
   const completed = harness.runtime.completeTaskWithOutcome({
@@ -178,29 +180,31 @@ test("WorkerRunner accepts explicit outcome as terminal state", () => {
   assert.equal(harness.terminalTasks.length, 1);
 });
 
-test("WorkerRunner rejects a second task", () => {
-  const harness = createHarness();
-  harness.runtime.assignTask({
-    taskId: "task-1",
-    description: "First task",
-    subagentType: ScoutAgentRoles.Verifier,
-    prompt: agent.turn.message("Do first task"),
-  });
-
-  assert.throws(() => {
-    harness.runtime.assignTask({
-      taskId: "task-2",
-      description: "Second task",
+test("WorkerRunner initializes and registers its single task during construction", () => {
+  const harness = createHarness({
+    taskInput: {
+      description: "First task",
       subagentType: ScoutAgentRoles.Verifier,
-      prompt: agent.turn.message("Do second task"),
-    });
-  }, /already owns task task-1/);
+      prompt: agent.turn.message("Do first task"),
+    },
+  });
+  const task = harness.runtime.snapshot().activeTask;
+
+  assert.equal(task?.taskId, "verifier-task-0001");
+  assert.equal(task?.taskSequence, 1);
+  assert.equal(task?.description, "First task");
 });
 
 test("WorkerRunner keeps plain messages queued while waiting for human input", async () => {
   let runtime: WorkerRunner | undefined;
   let turnCount = 0;
   const harness = createHarness({
+    taskInput: {
+      taskId: "task-1",
+      description: "Choose option",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Need human input"),
+    },
     runTurn: async () => {
       turnCount += 1;
       const requestId = turnCount === 1 ? "input-1" : "input-2";
@@ -220,12 +224,6 @@ test("WorkerRunner keeps plain messages queued while waiting for human input", a
     },
   });
   runtime = harness.runtime;
-  harness.runtime.assignTask({
-    taskId: "task-1",
-    description: "Choose option",
-    subagentType: ScoutAgentRoles.Verifier,
-    prompt: agent.turn.message("Need human input"),
-  });
   await harness.runtime.runTasksToIdle();
 
   const updated = harness.runtime.queueMessage({
@@ -247,6 +245,12 @@ test("WorkerRunner keeps plain messages queued while waiting for human input", a
 test("WorkerRunner appends RequestHumanInput turn as a waiting task step", async () => {
   let runtime: WorkerRunner | undefined;
   const harness = createHarness({
+    taskInput: {
+      taskId: "task-1",
+      description: "Choose option",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Need human input"),
+    },
     runTurn: async () => {
       runtime?.requestHumanInput({
         taskId: "task-1",
@@ -266,12 +270,6 @@ test("WorkerRunner appends RequestHumanInput turn as a waiting task step", async
   });
   runtime = harness.runtime;
 
-  harness.runtime.assignTask({
-    taskId: "task-1",
-    description: "Choose option",
-    subagentType: ScoutAgentRoles.Verifier,
-    prompt: agent.turn.message("Need human input"),
-  });
   await harness.runtime.runTasksToIdle();
 
   const task = harness.runtime.getTaskSnapshot("task-1");
@@ -288,6 +286,12 @@ test("WorkerRunner stores human input request and response on the interrupted ta
   let runtime: WorkerRunner | undefined;
   let turnCount = 0;
   const harness = createHarness({
+    taskInput: {
+      taskId: "task-1",
+      description: "Choose option",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Need human input"),
+    },
     runTurn: async () => {
       turnCount += 1;
       if (turnCount === 1) {
@@ -326,12 +330,6 @@ test("WorkerRunner stores human input request and response on the interrupted ta
   });
   runtime = harness.runtime;
 
-  harness.runtime.assignTask({
-    taskId: "task-1",
-    description: "Choose option",
-    subagentType: ScoutAgentRoles.Verifier,
-    prompt: agent.turn.message("Need human input"),
-  });
   await harness.runtime.runTasksToIdle();
 
   harness.runtime.queueMessage({
@@ -366,9 +364,6 @@ test("AgentTaskBackend reduces app-server plan and goal timeline entries into ta
     registry,
     taskStore: store,
     eventBus,
-    agentProvider: {
-      resolveWorker: () => agent,
-    },
     logger: {
       info: () => undefined,
       warn: () => undefined,
@@ -404,6 +399,7 @@ test("AgentTaskBackend reduces app-server plan and goal timeline entries into ta
 });
 
 function createHarness(input: {
+  taskInput?: AssignAgentTaskInput;
   runTurn?: (turn: ScoutAgentTurnInput) => Promise<ScoutAgentTurnOutcome>;
 } = {}): {
   runtime: WorkerRunner;
@@ -453,6 +449,7 @@ function createHarness(input: {
     runtime: new WorkerRunner({
       store: new AgentTaskStore(),
       eventBus,
+      taskInput: input.taskInput,
       host: {
         agentId: "verifier",
         role: ScoutAgentRoles.Verifier,
@@ -470,7 +467,7 @@ function createHarness(input: {
   };
 }
 
-function createScoutAgentStub(agentId: string): ScoutAgent {
+function createScoutAgentStub(agentId: string): WorkerAgent {
   return {
     agentId,
     role: ScoutAgentRoles.Verifier,
@@ -478,7 +475,7 @@ function createScoutAgentStub(agentId: string): ScoutAgent {
     runner: {
       hasRunningTasks: () => true,
     },
-  } as unknown as ScoutAgent;
+  } as unknown as WorkerAgent;
 }
 
 function taskState(input: {
@@ -489,6 +486,7 @@ function taskState(input: {
   return {
     type: "local_agent",
     taskId: input.taskId,
+    taskSequence: 1,
     agentId: input.agentId,
     role: ScoutAgentRoles.Verifier,
     description: "Verify plan updates",

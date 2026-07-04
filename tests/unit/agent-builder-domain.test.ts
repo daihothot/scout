@@ -16,9 +16,10 @@ import { ResearcherAgent } from "../../src/agent/roles/researcher-agent.js";
 import type { ScoutAgent, ScoutAgentOptions } from "../../src/agent/core/scout-agent.js";
 import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 import {
-  AGENT_AGENT_TOOL_NAMESPACE,
+  AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
   AGENT_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
+  AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
 } from "../../src/agent/tools/agent-tools.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
@@ -51,6 +52,7 @@ import type { AgentInterruptEventPayload } from "../../src/agent/orchestration/o
 import type { ScoutEvent } from "../../src/core/events/index.js";
 import type { LogEvent, Logger } from "../../src/core/logging/index.js";
 import type { WorkerRunner } from "../../src/agent/runner/worker/worker-runner.js";
+import type { WorkerAgent } from "../../src/agent/roles/worker-agent.js";
 import {
   AgentTaskStatuses,
   AgentTaskStepStatuses,
@@ -73,9 +75,10 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
   assert.ok(agent instanceof CoordinatorAgent);
   assert.equal(agent.runner.runnerKind, "coordinator");
   assert.equal(fixture.registry.listAgents()[0], agent);
-  assert.ok(tools.some((tool) => tool.namespace === AGENT_AGENT_TOOL_NAMESPACE && tool.name === "AgentTool"));
+  assert.ok(tools.some((tool) => tool.namespace === AGENT_ASSIGN_TASK_TOOL_NAMESPACE && tool.name === "AssignTask"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SEND_MESSAGE_TOOL_NAMESPACE && tool.name === "SendMessage"));
-  assert.ok(tools.some((tool) => tool.namespace === AGENT_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RequestHumanInput"));
+  assert.equal(tools.some((tool) => tool.namespace === AGENT_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RequestHumanInput"), false);
+  assert.equal(tools.some((tool) => tool.namespace === AGENT_SUBMIT_TASK_TOOL_NAMESPACE && tool.name === "SubmitTask"), false);
   assert.ok(tools.some((tool) => tool.namespace === "domain-a" && tool.name === "DomainProbe"));
   assert.equal(tools.some((tool) => tool.namespace === "domain-b"), false);
 });
@@ -105,8 +108,9 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   assert.equal(agent.runner.runnerKind, "worker");
   assert.equal(fixture.registry.resolveAgent(ScoutAgentRoles.Researcher), agent);
   assert.ok(tools.some((tool) => tool.namespace === AGENT_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RequestHumanInput"));
-  assert.deepEqual(tools.filter((tool) => tool.namespace !== "domain-worker").map((tool) => tool.name), ["RequestHumanInput"]);
-  assert.equal(tools.some((tool) => tool.name === "AgentTool"), false);
+  assert.ok(tools.some((tool) => tool.namespace === AGENT_SUBMIT_TASK_TOOL_NAMESPACE && tool.name === "SubmitTask"));
+  assert.deepEqual(tools.filter((tool) => tool.namespace !== "domain-worker").map((tool) => tool.name), ["RequestHumanInput", "SubmitTask"]);
+  assert.equal(tools.some((tool) => tool.name === "AssignTask"), false);
   assert.equal(tools.some((tool) => tool.name === "SendMessage"), false);
   assert.ok(tools.some((tool) => tool.namespace === "domain-worker" && tool.name === "DomainProbe"));
 });
@@ -158,15 +162,15 @@ test("AgentToolBackend routes non-agent dynamic tools to the registered domain",
     runId: "run-domain-route",
   });
   const registry = fixture.registry;
-  const agentBackend = new AgentBackend({
+  new AgentBackend({
     appServer,
     runId: "run-domain-route",
     registry,
     taskStore: fixture.taskStore,
     eventBus: fixture.options.eventBus,
     agentProvider: {
-      resolveWorker(input): ScoutAgent {
-        return registry.resolveAgent(input.role);
+      resolveWorker(input): WorkerAgent {
+        return registry.resolveAgent(input.role) as WorkerAgent;
       },
     },
     logger: fixture.options.logger,
@@ -224,8 +228,8 @@ test("AgentBackend does not write app-server agent message deltas to runtime log
     taskStore: fixture.taskStore,
     eventBus: fixture.options.eventBus,
     agentProvider: {
-      resolveWorker(input): ScoutAgent {
-        return registry.resolveAgent(input.role);
+      resolveWorker(input): WorkerAgent {
+        return registry.resolveAgent(input.role) as WorkerAgent;
       },
     },
     logger,
@@ -261,15 +265,17 @@ test("AgentTaskBackend reads and routes tasks through the shared task store", as
   let responseConsumed = false;
   const appServer = createFakeAppServer({
     onRunTurn: async (turn) => {
-      if (!verifier || !assignedTaskId) return;
+      if (!verifier) return;
+      const taskId = assignedTaskId ?? verifier.runner.snapshot().activeTask?.taskId;
+      if (!taskId) return;
       if (!requestIssued && turn.prompt?.includes("Verify this behavior.") === true) {
         requestIssued = true;
         verifier.runner.requestHumanInput({
-          taskId: assignedTaskId,
+          taskId,
           request: {
             requestId: "input-1",
             agentId: verifier.agentId,
-            taskId: assignedTaskId,
+            taskId,
             kind: "prompt_required",
             question: "Need expected result.",
             createdAt: new Date().toISOString(),
@@ -281,11 +287,11 @@ test("AgentTaskBackend reads and routes tasks through the shared task store", as
       if (requestIssued && !responseConsumed && turn.prompt?.includes("\"type\":\"task_tick\"") === true) {
         responseConsumed = true;
         verifier.runner.requestHumanInput({
-          taskId: assignedTaskId,
+          taskId,
           request: {
             requestId: "input-2",
             agentId: verifier.agentId,
-            taskId: assignedTaskId,
+            taskId,
             kind: "prompt_required",
             question: "Need final confirmation.",
             createdAt: new Date().toISOString(),
@@ -306,8 +312,8 @@ test("AgentTaskBackend reads and routes tasks through the shared task store", as
     taskStore: fixture.taskStore,
     eventBus: fixture.options.eventBus,
     agentProvider: {
-      resolveWorker(input): ScoutAgent {
-        return fixture.registry.resolveAgent(input.role);
+      resolveWorker(input): WorkerAgent {
+        return fixture.registry.resolveAgent(input.role) as WorkerAgent;
       },
     },
     logger: fixture.options.logger,
@@ -331,19 +337,27 @@ test("AgentTaskBackend reads and routes tasks through the shared task store", as
   verifier = builder.buildWorker(ScoutAgentRoles.Verifier);
   await verifier.start();
 
-  const task = agentBackend.task.assignAgentTask({
-    description: "Verify BDD",
-    subagentType: ScoutAgentRoles.Verifier,
-    prompt: agent.turn.message("Verify this behavior."),
-    isBackgrounded: true,
+  assert.ok(appServer.handler);
+  const assignResult = await appServer.handler({
+    threadId: coordinator.threadId ?? "",
+    turnId: "turn-assign-task",
+    callId: "call-assign-task",
+    namespace: AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
+    tool: "AssignTask",
+    arguments: {
+      description: "Verify BDD",
+      subagent_type: ScoutAgentRoles.Verifier,
+      prompt: "Verify this behavior.",
+    },
   });
+  assert.equal(assignResult.success, true);
+  const task = JSON.parse(assignResult.contentItems[0]?.text ?? "{}") as { taskId: string };
   assignedTaskId = task.taskId;
   assert.equal(verifier.agentId, ScoutAgentRoles.Verifier);
   await (verifier.runner as WorkerRunner).runTasksToIdle();
   await waitFor(() => fixture.taskStore.getTask(task.taskId)?.status === AgentTaskStatuses.WaitingForHumanInput);
   assert.equal(fixture.taskStore.getTask(task.taskId)?.status, AgentTaskStatuses.WaitingForHumanInput);
 
-  assert.ok(appServer.handler);
   const sendMessageResult = await appServer.handler({
     threadId: coordinator.threadId ?? "",
     turnId: "turn-send-message",
@@ -386,8 +400,8 @@ test("SendMessage rejects human_response when target task is not waiting for hum
     taskStore: fixture.taskStore,
     eventBus: fixture.options.eventBus,
     agentProvider: {
-      resolveWorker(input): ScoutAgent {
-        return fixture.registry.resolveAgent(input.role);
+      resolveWorker(input): WorkerAgent {
+        return fixture.registry.resolveAgent(input.role) as WorkerAgent;
       },
     },
     logger: fixture.options.logger,
@@ -408,9 +422,9 @@ test("SendMessage rejects human_response when target task is not waiting for hum
   });
   const coordinator = builder.buildCoordinator();
   await coordinator.start();
-  const verifier = builder.buildWorker(ScoutAgentRoles.Verifier);
+  const verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
   await verifier.start();
-  const task = verifier.runner.assignTask({
+  const task = verifier.assignTask({
     taskId: "task-1",
     description: "Verify BDD",
     subagentType: ScoutAgentRoles.Verifier,
@@ -436,20 +450,85 @@ test("SendMessage rejects human_response when target task is not waiting for hum
   assert.match(result.contentItems[0]?.text ?? "", /Cannot send human_response/);
 });
 
+test("SubmitTask lets a worker complete its active task through a dynamic tool", async () => {
+  const appServer = createFakeAppServer();
+  const fixture = createAgentFixture("submit-task-complete", appServer);
+  const domain = createStaticDomain("domain-submit-task-complete", []);
+  const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
+  const verifierCommit = createAssetCommit(verifierMount);
+  new AgentBackend({
+    appServer,
+    runId: "run-submit-task-complete",
+    registry: fixture.registry,
+    taskStore: fixture.taskStore,
+    eventBus: fixture.options.eventBus,
+    agentProvider: {
+      resolveWorker(input): WorkerAgent {
+        return fixture.registry.resolveAgent(input.role) as WorkerAgent;
+      },
+    },
+    logger: fixture.options.logger,
+    domain,
+  });
+  const builder = new AgentBuilder({
+    domain,
+    registry: fixture.registry,
+    taskStore: fixture.taskStore,
+    runtime: fixture.runtime,
+    preparedAgents: {
+      ...fixture.preparedAgents,
+      [ScoutAgentRoles.Verifier]: {
+        agentMount: verifierMount,
+        assetCommit: verifierCommit,
+      },
+    },
+  });
+  const verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
+  await verifier.start();
+  const task = verifier.assignTask({
+    taskId: "task-1",
+    description: "Verify BDD",
+    subagentType: ScoutAgentRoles.Verifier,
+    prompt: agent.turn.message("Verify this behavior."),
+    isBackgrounded: true,
+  });
+
+  assert.ok(appServer.handler);
+  const result = await appServer.handler({
+    threadId: verifier.threadId ?? "",
+    turnId: "turn-submit-task",
+    callId: "call-submit-task",
+    namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+    tool: "SubmitTask",
+    arguments: {
+      status: "complete",
+      summary: "验证完成。",
+    },
+  });
+
+  assert.equal(result.success, true);
+  const stored = fixture.taskStore.getTask(task.taskId);
+  assert.equal(stored?.status, AgentTaskStatuses.Complete);
+  assert.equal(stored?.outcome?.status, "complete");
+  assert.equal(stored?.outcome?.summary, "验证完成。");
+});
+
 test("AgentOrchestrator maps task human input events to agent interrupts", async () => {
   let verifier: ScoutAgent | undefined;
   let assignedTaskId: string | undefined;
   let requestIssued = false;
   const appServer = createFakeAppServer({
     onRunTurn: async (turn) => {
-      if (requestIssued || turn.prompt?.includes("Need human input") !== true || !verifier || !assignedTaskId) return;
+      if (requestIssued || turn.prompt?.includes("Need human input") !== true || !verifier) return;
+      const taskId = assignedTaskId ?? verifier.runner.snapshot().activeTask?.taskId;
+      if (!taskId) return;
       requestIssued = true;
       verifier.runner.requestHumanInput({
-        taskId: assignedTaskId,
+        taskId,
         request: {
           requestId: "input-1",
           agentId: verifier.agentId,
-          taskId: assignedTaskId,
+          taskId,
           kind: "prompt_required",
           question: "Need expected result.",
           createdAt: new Date().toISOString(),
@@ -471,15 +550,15 @@ test("AgentOrchestrator maps task human input events to agent interrupts", async
   eventBus.subscribe<AgentInterruptEventPayload>(AgentEvents.interrupt, (event) => {
     interruptEvents.push(event);
   });
-  const agentBackend = new AgentBackend({
+  new AgentBackend({
     appServer,
     runId: "run-orchestrator-human-input",
     registry: fixture.registry,
     taskStore: fixture.taskStore,
     eventBus,
     agentProvider: {
-      resolveWorker(input): ScoutAgent {
-        return fixture.registry.resolveAgent(input.role);
+      resolveWorker(input): WorkerAgent {
+        return fixture.registry.resolveAgent(input.role) as WorkerAgent;
       },
     },
     logger: fixture.options.logger,
@@ -509,18 +588,27 @@ test("AgentOrchestrator maps task human input events to agent interrupts", async
     logger: fixture.options.logger,
   });
   interactionGateway.start();
-  const task = agentBackend.task.assignAgentTask({
-    description: "Verify BDD",
-    subagentType: ScoutAgentRoles.Verifier,
-    prompt: agent.turn.message("Need human input"),
-    isBackgrounded: true,
-  });
-  assignedTaskId = task.taskId;
-  assert.equal(verifier.agentId, ScoutAgentRoles.Verifier);
   const orchestrator = new AgentOrchestrator({
     eventBus,
   });
   orchestrator.start();
+  assert.ok(appServer.handler);
+  const assignResult = await appServer.handler({
+    threadId: coordinator.threadId ?? "",
+    turnId: "turn-assign-task",
+    callId: "call-assign-task",
+    namespace: AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
+    tool: "AssignTask",
+    arguments: {
+      description: "Verify BDD",
+      subagent_type: ScoutAgentRoles.Verifier,
+      prompt: "Need human input",
+    },
+  });
+  assert.equal(assignResult.success, true);
+  const task = JSON.parse(assignResult.contentItems[0]?.text ?? "{}") as { taskId: string };
+  assignedTaskId = task.taskId;
+  assert.equal(verifier.agentId, ScoutAgentRoles.Verifier);
 
   await (verifier.runner as WorkerRunner).runTasksToIdle();
   await waitFor(() => fixture.taskStore.getTask(task.taskId)?.status === AgentTaskStatuses.WaitingForHumanInput);
@@ -529,7 +617,6 @@ test("AgentOrchestrator maps task human input events to agent interrupts", async
     return coordinatorInterruptKeys.includes(AgentEvents.interrupt.raised.routeKey)
       && interactionPort.notifications.some((event) => AgentEvents.task.humanInputRequested.is(event));
   });
-  assert.ok(appServer.handler);
   const sendMessageResult = await appServer.handler({
     threadId: coordinator.threadId ?? "",
     turnId: "turn-send-message",
@@ -591,6 +678,7 @@ test("AgentTaskStore snapshots are immutable from callers", () => {
   const task = fixture.taskStore.addTask({
     type: "local_agent",
     taskId: "task-immutable",
+    taskSequence: 1,
     agentId: "agent-1",
     role: ScoutAgentRoles.Verifier,
     description: "Immutable task",

@@ -1,399 +1,1242 @@
 # Scout Session Handoff
 
-本文档给后续 session 使用。当前基础设施已经可以支撑第一版业务层，不建议继续横向重构 infra；下一步应从 agent 业务职责、业务 schema、产物格式和纵向闭环开始。
+更新时间：2026-07-04
 
-## 当前状态
+本文是给下一个 session 的工程交接。当前目标不是复述旧设计文档，而是记录当前代码中已经落地的架构、边界、使用规范、设计原则、注意事项、风险点和下一阶段方向。`docs/scout-design.md` 与 `README.md` 可能滞后，下一阶段应以源码和本文为准。
 
-当前代码主线已经从旧 chat/session 流程切换到 Scout 自己的 runtime + agent 基础设施：
+## 0. 当前结论
 
-- `RunManager` 已接入 `prepareRuntimeRun()`；一个 run 会 materialize 多个 agent mount，并创建一个共享的 Codex app-server session/client 配置。
-- `AssetStore` 负责按 agent profile materialize mount、生成 mount manifest、构建 Asset Commit，并暴露该 mount 的有效 trusted / writable roots。
-- 每个 agent 有独立 mount：`coordinator`、`researcher`、`verifier`、`validator`。
-- 每个 agent mount 会生成自己的 `mount/`、`artifacts/`、`logs/`；`prepareRuntimeRun()` 会把 mount preflight 和 Asset Commit 结果写入对应 agent 的 artifacts。
-- `CodexAppServerClient` 已拆成 `startSession()`、`startThread()`、`startTurn()`、`awaitTurnCompletion()`、`runTurn()`，并实时消费 app-server JSONL。
-- `AppServerEventStore` 是 app-server timeline/state 的归并层，维护 thread / turn / item / plan / goal / progress / request 状态。
-- `AgentBackend` 负责 app-server dynamic tool backend、task state、notification、timeline 到 task/progress 的映射。
-- `ScoutAgent` 代表一个 agent/thread 抽象，持有自身 runner、mount、thread snapshot 和 turn 调用能力。
-- `AgentOrchestrator` 是主业务循环，驱动 Coordinator 的 turn，消费 orchestration event inbox，并把 worker notification / human input 投递回 Coordinator。
-- CLI/interaction 现在只是 disclosure、input、notification 的交互端口，不承载业务逻辑。
+Scout 现在已经从“跑不起来的设计草稿”进入“基础设施可用、可继续扩展业务层”的阶段。
 
-## 如何启动当前基础设施
+当前底层实现的核心使命是：
 
-当前 `RunManager` 已经接上第一版启动链路，不要恢复旧 `chat-session` 流程。启动顺序是：
+1. 可审计：所有关键运行事实必须能落到状态、timeline、log 或后续审计模块中。
+2. 可重放：底层 event、task step、app-server timeline、asset commit、thread snapshot 需要足够结构化，为后续 replay 做准备。
+3. 可历史积累：知识库、codebase、validation artifact 和历史验证结果后续要能沉淀为长期可检索资产。
 
-1. 为本次 run 生成 `runId` 和 run root。
-2. 对 `coordinator`、`researcher`、`verifier`、`validator` 分别调用 `AssetStore.materializeMount()`。
-3. 对每个 mount 调 `preflightCodexMount()` 做 Codex app-server mount preflight；preflight 结果写到该 agent 的 `artifacts/`。
-4. 用 `AssetStore.buildCommit()` 生成该 agent 的 Asset Commit，并写到该 agent 的 `artifacts/`。
-5. 汇总所有 agent 的 mount roots、`trustedRootsForMount()` 和 `writableRootsForMount()`。
-6. 用汇总后的 roots 创建一个 `CodexAppServerClient` bundle；这一 run 只使用这个 app-server session/client，多个 agent 通过不同 thread 运行。
-7. `RunManager.startRun()` 复用 prepared app-server client，创建 `AgentBackend`、Coordinator agent 和 `ScoutAgentOrchestrator`。
-8. Coordinator 作为主 session loop 启动，researcher / verifier / validator 由 Coordinator 通过 tools 分配 task。
+当前基础设施基本具备继续接 `domain/validation` 业务闭环的条件，但审计、replay、历史积累模块本身还没有完整实现。后续工作应优先做最小 vertical slice，而不是继续大规模翻基础设施。
 
-注意：当前还没有从自然语言直接生成 Scout Input 的完整业务链路。Understanding / Research 业务层下一步需要补。
+## 1. 总体分层
 
-## Agent 使用模型
+当前 Scout 按从内到外的层次理解：
 
-当前角色枚举在 `src/agent/types.ts`：
+1. Codex app-server client：JSON-RPC transport、thread/start、turn/start、dynamic tool server request、turn completion wait。
+2. AppServerEventStore：把 app-server notification reduce 成 thread/turn/item/plan/goal 状态，并产出 timeline entry。
+3. AgentBackend：连接 app-server timeline、dynamic tool call、agent registry、task backend、tool backend、domain backend。
+4. AgentTaskBackend：任务状态入口、app-server timeline 到 task state 的 reducer、task event 记录。
+5. AgentToolBackend：LLM dynamic tool_use 到系统能力和 domain 能力的执行入口。
+6. ScoutAgent / AgentBuilder / AgentRegistry：创建真实 app-server thread，绑定 agent/thread，统一 runner。
+7. AgentRunner：CoordinatorRunner 与 WorkerRunner 的执行循环。
+8. EventBus / EventMailbox：模块间通信与 runner/orchestrator 的事件邮箱。
+9. AgentOrchestrator：agent-domain 编排观察者，负责系统级 agent 调度事件，不负责 UI。
+10. InteractionGateway / InteractionPort / TUI：唯一用户 IO 边界。
+11. RunManager：run 生命周期编排，从 client/env/agent preparation 到 backend/domain/orchestrator/gateway。
+12. Domain：业务层扩展点，目前是 `validation`，下一阶段要做真实状态投影。
 
-- `coordinator`
-- `researcher`
-- `verifier`
-- `validator`
+名称边界：
 
-每个 agent 都继承 `ScoutAgent`，不要再引入 registry 兼容层或旧 builder/executor 角色。
+- `system`：仅保留 runtime/interaction IO 边界事件。
+- `agent`：agent 调度、task、interrupt、coordinator、orchestration、agent tools、agent attachments。
+- `domain`：业务领域状态、schema、tool、reducer，例如 `domain.validation`。
 
-角色文件：
+不要把 agent-domain 的概念再叫 `system`。中断属于 agent，因为它中断的是 agent 调度。编排也是 agent 编排。
 
-- `src/agent/roles/coordinator-agent.ts`
-- `src/agent/roles/researcher-agent.ts`
-- `src/agent/roles/verifier-agent.ts`
-- `src/agent/roles/validator-agent.ts`
+## 2. Codex App Server Client
 
-Agent instructions 从 mount 中读取：
+关键文件：
 
-- `assets/codex/agents/AGENTS.md`
-- `assets/codex/agents/coordinator.AGENTS.md`
-- `assets/codex/agents/researcher.AGENTS.md`
-- `assets/codex/agents/verifier.AGENTS.md`
-- `assets/codex/agents/validator.AGENTS.md`
+- `src/agent-server/codex/app-server-client.ts`
+- `src/agent-server/codex/app-server-event-store.ts`
+- `src/agent-server/codex/app-server-factory.ts`
+- `src/agent-server/codex/app-server-preflight.ts`
+
+### 2.1 Client 职责
+
+`CodexAppServerClient` 负责：
+
+- 启动 `codex app-server` 子进程。
+- 发送 JSON-RPC request。
+- 接收 notification / response / server request。
+- `initialize` + `initialized` session bootstrap。
+- `thread/start` 创建 thread。
+- `turn/start` 启动 turn。
+- 等待 `turn/completed`，合并 final response、progress items、plan、goal。
+- 提供 `turn/interrupt`，当前只接入能力，不主动使用。
+- 提供 `thread/goal/set`。
+- 接收 app-server server request，并通过 dynamic tool handler 执行。
+
+重要原则：
+
+- `thread/start` 只信 `thread.id`，其它 response 原样保存在 snapshot 里，不再把 response 其他字段当成稳定 contract。
+- `runTurn()` 是 `awaitTurnCompletion()` + `startTurn()` 的组合，等待的是当前 thread 的 turn 完成。
+- worker 调用 `RequestHumanInput` 后，模型自然停止即可；当前不主动调用 `turn/interrupt`。
+- app-server response / notification 是底层事实源，但 Scout 业务状态不能只存在于 app-server thread history 中。
+
+### 2.2 AppServerEventStore
+
+`AppServerEventStore` 的职责是把 app-server 原始消息转成两类事实：
+
+- 当前快照：thread、turn、item、plan、goal、tokenUsage、pendingRequests。
+- timeline entry：只描述发生了什么，供 backend 消费。
+
+timeline stream 当前有：
+
+- `lifecycle`：thread/turn started/completed/status/name。
+- `state`：goal、token usage。
+- `plan`：`turn/plan/updated`。
+- `item`：item started/completed、agent message delta。
+- `request`：server request / resolved。
+
+重要边界：
+
+- `AppServerTimelineEntry` 是事件流事实，适合推给 backend。
+- `AppServerResolvedTimelineEntry` 是在需要 reduce 到状态时，用 entry + 当前 store snapshot 查询出的视图。它不应该默认到处传播。
+- `AgentTaskBackend.handleAppServerTimelineEntry(agent, entry, resolver)` 会在对应 stream 分支里按需调用 resolver。
+- `agent_message_delta` 不写 runtime log，避免日志被流式 token 刷屏。
+- `JSON-RPC response` 是 transport acknowledgement，不再写 timeline，否则会制造空日志。
+
+### 2.3 Plan / Goal
+
+Plan mode 已移除，不再使用 `collaborationModeId: "plan"`。
+
+现在保留并依赖的是 app-server 内置 `update_plan` tool 产生的 `turn/plan/updated`：
+
+- app-server thread 下会维护一个 thread-level plan。
+- `AppServerEventStore` 把 `turn/plan/updated` reduce 到 `thread.plan`。
+- `AgentTaskBackend` 消费 plan timeline，写入 task：
+  - `task.plan`：最新 plan。
+  - `task.planRecords`：所有 plan 记录，消费方取最后一个即可。
+- 每个 worker turn 都通过 attachment 提醒模型使用 `update_plan`。
+
+Goal 也是 thread-level：
+
+- task 首次启动时，WorkerRunner 调用 `setGoal({ objective: initialPrompt })`。
+- `thread/goal/updated` 被 event store reduce 到 `thread.goal`。
+- `AgentTaskBackend` 写入 `task.goal`，覆盖保存最新 goal。
+
+## 3. Run Client / Env / Agent Preparation
+
+关键文件：
+
+- `src/run/run-client-preparation.ts`
+- `src/run/run-env-preparation.ts`
+- `src/run/run-agent-preparation.ts`
+- `src/run/run-manager.ts`
+
+### 3.1 startRun 顺序
+
+`RunManager.startRun()` 当前顺序：
+
+1. 生成 `runId`。
+2. 创建 `Logger`，日志目录为 `run/<runId>/logs`。
+3. `prepareRunClients()`：构建 isolated Codex home/config，启动 app-server session。
+4. `prepareRunEnvironment()`：materialize 每个 agent mount，做 app-server mount preflight，写 `app-server-preflight.json` 和 `asset-commit.json`。
+5. 创建 `InMemoryEventBus`。
+6. 创建并启动 `InteractionGateway`。
+7. 创建 `ValidationDomain`。
+8. `prepareAgents()`：创建 registry、task store、builder，构建所有 agent，并 eager start 所有 thread。
+9. 创建 `AgentBackend`，注册 dynamic tool handler 和 app-server timeline handler。
+10. `domain.start()`。
+11. 创建并启动 `AgentOrchestrator`。
+12. 注册 cleanup，包括 app-server close、domain stop、orchestrator stop、runner stop、gateway stop。
+
+### 3.2 preparation 职责
+
+`run-client-preparation`：
+
+- 构建 root access plan。
+- 读取 agent profiles 和 MCP config。
+- 生成 isolated `.codex/config.toml`。
+- 创建 app-server client。
+- 调用 `startSession()`。
+
+`run-env-preparation`：
+
+- 只负责底层环境和 mount/preflight/asset commit。
+- 不创建 app-server client。
+- 不 build agent。
+
+`run-agent-preparation`：
+
+- 创建 AgentRegistry、AgentTaskStore、AgentBuilder。
+- build coordinator + researcher + verifier + validator。
+- 所有 agent 一起 `start()`，不是 lazy create。
+
+重要原则：
+
+- Worker 不是 lazy create。当前四个角色都在 run preparation 阶段创建并 start thread。
+- AgentBuilder 只负责单个角色的创建和注册，不负责编排 run preparation。
+- RunManager 负责 run 生命周期编排，但具体阶段逻辑放在 preparation 模块里。
+- 不要恢复 `prepareRun`、`startWithPreflight`、`agent-thread-lifecycle` 这类旧层次。
+
+## 4. Asset / Mount / Preflight
+
+关键文件：
+
 - `assets/codex/agents/agent-profiles.json`
+- `assets/codex/tools/shell-tools.json`
+- `src/asset-store/*`
 
-后续业务层优先改这些 AGENTS 文件和业务 schema，不要先重写 agent runtime。
+当前每个 agent profile 控制：
 
-## Coordinator 如何调 worker
+- config。
+- skills。
+- shell tools。
+- MCP servers。
+- plugins。
+- trustedRoots。
+- writableRoots。
 
-Coordinator 通过 dynamic tools 与 runtime 交互。工具定义在 `src/agent/tools.ts`，执行后端在 `src/agent/backend/agent-tool-backend.ts`。
+当前重要 roots：
 
-Coordinator 可用：
+- `~/.guru/codebase`
+- `~/.guru/knowledge`
+- `~/.guru/guru-jarvis/scripts`
 
-- `AgentTool`：创建或复用 researcher / verifier / validator，并分配 task。
-- `SendMessage`：给已有 agent 或 task 追加消息。
-- `TaskStop`：停止已有 task。
-- `SyntheticOutput`：报告 Coordinator 综合状态或最终结论。
-- `RequestHumanInput`：Coordinator 和 worker 共用，用于向用户请求补充信息或确认。
+Jarvis 和 codegraph 已加入 shell tool assets：
 
-Worker 可用：
+- `jarvis`：`/Users/chengdai/.guru/guru-jarvis/scripts/jarvis`
+- `codegraph`：`/Users/chengdai/.npm-global/bin/codegraph`
 
-- `TaskResult`：提交正式 task 业务结论。
-- `RequestHumanInput`：请求人工输入，统一回到 Coordinator 再转发。
-- 其它工具由 agent profile / mount 决定。
+重要原则：
 
-约束：
+- profile-driven visibility only，不要把所有资产 mount 给所有 agent。
+- shell tools 通过 mount wrapper 暴露到 `mount/bin/<exposeAs>`。
+- app-server preflight 文件名是 `app-server-preflight.json`。
+- preflight 需要真实检查 config、skills、plugin、shell smoke、MCP smoke。
+- 如果 preflight 失败，run preparation status 应该失败，不要绕过。
 
-- Coordinator 不能直接使用 `TaskResult`。
-- Worker 完成任务必须调用 `TaskResult`。
-- 如果 worker turn 正常结束但没有 `TaskResult`，`ScoutAgentTaskRuntime` 会把 task 标为 failed。
-- `TaskResult(status="complete")` 必须提供至少一个 `evidence_ref`。
-- 非 complete 状态必须提供 `blocker` 或 `next_step`。
+## 5. Agent Core
 
-## Task 与消息队列
+关键文件：
 
-Task 状态定义在 `src/agent/task/types.ts`。
+- `src/agent/core/scout-agent.ts`
+- `src/agent/core/agent-registry.ts`
+- `src/agent/builder/agent-builder.ts`
+- `src/agent/thread/types.ts`
+- `src/agent/thread/thread-preflight.ts`
 
-当前业务终态：
+### 5.1 ScoutAgent
 
+`ScoutAgent` 是 thread 级实体：
+
+- 一个 ScoutAgent 对应一个 app-server thread。
+- 当前一个 run 对应一组 agent thread。
+- 当前一个 worker runner 只拥有一个 active task。
+- 一个 task 跨多个 turn。
+- 一个 turn 包含多个 app-server item。
+
+`ScoutAgent.start()`：
+
+- 调用 app-server `thread/start`。
+- 保存 `AgentThreadSnapshot`，包含 `threadId`、`spec`、`response`。
+- registry 绑定 agentId/threadId。
+- 调用 `checkThread()` 进行 thread preflight。
+
+注意：
+
+- `checkThread()` 当前在 start 后 await，名字是 thread preflight，不是旧 lifecycle。
+- `AgentThreadSnapshot` 保存 response 和 spec。
+- thread preflight 结果写入 `thread.threadPreflight`。
+
+### 5.2 AgentRegistry
+
+Registry 职责：
+
+- 注册 agent。
+- 绑定 threadId -> agentId。
+- 根据 agentId 或 threadId 找 agent。
+- dynamic tool call 进入时通过 threadId 找 caller。
+
+Registry 不负责：
+
+- 构建 agent。
+- preflight。
+- lifecycle。
+- task 调度策略。
+
+构建和注册由 `AgentBuilder` 完成，registry 只保存索引。
+
+### 5.3 AgentBuilder
+
+AgentBuilder 职责：
+
+- 根据 role 组装 `ScoutAgentOptions`。
+- 按 role 创建 CoordinatorAgent 或 Worker agent。
+- 注入 agent tools + domain tools。
+- 注册到 registry。
+
+工具装配：
+
+- Coordinator 可见 orchestration agent tools。
+- domain tools 由 `domain.dynamicToolsForRole(role)` 提供。
+- 一个 agent 只服务一个 domain。
+
+不要把 prompt 或业务策略硬写进 builder。builder 是 construction layer，不是 policy layer。
+
+## 6. AgentRunner / AgenticLoop
+
+关键文件：
+
+- `src/agent/core/agentic-loop.ts`
+- `src/agent/runner/types.ts`
+- `src/agent/runner/coordinator/coordinator-runner.ts`
+- `src/agent/runner/worker/worker-runner.ts`
+
+### 6.1 AgenticLoop
+
+`AgenticLoop` 是底层循环工具，支持两种 loop：
+
+- mailbox loop：`takeMailboxStep()` + `runMailboxStep()`。
+- tick loop：`takeTick()` + `runTick()`，可返回 `continueAfterMs` 做连续推进。
+
+使用规范：
+
+- 基于 mailbox 的统一叫 `runMailboxStep`。
+- 基于轮询/tick 的统一叫 `runXxxTick`。
+- 不要在 runner 外手动绕过 loop 直接 run。
+
+### 6.2 AgentRunner 抽象
+
+当前抽象是：
+
+- `AgentRunner`
+  - `CoordinatorRunner`
+  - `WorkerRunner`
+
+外部不应该写 `hasTaskCapability` 之类的能力判断。
+
+Coordinator 当前没有任务能力，默认 task 方法会抛错即可。外部使用统一 runner API，具体是否支持由 runner 实现决定。
+
+### 6.3 CoordinatorRunner
+
+CoordinatorRunner 是真实 agent runner，不是普通函数。
+
+它订阅：
+
+- `SystemEvents.interaction.userMessageSubmitted`
+- `AgentEvents.orchestration.dispatchRequested`
+- `AgentEvents.interrupt`
+
+流程：
+
+1. EventMailbox 收到事件。
+2. `runMailboxStep()` 从事件 payload 读取 attachment。
+3. attachment 进入 Coordinator pending message queue。
+4. tick loop 检查 pending messages。
+5. 有消息才启动 coordinator turn。
+6. turn 完成后发布：
+   - `AgentEvents.coordinator.turnCompleted`
+   - 如果有 final text，发布 `AgentEvents.coordinator.messageProduced`
+
+关键原则：
+
+- Coordinator 的每条文本输出就是给用户的回复，由 InteractionGateway 渲染。
+- Coordinator 收到的输入来自用户和 Orchestrator，都是 attachment。
+- Coordinator 不应该绕过 event bus 直接和 UI 通信。
+- Coordinator 不应持有业务状态，只通过 domain tool 或事件观察获取状态。
+
+### 6.4 WorkerRunner
+
+WorkerRunner 是 task executor。
+
+当前约束：
+
+- 一个 WorkerRunner 只拥有一个 active task。
+- 不能给已有 active task 的 runner 再 assign 另一个 task。
+- task 是上层 work 状态。
+- turn 是 execution step。
+- item 是 app-server 内部执行流。
+
+WorkerRunner 任务流程：
+
+1. `assignTask()` 创建 task，状态 `queued`，保存 `initialPrompt`。
+2. 首次 tick 时：
+   - 设置 app-server thread goal。
+   - attach thread snapshot。
+   - 发布 `task.threadAttached` 和可能的 `task.goalUpdated`。
+3. 组装 turn prompt：
+   - `agent.turn.use_update_tools()`
+   - 初次使用 `initialPrompt`
+   - 后续使用 `worker.turn.task_tick(...)`
+   - pending messages
+4. `appendTaskStep()` 创建当前 step。
+5. 调用 `host.runTurn()`。
+6. 根据结果更新 step、task、plan、goal、terminal 状态。
+7. completed 且未 terminal 时通过 `continueAfterMs: 0` 继续下一轮 tick。
+
+注意：
+
+- WorkerRunner 当前依赖 `continueAfterMs: 0` 连续推进 running task；`takeTaskTick()` 本身不会直接因为 `running` 返回 task。下一阶段如果发现 task 观察事件不足，可优先检查这里。
+- pending message 不等于 human response。只有带 `human-response` tag 的 message 才能用于解除 `waiting_for_human_input`。
+- worker 不负责猜测或补 tag。
+
+## 7. Task Model
+
+关键文件：
+
+- `src/agent/task/types.ts`
+- `src/agent/task/agent-task-store.ts`
+- `src/agent/task/task-events.ts`
+
+### 7.1 Task / Turn / Step 关系
+
+当前语义：
+
+- ScoutAgent：thread 级。
+- thread：app-server 执行上下文。
+- run：当前对应一组 thread。
+- task：Coordinator 分派给 worker 的 work 状态。
+- task step：一次 agent turn 的 task 侧记录。
+- turn：app-server thread 上的一次模型执行。
+- item：turn 内 app-server item。
+
+不要再用 `TaskTurnRecord`，当前叫 `AgentTaskStep`。
+
+### 7.2 Task 状态
+
+枚举：
+
+- `queued`
+- `running`
+- `waiting_for_human_input`
 - `complete`
-- `prompt_required`
-- `confirmation_required`
 - `blocked`
-- `insufficient_evidence`
 - `failed`
 - `stopped`
 
-主 session 消息队列在 `src/core/queue/message-queue.ts`：
+已删除/不应恢复：
 
-- `user_input` 默认 `next`
-- `system_event` 默认 `next`
-- `task_notification` 默认 `later`
-- priority 顺序：`now` > `next` > `later`
+- `waiting_for_coordinator`
+- `humanInputReceived`
+- `RequestHumanInput` 伪造成 terminal outcome
+- parent task
 
-worker 完成后：
+规则：
 
-1. worker 调 `TaskResult`。
-2. `AgentToolBackend` 记录 outcome。
-3. `ScoutAgentTaskRuntime` 触发 terminal event。
-4. `AgentTaskBackend` 渲染 `<task-notification>` 并 enqueue 到全局 message queue。
-5. `ScoutAgentOrchestrator` drain queue，notify interaction port，并把 `<queued-commands>` 注入 Coordinator 下一轮 prompt。
+- `RequestHumanInput` 只能让 task 进入 `waiting_for_human_input`，不能伪造成 outcome。
+- 一个 turn 没有 terminal outcome 不代表失败，可能是 waiting/interrupted。
+- human input request 和 response 都写到当前 step。
+- task outcome 只表达 terminal outcome：complete/blocked/failed。
 
-worker 请求人工输入时：
+### 7.3 Human Input Flow
 
-1. worker 调 `RequestHumanInput`。
-2. task 进入 `waiting_for_input`。
-3. runtime enqueue `<human-input-request-notification>`。
-4. interaction port 向用户提问。
-5. 用户回答被渲染成 `<human-input-response>`，注入 Coordinator 下一轮。
-6. Coordinator 再用 `SendMessage` 把明确选择或补充信息发回 worker。
+目标体验：用户感觉不到 worker 存在，但系统状态里能审计 worker 为什么停下、Coordinator 怎么追问、如何恢复。
 
-## App-server Timeline 与 Progress
+流程：
 
-`CodexAppServerClient` 接收到 JSONL message 后，顺序必须保持：
+1. worker turn running。
+2. worker 调用 `RequestHumanInput` dynamic tool。
+3. `AgentToolBackend.handleRequestHumanInputToolCall()` 解析并创建 request。
+4. WorkerRunner `requestHumanInput()`：
+   - task -> `waiting_for_human_input`
+   - latest step -> `waiting_for_human_input`
+   - step.humanInputRequest = request
+   - 发布 `AgentEvents.task.humanInputRequested`
+5. 当前 turn 自然完成。
+6. AgentOrchestrator 观察 task human input requested，发布 `AgentEvents.interrupt.raised`。
+7. CoordinatorRunner 订阅 interrupt，收到 observation attachment，启动 coordinator turn。
+8. Coordinator 向用户提问。
+9. 用户回复进入 InteractionGateway。
+10. Coordinator 继续判断是否够用。
+11. Coordinator 使用 `SendMessage`，且 `type: "human_response"`，发给 worker task。
+12. AgentToolBackend 给 message 加 `human-response` tag。
+13. WorkerRunner pending message handler 识别 `human-response` tag。
+14. `applyHumanInputResponse()` 写入当前 step，发布 `AgentEvents.task.humanInputResponded`。
+15. AgentOrchestrator 观察 responded，发布 `AgentEvents.interrupt.resolved`。
+16. worker task 恢复 running，继续下一个 turn。
 
-1. emit raw message handler
-2. `eventStore.ingestMessage(message)`
-3. `publishTimelineSince(beforeSeq)`
-4. 再处理 response / notification / server request 的控制逻辑
+关键原则：
 
-`AppServerEventStore` 当前维护：
+- InteractionGateway 不解 human input。
+- 用户回复不直接喂 worker。
+- Coordinator 是策略层，决定何时 resume worker。
+- `SendMessage.type="human_response"` 必须显式设置。
+- 不是所有 pending message 都是 human response。
+- `human-response` tag 只描述事实，不绑定角色。
 
-- thread meta / order
-- turn state
-- final response delta
-- goal state
-- plan state
-- item state
-- progress items
-- pending server requests
-- timeline entries
+## 8. Agent Backend
 
-timeline stream 类型：
+关键文件：
 
-- `lifecycle`
-- `state`
-- `plan`
-- `item`
-- `request`
+- `src/agent/backend/agent-backend.ts`
+- `src/agent/backend/agent-task-backend.ts`
+- `src/agent/backend/agent-tool-backend.ts`
 
-`AgentBackend` 直接订阅 `appServer.onTimeline(...)`，按 `threadId` 找 agent；没有 threadId 或找不到 agent 时走 unbound 日志分支。
+### 8.1 AgentBackend
 
-`AgentTaskBackend.consumeAppServerTimelineEntry()` 当前行为：
+AgentBackend 是 glue：
 
-- item started/completed + progress item -> `interactionPort.publishProgress(...)`
-- plan timeline -> 更新 active task 的 `plan`，并 disclose
-- goal timeline -> 更新 active task 的 `goal`，并 disclose
-- token usage -> 只写日志，不改 task state
+- 持有 registry。
+- 创建 task backend。
+- 创建 tool backend。
+- 注册 app-server dynamic tool call handler。
+- 注册 app-server timeline handler。
 
-后续 UI / TUI / GUI 应消费 interaction port 的 progress/disclosure，不要让 backend 负责渲染。
+它处理 app-server timeline 的路径：
 
-## 日志与产物
+1. app-server notification 进入 client。
+2. event store 产生 timeline entry。
+3. AgentBackend 根据 threadId 找 agent。
+4. 写 app-server timeline log。
+5. 调用 `task.handleAppServerTimelineEntry(agent, entry, resolver)`。
 
-日志系统在 `src/core/logging/logger.ts`。
+### 8.2 AgentTaskBackend
 
-当前规则：
+职责：
 
-- run 级全局日志：`run/<run-id>/logs/runtime.jsonl`
-- agent 级日志：`run/<run-id>/agents/<agent-id>/logs/runtime.jsonl`
-- 有 `agentId` 的日志会写 agent logs，同时也写全局 logs。
-- system/global 日志不带 `agentId`。
-- logger 支持 `serializer` / `redactor` / `summarizer`。
+- stop/get task。
+- 消费 app-server timeline entry 并 reduce 到 task state。
+- 订阅 `AgentEvents.task`，统一写 task 日志。
 
-主要产物：
+它不应该：
 
-- `run/<run-id>/agents/<agent>/artifacts/mount-preflight.json`
-- `run/<run-id>/agents/<agent>/artifacts/asset-commit.json`
-- `run/<run-id>/agents/coordinator/artifacts/run-preparation-artifact.json`
+- 处理 SendMessage tool。
+- 渲染 UI。
+- 直接调用 interactionPort。
+- 持有 Coordinator 私有 inbox。
 
-当前没有恢复/回滚系统，task state 由运行时 state store 维护；审计文件后续由独立模块负责。
+timeline reduce：
 
-## Asset / Mount 使用方式
+- item stream：解析 progress item，写 `agent.progress` log。
+- plan stream：`plan_updated` -> `task.plan` + `task.planRecords` + `task.planUpdated` event。
+- state stream：
+  - `goal_updated` -> `task.goal` + `task.goalUpdated` event。
+  - `token_usage_updated` -> log。
 
-AssetStore 文件：
+### 8.3 AgentToolBackend
 
-- `src/asset-store/asset-store.ts`
-- `src/asset-store/materialize.ts`
-- `src/asset-store/preflight.ts`
-- `src/asset-store/commit.ts`
-- `src/asset-store/mount-helpers.ts`
-- `src/asset-store/mount-macros.ts`
-- `src/asset-store/asset-layout.ts`
+职责：
 
-资产来源：
+- 处理所有 app-server dynamic tool call。
+- 先按 namespace 判断 agent tool 还是 domain tool。
+- agent tool 自己处理。
+- 非 agent namespace 交给 domain。
 
-- `assets/codex/agents/`
-- `assets/codex/config/`
-- `assets/codex/skills/`
-- `assets/codex/tools/`
-- `assets/codex/mcp/`
+当前 agent tools：
 
-当前没有 `assets/codex/manifest.json`。`AssetStore` 直接读取固定 asset layout：
+- `AssignTask`
+- `SendMessage`
+- `RequestHumanInput`
+- `SubmitTask`
 
-- `assets/codex/agents/agent-profiles.json`：每个 agent 的 profile。
-- `assets/codex/tools/shell-tools.json`：shell tool registry。
-- `assets/codex/mcp/servers.json`：MCP server registry。
-- `assets/codex/skills/`：skill 源目录。
-- `assets/codex/plugins/`：plugin 源目录。
-- `assets/codex/config/`：Codex base config。
+已删除/不应恢复：
 
-每个 agent 的可见能力只由 `agent-profiles.json` 决定。后续不要把所有 skills/tools/mcp 一股脑塞给所有 agent；必须通过 profile 控制每个 agent 的可见资产。
+- worker terminal outcome 伪装工具
+- `TaskStop`
+- `SyntheticOutput`
+- role-bound tool parser 分散实现
 
-Profile 字段语义：
+当前 namespaces：
 
-- `config`：相对 `assets/codex/` 的 base config 路径。
-- `skills`：可挂载 skill 名称列表，对应 `assets/codex/skills/<name>/`。
-- `shellTools`：可选；省略等于不挂载 shell tool。引用短 id，例如 `scoutAssets`、`rg`、`git`、`codegraph`，不要使用 `shellTools.*` 前缀。
-- `mcpServers`：MCP server 名称列表，对应 `assets/codex/mcp/servers.json`。
-- `plugins`：plugin 名称列表，对应 `assets/codex/plugins/`。
-- `trustedRoots` / `writableRoots`：该 agent 的读写边界。
+- `scout_agent_assigntask`
+- `scout_agent_sendmessage`
+- `scout_agent_humaninput`
+- `scout_agent_submittask`
+- domain 当前是 `scout_domain_validation`
 
-Root 配置支持：
+注意：
 
-- Runtime 宏：`${SCOUT_MOUNT_ROOT}`、`${SCOUT_ARTIFACT_ROOT}`、`${SCOUT_REPO_ROOT}`、`${SCOUT_RUN_ROOT}`、`${SCOUT_ASSET_COMMIT_ID}`、`${SCOUT_RUN_ID}`。
-- `~/`：展开到当前用户 home。
-- 绝对路径。
-- 相对路径：按 repo root 解析。
+- 命名当前用 underscore，app-server 可接受，不再做复杂编码。
+- domain tools 属于 domain，不写进 agent backend 内置系统工具。
+- `handleDomainToolCall` 当前仍存在，用于把未知 agent namespace 转给 domain。
 
-当前 worker 类 agent 是 `researcher`、`verifier`、`validator`。它们的 profile 已把 `~/.guru/knowledge` 配为 readable trusted root，把 `~/.guru/codebase` 配为 writable root。已有测试覆盖这些路径的 profile 展开。
+## 9. Attachments / Context
 
-当前实现为每个 agent 独立 mount root：
+关键文件：
 
-- mount root：`run/<run-id>/agents/<agent>/mount`
-- artifacts：`run/<run-id>/agents/<agent>/artifacts`
-- logs：`run/<run-id>/agents/<agent>/logs`
-- app-server thread cwd 应使用该 agent 的 `mountRoot`
-- `mount-manifest.json` 写在该 agent 的 `mountRoot`
-- manifest 内部路径应保持相对路径记录，运行时再 resolve 成绝对路径
+- `src/agent/context/attachments.ts`
+- `src/agent/context/agent-attachments.ts`
+- `src/agent/runner/coordinator/coordinator-attachments.ts`
+- `src/agent/runner/worker/worker-attachments.ts`
 
-Materialize 会生成：
+### 9.1 Attachment 基础规则
 
-- `AGENTS.md` 和 role AGENTS 到 mount。
-- `.codex/config.toml`，其中 PATH 优先 `mountRoot/bin`。
-- `.codex/hooks.json`。
-- `.agents/skills/` 和 `.agents/plugins/`。
-- `bin/<exposeAs>` shell wrappers。
-- `mcp/<server>` wrappers。
-- `mount-manifest.json`。
+统一格式是 tag block：
 
-Shell tool 规则：
-
-- `shellTools` registry 路径是 `assets/codex/tools/shell-tools.json`。
-- profile 只引用短 id。
-- `bin/<exposeAs>` 统一生成 shell wrapper，不切成 symlink / wrapper 两套模型；即使是 `cat`、`sed`、`rg` 这类纯转发命令也保持 wrapper，方便后续加 env、审计和权限门禁。
-- registry 里的 command 可以是可执行名，也可以是绝对路径；不带 `/` 的 command 会按当前 PATH 解析成真实可执行文件后写入 wrapper。
-- `rg` 必须配置为 `"command": "rg"`，不要写死 VS Code / ChatGPT 扩展里的版本化绝对路径，否则扩展升级后 materialize 会失败。
-- 找不到 command 时不 throw；写入 `mount.issues` 和 manifest `issues` 后继续。
-- `required: true` 记为 `severity: "error"`；`required: false` 记为 `severity: "warning"`。
-- 找不到的 shell tool 不会进入 `mount.shellTools`、manifest `shellTools` 或 `bin/`。
-
-MCP server 规则：
-
-- MCP registry 路径是 `assets/codex/mcp/servers.json`。
-- registry 里可以保留 `codegraph` 配置；agent profile 默认不要配置 `codegraph` MCP。
-- 当前 `codegraph` 以 shell tool 方式给 researcher/verifier 使用；如果后续要启用 CodeGraph MCP，需要提供 required binding，例如 repo `path`，并保证 wrapper 依赖可用。
-- profile 未列出的 MCP server 不会进入 mount config，也不会增加 trusted / writable roots。
-
-Asset Commit 使用方式：
-
-```ts
-const store = new AssetStore();
-const mount = store.materializeMount({ repoRoot, runId, agentId });
-const preflight = await preflightCodexMount(mount);
-const assetCommit = store.buildCommit({
-  mount,
-  preflightStatus: preflight.status === "passed" ? "passed" : "failed",
-  preflightPath,
-});
+```xml
+<tag-name>
+body
+</tag-name>
 ```
 
-`AssetStore.buildCommit()` 是构建 Asset Commit 的唯一入口；不要在 RunManager / AgentBackend 里手拼 commit。`prepareRuntimeRun()` 还会检查 `mount.issues`，只要存在 `severity: "error"`，即使 preflight mock 返回 passed，commit 也必须按 failed 处理。当前第一版可以直接覆盖旧 AssetCommit；正在执行的 task 下一个 turn 才能看到新 materialize 的内容。
+`attachments` 提供：
 
-权限根使用方式：
+- `compose(logger, ...blocks)`
+- `addTagBlock(tag, body)`
+- `removeTagBlock(text, tag)`
+- `replaceTagBlock(text, tag, body)`
+- `readTagBlock(text, tag)`
+- `haveTagBlock(text, tag)`
 
-- `AssetStore.trustedRootsForMount(mount)` = profile trusted roots + materialized MCP trusted roots。
-- `AssetStore.writableRootsForMount(mount)` = profile writable roots + materialized MCP writable roots。
-- app-server 创建 session/thread 前，必须把所有 agent mount 的有效 roots 汇总给 Codex 可访问目录配置；当前 `prepareRuntimeRun()` 已做这一步。
-- 不要把没有进 profile 的本地目录隐式加进 Codex sandbox。
+`compose()` 只组装已经带 tag 的 attachment blocks，并检查格式。不符合格式的 block 不组装，并通过 logger 记录。
 
-Preflight 边界：
+### 9.2 责任边界
 
-- `src/agent-server/codex/mount-preflight.ts` 负责 Codex app-server 侧 mount preflight，包括 config/read、skills/list、plugin/list、hooks/list 和 required shell tool smoke。
-- `mount-preflight.json` 不保存完整 `configRead`；只保存 `configLayers`，用于证明 Codex 读到了 isolated CODEX_HOME user layer 和 agent mount `.codex` project layer。
-- `configRead.config` 和逐 key `origins` 不落盘，避免 artifact 过大且混入 Codex 内部调试细节。
-- `src/agent/backend/thread-preflight.ts` 负责 thread preflight。
-- 不要把 thread preflight 结果写回 Asset Commit 的 mount preflight。
+谁发送 message，谁负责 add attachment tag。
 
-## 业务层下一步
+入口层负责打 tag：
 
-建议下一步从这条纵向闭环开始：
+- InteractionGateway：用户输入 -> `coordinator.user(...)`。
+- Orchestrator：dispatch/interrupt observation -> `coordinator.observation(...)`。
+- AgentToolBackend：
+  - `AssignTask.prompt` -> `agent.turn.message(...)`
+  - `SendMessage.message` -> `agent.turn.message(...)`
+  - `SendMessage.type=human_response` -> `agent.turn.human_response(...)`
 
-1. 定义 `ResearchArtifact` schema。
-2. 定义 `VerificationReport` schema。
-3. 定义 `ValidationResult` schema。
-4. 更新 researcher / verifier / validator AGENTS，让它们按 schema 写 artifact，并用 `TaskResult` 返回 artifact/evidence refs。
-5. Coordinator 根据 Scout Input 分配 researcher task。
-6. Researcher 输出清理后的资料和引用。
-7. Verifier 基于 researcher artifact 做 BDD 验证，寻找能证明场景成立或不成立的证据。
-8. Validator 只检查 artifact 格式、必需字段、证据引用完整性和状态一致性，不做业务推理。
-9. Coordinator 汇总并用 `SyntheticOutput` 披露最终状态。
+中间层不猜、不补、不转换 tag。接收方只识别自己关心的 tag。不带 tag 被忽略是发送方问题。
 
-业务理解边界：
+### 9.3 当前 tag
 
-- Researcher/Understanding 负责清理外部资料，不负责最终验证。
-- Verifier 负责 BDD 验证：根据清理资料查看对应内容，寻找证据，判断当前 BDD 场景是否成立。
-- Validator 负责结构、格式、必需条件、引用完整性，不需要懂业务。
-- Coordinator 负责和用户沟通、派发任务、转发人工输入、综合最终报告。
+Agent context tags：
 
-优先不要恢复硬性的 Plan + Step Executor。当前方向是 agent 自己规划、自己执行、自己更新 plan/goal；runtime 负责记录真实 app-server 状态流、task 状态、日志、progress 和基本门禁。
+- `use-update-tools`
+- `message`
+- `wait-for-human-request`
+- `human-response`
 
-## 测试
+Coordinator tags：
 
-默认测试：
+- `coordinator-user`
+- `coordinator-observation`
+
+Worker tag：
+
+- `task-tick`
+
+注意：
+
+- `wait-for-human-request` 当前定义保留，但主要 human input request 状态在 task step 中。
+- `human-response` 只描述事实，不叫 worker/coordinator。
+- AGENTS prompt 不应强制模型自己手写 tag；tag 应由入口层/工具层添加。agent 只需要理解 tag 含义。
+
+## 10. EventBus / EventMailbox
+
+关键文件：
+
+- `src/core/events/event-key.ts`
+- `src/core/events/event-catalog.ts`
+- `src/core/events/event-bus.ts`
+- `src/core/events/event-mailbox.ts`
+- `src/system/events/catalog.ts`
+- `src/agent/events/catalog.ts`
+
+### 10.1 Event Key
+
+event key/type 是对象，不是裸字符串。
+
+字段：
+
+- `scope`
+- `group`
+- `name`
+- `tag`
+- `routeKey`
+
+route key 由 `scope.group.name.tag` 生成。`scope` 不是额外路由维度，它体现在 event key/type 本身里。
+
+合法 scope：
+
+- `system`
+- `agent`
+- `domain.${string}`
+
+### 10.2 Catalog
+
+core 只提供定义能力：
+
+- `createEventCatalog(scope)`
+- `event()`
+
+模块自己 add：
+
+- `SystemEvents = createEventCatalog("system")`
+- `AgentEvents = createEventCatalog("agent")`
+- 各模块通过 `SystemEvents.add(...)` 或 `AgentEvents.add(...)` 注册自己的事件。
+
+只保留一种使用方式，不再导出 `AgentTaskEvents.xxx` 这种并行 catalog。
+
+订阅可以订阅：
+
+- leaf event：`AgentEvents.task.humanInputRequested`
+- group：`AgentEvents.task`
+
+### 10.3 EventBus
+
+`InMemoryEventBus` 支持：
+
+- `publish()`：异步 fire-and-forget handler。
+- `publishAndWait()`：等待所有 handler。
+- `subscribe()`。
+- `subscribeOnce()`。
+
+当前无 causationId/correlationId。不要重新加。
+
+### 10.4 EventMailbox
+
+EventMailbox 是 runner/orchestrator 可复用的并发事件队列：
+
+- 可订阅 event/group。
+- 可加 filter。
+- 收到事件后 push 到内部 queue。
+- `takeAll()` 供 AgenticLoop 一次取一批。
+- `onEvent` 触发 loop schedule。
+
+CoordinatorRunner 使用 EventMailbox 接用户输入、orchestration dispatch、interrupt。
+
+## 11. Agent Events
+
+关键文件：
+
+- `src/agent/task/task-events.ts`
+- `src/agent/orchestration/orchestrator-events.ts`
+- `src/agent/runner/coordinator/coordinator-runner-events.ts`
+
+### 11.1 Task Events
+
+Owner：
+
+- WorkerRunner 发布 task lifecycle events。
+- AgentTaskBackend 发布 app-server plan/goal reduce 后的 task events。
+
+当前 task group：
+
+- `assigned`
+- `messageQueued`
+- `stopped`
+- `outcomeAccepted`
+- `humanInputRequested`
+- `humanInputResponded`
+- `threadAttached`
+- `pendingMessagesDrained`
+- `stepStarted`
+- `stepCompleted`
+- `stepOutput`
+- `failed`
+- `goalUpdated`
+- `planUpdated`
+- `terminal`
+
+### 11.2 Interrupt Events
+
+Owner：
+
+- AgentOrchestrator 发布 `AgentEvents.interrupt.*`。
+
+当前 interrupt group：
+
+- `raised`
+- `resolved`
+- `cancelled`
+- `failed`
+
+含义：
+
+- 系统只需要知道 agent 调度中断/恢复。
+- 中断为什么发生、恢复为什么发生，是触发事件的上下文，不应该让 interrupt 事件本身绑定某个业务细节。
+- 目前 task human input requested/responded 是 interrupt raised/resolved 的触发源。
+
+### 11.3 Orchestration Events
+
+Owner：
+
+- AgentOrchestrator 发布。
+
+当前：
+
+- `AgentEvents.orchestration.dispatchRequested`
+
+用于让 CoordinatorRunner 收到结构化 observation，然后启动策略 turn。
+
+### 11.4 Coordinator Events
+
+Owner：
+
+- CoordinatorRunner 发布。
+
+当前：
+
+- `AgentEvents.coordinator.turnCompleted`
+- `AgentEvents.coordinator.messageProduced`
+
+InteractionGateway 监听 `messageProduced`，渲染到用户 IO。
+
+## 12. AgentOrchestrator
+
+关键文件：
+
+- `src/agent/orchestration/agent-orchestrator.ts`
+- `src/agent/orchestration/orchestrator-events.ts`
+
+Orchestrator 是 agent-domain 编排中心，不是 UI，不是 prompt renderer。
+
+职责：
+
+- 观察 agent/task 事件。
+- 把 task human input requested/responded 映射为 agent interrupt raised/resolved。
+- 在 agent loop 错误或需要策略调度时发布 `orchestration.dispatchRequested`。
+- 给 CoordinatorRunner 发 observation attachment。
+
+不负责：
+
+- 渲染用户消息。
+- 直接调用 interactionPort。
+- 处理 prompt。
+- 订阅自己发布的事件。
+- 替代 task backend 消费 task event。
+- 聚合事件后换一个名字再发无意义事件。
+
+设计原则：
+
+- 一个底层事件可以被多个模块按不同语义消费。
+- `task.humanInputRequested` 对 InteractionGateway 是“可以通知 UI 的 task 状态”，对 Orchestrator 是“agent 调度被中断”。
+- 不要为了“统一”把事实事件包成另一种同义事件。
+
+## 13. Interaction Layer
+
+关键文件：
+
+- `src/interaction/port.ts`
+- `src/interaction/gateway/interaction-gateway.ts`
+- `src/interaction/tui/*`
+- `src/interaction/cli/*`
+
+### 13.1 InteractionGateway
+
+InteractionGateway 是唯一用户 IO 边界。
+
+它做：
+
+- port -> event：
+  - `sendAgentMessage(handler)` 注册人类输入回调。
+  - 人类输入被发布为 `SystemEvents.interaction.userMessageSubmitted`。
+  - 输入 attachment 是 `coordinator.user(...)`。
+- event -> port：
+  - `SystemEvents.interaction.disclosureRequested` -> `interactionPort.disclose`
+  - `SystemEvents.interaction.progressRequested` -> `interactionPort.publishProgress`
+  - `AgentEvents.task.terminal/humanInputRequested` -> `interactionPort.notify`
+  - `AgentEvents.coordinator.messageProduced` -> `interactionPort.receiveAgentMessage`
+- exit：
+  - port exit -> `SystemEvents.interaction.exitRequested`
+
+它不做：
+
+- 解析 human input response。
+- 调 AgentTaskBackend。
+- 直接 resume worker。
+- 渲染 protocol 以外的业务 prompt。
+
+### 13.2 RuntimeInteractionPort
+
+当前接口：
+
+- `disclose(event)`
+- `publishProgress(event)`
+- `notify(event)`
+- `receiveAgentMessage(message)`
+- `sendAgentMessage?(handler)`
+- `onExitRequested?(handler)`
+
+命名注意：
+
+- `AgentMessageSend` 是人类发送给 agent 的 message。
+- `AgentMessageReply` 是 agent 回给人类的 message。
+- 交互层只做 send/receive/disclose/notify，不解 task human input。
+
+### 13.3 TUI
+
+TUI 当前是简单 Ink UI：
+
+- `TuiStore` 保存 logs/tasks/progress。
+- `TuiInteractionAdapter` 实现 RuntimeInteractionPort。
+- `ScoutTuiApp` 渲染 Tasks、Progress、Timeline、输入框。
+
+使用原则：
+
+- TUI 不能依赖 `ScoutRunSession` 或 runtime 内部对象。
+- UI 和 runtime 只通过 port 交互。
+- 输入 message id 统一为 `user-message-${Date.now()}`。
+- TUI 只是交互 adapter，不拥有业务状态。
+
+## 14. Dynamic Tools
+
+关键文件：
+
+- `src/agent/tools/agent-tools.ts`
+- `src/agent/tools/tool-profiles.ts`
+- `src/agent/backend/agent-tool-backend.ts`
+- `src/domain/validation/tools/validation-domain-tools.ts`
+
+### 14.1 Agent Tools
+
+当前只保留四类 agent tools：
+
+1. `AssignTask`
+   - namespace：`scout_agent_assigntask`
+   - Coordinator 创建/复用 worker 并分配 task。
+2. `SendMessage`
+   - namespace：`scout_agent_sendmessage`
+   - 给已有 agent/task 追加消息。
+   - `type` 可为 `message` 或 `human_response`。
+3. `RequestHumanInput`
+   - namespace：`scout_agent_humaninput`
+   - 仅 worker task 执行中请求人工输入。
+   - Coordinator 不用这个工具；Coordinator 要问用户就直接输出文本。
+4. `SubmitTask`
+   - namespace：`scout_agent_submittask`
+   - 仅 worker 可见，用于提交 complete/blocked/failed 终态。
+
+原则：
+
+- 工具 namespace 只分 agent/domain，不再按 role 细分。
+- 工具 call parser 合并在 `parseAgentDynamicToolCall()`。
+- 工具 handler 放在 `AgentToolBackend` 内部。
+- SendMessage 不放在 AgentTaskBackend。
+- domain tool 通过 domain backend 处理。
+
+### 14.2 Domain Tools
+
+当前 validation domain tool：
+
+- namespace：`scout_domain_validation`
+- tool：`GetValidationStateSnapshot`
+
+Coordinator 可以主动调用，用来观察 validation state。
+
+当前 snapshot 仍是静态 reducer 输出，没有真实事件投影接入。下一阶段要补的是 live projection/state store。
+
+## 15. Logging
+
+关键文件：
+
+- `src/core/logging/logger.ts`
+
+当前日志文件：
+
+- 全局：`run/<runId>/logs/runtime.log`
+- 每个 agent mount logsRoot 也有 agent 侧 `runtime.log`
+
+格式是文本 `.log`，不是 JSONL。
+
+格式：
+
+```text
+2026/07/04 00:52:12.123 [Scout] [pid:<pid>/thread:<worker_thread_id>] [ I ] [module] [agentId/runtime] event=<event> task=<taskId> run=<runId>
+```
+
+规则：
+
+- `[pid/thread]` 是 Node 进程/worker_threads thread id，不是 app-server thread id。
+- app-server threadId 放在 body 数据里。
+- 每条日志前空三行，便于读。
+- JSON / XML / YAML 字符串会格式化多行输出。
+- secret/token/password/api key/authorization 会 redacted。
+- 长字符串和大数组会 summarizer 截断。
+- `agent_message_delta` 不打印。
+
+## 16. Domain / Validation
+
+关键文件：
+
+- `src/domain/types.ts`
+- `src/domain/validation/domain.ts`
+- `src/domain/validation/agent/backend/validation-domain-agent-backend.ts`
+- `src/domain/validation/model/state-reducer.ts`
+- `src/domain/validation/schema/*`
+- `src/domain/validation/tools/*`
+
+### 16.1 Domain 抽象
+
+`ScoutDomain` 接口：
+
+- `domainId`
+- `name`
+- `dynamicToolsForRole(role)`
+- `handleDynamicToolCall(call)`
+- `start()`
+- `stop()`
+
+Domain 是系统层和业务层的胶水抽象：
+
+- RunManager 可以启动 domain。
+- AgentBuilder 可以向 agent 注入 domain tools。
+- AgentToolBackend 可以把 domain namespace 的 tool call 交给 domain。
+- 一个 agent 当前只服务一个 domain。
+
+### 16.2 Validation 当前状态
+
+当前 validation 已有：
+
+- schema generated files。
+- state reducer。
+- `GetValidationStateSnapshot` tool。
+- `ValidationDomainAgentBackend`。
+
+但还缺：
+
+- 真实 validation state store。
+- event/timeline/task outcome 到 validation observation 的 projection。
+- BDD 输入接入。
+- ResearchArtifact / VerificationReport / ValidationResult 的真实产物写入。
+- Coordinator 基于 snapshot 的最小策略闭环。
+
+下一阶段不要再先写大而全 schema。应该从一个最小 BDD validation vertical slice 开始。
+
+## 17. 知识库 / Jarvis / Codebase 使用方向
+
+可信根已在 agent profile 中配置：
+
+- `~/.guru/knowledge`
+- `~/.guru/codebase`
+
+Jarvis codebase 命令可通过 mount shell tool 使用：
 
 ```bash
-npm test
+jarvis codebase supported
 ```
 
-完整门禁：
+后续 validation 目标是：
+
+1. 用户输入一个 BDD。
+2. Coordinator 观察 validation state，确认缺少什么。
+3. Researcher 使用知识库、Jarvis codebase、codegraph、rg 等检索所有有助于验证的证据。
+4. Verifier 验证证据和代码片段。
+5. Validator 给出 gate。
+6. Coordinator 输出可审计验证报告。
+
+报告必须可追溯：
+
+- BDD 输入来源。
+- 检索 query。
+- 命中的知识库路径。
+- 命中的代码片段路径和行号。
+- codegraph/Jarvis 输出。
+- worker artifact。
+- task step / turn / item 证据。
+
+## 18. 使用规范与硬约束
+
+### 18.1 不要兼容旧逻辑
+
+用户明确要求：
+
+- 旧的不合适的东西直接删。
+- 不要兼容层。
+- 不要 transitional wrapper。
+- 不要为了“以后可能用”保留绕路代码。
+
+已删除/不要恢复的方向：
+
+- `ScoutAgentOrchestrator` 旧命名。
+- `runtime` 目录旧命名。
+- `system-tools` / `system-attachments` 旧命名。
+- `CoordinatorEvent` / `coordinatorThread` 这类角色绑定事件。
+- `eventsForPrompt` 这类 Orchestrator prompt 处理。
+- plan mode。
+- worker terminal outcome 伪装工具。
+- 独立 worker human input 直接接 UI。
+- UI 直接依赖 runtime session。
+
+### 18.2 编辑前先说明
+
+下一个 session 继续改代码时，必须先明确说将要做什么，再改。尤其是架构性调整，先讨论边界，不要直接动。
+
+### 18.3 只相信运行证据
+
+架构判断要尽量通过：
+
+- `npm run typecheck`
+- 单元测试
+- 集成测试
+- 真实 run
+- app-server timeline/log
+- preflight artifact
+
+不要只靠静态推理说“应该可以”。
+
+### 18.4 Sender owns attachment
+
+谁发消息谁打 tag。
+
+不要在中间层：
+
+- 猜消息类型。
+- 自动补 tag。
+- 根据 task 状态偷换成 human response。
+- 解析业务语义并改写 message。
+
+### 18.5 Render protocol belongs to interaction
+
+渲染协议只能 interaction 层使用。
+
+Orchestrator、backend、runner 不渲染 UI 文案，不调用 interactionPort。
+
+### 18.6 EventBus 不替代底层执行流
+
+底层 app-server item/turn/timeline 是执行事实。
+
+EventBus 是中上层模块通信：
+
+- task state events。
+- interrupt events。
+- orchestration events。
+- interaction events。
+- future domain events。
+
+事件流会聚合到 state/timeline，然后由 backend/orchestrator/coordinator 产生更上层事件。EventBus 不替代 app-server timeline，也不替代 state store。
+
+## 19. 当前可用验证命令
+
+建议下个 session 开始先跑：
 
 ```bash
-npm run check
+npm run typecheck
 ```
 
-真实 Codex app-server smoke：
+核心单测可按模式跑：
 
 ```bash
-npm run test:integration
+npm test -- --test-name-pattern "TuiStore|Logger|event bus|AgentBuilder|AgentOrchestrator maps task human input|agent dynamic tool specs|agent tool parsers|WorkerRunner|interaction gateway"
 ```
 
-当前已覆盖：
+如果要真实启动 TUI：
 
-- message queue priority / FIFO / snapshot
-- dynamic tool schema 和 parser
-- interaction XML / CLI render
-- logger redaction / summarizer / serializer
-- app-server event store reducer / timeline
-- app-server client timeline publish 顺序
-- AssetStore per-agent trusted / writable roots、`~/` 展开、本地相对路径解析
-- AssetStore omitted `shellTools` 空集合语义
-- AssetStore unresolved shell tool issue 记录和 mount 输出排除
-- real mount preflight run 已验证 `run-real-preflight-20260629T085333`：coordinator / researcher / verifier / validator 均 `preflight_passed`，`rg --version` smoke passed。
-- ScoutAgentTaskRuntime `TaskResult` 终态门禁
-- AgenticLoop idle/error/stopped 行为
-- real Codex app-server start session/thread/turn smoke
+```bash
+npm run scout:tui
+```
 
-注意：测试会写 `dist/`，当前环境中可能需要 elevated filesystem access。
+或检查 `package.json` 当前 scripts，避免命令名变更。
 
-## 已知问题与不要做的事
+真实 run 后重点看：
 
-已知问题：
+- `run/<runId>/logs/runtime.log`
+- 每个 agent artifact 下的 `app-server-preflight.json`
+- 每个 agent artifact 下的 `asset-commit.json`
+- app-server timeline log 中是否有 tool namespace、turn completed、plan updated、goal updated。
 
-- `docs/scout-design.md` 还保留较多旧设计语义，当前实现已经向更轻的业务 agent 模型移动；除非用户要求，不要主动重写设计文档。
-- `README.md` 有改动，但不是本 handoff 的主线。
-- 真实 app-server integration 会受本机 Codex 配置、模型 provider、插件 warning、网络状态影响；默认不要放进 `npm test`。
-- task 恢复、回滚、持久化重放还没有实现。
-- policy / approval / elicitation 目前仍较薄，app-server client 里还有 auto-accept 过渡逻辑。
-- Understanding 从外部自然语言生成 Scout Input 的完整业务链路还没接。
-- 不要把 shell tool registry 重新改成机器特定版本路径；优先使用 PATH 可解析 command，wrapper 会在 materialize 时固化到实际可执行路径。
+## 20. 下一阶段建议：Validation Vertical Slice
 
-不要做：
+不要继续先写 AGENTS 和 Skill。下一步更应该先打通业务状态。
 
-- 不要恢复旧 chat-session 流程。
-- 不要做向后兼容 shim。
-- 不要恢复 builder / reviewer / executor 三角色长期模型。
-- 不要把 backend 变成渲染层；backend 只抛结构化数据。
-- 不要让 task todo 取代 app-server plan/goal stream。
-- 不要把 thread history 当作 Scout durable state；app-server 可能压缩上下文，权威状态必须在 Scout runtime artifacts / store / logs 中。
-- 不要让 Coordinator 直接干 worker 的活；Coordinator 主要通过 tools 调度和综合。
-- 不要在没有 `TaskResult` 的情况下把 worker 文本回复当作任务完成。
-- 不要把所有 assets 全塞进所有 agent mount；使用 agent profile 控制可见资产。
+建议顺序：
 
-## 推荐切入点
+1. 定义最小 validation input：
+   - BDD 输入 observation。
+   - 输入来源。
+   - run/task/thread 归属。
+2. 建立 ValidationStateStore：
+   - 从 interaction user message 或 Coordinator 决策记录 BDD。
+   - 从 task terminal/outcome/plan/goal 事件投影 worker observation。
+   - 生成 `ValidationStateSnapshot`。
+3. 改 `GetValidationStateSnapshot`：
+   - 返回 live state，而不是静态空 reducer。
+4. Coordinator 最小闭环：
+   - 如果 `missing_bdd`，只问用户要 BDD。
+   - 有 BDD 后调度 Researcher。
+   - 不聊无关内容。
+5. Researcher 最小任务：
+   - 使用 Jarvis/codegraph/knowledge/rg 检索证据。
+   - 输出 ResearchArtifact。
+6. Verifier 最小任务：
+   - 验证证据是否支持 BDD。
+   - 输出 VerificationReport。
+7. Validator 最小任务：
+   - gate accepted / insufficient_evidence / blocked / failed。
+   - 输出 ValidationResult。
+8. Coordinator synthesis：
+   - 输出可审计验证报告。
 
-下一轮最有效的第一步：
+不要一次性生成完整复杂 schema。一个一个收敛。
 
-1. 新建业务 schema 目录，例如 `src/business/schema/` 或 `src/domain/validation/`。
-2. 先写 `ResearchArtifact`、`VerificationReport`、`ValidationResult` 类型和最小 validator。
-3. 为这三个 schema 写单元测试。
-4. 修改 `assets/codex/agents/researcher.AGENTS.md`、`verifier.AGENTS.md`、`validator.AGENTS.md`，要求 agent 输出对应 artifact 并调用 `TaskResult`。
-5. 在 `AgentTaskBackend` 或新业务 service 中接入 artifact refs 的基本存在性检查。
+## 21. 未来模块方向
 
-完成这条后，再考虑 UI/TUI、恢复、policy、tool request、增量 asset reload。
+### 21.1 Audit
+
+当前日志和 task step 只是基础，不是最终 audit 模块。
+
+未来 audit 应单独模块化：
+
+- 订阅事件。
+- 读取 app-server timeline。
+- 读取 task store/domain state。
+- 生成 append-only audit record。
+- 建立 artifact ref/evidence ref。
+
+不要在 runner/backend 里继续塞 `record*` 语义。当前代码已尽量改为 append/update/handle。
+
+### 21.2 Replay
+
+Replay 需要：
+
+- run env snapshot。
+- asset commit。
+- app-server timeline。
+- event stream。
+- task state transitions。
+- domain state transitions。
+- interaction input messages。
+
+当前结构已经为 replay 留了位置，但 replay runner 还没做。
+
+### 21.3 Historical Accumulation
+
+历史积累应沉淀到：
+
+- `~/.guru/knowledge`
+- `~/.guru/codebase`
+- validation artifact index
+- accepted verification report
+- lessons learned / capability docs
+
+不要把历史知识只留在 app-server thread history。
+
+## 22. 已知风险和下次检查点
+
+1. Worker running tick 行为
+
+   - 当前 completed turn 后靠 `continueAfterMs: 0` 继续。
+   - 如果要“running 每帧观察”，检查 `WorkerRunner.takeTaskTick()` 是否需要调整。
+2. InteractionPort 命名
+
+   - `sendAgentMessage` 是人类发送消息到 agent 的 callback 注册，名字仍可能让人误解。
+   - 当前不要大改，除非继续梳理 port 命名。
+3. Domain snapshot 仍是静态
+
+   - `GetValidationStateSnapshot` 还没有真实 state store。
+   - 这是下一阶段最核心缺口。
+4. TUI 只是基础 UI
+
+   - 输入框和 timeline 已可用，但仍需真实 run 继续观察光标/布局。
+   - 不要让 TUI 拿 runtime 内部对象。
+5. App-server tool namespace smoke
+
+   - agent tools namespace 已改成 underscore。
+   - 真实 run 时要观察 dynamicToolCall namespace 是否完全符合预期。
+6. Docs 仍可能滞后
+
+   - `README.md`、`scout-design.md` 不要作为当前实现依据。
+   - 本文和源码优先。
+7. Handoff 本身不是 proof
+
+   - 下一 session 若要确认“已经可用”，必须跑 typecheck/test/run/log。
+
+## 23. 下一个 Session 推荐开场动作
+
+建议按这个顺序：
+
+1. `git status --short` 看工作区。
+2. 读本文。
+3. 跑 `npm run typecheck`。
+4. 跑核心单测。
+5. 如果要接业务，先读：
+   - `src/domain/types.ts`
+   - `src/domain/validation/domain.ts`
+   - `src/domain/validation/model/state-reducer.ts`
+   - `src/agent/backend/agent-task-backend.ts`
+   - `src/agent/runner/coordinator/coordinator-runner.ts`
+   - `src/agent/runner/worker/worker-runner.ts`
+6. 先实现 live ValidationStateStore/projection，而不是继续重构底层。
+
+## 24. 当前心智模型一句话
+
+Scout 不是聊天机器人壳子，而是一个以状态空间为核心的可审计 agent validation runtime：app-server 提供执行流，event store 固化底层事实，agent backend 把事实归并为 task 状态，event bus 驱动中上层模块通信，Coordinator 作为策略 agent 观察状态并调度 worker，worker 只执行 task，InteractionGateway 是唯一用户 IO 边界，domain/validation 才是下一步要补齐的业务状态空间。

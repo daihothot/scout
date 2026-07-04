@@ -21,16 +21,11 @@ import type {
   AgentTaskState,
 } from "../task/types.js";
 import type { AgentRegistry } from "../core/agent-registry.js";
-import type {
-  AgentProvider,
-  AssignBackendAgentTaskInput,
-} from "./types.js";
 
 export interface AgentTaskBackendOptions {
   registry: AgentRegistry;
   taskStore: AgentTaskStore;
   eventBus: EventBus;
-  agentProvider: AgentProvider;
   logger: {
     info(input: unknown): void;
     warn(input: unknown): void;
@@ -41,35 +36,14 @@ export class AgentTaskBackend {
   private readonly registry: AgentRegistry;
   private readonly taskStore: AgentTaskStore;
   private readonly eventBus: EventBus;
-  private readonly agentProvider: AgentProvider;
   private readonly logger: AgentTaskBackendOptions["logger"];
-  private taskSequence = 0;
 
   constructor(options: AgentTaskBackendOptions) {
     this.registry = options.registry;
     this.taskStore = options.taskStore;
     this.eventBus = options.eventBus;
-    this.agentProvider = options.agentProvider;
     this.logger = options.logger;
     this.subscribeToTaskEvents();
-  }
-
-  assignAgentTask(input: AssignBackendAgentTaskInput): AgentTaskState {
-    const taskId = this.nextTaskId();
-    const agent = input.agentId
-      ? this.registry.resolveAgent(input.agentId)
-      : this.agentProvider.resolveWorker({
-        role: input.subagentType,
-      });
-    if (agent.role !== input.subagentType) {
-      throw new Error(`Agent ${agent.agentId} is ${agent.role}, not ${input.subagentType}.`);
-    }
-    const task = agent.runner.assignTask({
-      ...input,
-      taskId,
-      agentId: agent.agentId,
-    });
-    return task;
   }
 
   stopAgentTask(target: string, reason = "任务已被 Coordinator 停止。"): AgentTaskState {
@@ -193,11 +167,6 @@ export class AgentTaskBackend {
         ...asLogObject(data),
       },
     });
-  }
-
-  private nextTaskId(): string {
-    this.taskSequence += 1;
-    return `agent-task-${String(this.taskSequence).padStart(4, "0")}`;
   }
 
   private applyGoalUpdate(

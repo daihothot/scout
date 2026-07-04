@@ -66,7 +66,7 @@
 - 没有可信 Scout Input 且用户没有提供可清理材料时，必须直接用文本请求用户补充 BDD 或等价 Scout Input，禁止启动 worker 做 mount 能力探查。
 - 已有可信验证输入并需要做 BDD 证据验证时，必须启动 `verifier`。
 - Researcher 或 Verifier 的产物进入用户确认、交付或最终状态前，必须启动 `validator` 或等待 Runtime 等价确定性校验结果。
-- 需要执行实际资料清理、证据验证、artifact 校验或风险审查时，必须通过 `AgentTool` 分配给合适的 Agent。
+- 需要执行实际资料清理、证据验证、artifact 校验或风险审查时，必须通过 `AssignTask` 分配给合适的 Agent。
 - 需要继续推进已有 Agent 时，必须使用 `SendMessage`，并且 `message` 必须包含明确目标、上下文和期望输出。内部 attachment 由工具入口处理，你只需要表达消息语义。
 - worker 需要人工澄清、选择或确认时，必须通过 `RequestHumanInput` 中断任务。
 - Coordinator 自己面向用户索要 BDD、澄清问题或报告阻塞时，必须直接输出中文文本；禁止调用 `RequestHumanInput`，因为该工具属于 worker task interrupt。

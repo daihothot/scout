@@ -6,26 +6,31 @@ import type { ScoutDomain } from "../../domain/index.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { ScoutAgentRoles } from "../thread/types.js";
 import {
+  type AssignTaskToolCall,
   AGENT_TOOL_NAMESPACES,
   parseAgentDynamicToolCall,
-  type AgentToolCall,
   type RequestHumanInputToolCall,
   type SendMessageToolCall,
+  type SubmitTaskToolCall,
   type AgentDynamicToolCall,
 } from "../tools/agent-tools.js";
 import type { AgentRegistry } from "../core/agent-registry.js";
 import type { AgentTaskBackend } from "./agent-task-backend.js";
 import type { AgentTaskStore } from "../task/agent-task-store.js";
+import type { AgentProvider } from "./types.js";
 import {
+  AgentTaskOutcomeStatuses,
   AgentTaskStatuses,
   type AgentTaskState,
 } from "../task/types.js";
+import type { WorkerAgent } from "../roles/worker-agent.js";
 import { agent } from "../context/agent-attachments.js";
 
 export interface AgentToolBackendOptions {
   registry: AgentRegistry;
   taskStore: AgentTaskStore;
   taskBackend: AgentTaskBackend;
+  agentProvider: AgentProvider;
   domain: ScoutDomain;
   logger: {
     info(input: unknown): void;
@@ -37,6 +42,7 @@ export class AgentToolBackend {
   private readonly registry: AgentRegistry;
   private readonly taskStore: AgentTaskStore;
   private readonly taskBackend: AgentTaskBackend;
+  private readonly agentProvider: AgentProvider;
   private readonly domain: ScoutDomain;
   private readonly logger: AgentToolBackendOptions["logger"];
 
@@ -44,6 +50,7 @@ export class AgentToolBackend {
     this.registry = options.registry;
     this.taskStore = options.taskStore;
     this.taskBackend = options.taskBackend;
+    this.agentProvider = options.agentProvider;
     this.domain = options.domain;
     this.logger = options.logger;
   }
@@ -227,11 +234,12 @@ export class AgentToolBackend {
     }
   }
 
-  private handleAgentToolCall(
-    call: AgentToolCall,
+  private handleAssignTaskToolCall(
+    call: AssignTaskToolCall,
   ): Record<string, unknown> {
-    const task = this.taskBackend.assignAgentTask({
-      agentId: call.agent_id,
+    const worker = this.resolveAssignableWorker(call);
+    const task = worker.assignTask({
+      agentId: worker.agentId,
       description: call.description,
       subagentType: call.subagent_type,
       prompt: agent.turn.message(call.prompt),
@@ -243,6 +251,36 @@ export class AgentToolBackend {
       agentId: task.agentId,
       role: task.role,
       description: task.description,
+    };
+  }
+
+  private handleSubmitTaskToolCall(
+    call: SubmitTaskToolCall,
+    caller: ScoutAgent,
+  ): Record<string, unknown> {
+    if (caller.role === ScoutAgentRoles.Coordinator) {
+      throw new Error("SubmitTask requires an active non-coordinator task.");
+    }
+    const task = this.taskBackend.resolveAgentTask(caller, call.task_id, "submit task");
+    const status = readSubmitTaskStatus(call.status);
+    const summary = readSubmitTaskSummary(call.summary);
+    const completed = caller.runner.completeTaskWithOutcome({
+      taskId: task.taskId,
+      outcome: {
+        status,
+        summary,
+        artifactRefs: [],
+        evidenceRefs: [],
+        blocker: status === AgentTaskOutcomeStatuses.Complete ? undefined : summary,
+        nextStep: status === AgentTaskOutcomeStatuses.Complete ? undefined : summary,
+      },
+    });
+    return {
+      status: "accepted",
+      taskId: completed.taskId,
+      agentId: completed.agentId,
+      taskStatus: completed.status,
+      outcome: completed.outcome,
     };
   }
 
@@ -275,10 +313,12 @@ export class AgentToolBackend {
     switch (call.tool) {
       case "RequestHumanInput":
         return this.handleRequestHumanInputToolCall(call, input, caller);
-      case "AgentTool":
-        return this.handleAgentToolCall(call);
+      case "AssignTask":
+        return this.handleAssignTaskToolCall(call);
       case "SendMessage":
         return this.handleSendMessageToolCall(call);
+      case "SubmitTask":
+        return this.handleSubmitTaskToolCall(call, caller);
       default:
         throw new Error(`Unsupported agent tool: ${String((call as { tool?: unknown }).tool)}`);
     }
@@ -301,6 +341,18 @@ export class AgentToolBackend {
       agent,
       task: active,
     };
+  }
+
+  private resolveAssignableWorker(call: AssignTaskToolCall): WorkerAgent {
+    const worker = call.agent_id
+      ? this.registry.resolveAgent(call.agent_id) as WorkerAgent
+      : this.agentProvider.resolveWorker({
+        role: call.subagent_type,
+      });
+    if (worker.role !== call.subagent_type) {
+      throw new Error(`Agent ${worker.agentId} is ${worker.role}, not ${call.subagent_type}.`);
+    }
+    return worker;
   }
 }
 
@@ -326,4 +378,22 @@ function dynamicToolFailure(message: string): DynamicToolCallResult {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readSubmitTaskStatus(value: SubmitTaskToolCall["status"]): typeof AgentTaskOutcomeStatuses[keyof typeof AgentTaskOutcomeStatuses] {
+  if (value === AgentTaskOutcomeStatuses.Complete) return AgentTaskOutcomeStatuses.Complete;
+  if (value === AgentTaskOutcomeStatuses.Blocked) return AgentTaskOutcomeStatuses.Blocked;
+  if (value === AgentTaskOutcomeStatuses.Failed) return AgentTaskOutcomeStatuses.Failed;
+  throw new Error("SubmitTask status must be complete, blocked, or failed.");
+}
+
+function readSubmitTaskSummary(value: SubmitTaskToolCall["summary"]): string {
+  if (typeof value !== "string") {
+    throw new Error("SubmitTask summary must be a string.");
+  }
+  const summary = value.trim();
+  if (summary.length === 0 || summary.length > 4000) {
+    throw new Error("SubmitTask summary must be 1-4000 characters.");
+  }
+  return summary;
 }

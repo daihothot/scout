@@ -69,6 +69,7 @@ export interface WorkerRunnerOptions {
   host: WorkerRunnerHost;
   store: AgentTaskStore;
   eventBus: EventBus;
+  taskInput?: AssignAgentTaskInput;
 }
 
 export class WorkerRunner extends AgentRunner {
@@ -96,26 +97,29 @@ export class WorkerRunner extends AgentRunner {
         onError: (error) => this.failActiveTask(error),
       },
     });
+    if (options.taskInput) {
+      this.initializeTask(options.taskInput);
+    }
   }
 
   get agentId(): string {
     return this.host.agentId;
   }
 
-  assignTask(input: AssignAgentTaskInput): AgentTaskState {
+  private initializeTask(input: AssignAgentTaskInput): AgentTaskState {
     if (this.stopped) {
       throw new Error(`Agent ${this.host.agentId} is stopped.`);
     }
-    if (input.subagentType !== this.host.role) {
-      throw new Error(`Cannot assign ${input.subagentType} task to ${this.host.role} agent ${this.host.agentId}.`);
-    }
     if (this.activeTask) {
-      throw new Error(`Worker runner ${this.host.agentId} already owns task ${this.activeTask.taskId}.`);
+      throw new Error(`Worker runner ${this.host.agentId} already has task ${this.activeTask.taskId}.`);
     }
     const now = new Date().toISOString();
+    const taskSequence = this.nextTaskSequence();
+    const taskId = input.taskId ?? this.buildTaskId(taskSequence);
     const task: AgentTaskState = {
       type: "local_agent",
-      taskId: input.taskId,
+      taskId,
+      taskSequence,
       agentId: this.host.agentId,
       role: this.host.role,
       description: input.description,
@@ -133,6 +137,14 @@ export class WorkerRunner extends AgentRunner {
     } satisfies AgentTaskEventPayload);
     this.loop.schedule();
     return stored;
+  }
+
+  private nextTaskSequence(): number {
+    return this.store.listTasks({ agentId: this.host.agentId }).length + 1;
+  }
+
+  private buildTaskId(taskSequence: number): string {
+    return `${this.host.agentId}-task-${String(taskSequence).padStart(4, "0")}`;
   }
 
   queueMessage(input: Omit<SendAgentMessageInput, "target"> & { taskId?: string }): AgentTaskState {
@@ -418,6 +430,11 @@ export class WorkerRunner extends AgentRunner {
           data: { goal },
         } satisfies AgentTaskEventPayload);
       }
+      task = this.getTask(taskId);
+      if (isTerminalTaskStatus(task.status)) {
+        this.activeTask = task;
+        return;
+      }
     }
 
     let pendingMessages = this.drainPendingMessages(taskId);
@@ -433,6 +450,11 @@ export class WorkerRunner extends AgentRunner {
     if (pendingMessageResult) {
       task = pendingMessageResult.task;
       pendingMessages = pendingMessageResult.remainingMessages;
+    }
+    task = this.getTask(taskId);
+    if (isTerminalTaskStatus(task.status)) {
+      this.activeTask = task;
+      return;
     }
     const promptSections = this.buildTaskTurnSections({
       task,

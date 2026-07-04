@@ -1,29 +1,35 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  AGENT_AGENT_TOOL_NAMESPACE,
+  AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
   AGENT_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-  buildAgentToolDynamicTool,
+  AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+  buildAssignTaskDynamicTool,
   buildRequestHumanInputDynamicTool,
   buildSendMessageDynamicTool,
+  buildSubmitTaskDynamicTool,
   parseAgentDynamicToolCall,
 } from "../../src/agent/tools/agent-tools.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 
 test("agent dynamic tool specs expose stable namespaces and required fields", () => {
-  const agentTool = buildAgentToolDynamicTool();
+  const assignTaskTool = buildAssignTaskDynamicTool();
   const sendMessageTool = buildSendMessageDynamicTool();
   const humanInputTool = buildRequestHumanInputDynamicTool();
+  const submitTaskTool = buildSubmitTaskDynamicTool();
 
-  assert.equal(agentTool.namespace, AGENT_AGENT_TOOL_NAMESPACE);
+  assert.equal(assignTaskTool.namespace, AGENT_ASSIGN_TASK_TOOL_NAMESPACE);
   assert.equal(sendMessageTool.namespace, AGENT_SEND_MESSAGE_TOOL_NAMESPACE);
   assert.equal(humanInputTool.namespace, AGENT_HUMAN_INPUT_TOOL_NAMESPACE);
-  assert.deepEqual(readRequired(agentTool.inputSchema), ["description", "subagent_type", "prompt"]);
+  assert.equal(submitTaskTool.namespace, AGENT_SUBMIT_TASK_TOOL_NAMESPACE);
+  assert.deepEqual(readRequired(assignTaskTool.inputSchema), ["description", "subagent_type", "prompt"]);
   assert.deepEqual(readRequired(sendMessageTool.inputSchema), ["to", "message"]);
   assert.deepEqual(readRequired(humanInputTool.inputSchema), ["question"]);
+  assert.deepEqual(readRequired(submitTaskTool.inputSchema), ["status", "summary"]);
   assert.deepEqual(readEnumProperty(sendMessageTool.inputSchema, "type"), ["message", "human_response"]);
-  assert.deepEqual(readEnumProperty(agentTool.inputSchema, "subagent_type"), [
+  assert.deepEqual(readEnumProperty(submitTaskTool.inputSchema, "status"), ["complete", "blocked", "failed"]);
+  assert.deepEqual(readEnumProperty(assignTaskTool.inputSchema, "subagent_type"), [
     ScoutAgentRoles.Researcher,
     ScoutAgentRoles.Verifier,
     ScoutAgentRoles.Validator,
@@ -51,10 +57,18 @@ test("agent tool parsers preserve typed payloads", () => {
     question: "选 A 还是 B?",
     options: ["A", "B"],
   });
+  assert.deepEqual(parseAgentDynamicToolCall("SubmitTask", {
+    status: "complete",
+    summary: "验证完成。",
+  }), {
+    tool: "SubmitTask",
+    status: "complete",
+    summary: "验证完成。",
+  });
 });
 
 test("agent tool parsers reject non-object arguments", () => {
-  assert.throws(() => parseAgentDynamicToolCall("AgentTool", null));
+  assert.throws(() => parseAgentDynamicToolCall("AssignTask", null));
   assert.throws(() => parseAgentDynamicToolCall("RequestHumanInput", []));
 });
 

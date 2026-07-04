@@ -2,18 +2,20 @@ import type { AgentDynamicToolSpec, AgentJsonValue } from "./types.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 import { ScoutAgentRoles } from "../thread/types.js";
 
-export const AGENT_AGENT_TOOL_NAMESPACE = "scout_agent_agenttool";
+export const AGENT_ASSIGN_TASK_TOOL_NAMESPACE = "scout_agent_assigntask";
 export const AGENT_SEND_MESSAGE_TOOL_NAMESPACE = "scout_agent_sendmessage";
 export const AGENT_HUMAN_INPUT_TOOL_NAMESPACE = "scout_agent_humaninput";
+export const AGENT_SUBMIT_TASK_TOOL_NAMESPACE = "scout_agent_submittask";
 
 export const AGENT_TOOL_NAMESPACES = new Set<string>([
-  AGENT_AGENT_TOOL_NAMESPACE,
+  AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
   AGENT_HUMAN_INPUT_TOOL_NAMESPACE,
+  AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
 ]);
 
-export interface AgentToolCall {
-  tool: "AgentTool";
+export interface AssignTaskToolCall {
+  tool: "AssignTask";
   agent_id?: string;
   description: string;
   subagent_type: Exclude<ScoutAgentRole, typeof ScoutAgentRoles.Coordinator>;
@@ -36,15 +38,23 @@ export interface RequestHumanInputToolCall {
   options?: string[];
 }
 
-export type AgentDynamicToolCall =
-  | AgentToolCall
-  | SendMessageToolCall
-  | RequestHumanInputToolCall;
+export interface SubmitTaskToolCall {
+  tool: "SubmitTask";
+  task_id?: string;
+  status: "complete" | "blocked" | "failed";
+  summary: string;
+}
 
-export function buildAgentToolDynamicTool(): AgentDynamicToolSpec {
+export type AgentDynamicToolCall =
+  | AssignTaskToolCall
+  | SendMessageToolCall
+  | RequestHumanInputToolCall
+  | SubmitTaskToolCall;
+
+export function buildAssignTaskDynamicTool(): AgentDynamicToolSpec {
   return {
-    namespace: AGENT_AGENT_TOOL_NAMESPACE,
-    name: "AgentTool",
+    namespace: AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
+    name: "AssignTask",
     description: "创建或复用一个 Scout researcher、verifier 或 validator worker agent，并分配一个新任务。",
     inputSchema: objectSchema({
       agent_id: {
@@ -120,6 +130,29 @@ export function buildRequestHumanInputDynamicTool(): AgentDynamicToolSpec {
         description: "可选。互斥选项列表。",
       },
     }, ["question"]),
+  };
+}
+
+export function buildSubmitTaskDynamicTool(): AgentDynamicToolSpec {
+  return {
+    namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+    name: "SubmitTask",
+    description: "仅供 worker 提交当前 task 的正式终态结果。Coordinator 不可见也不使用此工具。",
+    inputSchema: objectSchema({
+      task_id: {
+        type: "string",
+        description: "可选。当前 worker task id；省略时 runtime 会使用当前 worker 的 active task。",
+      },
+      status: {
+        type: "string",
+        enum: ["complete", "blocked", "failed"],
+        description: "当前 task 的终态。stopped 由 Coordinator/runtime 控制，worker 不提交 stopped。",
+      },
+      summary: {
+        type: "string",
+        description: "当前 task 的中文结论、阻塞原因或失败原因。",
+      },
+    }, ["status", "summary"]),
   };
 }
 

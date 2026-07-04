@@ -38,7 +38,7 @@ export interface WorkerOutcomeObservation {
   task_id: string;
   /** worker role。 */
   agent_role: ValidationAgentRole;
-  /** TaskResult 状态。 */
+  /** worker outcome 状态。 */
   status: ValidationTaskStatus;
   /** worker 结论摘要。 */
   summary: string;

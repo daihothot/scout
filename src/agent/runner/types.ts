@@ -1,8 +1,8 @@
 import type {
   AgentHumanInputRequest,
   AgentHumanInputResponse,
+  AgentTaskOutcome,
   AgentTaskState,
-  AssignAgentTaskInput,
   SendAgentMessageInput,
 } from "../task/types.js";
 
@@ -29,16 +29,19 @@ export abstract class AgentRunner {
     return undefined;
   }
 
-  assignTask(_input: AssignAgentTaskInput): AgentTaskState {
-    return this.unsupportedTaskMethod("assignTask");
-  }
-
   queueMessage(_input: Omit<SendAgentMessageInput, "target"> & { taskId?: string }): AgentTaskState {
     return this.unsupportedTaskMethod("queueMessage");
   }
 
   stopTask(_taskId: string, _reason?: string): AgentTaskState {
     return this.unsupportedTaskMethod("stopTask");
+  }
+
+  completeTaskWithOutcome(_input: {
+    taskId: string;
+    outcome: Omit<AgentTaskOutcome, "emittedAt">;
+  }): AgentTaskState {
+    return this.unsupportedTaskMethod("completeTaskWithOutcome");
   }
 
   requestHumanInput(input: {

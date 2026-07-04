@@ -168,6 +168,7 @@ function task(input: Partial<AgentTaskState> = {}): AgentTaskState {
   return {
     type: "local_agent",
     taskId: "task-1",
+    taskSequence: 1,
     agentId: "verifier",
     role: ScoutAgentRoles.Verifier,
     description: "验证 <BDD>",
