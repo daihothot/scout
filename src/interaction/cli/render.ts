@@ -1,4 +1,4 @@
-import type { AgentTaskSystemEvent } from "../../agent/task/task-events.js";
+import type { AgentTaskEvent } from "../../agent/task/task-events.js";
 import type { RuntimeDisclosureEvent, RuntimeProgressEvent } from "../port.js";
 import { renderEventNotification as renderProtocolEventNotification } from "../protocol/index.js";
 
@@ -8,7 +8,7 @@ export function renderDisclosure(event: RuntimeDisclosureEvent): string {
   return `[${event.level}] ${event.source}: ${event.message}${data}\n`;
 }
 
-export function renderEventNotification(event: AgentTaskSystemEvent): string {
+export function renderEventNotification(event: AgentTaskEvent): string {
   return renderProtocolEventNotification(event);
 }
 

@@ -3,6 +3,7 @@ import type {
   AgentHumanInputResponse,
   AgentTaskState,
   AssignAgentTaskInput,
+  SendAgentMessageInput,
 } from "../task/types.js";
 
 export type AgentRunnerKind = "coordinator" | "worker";
@@ -32,7 +33,7 @@ export abstract class AgentRunner {
     return this.unsupportedTaskMethod("assignTask");
   }
 
-  queueMessage(_input: { taskId?: string; message: string }): AgentTaskState {
+  queueMessage(_input: Omit<SendAgentMessageInput, "target"> & { taskId?: string }): AgentTaskState {
     return this.unsupportedTaskMethod("queueMessage");
   }
 

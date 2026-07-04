@@ -2,27 +2,23 @@ import {
   type EventBus,
   type ScoutEvent,
 } from "../../core/events/index.js";
-import { SystemEvents } from "../../system/events/index.js";
+import { AgentEvents } from "../events/index.js";
 import type {
   AppServerPlanState,
   AppServerResolvedTimelineEntry,
   AppServerTimelineEntry,
   AppServerThreadGoalState,
 } from "../../agent-server/codex/app-server-event-store.js";
-import type { ScoutAgent } from "../core/scout-agent.js";
 import {
   AgentTaskStore,
   cloneAgentTaskState,
 } from "../task/agent-task-store.js";
+import type { ScoutAgent } from "../core/scout-agent.js";
 import type {
   AgentTaskEventPayload,
-  AgentHumanInputRespondedEventPayload,
 } from "../task/task-events.js";
-import type { InteractionHumanInputReceivedPayload } from "../../interaction/index.js";
 import type {
   AgentTaskState,
-  AgentHumanInputResponse,
-  SendAgentMessageInput,
 } from "../task/types.js";
 import type { AgentRegistry } from "../core/agent-registry.js";
 import type {
@@ -76,44 +72,9 @@ export class AgentTaskBackend {
     return task;
   }
 
-  sendAgentMessage(input: SendAgentMessageInput): AgentTaskState {
-    const target = this.resolveTaskTarget(input.target);
-    const task = target.agent.runner.queueMessage({
-      taskId: target.taskId,
-      message: input.message,
-    });
-    return task;
-  }
-
   stopAgentTask(target: string, reason = "任务已被 Coordinator 停止。"): AgentTaskState {
     const resolved = this.resolveTaskTarget(target);
     const task = resolved.agent.runner.stopTask(resolved.taskId, reason);
-    return task;
-  }
-
-  handleHumanInputResponse(input: {
-    taskId: string;
-    requestId: string;
-    response: string;
-  }): AgentTaskState {
-    const target = this.resolveTaskTarget(input.taskId);
-    const current = this.taskStore.getTask(target.taskId);
-    if (!current) throw new Error(`Unknown agent task: ${target.taskId}`);
-    const response: AgentHumanInputResponse = {
-      requestId: input.requestId,
-      agentId: current.agentId,
-      taskId: current.taskId,
-      response: input.response,
-      createdAt: new Date().toISOString(),
-    };
-    const task = target.agent.runner.applyHumanInputResponse(response);
-    this.eventBus.publish(SystemEvents.task.humanInputResponded, {
-      task,
-      response,
-      data: {
-        requestId: input.requestId,
-      },
-    } satisfies AgentHumanInputRespondedEventPayload);
     return task;
   }
 
@@ -138,55 +99,44 @@ export class AgentTaskBackend {
     return this.taskStore.hasWaitingHumanInputTasks();
   }
 
-  consumeAppServerTimelineEntry(
+  handleAppServerTimelineEntry(
     agent: ScoutAgent,
     entry: AppServerTimelineEntry,
-    resolved: AppServerResolvedTimelineEntry,
-  ): AgentTaskTimelineProjection | undefined {
+    resolver: AgentTaskTimelineResolver,
+  ): void {
     const activeTask = this.taskStore.findActiveTaskForAgent(agent.agentId);
-    if (
-      entry.stream === "item"
-      && (entry.kind === "item_started" || entry.kind === "item_completed")
-      && resolved.progressItem
-    ) {
-      return {
-        kind: "progress",
-        agent,
-        activeTask,
-        entry,
-        progressItem: resolved.progressItem,
-      };
+    switch (entry.stream) {
+      case "item": {
+        if (entry.kind !== "item_started" && entry.kind !== "item_completed") return;
+        const resolved = resolver(entry);
+        if (resolved.progressItem) {
+          this.applyProgressUpdate(agent, activeTask, entry, resolved.progressItem);
+        }
+        return;
+      }
+      case "plan": {
+        if (entry.kind !== "plan_updated" || !activeTask) return;
+        const resolved = resolver(entry);
+        if (resolved.plan) {
+          this.applyPlanUpdate(activeTask, resolved.plan, entry);
+        }
+        return;
+      }
+      case "state": {
+        if (entry.kind === "goal_updated") {
+          if (!activeTask) return;
+          const resolved = resolver(entry);
+          if (resolved.goal) {
+            this.applyGoalUpdate(activeTask, resolved.goal, entry);
+          }
+          return;
+        }
+        if (entry.kind === "token_usage_updated") {
+          const resolved = resolver(entry);
+          this.applyTokenUsageUpdate(agent, activeTask, entry, resolved.tokenUsage);
+        }
+      }
     }
-    if (entry.stream === "plan" && resolved.plan && activeTask) {
-      const updated = this.applyPlanUpdate(activeTask, resolved.plan, entry);
-      return {
-        kind: "plan_updated",
-        agent,
-        task: updated,
-        entry,
-        plan: resolved.plan,
-      };
-    }
-    if (entry.stream === "state" && entry.kind === "goal_updated" && resolved.goal && activeTask) {
-      const updated = this.applyGoalUpdate(activeTask, resolved.goal, entry);
-      return {
-        kind: "goal_updated",
-        agent,
-        task: updated,
-        entry,
-        goal: resolved.goal,
-      };
-    }
-    if (entry.stream === "state" && entry.kind === "token_usage_updated") {
-      return {
-        kind: "token_usage_updated",
-        agent,
-        activeTask,
-        entry,
-        tokenUsage: resolved.tokenUsage,
-      };
-    }
-    return undefined;
   }
 
   resolveAgentTask(agent: ScoutAgent, taskId: string | undefined, context: string): AgentTaskState {
@@ -223,19 +173,9 @@ export class AgentTaskBackend {
   }
 
   private subscribeToTaskEvents(): void {
-    this.eventBus.subscribe(SystemEvents.task, (event) => {
+    this.eventBus.subscribe(AgentEvents.task, (event) => {
       this.handleTaskEvent(event as ScoutEvent<AgentTaskEventPayload>);
     });
-    this.eventBus.subscribe<InteractionHumanInputReceivedPayload>(
-      SystemEvents.interaction.humanInputReceived,
-      (event) => {
-        this.handleHumanInputResponse({
-          taskId: event.payload.taskId,
-          requestId: event.payload.requestId,
-          response: event.payload.response.text,
-        });
-      },
-    );
   }
 
   private handleTaskEvent(event: ScoutEvent<AgentTaskEventPayload>): void {
@@ -270,28 +210,28 @@ export class AgentTaskBackend {
       goal,
       updatedAt: new Date().toISOString(),
     };
-    this.taskStore.updateTask(updated.taskId, () => updated);
+    const stored = this.taskStore.updateTask(updated.taskId, () => updated);
     this.logger.info({
       module: "agent.task",
       event: "goal_updated",
-      agentId: updated.agentId,
-      taskId: updated.taskId,
+      agentId: stored.agentId,
+      taskId: stored.taskId,
       data: {
-        status: updated.status,
-        role: updated.role,
-        description: updated.description,
+        status: stored.status,
+        role: stored.role,
+        description: stored.description,
         seq: entry.seq,
         goal,
       },
     });
-    this.eventBus.publish(SystemEvents.task.goalUpdated, {
-      task: cloneAgentTaskState(updated),
+    this.eventBus.publish(AgentEvents.task.goalUpdated, {
+      task: cloneAgentTaskState(stored),
       data: {
         seq: entry.seq,
         goal,
       },
     } satisfies AgentTaskEventPayload);
-    return updated;
+    return stored;
   }
 
   private applyPlanUpdate(
@@ -305,60 +245,80 @@ export class AgentTaskBackend {
       planRecords: [...(task.planRecords ?? []), plan],
       updatedAt: new Date().toISOString(),
     };
-    this.taskStore.updateTask(updated.taskId, () => updated);
+    const stored = this.taskStore.updateTask(updated.taskId, () => updated);
     this.logger.info({
       module: "agent.task",
       event: "plan_updated",
-      agentId: updated.agentId,
-      taskId: updated.taskId,
+      agentId: stored.agentId,
+      taskId: stored.taskId,
       data: {
-        status: updated.status,
-        role: updated.role,
-        description: updated.description,
+        status: stored.status,
+        role: stored.role,
+        description: stored.description,
         seq: entry.seq,
         plan,
       },
     });
-    this.eventBus.publish(SystemEvents.task.planUpdated, {
-      task: cloneAgentTaskState(updated),
+    this.eventBus.publish(AgentEvents.task.planUpdated, {
+      task: cloneAgentTaskState(stored),
       data: {
         seq: entry.seq,
         plan,
       },
     } satisfies AgentTaskEventPayload);
-    return updated;
+    return stored;
   }
+
+  private applyProgressUpdate(
+    agent: ScoutAgent,
+    activeTask: AgentTaskState | undefined,
+    entry: AppServerTimelineEntry,
+    progressItem: NonNullable<AppServerResolvedTimelineEntry["progressItem"]>,
+  ): void {
+    this.logger.info({
+      module: "agent.progress",
+      event: "progress_item",
+      agentId: agent.agentId,
+      taskId: activeTask?.taskId,
+      data: {
+        seq: entry.seq,
+        threadId: progressItem.threadId,
+        turnId: progressItem.turnId,
+        itemId: progressItem.itemId,
+        type: progressItem.type,
+        status: progressItem.status,
+        label: progressItem.label,
+        detail: progressItem.detail,
+        updatedAt: progressItem.updatedAt,
+      },
+    });
+  }
+
+  private applyTokenUsageUpdate(
+    agent: ScoutAgent,
+    activeTask: AgentTaskState | undefined,
+    entry: AppServerTimelineEntry,
+    tokenUsage: AppServerResolvedTimelineEntry["tokenUsage"],
+  ): void {
+    this.logger.info({
+      module: "agent.state",
+      event: "thread_token_usage_updated",
+      agentId: agent.agentId,
+      taskId: activeTask?.taskId,
+      data: {
+        seq: entry.seq,
+        threadId: entry.threadId,
+        turnId: entry.turnId,
+        tokenUsage,
+      },
+    });
+  }
+
 }
 
-export type AgentTaskTimelineProjection =
-  | {
-    kind: "progress";
-    agent: ScoutAgent;
-    activeTask?: AgentTaskState;
-    entry: AppServerTimelineEntry;
-    progressItem: NonNullable<AppServerResolvedTimelineEntry["progressItem"]>;
-  }
-  | {
-    kind: "plan_updated";
-    agent: ScoutAgent;
-    task: AgentTaskState;
-    entry: AppServerTimelineEntry;
-    plan: AppServerPlanState;
-  }
-  | {
-    kind: "goal_updated";
-    agent: ScoutAgent;
-    task: AgentTaskState;
-    entry: AppServerTimelineEntry;
-    goal: AppServerThreadGoalState;
-  }
-  | {
-    kind: "token_usage_updated";
-    agent: ScoutAgent;
-    activeTask?: AgentTaskState;
-    entry: AppServerTimelineEntry;
-    tokenUsage: AppServerResolvedTimelineEntry["tokenUsage"];
-  };
+export type AgentTaskTimelineResolver = (
+  entry: AppServerTimelineEntry,
+) => AppServerResolvedTimelineEntry;
 
 export function cloneTask(task: AgentTaskState): AgentTaskState {
   return cloneAgentTaskState(task);

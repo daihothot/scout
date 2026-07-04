@@ -8,13 +8,15 @@ import type {
 } from "../../../core/events/index.js";
 import { EventMailbox } from "../../../core/events/index.js";
 import { SystemEvents } from "../../../system/events/index.js";
+import { AgentEvents } from "../../events/index.js";
 import { AgenticLoop } from "../../core/agentic-loop.js";
 import type {
-  SystemDispatchRequestedPayload,
-  SystemInterruptEventPayload,
+  AgentOrchestrationDispatchRequestedPayload,
+  AgentInterruptEventPayload,
 } from "../../orchestration/orchestrator-events.js";
 import type { UserMessageSubmittedPayload } from "../../../interaction/gateway/interaction-events.js";
 import { AgentRunner } from "../types.js";
+import { attachments } from "../../context/attachments.js";
 
 export interface CoordinatorRunnerHost {
   readonly agentId: string;
@@ -27,7 +29,9 @@ export class CoordinatorRunner extends AgentRunner {
   private readonly host: CoordinatorRunnerHost;
   private readonly eventBus: EventBus;
   private readonly mailbox: EventMailbox;
-  private readonly loop: AgenticLoop<ScoutEvent[]>;
+  private readonly mailboxLoop: AgenticLoop<ScoutEvent[]>;
+  private readonly tickLoop: AgenticLoop<CoordinatorPendingMessageTick>;
+  private pendingMessages: string[] = [];
   private stopped = false;
   private stopReason?: string;
 
@@ -37,9 +41,9 @@ export class CoordinatorRunner extends AgentRunner {
     this.eventBus = options.eventBus;
     this.mailbox = new EventMailbox({
       eventBus: this.eventBus,
-      onEvent: () => this.loop.schedule(),
+      onEvent: () => this.mailboxLoop.schedule(),
     });
-    this.loop = new AgenticLoop<ScoutEvent[]>({
+    this.mailboxLoop = new AgenticLoop<ScoutEvent[]>({
       agentId: this.host.agentId,
       handlers: {
         loopKind: "mailbox",
@@ -49,9 +53,19 @@ export class CoordinatorRunner extends AgentRunner {
         onError: (error) => this.publishFailure(error),
       },
     });
+    this.tickLoop = new AgenticLoop<CoordinatorPendingMessageTick>({
+      agentId: this.host.agentId,
+      handlers: {
+        loopKind: "tick",
+        takeTick: () => this.takePendingMessageTick(),
+        runTick: () => this.runPendingMessageTick(),
+        isStopped: () => this.stopped,
+        onError: (error) => this.publishFailure(error),
+      },
+    });
     this.mailbox.subscribe<UserMessageSubmittedPayload>(SystemEvents.interaction.userMessageSubmitted);
-    this.mailbox.subscribe<SystemDispatchRequestedPayload>(SystemEvents.system.dispatchRequested);
-    this.mailbox.subscribe<SystemInterruptEventPayload>(SystemEvents.interrupt);
+    this.mailbox.subscribe<AgentOrchestrationDispatchRequestedPayload>(AgentEvents.orchestration.dispatchRequested);
+    this.mailbox.subscribe<AgentInterruptEventPayload>(AgentEvents.interrupt);
   }
 
   get agentId(): string {
@@ -62,28 +76,33 @@ export class CoordinatorRunner extends AgentRunner {
     this.stopped = true;
     this.stopReason = reason;
     this.mailbox.stop();
+    this.mailboxLoop.stop();
+    this.tickLoop.stop();
   }
 
   private async runMailboxStep(events: ScoutEvent[]): Promise<void> {
-    const outcome = await this.runFromMailboxEvents(events);
-    this.publishOutcome(outcome);
+    const messages = events
+      .map((event) => readCoordinatorAttachment(event))
+      .filter((message): message is string => typeof message === "string" && message.trim().length > 0);
+    this.queueMessages(messages);
+    this.tickLoop.schedule();
   }
 
-  private async runFromMailboxEvents(events: ScoutEvent[]): Promise<ScoutAgentTurnOutcome> {
+  private takePendingMessageTick(): CoordinatorPendingMessageTick | undefined {
+    return this.countPendingMessages() > 0 ? { type: "pending_messages" } : undefined;
+  }
+
+  private async runPendingMessageTick(): Promise<void> {
     if (this.stopped) {
       throw new Error(`Coordinator runner ${this.agentId} is stopped.${this.stopReason ? ` Reason: ${this.stopReason}` : ""}`);
     }
-    return this.host.runTurn({
-      prompt: composeCoordinatorMailboxInput({
-        messages: events.map(toRunnerInputMessage),
-      }),
+    const messages = this.drainPendingMessages();
+    const outcome = await this.host.runTurn({
+      prompt: attachments.compose(undefined, ...messages),
       sandbox: "workspaceWrite",
       outputContract: "coordinator_main_loop",
     });
-  }
-
-  private publishOutcome(outcome: ScoutAgentTurnOutcome): void {
-    this.eventBus.publish(SystemEvents.coordinator.turnCompleted, {
+    this.eventBus.publish(AgentEvents.coordinator.turnCompleted, {
       agentId: this.agentId,
       threadId: outcome.turn.threadId,
       turnId: outcome.turn.turnId,
@@ -93,7 +112,7 @@ export class CoordinatorRunner extends AgentRunner {
     });
     const text = outcome.finalResponse?.trim();
     if (!text) return;
-    this.eventBus.publish(SystemEvents.coordinator.messageProduced, {
+    this.eventBus.publish(AgentEvents.coordinator.messageProduced, {
       messageId: `${outcome.turn.invocationId}-message`,
       agentId: this.agentId,
       threadId: outcome.turn.threadId,
@@ -104,7 +123,7 @@ export class CoordinatorRunner extends AgentRunner {
   }
 
   private publishFailure(error: unknown): void {
-    this.eventBus.publish(SystemEvents.coordinator.messageProduced, {
+    this.eventBus.publish(AgentEvents.coordinator.messageProduced, {
       messageId: `${this.agentId}-runner-error-${Date.now()}`,
       agentId: this.agentId,
       threadId: this.host.threadId,
@@ -115,80 +134,28 @@ export class CoordinatorRunner extends AgentRunner {
       },
     });
   }
+
+  private queueMessages(messages: string[]): void {
+    if (messages.length === 0) return;
+    this.pendingMessages = [...this.pendingMessages, ...messages];
+  }
+
+  private drainPendingMessages(): string[] {
+    const messages = this.pendingMessages;
+    this.pendingMessages = [];
+    return messages;
+  }
+
+  private countPendingMessages(): number {
+    return this.pendingMessages.length;
+  }
 }
 
-function toRunnerInputMessage(event: ScoutEvent): RunnerInputMessage {
-  if (SystemEvents.interaction.userMessageSubmitted.is(event as ScoutEvent)) {
-    return {
-      type: "user_message",
-      message: event.payload as UserMessageSubmittedPayload,
-    };
-  }
-  if (SystemEvents.interrupt.is(event)) {
-    return {
-      type: "interrupt",
-      interrupt: event as ScoutEvent<SystemInterruptEventPayload>,
-    };
-  }
-  return {
-    type: "system_dispatch",
-    dispatch: event.payload as SystemDispatchRequestedPayload,
-  };
+function readCoordinatorAttachment(event: ScoutEvent): string | undefined {
+  const payload = event.payload as { attachment?: unknown };
+  return typeof payload.attachment === "string" ? payload.attachment : undefined;
 }
 
-type RunnerInputMessage =
-  | {
-    type: "user_message";
-    message: UserMessageSubmittedPayload;
-  }
-  | {
-    type: "system_dispatch";
-    dispatch: SystemDispatchRequestedPayload;
-  }
-  | {
-    type: "interrupt";
-    interrupt: ScoutEvent<SystemInterruptEventPayload>;
-  };
-
-function composeCoordinatorMailboxInput(input: { messages: RunnerInputMessage[] }): string {
-  return JSON.stringify({
-    type: "coordinator_messages",
-    messages: input.messages.map((message) => {
-      if (message.type === "user_message") {
-        return {
-          type: message.type,
-          message: message.message,
-        };
-      }
-      if (message.type === "system_dispatch") {
-        return {
-          type: message.type,
-          dispatch: summarizeSystemDispatch(message.dispatch),
-        };
-      }
-      return {
-        type: message.type,
-        interrupt: summarizeInterrupt(message.interrupt),
-      };
-    }),
-  }, null, 2);
-}
-
-function summarizeSystemDispatch(dispatch: SystemDispatchRequestedPayload): unknown {
-  return {
-    dispatchId: dispatch.dispatchId,
-    reason: dispatch.reason,
-    systemMessage: dispatch.systemMessage,
-    createdAt: dispatch.createdAt,
-    data: dispatch.data,
-  };
-}
-
-function summarizeInterrupt(event: ScoutEvent<SystemInterruptEventPayload>): unknown {
-  return {
-    id: event.id,
-    key: event.key.routeKey,
-    occurredAt: event.occurredAt,
-    payload: event.payload,
-  };
+interface CoordinatorPendingMessageTick {
+  type: "pending_messages";
 }

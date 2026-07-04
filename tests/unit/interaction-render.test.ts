@@ -11,12 +11,12 @@ import type { AgentTaskState } from "../../src/agent/task/types.js";
 import type {
   AgentHumanInputRequestedEventPayload,
   AgentTaskEventPayload,
-  AgentTaskSystemEvent,
+  AgentTaskEvent,
 } from "../../src/agent/task/task-events.js";
 import type { ScoutEvent } from "../../src/core/events/index.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
-import { SystemEvents } from "../../src/system/events/index.js";
+import { AgentEvents } from "../../src/agent/events/index.js";
 
 test("task notification XML escapes task content and renders outcome refs", () => {
   const xml = renderTaskNotificationXml(task({
@@ -140,14 +140,14 @@ test("CLI render formats goal and plan status", () => {
   ].join("\n"));
 });
 
-function taskTerminalEvent(taskState: AgentTaskState): AgentTaskSystemEvent {
+function taskTerminalEvent(taskState: AgentTaskState): AgentTaskEvent {
   const bus = new InMemoryEventBus();
-  return bus.publish(SystemEvents.task.terminal, {
+  return bus.publish(AgentEvents.task.terminal, {
     task: taskState,
   } satisfies AgentTaskEventPayload, {
     id: "event-1",
     occurredAt: "2026-06-29T00:00:00.000Z",
-  }) as AgentTaskSystemEvent;
+  }) as AgentTaskEvent;
 }
 
 function humanInputEvent(input: {
@@ -155,7 +155,7 @@ function humanInputEvent(input: {
   request: AgentHumanInputRequestedEventPayload["request"];
 }): ScoutEvent<AgentHumanInputRequestedEventPayload> {
   const bus = new InMemoryEventBus();
-  return bus.publish(SystemEvents.task.humanInputRequested, {
+  return bus.publish(AgentEvents.task.humanInputRequested, {
     task: input.task,
     request: input.request,
   } satisfies AgentHumanInputRequestedEventPayload, {

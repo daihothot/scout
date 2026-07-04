@@ -1,5 +1,5 @@
 import { event } from "../../../core/events/index.js";
-import { SystemEvents } from "../../../system/events/catalog.js";
+import { AgentEvents } from "../../events/catalog.js";
 import type { ScoutAgentTurnResult } from "../../core/scout-agent.js";
 
 const coordinatorRunnerEventCatalog = {
@@ -9,7 +9,7 @@ const coordinatorRunnerEventCatalog = {
   },
 } as const;
 
-SystemEvents.add(coordinatorRunnerEventCatalog);
+AgentEvents.add(coordinatorRunnerEventCatalog);
 
 export type CoordinatorRunnerEventCatalog = typeof coordinatorRunnerEventCatalog;
 

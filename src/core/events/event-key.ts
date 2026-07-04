@@ -1,4 +1,4 @@
-export type EventKeyScope = "system" | `domain.${string}`;
+export type EventKeyScope = "system" | "agent" | `domain.${string}`;
 
 export interface EventKeyDefinition {
   scope: EventKeyScope;

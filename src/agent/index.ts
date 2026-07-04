@@ -14,5 +14,6 @@ export * from "./roles/researcher-agent.js";
 export * from "./roles/verifier-agent.js";
 export * from "./roles/validator-agent.js";
 export * from "./task/index.js";
-export * from "./tools/system-tools.js";
+export * from "./tools/agent-tools.js";
 export * from "./tools/types.js";
+export * from "./events/index.js";

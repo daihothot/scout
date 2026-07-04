@@ -133,14 +133,31 @@ test("AppServerEventStore handles local server request resolution and clears pen
 test("AppServerEventStore limits timeline and reports dropped entries", () => {
   const store = new AppServerEventStore({ timelineLimit: 2 });
 
-  store.ingestResponse({ id: 1, result: {} });
-  store.ingestResponse({ id: 2, result: {} });
-  store.ingestResponse({ id: 3, result: {} });
+  store.ingestNotification(notification("thread/status/changed", {
+    threadId: "thread-1",
+    status: "running",
+  }));
+  store.ingestNotification(notification("thread/status/changed", {
+    threadId: "thread-2",
+    status: "running",
+  }));
+  store.ingestNotification(notification("thread/status/changed", {
+    threadId: "thread-3",
+    status: "running",
+  }));
 
   const snapshot = store.snapshot();
   assert.equal(snapshot.timeline.length, 2);
   assert.equal(snapshot.droppedTimelineCount, 1);
-  assert.deepEqual(snapshot.timeline.map((entry) => entry.requestId), ["2", "3"]);
+  assert.deepEqual(snapshot.timeline.map((entry) => entry.threadId), ["thread-2", "thread-3"]);
+});
+
+test("AppServerEventStore ignores JSON-RPC responses as timeline events", () => {
+  const store = new AppServerEventStore();
+
+  store.ingestResponse({ id: 1, result: { ok: true } });
+
+  assert.equal(store.snapshot().timeline.length, 0);
 });
 
 function notification(method: string, params: unknown): JsonRpcNotification {

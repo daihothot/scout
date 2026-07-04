@@ -1,18 +1,9 @@
-import type {
-  AppServerProgressItem,
-  AppServerResolvedTimelineEntry,
-  AppServerTimelineEntry,
-} from "../../agent-server/codex/app-server-event-store.js";
-import { AgentTaskBackend, type AgentTaskTimelineProjection } from "./agent-task-backend.js";
+import type { AppServerTimelineEntry } from "../../agent-server/codex/app-server-event-store.js";
+import { AgentTaskBackend } from "./agent-task-backend.js";
 import { AgentToolBackend } from "./agent-tool-backend.js";
 import type { AgentBackendOptions } from "./types.js";
 import type { AgentTaskState } from "../task/types.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
-import { SystemEvents } from "../../system/events/index.js";
-import type {
-  InteractionDisclosureRequestedPayload,
-  InteractionProgressRequestedPayload,
-} from "../../interaction/index.js";
 
 export type {
   AgentBackendOptions,
@@ -41,62 +32,58 @@ export class AgentBackend {
     });
     this.tool = new AgentToolBackend({
       registry: this.registry,
+      taskStore: options.taskStore,
       taskBackend: this.task,
       domain: options.domain,
       logger: options.logger,
     });
     options.appServer.setDynamicToolCallHandler((input) => this.tool.handleDynamicToolCall(input));
-    options.appServer.onTimeline((entry, resolved) => this.handleAppServerTimelineEntry(entry, resolved));
+    options.appServer.onTimeline((entry) => this.handleAppServerTimelineEntry(entry));
   }
 
-  private handleAppServerTimelineEntry(
-    entry: AppServerTimelineEntry,
-    resolved: AppServerResolvedTimelineEntry,
-  ): void {
+  private handleAppServerTimelineEntry(entry: AppServerTimelineEntry): void {
     if (!entry.threadId) {
-      this.handleUnboundAppServerTimelineEntry(entry, resolved);
+      this.handleUnboundAppServerTimelineEntry(entry);
       return;
     }
     const agent = this.registry.resolveAgentByThreadId(entry.threadId);
     if (!agent) {
-      this.handleUnboundAppServerTimelineEntry(entry, resolved);
+      this.handleUnboundAppServerTimelineEntry(entry);
       return;
     }
-    this.consumeAppServerTimelineEntry(agent, entry, resolved);
+    this.handleAppServerTimelineEntryForAgent(agent, entry);
   }
 
-  private consumeAppServerTimelineEntry(
+  private handleAppServerTimelineEntryForAgent(
     agent: ScoutAgent,
     entry: AppServerTimelineEntry,
-    resolved: AppServerResolvedTimelineEntry,
   ): void {
     const activeTask = this.findActiveTask(agent);
-    this.options.logger.info({
-      module: `agent.app_server.${entry.stream}`,
-      event: entry.kind,
-      agentId: agent.agentId,
-      taskId: activeTask?.taskId,
-      data: {
-        runId: this.runId,
-        timeline: entry,
-        resolved,
-      },
-    });
-    const projection = this.task.consumeAppServerTimelineEntry(agent, entry, resolved);
-    if (projection) this.publishTimelineProjection(projection);
+    if (!shouldSkipAppServerTimelineLog(entry)) {
+      this.options.logger.info({
+        module: `agent.app_server.${entry.stream}`,
+        event: entry.kind,
+        agentId: agent.agentId,
+        taskId: activeTask?.taskId,
+        data: {
+          runId: this.runId,
+          timeline: entry,
+        },
+      });
+    }
+    this.task.handleAppServerTimelineEntry(agent, entry, (timelineEntry) =>
+      this.options.appServer.resolveTimelineEntry(timelineEntry)
+    );
   }
 
-  private handleUnboundAppServerTimelineEntry(
-    entry: AppServerTimelineEntry,
-    resolved: AppServerResolvedTimelineEntry,
-  ): void {
+  private handleUnboundAppServerTimelineEntry(entry: AppServerTimelineEntry): void {
+    if (shouldSkipAppServerTimelineLog(entry)) return;
     this.options.logger.info({
       module: `agent.app_server.${entry.stream}`,
       event: entry.kind,
       data: {
         runId: this.runId,
         timeline: entry,
-        resolved,
       },
     });
   }
@@ -104,92 +91,8 @@ export class AgentBackend {
   private findActiveTask(agent: ScoutAgent): AgentTaskState | undefined {
     return this.options.taskStore.findActiveTaskForAgent(agent.agentId);
   }
+}
 
-  private publishTimelineProjection(projection: AgentTaskTimelineProjection): void {
-    switch (projection.kind) {
-      case "progress":
-        this.publishAppServerProgress(projection.agent, projection.entry, projection.progressItem);
-        return;
-      case "goal_updated":
-        this.options.eventBus.publish(SystemEvents.interaction.disclosureRequested, {
-          level: "info",
-          source: `agent.goal.${projection.agent.agentId}`,
-          message: "Agent goal updated.",
-          data: {
-            runId: this.runId,
-            seq: projection.entry.seq,
-            agentId: projection.agent.agentId,
-            taskId: projection.task.taskId,
-            goal: projection.goal,
-          },
-        } satisfies InteractionDisclosureRequestedPayload);
-        return;
-      case "plan_updated":
-        this.options.eventBus.publish(SystemEvents.interaction.disclosureRequested, {
-          level: "info",
-          source: `agent.plan.${projection.agent.agentId}`,
-          message: "Agent plan updated.",
-          data: {
-            runId: this.runId,
-            seq: projection.entry.seq,
-            agentId: projection.agent.agentId,
-            taskId: projection.task.taskId,
-            plan: projection.plan,
-          },
-        } satisfies InteractionDisclosureRequestedPayload);
-        return;
-      case "token_usage_updated":
-        this.options.logger.info({
-          module: "agent.state",
-          event: "thread_token_usage_updated",
-          agentId: projection.agent.agentId,
-          taskId: projection.activeTask?.taskId,
-          data: {
-            runId: this.runId,
-            seq: projection.entry.seq,
-            threadId: projection.entry.threadId,
-            turnId: projection.entry.turnId,
-            tokenUsage: projection.tokenUsage,
-          },
-        });
-        return;
-    }
-  }
-
-  private publishAppServerProgress(
-    agent: ScoutAgent,
-    entry: AppServerTimelineEntry,
-    progressItem: AppServerProgressItem,
-  ): void {
-    const activeTask = this.options.taskStore.findActiveTaskForAgent(agent.agentId);
-    const progressEvent = {
-      source: "app-server",
-      seq: entry.seq,
-      agentId: agent.agentId,
-      taskId: activeTask?.taskId,
-      threadId: progressItem.threadId,
-      turnId: progressItem.turnId,
-      itemId: progressItem.itemId,
-      type: progressItem.type,
-      status: progressItem.status,
-      label: progressItem.label,
-      detail: progressItem.detail,
-      updatedAt: progressItem.updatedAt,
-      data: {
-        timeline: entry,
-        item: progressItem.item,
-      },
-    };
-    this.options.logger.info({
-      module: "agent.progress",
-      event: "progress_item",
-      agentId: agent.agentId,
-      taskId: activeTask?.taskId,
-      data: progressEvent,
-    });
-    this.options.eventBus.publish(
-      SystemEvents.interaction.progressRequested,
-      progressEvent satisfies InteractionProgressRequestedPayload,
-    );
-  }
+function shouldSkipAppServerTimelineLog(entry: AppServerTimelineEntry): boolean {
+  return entry.kind === "agent_message_delta";
 }

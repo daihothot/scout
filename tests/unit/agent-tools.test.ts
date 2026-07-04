@@ -1,14 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  SYSTEM_AGENT_TOOL_NAMESPACE,
-  SYSTEM_HUMAN_INPUT_TOOL_NAMESPACE,
-  SYSTEM_SEND_MESSAGE_TOOL_NAMESPACE,
+  AGENT_AGENT_TOOL_NAMESPACE,
+  AGENT_HUMAN_INPUT_TOOL_NAMESPACE,
+  AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
   buildAgentToolDynamicTool,
   buildRequestHumanInputDynamicTool,
   buildSendMessageDynamicTool,
-  parseSystemDynamicToolCall,
-} from "../../src/agent/tools/system-tools.js";
+  parseAgentDynamicToolCall,
+} from "../../src/agent/tools/agent-tools.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 
 test("agent dynamic tool specs expose stable namespaces and required fields", () => {
@@ -16,12 +16,13 @@ test("agent dynamic tool specs expose stable namespaces and required fields", ()
   const sendMessageTool = buildSendMessageDynamicTool();
   const humanInputTool = buildRequestHumanInputDynamicTool();
 
-  assert.equal(agentTool.namespace, SYSTEM_AGENT_TOOL_NAMESPACE);
-  assert.equal(sendMessageTool.namespace, SYSTEM_SEND_MESSAGE_TOOL_NAMESPACE);
-  assert.equal(humanInputTool.namespace, SYSTEM_HUMAN_INPUT_TOOL_NAMESPACE);
+  assert.equal(agentTool.namespace, AGENT_AGENT_TOOL_NAMESPACE);
+  assert.equal(sendMessageTool.namespace, AGENT_SEND_MESSAGE_TOOL_NAMESPACE);
+  assert.equal(humanInputTool.namespace, AGENT_HUMAN_INPUT_TOOL_NAMESPACE);
   assert.deepEqual(readRequired(agentTool.inputSchema), ["description", "subagent_type", "prompt"]);
   assert.deepEqual(readRequired(sendMessageTool.inputSchema), ["to", "message"]);
   assert.deepEqual(readRequired(humanInputTool.inputSchema), ["question"]);
+  assert.deepEqual(readEnumProperty(sendMessageTool.inputSchema, "type"), ["message", "human_response"]);
   assert.deepEqual(readEnumProperty(agentTool.inputSchema, "subagent_type"), [
     ScoutAgentRoles.Researcher,
     ScoutAgentRoles.Verifier,
@@ -30,15 +31,17 @@ test("agent dynamic tool specs expose stable namespaces and required fields", ()
 });
 
 test("agent tool parsers preserve typed payloads", () => {
-  assert.deepEqual(parseSystemDynamicToolCall("SendMessage", {
+  assert.deepEqual(parseAgentDynamicToolCall("SendMessage", {
     to: "researcher",
+    type: "message",
     message: "继续验证",
   }), {
     tool: "SendMessage",
     to: "researcher",
+    type: "message",
     message: "继续验证",
   });
-  assert.deepEqual(parseSystemDynamicToolCall("RequestHumanInput", {
+  assert.deepEqual(parseAgentDynamicToolCall("RequestHumanInput", {
     kind: "prompt_required",
     question: "选 A 还是 B?",
     options: ["A", "B"],
@@ -51,8 +54,8 @@ test("agent tool parsers preserve typed payloads", () => {
 });
 
 test("agent tool parsers reject non-object arguments", () => {
-  assert.throws(() => parseSystemDynamicToolCall("AgentTool", null));
-  assert.throws(() => parseSystemDynamicToolCall("RequestHumanInput", []));
+  assert.throws(() => parseAgentDynamicToolCall("AgentTool", null));
+  assert.throws(() => parseAgentDynamicToolCall("RequestHumanInput", []));
 });
 
 function readRequired(schema: unknown): string[] {

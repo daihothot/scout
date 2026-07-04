@@ -1,6 +1,6 @@
 import type { ScoutEvent } from "../../core/events/index.js";
 import { event } from "../../core/events/index.js";
-import { SystemEvents } from "../../system/events/catalog.js";
+import { AgentEvents } from "../events/catalog.js";
 import type {
   AgentTaskState,
   AgentTaskStep,
@@ -28,7 +28,7 @@ const taskEventCatalog = {
   },
 } as const;
 
-SystemEvents.add(taskEventCatalog);
+AgentEvents.add(taskEventCatalog);
 
 export type AgentTaskEventCatalog = typeof taskEventCatalog;
 
@@ -57,11 +57,11 @@ export interface AgentHumanInputRespondedEventPayload extends AgentTaskEventPayl
   response: AgentHumanInputResponse;
 }
 
-export type AgentTaskSystemEventPayload =
+export type AgentTaskEventPayloadVariant =
   | AgentTaskEventPayload
   | AgentHumanInputRequestedEventPayload
   | AgentHumanInputRespondedEventPayload
   | AgentTaskStepEventPayload
   | AgentTaskTerminalEventPayload;
 
-export type AgentTaskSystemEvent = ScoutEvent<AgentTaskSystemEventPayload>;
+export type AgentTaskEvent = ScoutEvent<AgentTaskEventPayloadVariant>;

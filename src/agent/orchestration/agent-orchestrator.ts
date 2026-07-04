@@ -3,15 +3,16 @@ import {
   EventMailbox,
   type ScoutEvent,
 } from "../../core/events/index.js";
-import { SystemEvents } from "../../system/events/index.js";
+import { AgentEvents } from "../events/index.js";
 import { AgenticLoop } from "../core/agentic-loop.js";
 import type {
   AgentHumanInputRequestedEventPayload,
   AgentHumanInputRespondedEventPayload,
-  AgentTaskSystemEvent,
-  AgentTaskSystemEventPayload,
+  AgentTaskEvent,
+  AgentTaskEventPayloadVariant,
 } from "../task/task-events.js";
-import type { SystemInterruptEventPayload } from "./orchestrator-events.js";
+import type { AgentInterruptEventPayload } from "./orchestrator-events.js";
+import { coordinator } from "../runner/coordinator/coordinator-attachments.js";
 
 export interface AgentOrchestratorOptions {
   eventBus: EventBus;
@@ -54,7 +55,7 @@ export class AgentOrchestrator {
       throw new Error("Cannot restart a stopped AgentOrchestrator.");
     }
     this.started = true;
-    this.mailbox.subscribe<AgentTaskSystemEventPayload>(SystemEvents.task);
+    this.mailbox.subscribe<AgentTaskEventPayloadVariant>(AgentEvents.task);
   }
 
   stop(): void {
@@ -78,15 +79,15 @@ export class AgentOrchestrator {
   }
 
   private handleSystemObservation(event: ScoutEvent): void {
-    if (!isAgentTaskSystemEvent(event)) {
+    if (!isAgentTaskEvent(event)) {
       return;
     }
 
-    if (SystemEvents.task.humanInputRequested.is(event)) {
+    if (AgentEvents.task.humanInputRequested.is(event)) {
       this.handleHumanInputRequested(event as ScoutEvent<AgentHumanInputRequestedEventPayload>);
       return;
     }
-    if (SystemEvents.task.humanInputResponded.is(event)) {
+    if (AgentEvents.task.humanInputResponded.is(event)) {
       this.handleHumanInputResponded(event as ScoutEvent<AgentHumanInputRespondedEventPayload>);
     }
   }
@@ -95,40 +96,65 @@ export class AgentOrchestrator {
     event: ScoutEvent<AgentHumanInputRequestedEventPayload>,
   ): void {
     const payload = event.payload;
-    this.eventBus.publish(SystemEvents.interrupt.raised, {
+    const interrupt = {
+      eventKey: AgentEvents.interrupt.raised.routeKey,
+      occurredAt: event.occurredAt,
       interruptKind: "human_input",
       taskId: payload.task.taskId,
       agentId: payload.task.agentId,
       turnId: payload.request.turnId,
       requestId: payload.request.requestId,
-    } satisfies SystemInterruptEventPayload);
+    } as const;
+    this.eventBus.publish(AgentEvents.interrupt.raised, {
+      ...interrupt,
+      attachment: coordinator.observation({
+        type: "interrupt",
+        ...interrupt,
+      }),
+    } satisfies AgentInterruptEventPayload);
   }
 
   private handleHumanInputResponded(
     event: ScoutEvent<AgentHumanInputRespondedEventPayload>,
   ): void {
     const payload = event.payload;
-    this.eventBus.publish(SystemEvents.interrupt.resolved, {
+    const interrupt = {
+      eventKey: AgentEvents.interrupt.resolved.routeKey,
+      occurredAt: event.occurredAt,
       interruptKind: "human_input",
       taskId: payload.task.taskId,
       agentId: payload.task.agentId,
       requestId: payload.response.requestId,
-    } satisfies SystemInterruptEventPayload);
+    } as const;
+    this.eventBus.publish(AgentEvents.interrupt.resolved, {
+      ...interrupt,
+      attachment: coordinator.observation({
+        type: "interrupt",
+        ...interrupt,
+      }),
+    } satisfies AgentInterruptEventPayload);
   }
 
   private handleLoopError(error: unknown): void {
-    this.eventBus.publish(SystemEvents.system.dispatchRequested, {
+    const dispatch = {
       dispatchId: `orchestrator-error-${Date.now()}`,
-      reason: "system_error",
-      systemMessage: "Agent orchestrator failed while handling system events.",
+      reason: "agent_error" as const,
+      message: "Agent orchestrator failed while handling agent events.",
       createdAt: new Date().toISOString(),
       data: {
         error: error instanceof Error ? error.stack ?? error.message : String(error),
       },
+    };
+    this.eventBus.publish(AgentEvents.orchestration.dispatchRequested, {
+      ...dispatch,
+      attachment: coordinator.observation({
+        type: "dispatch",
+        ...dispatch,
+      }),
     });
   }
 }
 
-function isAgentTaskSystemEvent(event: ScoutEvent): event is AgentTaskSystemEvent {
-  return SystemEvents.task.is(event);
+function isAgentTaskEvent(event: ScoutEvent): event is AgentTaskEvent {
+  return AgentEvents.task.is(event);
 }

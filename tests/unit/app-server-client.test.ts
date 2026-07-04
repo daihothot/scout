@@ -40,7 +40,8 @@ test("CodexAppServerClient publishes timeline after store state is reduced", asy
     providerName: "missing-provider",
   });
   const timelineSnapshots: Array<{ kind: string; progressCount: number; planSteps: number }> = [];
-  client.onTimeline((entry, resolved) => {
+  client.onTimeline((entry) => {
+    const resolved = client.resolveTimelineEntry(entry);
     timelineSnapshots.push({
       kind: entry.kind,
       progressCount: client.getEventStoreSnapshot().progressItems.length,

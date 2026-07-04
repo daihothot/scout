@@ -82,6 +82,9 @@ export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
     ...task,
     usage: task.usage ? { ...task.usage } : undefined,
     thread: task.thread ? { ...task.thread } : undefined,
+    goal: task.goal ? cloneJson(task.goal) : undefined,
+    plan: task.plan ? cloneJson(task.plan) : undefined,
+    planRecords: task.planRecords?.map((plan) => cloneJson(plan)),
     steps: task.steps?.map((step) => ({
       ...step,
       humanInputRequest: step.humanInputRequest ? {
@@ -102,4 +105,8 @@ export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
 
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }

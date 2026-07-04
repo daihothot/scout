@@ -128,15 +128,6 @@ export class AgenticLoop<TWork> {
     const nextWork = continuation.continueWith ?? work;
     this.clearDelayedSchedule();
     const version = ++this.delayedScheduleVersion;
-    if (delayMs === 0) {
-      queueMicrotask(() => {
-        if (version !== this.delayedScheduleVersion) return;
-        if (this.handlers.isStopped()) return;
-        this.delayedWork = nextWork;
-        this.scheduleDelayedWork();
-      });
-      return;
-    }
     const timer = setTimeout(() => {
       if (version !== this.delayedScheduleVersion) return;
       this.delayedSchedule = undefined;

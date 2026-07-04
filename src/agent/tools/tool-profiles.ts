@@ -3,13 +3,13 @@ import {
   buildAgentToolDynamicTool,
   buildRequestHumanInputDynamicTool,
   buildSendMessageDynamicTool,
-} from "./system-tools.js";
+} from "./agent-tools.js";
 
-export interface BuildSystemDynamicToolsOptions {
+export interface BuildAgentDynamicToolsOptions {
   orchestrationTools?: boolean;
 }
 
-export function buildSystemDynamicTools(options: BuildSystemDynamicToolsOptions = {}): AgentDynamicToolSpec[] {
+export function buildAgentDynamicTools(options: BuildAgentDynamicToolsOptions = {}): AgentDynamicToolSpec[] {
   const tools = [buildRequestHumanInputDynamicTool()];
   if (options.orchestrationTools) {
     tools.unshift(

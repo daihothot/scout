@@ -1,7 +1,6 @@
 import type {
-  AgentHumanInputRequestedEventPayload,
-  AgentTaskSystemEvent,
-  AgentTaskSystemEventPayload,
+  AgentTaskEvent,
+  AgentTaskEventPayloadVariant,
 } from "../../agent/task/task-events.js";
 import {
   type EventBus,
@@ -9,15 +8,19 @@ import {
   type UnsubscribeEventHandler,
 } from "../../core/events/index.js";
 import { SystemEvents } from "../../system/events/index.js";
-import { renderHumanInputPrompt } from "../protocol/index.js";
-import type { RuntimeInteractionPort } from "../port.js";
+import { AgentEvents } from "../../agent/events/index.js";
+import type {
+  AgentMessageSend,
+  RuntimeDisclosureEvent,
+  RuntimeInteractionPort,
+  RuntimeProgressEvent,
+} from "../port.js";
 import type {
   CoordinatorMessageProducedPayload,
 } from "../../agent/runner/coordinator/coordinator-runner-events.js";
+import { coordinator } from "../../agent/runner/coordinator/coordinator-attachments.js";
 import type {
-  InteractionDisclosureRequestedPayload,
-  InteractionHumanInputReceivedPayload,
-  InteractionProgressRequestedPayload,
+  InteractionExitRequestedPayload,
   UserMessageSubmittedPayload,
 } from "./interaction-events.js";
 
@@ -44,27 +47,31 @@ export class InteractionGateway {
   start(): void {
     if (this.unsubscribers.length > 0) return;
     this.unsubscribers.push(
-      this.eventBus.subscribe<InteractionDisclosureRequestedPayload>(
+      this.eventBus.subscribe<RuntimeDisclosureEvent>(
         SystemEvents.interaction.disclosureRequested,
         (event) => this.handleDisclosureRequest(event),
       ),
-      this.eventBus.subscribe<InteractionProgressRequestedPayload>(
+      this.eventBus.subscribe<RuntimeProgressEvent>(
         SystemEvents.interaction.progressRequested,
         (event) => this.handleProgressRequest(event),
       ),
-      this.eventBus.subscribe<AgentTaskSystemEventPayload>(
-        SystemEvents.task,
-        (event) => this.handleTaskEvent(event as AgentTaskSystemEvent),
-      ),
-      this.eventBus.subscribe<AgentHumanInputRequestedEventPayload>(
-        SystemEvents.task.humanInputRequested,
-        (event) => this.handleHumanInputRequest(event),
+      this.eventBus.subscribe<AgentTaskEventPayloadVariant>(
+        AgentEvents.task,
+        (event) => this.handleTaskEvent(event as AgentTaskEvent),
       ),
       this.eventBus.subscribe<CoordinatorMessageProducedPayload>(
-        SystemEvents.coordinator.messageProduced,
+        AgentEvents.coordinator.messageProduced,
         (event) => this.handleAgentMessageProduced(event),
       ),
     );
+    const unsubscribeAgentMessage = this.interactionPort.sendAgentMessage?.((message) =>
+      this.handleAgentMessage(message)
+    );
+    if (unsubscribeAgentMessage) this.unsubscribers.push(unsubscribeAgentMessage);
+    const unsubscribeExit = this.interactionPort.onExitRequested?.(() =>
+      this.handleExitRequested()
+    );
+    if (unsubscribeExit) this.unsubscribers.push(unsubscribeExit);
   }
 
   stop(): void {
@@ -79,17 +86,26 @@ export class InteractionGateway {
     source?: string;
     data?: unknown;
   }): void {
+    const messageId = input.messageId ?? `user-message-${Date.now()}`;
+    const submittedAt = new Date().toISOString();
     this.eventBus.publish(SystemEvents.interaction.userMessageSubmitted, {
-      messageId: input.messageId ?? `user-message-${Date.now()}`,
+      messageId,
       text: input.text,
-      submittedAt: new Date().toISOString(),
+      submittedAt,
+      attachment: coordinator.user({
+        messageId,
+        text: input.text,
+        submittedAt,
+        source: input.source,
+        data: input.data,
+      }),
       source: input.source,
       data: input.data,
     } satisfies UserMessageSubmittedPayload);
   }
 
   private async handleDisclosureRequest(
-    event: ScoutEvent<InteractionDisclosureRequestedPayload>,
+    event: ScoutEvent<RuntimeDisclosureEvent>,
   ): Promise<void> {
     try {
       await this.interactionPort.disclose(event.payload);
@@ -101,7 +117,7 @@ export class InteractionGateway {
     }
   }
 
-  private async handleProgressRequest(event: ScoutEvent<InteractionProgressRequestedPayload>): Promise<void> {
+  private async handleProgressRequest(event: ScoutEvent<RuntimeProgressEvent>): Promise<void> {
     try {
       await this.interactionPort.publishProgress(event.payload);
     } catch (error) {
@@ -113,7 +129,7 @@ export class InteractionGateway {
     }
   }
 
-  private async handleTaskEvent(event: AgentTaskSystemEvent): Promise<void> {
+  private async handleTaskEvent(event: AgentTaskEvent): Promise<void> {
     if (!shouldNotifyTaskEvent(event)) return;
     try {
       await this.interactionPort.notify(event);
@@ -124,41 +140,18 @@ export class InteractionGateway {
     }
   }
 
-  private async handleAgentMessageProduced(event: ScoutEvent<CoordinatorMessageProducedPayload>): Promise<void> {
-    try {
-      await this.interactionPort.publishAgentMessage(event.payload.text, event.payload.data);
-    } catch (error) {
+  private handleAgentMessageProduced(event: ScoutEvent<CoordinatorMessageProducedPayload>): void {
+    void Promise.resolve(
+      this.interactionPort.receiveAgentMessage({
+        id: event.payload.messageId,
+        text: event.payload.text,
+        data: event.payload.data,
+      }),
+    ).catch((error) =>
       this.warnInteractionError("agent_message_failed", error, {
         eventId: event.id,
-      });
-    }
-  }
-
-  private async handleHumanInputRequest(event: ScoutEvent<AgentHumanInputRequestedEventPayload>): Promise<void> {
-    try {
-      const payload = event.payload;
-      const response = await this.interactionPort.requestInput({
-        id: payload.request.requestId,
-        prompt: renderHumanInputPrompt({
-          task: payload.task,
-          request: payload.request,
-        }),
-        reason: "Agent requested human input while executing a task.",
-      });
-      this.eventBus.publish(SystemEvents.interaction.humanInputReceived, {
-        taskId: payload.task.taskId,
-        agentId: payload.task.agentId,
-        requestId: payload.request.requestId,
-        response,
-      } satisfies InteractionHumanInputReceivedPayload);
-    } catch (error) {
-      this.warnInteractionError("human_input_request_failed", error, {
-        eventId: event.id,
-        agentId: event.payload.task.agentId,
-        taskId: event.payload.task.taskId,
-        requestId: event.payload.request.requestId,
-      });
-    }
+      }),
+    );
   }
 
   private warnInteractionError(
@@ -175,9 +168,23 @@ export class InteractionGateway {
       },
     });
   }
+
+  private handleAgentMessage(message: AgentMessageSend): void {
+    this.submitUserMessage({
+      messageId: message.id,
+      text: message.text,
+      data: message.data,
+    });
+  }
+
+  private handleExitRequested(): void {
+    this.eventBus.publish(SystemEvents.interaction.exitRequested, {
+      requestedAt: new Date().toISOString(),
+    } satisfies InteractionExitRequestedPayload);
+  }
 }
 
-function shouldNotifyTaskEvent(event: AgentTaskSystemEvent): boolean {
-  return SystemEvents.task.terminal.is(event)
-    || SystemEvents.task.humanInputRequested.is(event);
+function shouldNotifyTaskEvent(event: AgentTaskEvent): boolean {
+  return AgentEvents.task.terminal.is(event)
+    || AgentEvents.task.humanInputRequested.is(event);
 }
