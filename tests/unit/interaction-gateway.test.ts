@@ -65,6 +65,7 @@ test("interaction gateway separates receiving agent message from sending human m
     task: {
       type: "local_agent",
       taskId: "task-1",
+      taskSequence: 1,
       agentId: "researcher",
       role: "researcher",
       description: "need input",

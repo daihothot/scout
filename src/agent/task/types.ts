@@ -93,6 +93,7 @@ export interface AgentTaskStepToolCall {
 export interface AgentTaskState {
   type: "local_agent";
   taskId: string;
+  taskSequence: number;
   agentId: string;
   role: ScoutAgentRole;
   description: string;
@@ -115,7 +116,7 @@ export interface AgentTaskState {
 }
 
 export interface AssignAgentTaskInput {
-  taskId: string;
+  taskId?: string;
   agentId?: string;
   description: string;
   subagentType: ScoutAgentRole;

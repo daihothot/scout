@@ -7,15 +7,12 @@ import type { AssetCommit, CodexMount } from "../../asset-store/types.js";
 import type { EventBus } from "../../core/events/index.js";
 import type { Logger } from "../../core/logging/index.js";
 import type { RunContextBundle } from "../../run/types.js";
-import { CoordinatorRunner } from "../runner/coordinator/coordinator-runner.js";
-import { WorkerRunner } from "../runner/worker/worker-runner.js";
 import { AgentRunner } from "../runner/types.js";
 import type { AgentTaskStore } from "../task/agent-task-store.js";
 import type {
   AgentTaskStepToolCall,
   AgentTaskState,
 } from "../task/types.js";
-import { ScoutAgentRoles } from "../thread/types.js";
 import type { AgentThreadSnapshot, AgentThreadSpec } from "../thread/types.js";
 import { runThreadPreflight } from "../thread/thread-preflight.js";
 import type { AgentRegistry } from "./agent-registry.js";
@@ -82,7 +79,7 @@ export class ScoutAgent {
   protected readonly logger: Logger;
   protected readonly eventBus: EventBus;
   protected readonly registry: AgentRegistry;
-  readonly runner: AgentRunner;
+  runner!: AgentRunner;
   private thread?: AgentThreadSnapshot;
   private threadPreflightPromise?: Promise<void>;
   private invocationSequence = 0;
@@ -100,9 +97,6 @@ export class ScoutAgent {
     this.eventBus = input.eventBus;
     this.registry = input.registry;
     this.logger.registerAgentLogRoot(this.agentId, input.agentMount.logsRoot);
-
-    const agent = this;
-    this.runner = this.createRunner(input.taskStore, agent);
   }
 
   get role(): AgentThreadSpec["role"] {
@@ -278,44 +272,6 @@ export class ScoutAgent {
       thread: this.thread,
       ...taskSnapshot,
     };
-  }
-
-  private createRunner(taskStore: AgentTaskStore, agent: ScoutAgent): AgentRunner {
-    if (this.spec.role === ScoutAgentRoles.Coordinator) {
-      return new CoordinatorRunner({
-        host: {
-          get agentId() {
-            return agent.agentId;
-          },
-          runTurn: (turnInput) => agent.runTurn(turnInput),
-          get threadId() {
-            return agent.threadId;
-          },
-        },
-        eventBus: this.eventBus,
-      });
-    }
-    return new WorkerRunner({
-      store: taskStore,
-      eventBus: this.eventBus,
-      host: {
-        get agentId() {
-          return agent.agentId;
-        },
-        get role() {
-          return agent.role;
-        },
-        get spec() {
-          return agent.spec;
-        },
-        get threadSnapshot() {
-          return agent.threadSnapshot;
-        },
-        logger: this.logger,
-        runTurn: (turnInput) => agent.runTurn(turnInput),
-        setGoal: (goalInput) => agent.setGoal(goalInput),
-      },
-    });
   }
 
   private async checkThread(thread: AgentThreadSnapshot): Promise<void> {

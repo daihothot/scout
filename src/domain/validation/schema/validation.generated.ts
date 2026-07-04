@@ -814,7 +814,7 @@ export const domainValidationRuntimeSchema = {
       "status": {
         "type": "ValidationTaskStatus",
         "required": true,
-        "description": "TaskResult 状态。"
+        "description": "worker outcome 状态。"
       },
       "summary": {
         "type": "string",

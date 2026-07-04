@@ -8,6 +8,7 @@ import { ScoutAgentRoles } from "../agent/thread/types.js";
 import { AgentBackend } from "../agent/backend/agent-backend.js";
 import { AgentOrchestrator } from "../agent/orchestration/agent-orchestrator.js";
 import type { ScoutAgent } from "../agent/core/scout-agent.js";
+import type { WorkerAgent } from "../agent/roles/worker-agent.js";
 import { InMemoryEventBus } from "../core/events/index.js";
 import { SystemEvents } from "../system/events/index.js";
 import { Logger } from "../core/logging/index.js";
@@ -113,8 +114,12 @@ export class RunManager {
       taskStore: preparedAgents.taskStore,
       eventBus,
       agentProvider: {
-        resolveWorker(input): ScoutAgent {
-          return preparedAgents.registry.resolveAgent(input.role);
+        resolveWorker(input): WorkerAgent {
+          const agent = preparedAgents.registry.resolveAgent(input.role);
+          if (agent.role === ScoutAgentRoles.Coordinator) {
+            throw new Error("Coordinator cannot be resolved as a worker.");
+          }
+          return agent as WorkerAgent;
         },
       },
       logger: runtimeLogger,

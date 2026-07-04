@@ -1,8 +1,9 @@
 import type { AgentDynamicToolSpec } from "./types.js";
 import {
-  buildAgentToolDynamicTool,
+  buildAssignTaskDynamicTool,
   buildRequestHumanInputDynamicTool,
   buildSendMessageDynamicTool,
+  buildSubmitTaskDynamicTool,
 } from "./agent-tools.js";
 
 export interface BuildAgentDynamicToolsOptions {
@@ -10,12 +11,14 @@ export interface BuildAgentDynamicToolsOptions {
 }
 
 export function buildAgentDynamicTools(options: BuildAgentDynamicToolsOptions = {}): AgentDynamicToolSpec[] {
-  const tools = [buildRequestHumanInputDynamicTool()];
   if (options.orchestrationTools) {
-    tools.unshift(
-      buildAgentToolDynamicTool(),
+    return [
+      buildAssignTaskDynamicTool(),
       buildSendMessageDynamicTool(),
-    );
+    ];
   }
-  return tools;
+  return [
+    buildRequestHumanInputDynamicTool(),
+    buildSubmitTaskDynamicTool(),
+  ];
 }

@@ -19,20 +19,20 @@ summary: 以 BDD 为输入，按角色产出可追溯 ResearchArtifact、BDD Ver
 ## 状态模型
 
 - Activity State：工具调用、命令、日志、plan、progress、错误和 token 记录。它证明“发生过什么”，不能直接证明 BDD 成立。
-- Validation State：ResearchArtifact、VerificationReport、ValidationResult、TaskResult、artifact refs、evidence refs、人工确认和阻塞原因。它才可以推动业务状态。
+- Validation State：ResearchArtifact、VerificationReport、ValidationResult、task outcome、artifact refs、evidence refs、人工确认和阻塞原因。它才可以推动业务状态。
 - Evidence Candidate：知识库命中、CodeGraph 结果、源码片段、配置、日志、历史记录和用户补充。候选证据必须被整理进正式 artifact 后才能支撑结论。
 - Gate：Validator 对 artifact、schema、字段、证据引用、状态一致性和风险披露的校验结论。
 
-所有 worker 都必须把当前角色结果写入 `SCOUT_ARTIFACT_ROOT`，再用 `TaskResult` 引用 artifact refs 与 evidence refs。
+所有 worker 都必须把当前角色结果写入 `SCOUT_ARTIFACT_ROOT`，再用 `SubmitTask` 提交 task outcome，并在 summary 中引用 artifact refs 与 evidence refs。
 
 ## 通用执行顺序
 
 1. 用 `scout-assets list` 和 `scout-assets skills/tools/mcp/plugins` 确认可用能力。
 2. 确认 Coordinator task 中的目标状态、输入 refs、角色职责和完成门槛。
-3. 缺少当前角色必要输入时，调用 `RequestHumanInput` 或用 `TaskResult` 报告需要 Coordinator 补充。
+3. 缺少当前角色必要输入时，调用 `RequestHumanInput` 请求 Coordinator 补充。
 4. 收集证据候选，并记录收集方法、命令、路径、版本和不确定性。
 5. 写入当前角色 artifact。
-6. 用 `TaskResult` 提交状态、artifact refs、evidence refs、缺口和下一步建议。
+6. 用 `SubmitTask` 提交 complete/blocked/failed 状态、artifact refs、evidence refs、缺口和下一步建议。
 
 禁止只输出自然语言总结。禁止把未写入 artifact 的临时观察作为正式结论。
 
@@ -142,7 +142,7 @@ Validator 规则：
 
 - 检查 artifact 类型、必填字段、状态枚举、artifact refs 和 evidence refs 是否闭环。
 - 检查 Activity State 是否被误用为 BDD pass/fail 结论。
-- 检查 `TaskResult(status="complete")` 是否与 artifact 内容一致。
+- 检查 `SubmitTask(status="complete")` 的 summary 是否与 artifact 内容一致。
 - 检查是否具备可审计和可重放信息：输入 refs、知识库路径、codebase repo、版本/branch、相对路径、收集方法、命令和缺口。
 - 不合格时只给最小修复项，不替其它 Agent 修改业务产物。
 

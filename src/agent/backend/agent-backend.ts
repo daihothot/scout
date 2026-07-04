@@ -7,7 +7,6 @@ import type { ScoutAgent } from "../core/scout-agent.js";
 
 export type {
   AgentBackendOptions,
-  AssignBackendAgentTaskInput,
 } from "./types.js";
 
 export class AgentBackend {
@@ -27,13 +26,13 @@ export class AgentBackend {
       registry: this.registry,
       taskStore: options.taskStore,
       eventBus: options.eventBus,
-      agentProvider: options.agentProvider,
       logger: options.logger,
     });
     this.tool = new AgentToolBackend({
       registry: this.registry,
       taskStore: options.taskStore,
       taskBackend: this.task,
+      agentProvider: options.agentProvider,
       domain: options.domain,
       logger: options.logger,
     });
