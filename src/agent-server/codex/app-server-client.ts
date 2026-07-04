@@ -6,9 +6,11 @@ import readline from "node:readline";
 import {
   AppServerEventStore,
   type AppServerEventStoreSnapshot,
-  type AppServerThreadGoalState,
+  type AppServerPlanState,
   type AppServerProgressItem,
   type AppServerResolvedTimelineEntry,
+  type AppServerThreadGoalState,
+  type AppServerThreadState,
   type AppServerTimelineEntry,
   type AppServerTimelineStream,
   type AppServerTurnState,
@@ -152,10 +154,7 @@ export type AppServerRequestHandler = (
 ) => boolean | Promise<boolean>;
 
 export type AppServerMessageHandler = (message: JsonRpcMessage) => void;
-export type AppServerTimelineHandler = (
-  entry: AppServerTimelineEntry,
-  resolved: AppServerResolvedTimelineEntry,
-) => void;
+export type AppServerTimelineHandler = (entry: AppServerTimelineEntry) => void;
 
 export class CodexAppServerClient {
   private readonly child: ChildProcessWithoutNullStreams;
@@ -410,6 +409,34 @@ export class CodexAppServerClient {
     return this.eventStore.timelineSince(seq, filter);
   }
 
+  threadSnapshot(threadId: string): AppServerThreadState | undefined {
+    return this.eventStore.threadSnapshot(threadId);
+  }
+
+  turnSnapshot(threadId: string, turnId: string): AppServerTurnState | undefined {
+    return this.eventStore.turnSnapshot(threadId, turnId);
+  }
+
+  progressItem(input: {
+    threadId: string;
+    turnId: string;
+    itemId: string;
+  }): AppServerProgressItem | undefined {
+    return this.eventStore.progressItem(input);
+  }
+
+  planSnapshot(threadId: string): AppServerPlanState | undefined {
+    return this.eventStore.threadSnapshot(threadId)?.plan;
+  }
+
+  goalSnapshot(threadId: string): AppServerThreadGoalState | undefined {
+    return this.eventStore.threadSnapshot(threadId)?.goal;
+  }
+
+  tokenUsageSnapshot(threadId: string): unknown {
+    return this.eventStore.threadSnapshot(threadId)?.tokenUsage;
+  }
+
   resolveTimelineEntry(entry: AppServerTimelineEntry): AppServerResolvedTimelineEntry {
     return this.eventStore.resolveTimelineEntry(entry);
   }
@@ -578,10 +605,9 @@ export class CodexAppServerClient {
 
   private publishTimelineSince(seq: number): void {
     for (const entry of this.eventStore.timelineSince(seq)) {
-      const resolved = this.eventStore.resolveTimelineEntry(entry);
       for (const handler of this.timelineHandlers) {
         try {
-          handler(entry, resolved);
+          handler(entry);
         } catch (error) {
           process.stderr.write(`[${this.logPrefix}] timeline handler failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
         }

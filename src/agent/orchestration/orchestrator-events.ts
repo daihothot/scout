@@ -1,8 +1,8 @@
 import { event } from "../../core/events/index.js";
-import { SystemEvents } from "../../system/events/catalog.js";
+import { AgentEvents } from "../events/catalog.js";
 
 const orchestratorEventCatalog = {
-  system: {
+  orchestration: {
     dispatchRequested: event(),
   },
   interrupt: {
@@ -13,30 +13,32 @@ const orchestratorEventCatalog = {
   },
 } as const;
 
-SystemEvents.add(orchestratorEventCatalog);
+AgentEvents.add(orchestratorEventCatalog);
 
 export type OrchestratorEventCatalog = typeof orchestratorEventCatalog;
 
-export type SystemInterruptKind =
+export type AgentInterruptKind =
   | "human_input"
   | "tool_call"
   | "approval"
   | "exception"
   | "policy_block";
 
-export interface SystemInterruptEventPayload {
+export interface AgentInterruptEventPayload {
   runId?: string;
-  interruptKind: SystemInterruptKind;
+  interruptKind: AgentInterruptKind;
+  attachment: string;
   taskId?: string;
   agentId?: string;
   turnId?: string;
   requestId?: string;
 }
 
-export interface SystemDispatchRequestedPayload {
+export interface AgentOrchestrationDispatchRequestedPayload {
   dispatchId: string;
-  reason: "runtime_events" | "system_interrupt" | "system_error" | "system_message";
-  systemMessage?: string;
+  reason: "runtime_events" | "agent_interrupt" | "agent_error" | "agent_message";
+  message?: string;
   createdAt: string;
+  attachment: string;
   data?: unknown;
 }

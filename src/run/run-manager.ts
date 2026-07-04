@@ -15,7 +15,7 @@ import { ValidationDomain } from "../domain/index.js";
 import {
   InteractionGateway,
   NoopRuntimeInteractionPort,
-  type InteractionDisclosureRequestedPayload,
+  type RuntimeDisclosureEvent,
 } from "../interaction/index.js";
 import { prepareRunClients } from "./run-client-preparation.js";
 import { prepareRunEnvironment, type PreparedRun } from "./run-env-preparation.js";
@@ -58,7 +58,7 @@ export class RunManager {
       level: "info",
       source: "run.manager",
       message: "Preparing Scout run.",
-    } satisfies InteractionDisclosureRequestedPayload);
+    } satisfies RuntimeDisclosureEvent);
     const preparationStatus = runPreparationStatus(preparedRun);
     if (preparationStatus !== "passed") {
       eventBus.publish(SystemEvents.interaction.disclosureRequested, {
@@ -69,7 +69,7 @@ export class RunManager {
           runId: preparedRun.runId,
           agents: summarizeAgents(preparedRun),
         },
-      } satisfies InteractionDisclosureRequestedPayload);
+      } satisfies RuntimeDisclosureEvent);
       interactionGateway.stop();
       preparedClients.appServerClient.client.close();
       return this.toRunResult(preparedRun, "failed");
@@ -97,13 +97,15 @@ export class RunManager {
         data: {
           error: error instanceof Error ? error.stack ?? error.message : String(error),
         },
-      } satisfies InteractionDisclosureRequestedPayload);
+      } satisfies RuntimeDisclosureEvent);
       interactionGateway.stop();
       preparedClients.appServerClient.client.close();
       return this.toRunResult(preparedRun, "failed");
     }
 
     const appServer = preparedAgents.appServerClient.client;
+    const cleanup = new RunCleanup();
+    cleanup.add(() => appServer.close());
     const agentBackend = new AgentBackend({
       runId: preparedRun.runId,
       appServer,
@@ -119,14 +121,28 @@ export class RunManager {
       domain,
     });
 
+    let orchestrator: AgentOrchestrator | undefined;
     try {
       await agentBackend.domain.start?.();
-      const orchestrator = new AgentOrchestrator({
+      cleanup.add(() => agentBackend.domain.stop?.());
+      orchestrator = new AgentOrchestrator({
         eventBus,
       });
       orchestrator.start();
+      cleanup.add(() => orchestrator?.stop());
+      cleanup.add(() => {
+        for (const agent of Object.values(preparedAgents.agents)) {
+          agent.runner.stop("run_cleanup");
+        }
+      });
+      const unsubscribeExitRequested = eventBus.subscribe(
+        SystemEvents.interaction.exitRequested,
+        async () => cleanup.run(),
+      );
+      cleanup.add(unsubscribeExitRequested);
+      cleanup.add(() => interactionGateway.stop());
     } catch (error) {
-      await agentBackend.domain.stop?.();
+      await cleanup.run();
       eventBus.publish(SystemEvents.interaction.disclosureRequested, {
         level: "error",
         source: "run.manager",
@@ -134,11 +150,18 @@ export class RunManager {
         data: {
           error: error instanceof Error ? error.stack ?? error.message : String(error),
         },
-      } satisfies InteractionDisclosureRequestedPayload);
-      interactionGateway.stop();
-      appServer.close();
+      } satisfies RuntimeDisclosureEvent);
       return this.toRunResult(preparedRun, "failed");
     }
+
+    eventBus.publish(SystemEvents.interaction.disclosureRequested, {
+      level: "info",
+      source: "run.manager",
+      message: "Scout run prepared.",
+      data: {
+        runId: preparedRun.runId,
+      },
+    } satisfies RuntimeDisclosureEvent);
 
     return this.toRunResult(preparedRun, "passed");
   }
@@ -166,6 +189,29 @@ export class RunManager {
   }
 }
 
+class RunCleanup {
+  private readonly handlers: Array<() => void | Promise<void>> = [];
+  private started = false;
+
+  add(handler: () => void | Promise<void>): void {
+    if (this.started) {
+      void Promise.resolve(handler()).catch(() => undefined);
+      return;
+    }
+    this.handlers.push(handler);
+  }
+
+  async run(): Promise<void> {
+    if (this.started) return;
+    this.started = true;
+    while (this.handlers.length > 0) {
+      const handler = this.handlers.pop();
+      if (!handler) continue;
+      await Promise.resolve(handler()).catch(() => undefined);
+    }
+  }
+}
+
 export async function startRun(options: ScoutRunOptions): Promise<ScoutRunResult> {
   return new RunManager().startRun(options);
 }
@@ -180,7 +226,12 @@ function summarizeAgents(preparedRun: PreparedRun): Record<string, unknown> {
   return mapPreparedAgents(preparedRun, (agent) => ({
     preflightStatus: agent.preflight.status,
     assetCommitStatus: agent.assetCommit.status,
-    issueCount: agent.mount.issues.length,
+    issues: agent.mount.issues.map((issue) => ({
+      severity: issue.severity,
+      code: issue.code,
+      message: issue.message,
+      resourceId: issue.resourceId,
+    })),
   }));
 }
 

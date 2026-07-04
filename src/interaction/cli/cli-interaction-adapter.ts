@@ -1,12 +1,11 @@
 import type {
-  HumanInputRequest,
-  HumanInputResponse,
+  AgentMessageReply,
   RuntimeDisclosureEvent,
   RuntimeInteractionPort,
   RuntimeProgressEvent,
 } from "../port.js";
-import type { AgentTaskSystemEvent } from "../../agent/task/task-events.js";
-import { promptForHumanInput } from "./prompt.js";
+import type { AgentTaskEvent } from "../../agent/task/task-events.js";
+import { promptForAgentMessage } from "./prompt.js";
 import { renderDisclosure, renderEventNotification, renderProgress } from "./render.js";
 
 export class CliInteractionAdapter implements RuntimeInteractionPort {
@@ -19,7 +18,7 @@ export class CliInteractionAdapter implements RuntimeInteractionPort {
     process.stdout.write(rendered);
   }
 
-  async notify(event: AgentTaskSystemEvent): Promise<void> {
+  async notify(event: AgentTaskEvent): Promise<void> {
     process.stdout.write(renderEventNotification(event));
   }
 
@@ -27,11 +26,7 @@ export class CliInteractionAdapter implements RuntimeInteractionPort {
     process.stdout.write(renderProgress(event));
   }
 
-  async publishAgentMessage(message: string): Promise<void> {
-    process.stdout.write(`${message}\n`);
-  }
-
-  requestInput(request: HumanInputRequest): Promise<HumanInputResponse> {
-    return promptForHumanInput(request);
+  async receiveAgentMessage(message: AgentMessageReply): Promise<void> {
+    await promptForAgentMessage(message);
   }
 }

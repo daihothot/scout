@@ -9,7 +9,7 @@ import type {
   ScoutAgentOptions,
 } from "../core/scout-agent.js";
 import type { AgentRegistry } from "../core/agent-registry.js";
-import { buildSystemDynamicTools } from "../tools/tool-profiles.js";
+import { buildAgentDynamicTools } from "../tools/tool-profiles.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 import { ScoutAgentRoles } from "../thread/types.js";
 import type { AgentTaskStore } from "../task/agent-task-store.js";
@@ -59,9 +59,9 @@ export class AgentBuilder {
     return this.registerAgent(agent);
   }
 
-  dynamicToolsForRole(role: ScoutAgentRole): ReturnType<typeof buildSystemDynamicTools> {
+  dynamicToolsForRole(role: ScoutAgentRole): ReturnType<typeof buildAgentDynamicTools> {
     return [
-      ...buildSystemDynamicTools({
+      ...buildAgentDynamicTools({
         orchestrationTools: role === ScoutAgentRoles.Coordinator,
       }),
       ...this.options.domain.dynamicToolsForRole(role),

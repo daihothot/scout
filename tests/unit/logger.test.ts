@@ -27,18 +27,45 @@ test("Logger writes global and agent logs with redaction and summarization", () 
     },
   });
 
-  const globalEvent = readJsonLine(join(root, "logs", "runtime.jsonl"));
-  const agentEvent = readJsonLine(join(root, "agents", "agent-1", "logs", "runtime.jsonl"));
-  assert.equal(globalEvent.runId, "run-1");
-  assert.equal(agentEvent.agentId, "agent-1");
-  assert.equal(globalEvent.data.api_key, "[redacted]");
-  assert.equal(globalEvent.data.nested.token, "[redacted]");
-  assert.match(globalEvent.data.output, /^\w+\.\.\.\[truncated:4100\]$/);
-  assert.equal(globalEvent.data.items.length, 201);
-  assert.equal(globalEvent.data.items.at(-1), "[truncated_items:5]");
+  const globalText = readFileSync(join(root, "logs", "runtime.log"), "utf8");
+  const agentText = readFileSync(join(root, "agents", "agent-1", "logs", "runtime.log"), "utf8");
+  assert.match(globalText, /^\n\n\n\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[Scout\] \[pid:\d+\/thread:\d+\] \[ I \] \[test\] \[agent-1\] event=secret_event run=run-1/);
+  assert.match(globalText, /api_key: \[redacted\]/);
+  assert.match(globalText, /token: \[redacted\]/);
+  assert.match(globalText, /\.\.\.\[truncated:4100\]/);
+  assert.match(globalText, /\[truncated_items:5\]/);
+  assert.match(agentText, /\[test\] \[agent-1\]/);
 });
 
-test("Logger supports custom serializer, redactor and summarizer hooks", () => {
+test("Logger formats JSON, XML and YAML string values across lines", () => {
+  const root = mkdtempSync(join(tmpdir(), "scout-logger-test-"));
+  const logger = new Logger({
+    runId: "run-1",
+    logsRoot: join(root, "logs"),
+  });
+
+  logger.info({
+    module: "test",
+    event: "json_string_event",
+    data: {
+      schema: "{\"type\":\"object\",\"properties\":{\"ok\":{\"type\":\"boolean\"}}}",
+      xml: "<root><child enabled=\"true\">value</child></root>",
+      yaml: "name: scout\nstatus: ok",
+    },
+  });
+
+  const text = readFileSync(join(root, "logs", "runtime.log"), "utf8");
+  assert.match(text, /^\n\n\n\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[Scout\] \[pid:\d+\/thread:\d+\] \[ I \] \[test\] \[runtime\]/);
+  assert.match(text, /event=json_string_event/);
+  assert.match(text, /schema:\n\s+\{/);
+  assert.match(text, /"properties": \{/);
+  assert.match(text, /"ok": \{/);
+  assert.match(text, /xml:\n\s+<root>/);
+  assert.match(text, /<child enabled="true">value<\/child>/);
+  assert.match(text, /yaml:\n\s+name: scout\n\s+status: ok/);
+});
+
+test("Logger supports custom redactor and summarizer hooks", () => {
   const root = mkdtempSync(join(tmpdir(), "scout-logger-test-"));
   const logger = new Logger({
     runId: "run-1",
@@ -56,7 +83,6 @@ test("Logger supports custom serializer, redactor and summarizer hooks", () => {
         redacted: true,
       },
     }),
-    serializer: (event) => `custom:${event.event}:${JSON.stringify(event.data)}`,
   });
 
   logger.warn({
@@ -67,10 +93,8 @@ test("Logger supports custom serializer, redactor and summarizer hooks", () => {
     },
   });
 
-  const text = readFileSync(join(root, "logs", "runtime.jsonl"), "utf8").trim();
-  assert.equal(text, 'custom:custom_event:{"summarized":true,"redacted":true}');
+  const text = readFileSync(join(root, "logs", "runtime.log"), "utf8");
+  assert.match(text, /event=custom_event/);
+  assert.match(text, /summarized: true/);
+  assert.match(text, /redacted: true/);
 });
-
-function readJsonLine(path: string): Record<string, any> {
-  return JSON.parse(readFileSync(path, "utf8").trim()) as Record<string, any>;
-}

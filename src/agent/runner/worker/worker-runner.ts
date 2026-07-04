@@ -1,10 +1,14 @@
 import type { Logger } from "../../../core/logging/index.js";
 import {
-  composeTaskTurnInput,
+  attachments,
 } from "../../context/attachments.js";
 import {
-  getWorkerPendingMessageAttachments,
+  AgentContextTags,
+  agent,
+} from "../../context/agent-attachments.js";
+import {
   worker,
+  type WorkerTaskTickInput,
 } from "./worker-attachments.js";
 import {
   AgenticLoop,
@@ -15,9 +19,10 @@ import {
   cloneAgentTaskState as cloneTaskState,
 } from "../../task/agent-task-store.js";
 import type { EventBus } from "../../../core/events/index.js";
-import { SystemEvents } from "../../../system/events/index.js";
+import { AgentEvents } from "../../events/index.js";
 import type {
   AgentTaskEventPayload,
+  AgentHumanInputRespondedEventPayload,
   AgentHumanInputRequestedEventPayload,
   AgentTaskStepEventPayload,
   AgentTaskTerminalEventPayload,
@@ -32,6 +37,7 @@ import {
   type AgentTaskStep,
   type AgentTaskState,
   type AssignAgentTaskInput,
+  type SendAgentMessageInput,
 } from "../../task/types.js";
 import type {
   ScoutAgentTurnInput,
@@ -63,7 +69,6 @@ export interface WorkerRunnerOptions {
   host: WorkerRunnerHost;
   store: AgentTaskStore;
   eventBus: EventBus;
-  tickIntervalMs?: number;
 }
 
 export class WorkerRunner extends AgentRunner {
@@ -72,7 +77,6 @@ export class WorkerRunner extends AgentRunner {
   private readonly store: AgentTaskStore;
   private readonly eventBus: EventBus;
   private readonly loop: AgenticLoop<AgentTaskState>;
-  private readonly tickIntervalMs: number;
   private pendingMessages: string[] = [];
   private activeTask?: AgentTaskState;
   private stopped = false;
@@ -82,7 +86,6 @@ export class WorkerRunner extends AgentRunner {
     this.host = options.host;
     this.store = options.store;
     this.eventBus = options.eventBus;
-    this.tickIntervalMs = options.tickIntervalMs ?? 1000;
     this.loop = new AgenticLoop<AgentTaskState>({
       agentId: this.host.agentId,
       handlers: {
@@ -125,14 +128,14 @@ export class WorkerRunner extends AgentRunner {
     };
     const stored = this.store.addTask(task);
     this.activeTask = stored;
-    this.eventBus.publish(SystemEvents.task.assigned, {
+    this.eventBus.publish(AgentEvents.task.assigned, {
       task: stored,
     } satisfies AgentTaskEventPayload);
     this.loop.schedule();
     return stored;
   }
 
-  queueMessage(input: { taskId?: string; message: string }): AgentTaskState {
+  queueMessage(input: Omit<SendAgentMessageInput, "target"> & { taskId?: string }): AgentTaskState {
     const task = this.resolveMessageTarget(input.taskId);
     if (isTerminalTaskStatus(task.status)) {
       throw new Error(`Cannot queue message for terminal task ${task.taskId}. Status: ${task.status}`);
@@ -140,11 +143,10 @@ export class WorkerRunner extends AgentRunner {
     this.pendingMessages = [...this.pendingMessages, input.message];
     const updated = this.updateTask(task.taskId, (currentTask) => ({
       ...currentTask,
-      status: currentTask.status === AgentTaskStatuses.WaitingForHumanInput ? AgentTaskStatuses.Running : currentTask.status,
       updatedAt: new Date().toISOString(),
     }));
     this.activeTask = updated;
-    this.eventBus.publish(SystemEvents.task.messageQueued, {
+    this.eventBus.publish(AgentEvents.task.messageQueued, {
       task: updated,
       data: {
         message: input.message,
@@ -167,11 +169,11 @@ export class WorkerRunner extends AgentRunner {
       updatedAt: new Date().toISOString(),
     }));
     this.activeTask = stopped;
-    this.eventBus.publish(SystemEvents.task.stopped, {
+    this.eventBus.publish(AgentEvents.task.stopped, {
       task: stopped,
       data: { reason },
     } satisfies AgentTaskEventPayload);
-    this.eventBus.publish(SystemEvents.task.terminal, {
+    this.eventBus.publish(AgentEvents.task.terminal, {
       task: stopped,
       result: stopped.result,
       error: stopped.error,
@@ -229,13 +231,13 @@ export class WorkerRunner extends AgentRunner {
     }));
     this.pendingMessages = [];
     this.activeTask = completed;
-    this.eventBus.publish(SystemEvents.task.outcomeAccepted, {
+    this.eventBus.publish(AgentEvents.task.outcomeAccepted, {
       task: completed,
       data: {
         outcome: completed.outcome,
       },
     } satisfies AgentTaskEventPayload);
-    this.eventBus.publish(SystemEvents.task.terminal, {
+    this.eventBus.publish(AgentEvents.task.terminal, {
       task: completed,
       result: completed.result,
       error: completed.error,
@@ -272,7 +274,7 @@ export class WorkerRunner extends AgentRunner {
       updatedAt,
     }));
     this.activeTask = waiting;
-    this.eventBus.publish(SystemEvents.task.humanInputRequested, {
+    this.eventBus.publish(AgentEvents.task.humanInputRequested, {
       task: waiting,
       request,
       data: { requestId: request.requestId },
@@ -303,6 +305,46 @@ export class WorkerRunner extends AgentRunner {
     return cloneTaskState(updated);
   }
 
+  private handlePendingMessages(
+    task: AgentTaskState,
+    messages: string[],
+  ): { task: AgentTaskState; remainingMessages: string[] } | undefined {
+    if (messages.length === 0) return undefined;
+    const request = latestTaskStep(task)?.humanInputRequest;
+    if (!request || request.status !== "pending") return undefined;
+    const responseMessageIndex = messages.findIndex((message) =>
+      attachments.haveTagBlock(message, AgentContextTags.HumanResponse)
+    );
+    if (responseMessageIndex < 0) return undefined;
+    const responseMessage = messages[responseMessageIndex];
+    if (!responseMessage) return undefined;
+    const humanResponse = attachments.readTagBlock(responseMessage, AgentContextTags.HumanResponse)[0];
+    if (!humanResponse) return undefined;
+    const remainingMessages = [
+      ...messages.slice(0, responseMessageIndex),
+      ...messages.slice(responseMessageIndex + 1),
+    ];
+    const response: AgentHumanInputResponse = {
+      requestId: request.requestId,
+      agentId: task.agentId,
+      taskId: task.taskId,
+      response: humanResponse.body,
+      createdAt: new Date().toISOString(),
+    };
+    const updated = this.applyHumanInputResponse(response);
+    this.eventBus.publish(AgentEvents.task.humanInputResponded, {
+      task: updated,
+      response,
+      data: {
+        requestId: response.requestId,
+      },
+    } satisfies AgentHumanInputRespondedEventPayload);
+    return {
+      task: updated,
+      remainingMessages,
+    };
+  }
+
   hasRunningTasks(): boolean {
     return this.listTasks().some((task) =>
       task.status === AgentTaskStatuses.Queued || task.status === AgentTaskStatuses.Running
@@ -326,11 +368,11 @@ export class WorkerRunner extends AgentRunner {
       if (this.activeTask.status === AgentTaskStatuses.Queued) {
         return this.activeTask;
       }
-      if (this.activeTask.status !== AgentTaskStatuses.Running) {
-        return undefined;
-      }
       if (this.countPendingMessages(this.activeTask.taskId) > 0) {
         return this.activeTask;
+      }
+      if (this.activeTask.status !== AgentTaskStatuses.Running) {
+        return undefined;
       }
       return undefined;
     }
@@ -340,8 +382,12 @@ export class WorkerRunner extends AgentRunner {
   private async runTaskTick(activeTask: AgentTaskState): Promise<void | AgenticTickContinuation<AgentTaskState>> {
     const taskId = activeTask.taskId;
     this.ensureOwnedTask(taskId);
-    let task = activeTask;
-    if (task.status === AgentTaskStatuses.Stopped) {
+    let task = this.getTask(taskId);
+    if (
+      task.status !== AgentTaskStatuses.Queued
+      && task.status !== AgentTaskStatuses.Running
+      && task.status !== AgentTaskStatuses.WaitingForHumanInput
+    ) {
       return;
     }
     const hadStarted = Boolean(task.startedAt);
@@ -362,35 +408,41 @@ export class WorkerRunner extends AgentRunner {
         startedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }));
-      this.eventBus.publish(SystemEvents.task.threadAttached, {
+      this.eventBus.publish(AgentEvents.task.threadAttached, {
         task,
         data: { threadId: thread.threadId },
       } satisfies AgentTaskEventPayload);
       if (goal) {
-        this.eventBus.publish(SystemEvents.task.goalUpdated, {
+        this.eventBus.publish(AgentEvents.task.goalUpdated, {
           task,
           data: { goal },
         } satisfies AgentTaskEventPayload);
       }
     }
 
-    const pendingMessages = this.drainPendingMessages(taskId);
+    let pendingMessages = this.drainPendingMessages(taskId);
     if (pendingMessages.length > 0) {
-      this.eventBus.publish(SystemEvents.task.pendingMessagesDrained, {
+      this.eventBus.publish(AgentEvents.task.pendingMessagesDrained, {
         task,
         data: {
           messages: pendingMessages,
         },
       } satisfies AgentTaskEventPayload);
     }
+    const pendingMessageResult = this.handlePendingMessages(task, pendingMessages);
+    if (pendingMessageResult) {
+      task = pendingMessageResult.task;
+      pendingMessages = pendingMessageResult.remainingMessages;
+    }
     const promptSections = this.buildTaskTurnSections({
       task,
       initialPrompt,
     });
-    const prompt = composeTaskTurnInput({
-      sections: promptSections,
-      attachments: getWorkerPendingMessageAttachments({ messages: pendingMessages }),
-    });
+    const prompt = attachments.compose(
+      this.host.logger,
+      ...promptSections,
+      ...pendingMessages,
+    );
 
     const running = this.updateTask(taskId, (current) => this.appendTaskStep({
       task: {
@@ -401,7 +453,7 @@ export class WorkerRunner extends AgentRunner {
       startedAt: new Date().toISOString(),
     }));
     this.activeTask = running;
-    this.eventBus.publish(SystemEvents.task.stepStarted, {
+    this.eventBus.publish(AgentEvents.task.stepStarted, {
       task: running,
       prompt,
       step: latestTaskStep(running),
@@ -426,7 +478,7 @@ export class WorkerRunner extends AgentRunner {
         status: AgentTaskStepStatuses.WaitingForHumanInput,
       }));
       this.activeTask = waiting;
-      this.eventBus.publish(SystemEvents.task.stepCompleted, {
+      this.eventBus.publish(AgentEvents.task.stepCompleted, {
         task: waiting,
         step: latestTaskStep(waiting),
         data: { reason: AgentTaskStatuses.WaitingForHumanInput },
@@ -441,7 +493,7 @@ export class WorkerRunner extends AgentRunner {
         status: outcome.turn.status === "failed" ? AgentTaskStepStatuses.Failed : AgentTaskStepStatuses.Completed,
       }));
       this.activeTask = updated;
-      this.eventBus.publish(SystemEvents.task.stepCompleted, {
+      this.eventBus.publish(AgentEvents.task.stepCompleted, {
         task: updated,
         step: latestTaskStep(updated),
         data: { reason: "terminal_update" },
@@ -450,7 +502,7 @@ export class WorkerRunner extends AgentRunner {
     }
 
     if (outcome.turn.status === "completed") {
-      this.eventBus.publish(SystemEvents.task.stepOutput, {
+      this.eventBus.publish(AgentEvents.task.stepOutput, {
         task: latest,
         data: { output: outcome.finalResponse ?? "" },
       } satisfies AgentTaskEventPayload);
@@ -462,7 +514,7 @@ export class WorkerRunner extends AgentRunner {
           status: AgentTaskStepStatuses.Completed,
         }));
         this.activeTask = stillRunning;
-        this.eventBus.publish(SystemEvents.task.stepCompleted, {
+        this.eventBus.publish(AgentEvents.task.stepCompleted, {
           task: stillRunning,
           step: latestTaskStep(stillRunning),
           output: outcome.finalResponse ?? "",
@@ -477,13 +529,13 @@ export class WorkerRunner extends AgentRunner {
         status: AgentTaskStepStatuses.Completed,
       }));
       this.activeTask = stillRunning;
-      this.eventBus.publish(SystemEvents.task.stepCompleted, {
+      this.eventBus.publish(AgentEvents.task.stepCompleted, {
         task: stillRunning,
         step: latestTaskStep(stillRunning),
         output: outcome.finalResponse ?? "",
         data: { reason: "tick_scheduled" },
       } satisfies AgentTaskStepEventPayload);
-      return { continueAfterMs: this.tickIntervalMs, continueWith: stillRunning };
+      return { continueAfterMs: 0, continueWith: stillRunning };
     }
 
     const failed = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
@@ -506,10 +558,10 @@ export class WorkerRunner extends AgentRunner {
       status: AgentTaskStepStatuses.Failed,
     }));
     this.activeTask = failed;
-    this.eventBus.publish(SystemEvents.task.failed, {
+    this.eventBus.publish(AgentEvents.task.failed, {
       task: failed,
     } satisfies AgentTaskEventPayload);
-    this.eventBus.publish(SystemEvents.task.terminal, {
+    this.eventBus.publish(AgentEvents.task.terminal, {
       task: failed,
       result: failed.result,
       error: failed.error,
@@ -545,10 +597,10 @@ export class WorkerRunner extends AgentRunner {
       updatedAt: new Date().toISOString(),
     }));
     this.activeTask = failed;
-    this.eventBus.publish(SystemEvents.task.failed, {
+    this.eventBus.publish(AgentEvents.task.failed, {
       task: failed,
     } satisfies AgentTaskEventPayload);
-    this.eventBus.publish(SystemEvents.task.terminal, {
+    this.eventBus.publish(AgentEvents.task.terminal, {
       task: failed,
       result: failed.result,
       error: failed.error,
@@ -678,16 +730,15 @@ export class WorkerRunner extends AgentRunner {
     task: AgentTaskState;
     initialPrompt?: string;
   }): string[] {
+    const updateToolInstruction = agent.turn.use_update_tools();
     if (input.initialPrompt !== undefined) {
       if (!input.initialPrompt) throw new Error(`Task ${input.task.taskId} has no initial prompt.`);
-      return [input.initialPrompt];
+      return [updateToolInstruction, input.initialPrompt];
     }
-    return [worker.turn.task_tick({
-      taskId: input.task.taskId,
-      status: input.task.status,
-      description: input.task.description,
-      latestStepId: latestTaskStep(input.task)?.stepId,
-    })];
+    return [
+      updateToolInstruction,
+      worker.turn.task_tick(toWorkerTaskTickInput(input.task)),
+    ];
   }
 }
 
@@ -704,4 +755,13 @@ export function isTerminalTaskStatus(status: AgentTaskState["status"]): boolean 
 
 function latestTaskStep(task: AgentTaskState): AgentTaskStep | undefined {
   return task.steps?.[task.steps.length - 1];
+}
+
+function toWorkerTaskTickInput(task: AgentTaskState): WorkerTaskTickInput {
+  return {
+    taskId: task.taskId,
+    status: task.status,
+    description: task.description,
+    latestStepId: latestTaskStep(task)?.stepId,
+  };
 }

@@ -6,16 +6,25 @@ import type { ScoutDomain } from "../../domain/index.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { ScoutAgentRoles } from "../thread/types.js";
 import {
-  SYSTEM_TOOL_NAMESPACES,
-  parseSystemDynamicToolCall,
+  AGENT_TOOL_NAMESPACES,
+  parseAgentDynamicToolCall,
+  type AgentToolCall,
   type RequestHumanInputToolCall,
-  type SystemToolCall,
-} from "../tools/system-tools.js";
+  type SendMessageToolCall,
+  type AgentDynamicToolCall,
+} from "../tools/agent-tools.js";
 import type { AgentRegistry } from "../core/agent-registry.js";
 import type { AgentTaskBackend } from "./agent-task-backend.js";
+import type { AgentTaskStore } from "../task/agent-task-store.js";
+import {
+  AgentTaskStatuses,
+  type AgentTaskState,
+} from "../task/types.js";
+import { agent } from "../context/agent-attachments.js";
 
 export interface AgentToolBackendOptions {
   registry: AgentRegistry;
+  taskStore: AgentTaskStore;
   taskBackend: AgentTaskBackend;
   domain: ScoutDomain;
   logger: {
@@ -26,12 +35,14 @@ export interface AgentToolBackendOptions {
 
 export class AgentToolBackend {
   private readonly registry: AgentRegistry;
+  private readonly taskStore: AgentTaskStore;
   private readonly taskBackend: AgentTaskBackend;
   private readonly domain: ScoutDomain;
   private readonly logger: AgentToolBackendOptions["logger"];
 
   constructor(options: AgentToolBackendOptions) {
     this.registry = options.registry;
+    this.taskStore = options.taskStore;
     this.taskBackend = options.taskBackend;
     this.domain = options.domain;
     this.logger = options.logger;
@@ -42,15 +53,15 @@ export class AgentToolBackend {
     if (!caller) {
       return dynamicToolFailure(`Unknown dynamic tool caller thread: ${input.threadId}`);
     }
-    if (!input.namespace || !SYSTEM_TOOL_NAMESPACES.has(input.namespace)) {
+    if (!input.namespace || !AGENT_TOOL_NAMESPACES.has(input.namespace)) {
       return this.handleDomainToolCall(input, caller);
     }
 
     try {
-      const call = parseSystemDynamicToolCall(input.tool, input.arguments);
+      const call = parseAgentDynamicToolCall(input.tool, input.arguments);
       this.logger.info({
         module: "agent.tool",
-        event: "system_tool_call_started",
+        event: "agent_tool_call_started",
         agentId: caller.agentId,
         data: {
           tool: input.tool,
@@ -60,10 +71,10 @@ export class AgentToolBackend {
           threadId: input.threadId,
         },
       });
-      const result = await this.dispatchSystemToolCall(call, caller, input);
+      const result = await this.dispatchAgentDynamicToolCall(call, caller, input);
       this.logger.info({
         module: "agent.tool",
-        event: "system_tool_call_completed",
+        event: "agent_tool_call_completed",
         agentId: caller.agentId,
         data: {
           tool: input.tool,
@@ -76,7 +87,7 @@ export class AgentToolBackend {
       const message = error instanceof Error ? error.stack ?? error.message : String(error);
       this.logger.error({
         module: "agent.tool",
-        event: "system_tool_call_failed",
+        event: "agent_tool_call_failed",
         agentId: caller.agentId,
         data: {
           tool: input.tool,
@@ -146,16 +157,44 @@ export class AgentToolBackend {
     input: DynamicToolCallInput,
     caller: ScoutAgent,
   ): Promise<Record<string, unknown>> {
+    const readQuestion = (): string => {
+      if (typeof call.question !== "string") {
+        throw new Error("RequestHumanInput question must be a string.");
+      }
+      const question = call.question.trim();
+      if (question.length === 0 || question.length > 1000) {
+        throw new Error("RequestHumanInput question must be 1-1000 characters.");
+      }
+      return question;
+    };
+    const readContext = (): string | undefined =>
+      typeof call.context === "string" && call.context.trim().length > 0 ? call.context.trim() : undefined;
+    const readOptions = (): string[] | undefined => {
+      if (call.options === undefined) return undefined;
+      if (!Array.isArray(call.options) || !call.options.every((item) => typeof item === "string")) {
+        throw new Error("options must be a string array.");
+      }
+      const options = call.options.map((item) => item.trim()).filter((item) => item.length > 0);
+      if (options.length > 20) {
+        throw new Error("options must contain at most 20 items.");
+      }
+      return options.length > 0 ? options : undefined;
+    };
+
     try {
-      const request = normalizeHumanInputRequest(call, caller);
       const task = caller.role === ScoutAgentRoles.Coordinator
         ? undefined
         : this.taskBackend.resolveAgentTask(caller, call.task_id, "human input request");
       if (task) {
+        const requestId = `${caller.agentId}-input-${Date.now()}`;
         const updated = caller.runner.requestHumanInput({
           taskId: task.taskId,
           request: {
-            ...request,
+            requestId,
+            kind: call.kind === "confirmation_required" ? "confirmation_required" : "prompt_required",
+            question: readQuestion(),
+            context: readContext(),
+            options: readOptions(),
             agentId: caller.agentId,
             taskId: task.taskId,
             turnId: input.turnId,
@@ -165,7 +204,7 @@ export class AgentToolBackend {
         });
         return {
           status: "accepted",
-          requestId: request.requestId,
+          requestId,
           routedTo: "coordinator",
           taskId: updated.taskId,
           instruction: "Human input request accepted. Stop this turn now. Do not continue work until Coordinator resumes the task.",
@@ -188,44 +227,80 @@ export class AgentToolBackend {
     }
   }
 
-  private async dispatchSystemToolCall(
-    call: SystemToolCall,
+  private handleAgentToolCall(
+    call: AgentToolCall,
+  ): Record<string, unknown> {
+    const task = this.taskBackend.assignAgentTask({
+      agentId: call.agent_id,
+      description: call.description,
+      subagentType: call.subagent_type,
+      prompt: agent.turn.message(call.prompt),
+      isBackgrounded: true,
+    });
+    return {
+      status: call.agent_id ? "assigned" : "spawned",
+      taskId: task.taskId,
+      agentId: task.agentId,
+      role: task.role,
+      description: task.description,
+    };
+  }
+
+  private handleSendMessageToolCall(
+    call: SendMessageToolCall,
+  ): Record<string, unknown> {
+    const target = this.resolveMessageTarget(call.to);
+    const type = call.type ?? "message";
+    if (type === "human_response" && target.task.status !== AgentTaskStatuses.WaitingForHumanInput) {
+      throw new Error(`Cannot send human_response to task ${target.task.taskId}. Status: ${target.task.status}.`);
+    }
+    const task = target.agent.runner.queueMessage({
+      taskId: target.task.taskId,
+      message: type === "human_response"
+        ? agent.turn.human_response(call.message)
+        : agent.turn.message(call.message),
+    });
+    return {
+      status: "queued",
+      taskId: task.taskId,
+      agentId: task.agentId,
+    };
+  }
+
+  private async dispatchAgentDynamicToolCall(
+    call: AgentDynamicToolCall,
     caller: ScoutAgent,
     input: DynamicToolCallInput,
   ): Promise<Record<string, unknown>> {
     switch (call.tool) {
       case "RequestHumanInput":
         return this.handleRequestHumanInputToolCall(call, input, caller);
-      case "AgentTool": {
-        const task = this.taskBackend.assignAgentTask({
-          agentId: call.agent_id,
-          description: call.description,
-          subagentType: call.subagent_type,
-          prompt: call.prompt,
-          isBackgrounded: true,
-        });
-        return {
-          status: call.agent_id ? "assigned" : "spawned",
-          taskId: task.taskId,
-          agentId: task.agentId,
-          role: task.role,
-          description: task.description,
-        };
-      }
-      case "SendMessage": {
-        const task = this.taskBackend.sendAgentMessage({
-          target: call.to,
-          message: call.message,
-        });
-        return {
-          status: "queued",
-          taskId: task.taskId,
-          agentId: task.agentId,
-        };
-      }
+      case "AgentTool":
+        return this.handleAgentToolCall(call);
+      case "SendMessage":
+        return this.handleSendMessageToolCall(call);
       default:
-        throw new Error(`Unsupported system tool: ${String((call as { tool?: unknown }).tool)}`);
+        throw new Error(`Unsupported agent tool: ${String((call as { tool?: unknown }).tool)}`);
     }
+  }
+
+  private resolveMessageTarget(target: string): { agent: ScoutAgent; task: AgentTaskState } {
+    const task = this.taskStore.getTask(target);
+    if (task) {
+      return {
+        agent: this.registry.resolveAgent(task.agentId),
+        task,
+      };
+    }
+    const agent = this.registry.resolveAgent(target);
+    const active = this.taskStore.findActiveTaskForAgent(agent.agentId);
+    if (!active) {
+      throw new Error(`Agent ${agent.agentId} has no active task.`);
+    }
+    return {
+      agent,
+      task: active,
+    };
   }
 }
 
@@ -247,46 +322,6 @@ function dynamicToolFailure(message: string): DynamicToolCallResult {
       text: message,
     }],
   };
-}
-
-function normalizeHumanInputRequest(call: RequestHumanInputToolCall, caller: ScoutAgent): {
-  requestId: string;
-  kind: "prompt_required" | "confirmation_required";
-  question: string;
-  context?: string;
-  options?: string[];
-} {
-  if (typeof call.question !== "string") {
-    throw new Error("RequestHumanInput requires a string question.");
-  }
-  const question = call.question.trim();
-  if (question.length === 0 || question.length > 1000) {
-    throw new Error("RequestHumanInput question must be 1-1000 characters.");
-  }
-  const context = typeof call.context === "string" && call.context.trim().length > 0
-    ? call.context.trim()
-    : undefined;
-  const options = readOptionalStringArray(call.options, "options")
-    ?.map((option) => option.trim())
-    .filter((option) => option.length > 0);
-  if (options && options.length > 20) {
-    throw new Error("RequestHumanInput options must contain at most 20 items.");
-  }
-  return {
-    requestId: `${caller.agentId}-input-${Date.now()}`,
-    kind: call.kind === "confirmation_required" ? "confirmation_required" : "prompt_required",
-    question,
-    context,
-    options: options && options.length > 0 ? options : undefined,
-  };
-}
-
-function readOptionalStringArray(value: unknown, fieldName: string): string[] | undefined {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
-    throw new Error(`${fieldName} must be a string array.`);
-  }
-  return [...value];
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

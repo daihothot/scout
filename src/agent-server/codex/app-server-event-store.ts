@@ -266,13 +266,9 @@ export class AppServerEventStore {
     });
   }
 
-  ingestResponse(response: JsonRpcResponse): void {
-    this.appendTimeline({
-      stream: AppServerTimelineStreams.Lifecycle,
-      kind: "response",
-      receivedAt: nowIso(),
-      requestId: String(response.id),
-    });
+  ingestResponse(_response: JsonRpcResponse): void {
+    // JSON-RPC responses are transport acknowledgements for client requests, not app-server timeline events.
+    // The request caller consumes the response directly, so emitting a timeline entry only creates empty logs.
   }
 
   resolveServerRequest(input: {

@@ -1,4 +1,4 @@
-import type { AgentTaskSystemEvent } from "../agent/task/task-events.js";
+import type { AgentTaskEvent } from "../agent/task/task-events.js";
 
 export type RuntimeDisclosureLevel = "debug" | "info" | "warn" | "error";
 
@@ -25,24 +25,27 @@ export interface RuntimeProgressEvent {
   data?: unknown;
 }
 
-export interface HumanInputRequest {
+export interface AgentMessageSend {
   id: string;
-  prompt: string;
-  reason?: string;
-  defaultValue?: string;
+  text: string;
+  data?: unknown;
 }
 
-export interface HumanInputResponse {
-  requestId: string;
+export interface AgentMessageReply {
+  id: string;
   text: string;
+  data?: unknown;
 }
+
+export type RuntimeInteractionUnsubscribe = () => void;
 
 export interface RuntimeInteractionPort {
   disclose(event: RuntimeDisclosureEvent): Promise<void>;
   publishProgress(event: RuntimeProgressEvent): Promise<void>;
-  notify(event: AgentTaskSystemEvent): Promise<void>;
-  publishAgentMessage(message: string, data?: unknown): Promise<void>;
-  requestInput(request: HumanInputRequest): Promise<HumanInputResponse>;
+  notify(event: AgentTaskEvent): Promise<void>;
+  receiveAgentMessage(message: AgentMessageReply): Promise<void>;
+  sendAgentMessage?(handler: (message: AgentMessageSend) => void | Promise<void>): RuntimeInteractionUnsubscribe;
+  onExitRequested?(handler: () => void | Promise<void>): RuntimeInteractionUnsubscribe;
 }
 
 export class NoopRuntimeInteractionPort implements RuntimeInteractionPort {
@@ -58,14 +61,19 @@ export class NoopRuntimeInteractionPort implements RuntimeInteractionPort {
     // no-op
   }
 
-  async publishAgentMessage(): Promise<void> {
+  async receiveAgentMessage(): Promise<void> {
     // no-op
   }
 
-  async requestInput(request: HumanInputRequest): Promise<HumanInputResponse> {
-    return {
-      requestId: request.id,
-      text: request.defaultValue ?? "",
+  sendAgentMessage(): RuntimeInteractionUnsubscribe {
+    return () => {
+      // no-op
+    };
+  }
+
+  onExitRequested(): RuntimeInteractionUnsubscribe {
+    return () => {
+      // no-op
     };
   }
 }

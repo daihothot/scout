@@ -4,6 +4,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
+    "jsx": "react-jsx",
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
@@ -13,5 +14,5 @@
     "allowImportingTsExtensions": false,
     "resolveJsonModule": false
   },
-  "include": ["src/**/*.ts", "schemas/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "schemas/**/*.ts", "tests/**/*.ts", "tests/**/*.tsx"]
 }

@@ -1,21 +1,21 @@
 import type {
   AgentHumanInputRequestedEventPayload,
   AgentTaskEventPayload,
-  AgentTaskSystemEvent,
+  AgentTaskEvent,
 } from "../../agent/task/task-events.js";
-import { SystemEvents } from "../../system/events/index.js";
+import { AgentEvents } from "../../agent/events/index.js";
 import { renderTaskNotificationXml } from "./task-notification.js";
 import {
   renderHumanInputRequestNotification,
 } from "./human-input.js";
 import { escapeXml } from "./xml.js";
 
-export function renderEventNotification(event: AgentTaskSystemEvent): string {
-  if (SystemEvents.task.terminal.is(event)) {
+export function renderEventNotification(event: AgentTaskEvent): string {
+  if (AgentEvents.task.terminal.is(event)) {
     const payload = event.payload as AgentTaskEventPayload;
     return `${renderTaskNotificationXml(payload.task)}\n`;
   }
-  if (SystemEvents.task.humanInputRequested.is(event)) {
+  if (AgentEvents.task.humanInputRequested.is(event)) {
     const payload = event.payload as AgentHumanInputRequestedEventPayload;
     return `${renderHumanInputRequestNotification({
       task: payload.task,
@@ -32,7 +32,7 @@ export function renderEventNotification(event: AgentTaskSystemEvent): string {
   ].join("\n");
 }
 
-function renderEventPayloadSummary(event: AgentTaskSystemEvent): string {
+function renderEventPayloadSummary(event: AgentTaskEvent): string {
   const payload = event.payload as Partial<AgentTaskEventPayload>;
   const task = payload.task;
   return [
