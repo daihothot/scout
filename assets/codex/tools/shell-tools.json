@@ -15,6 +15,20 @@
       "marker": "SCOUT_ASSETS_OK"
     },
     {
+      "id": "scoutMemory",
+      "name": "scout-memory",
+      "command": "node",
+      "args": [
+        "assets/codex/tools/scout-memory.cjs"
+      ],
+      "exposeAs": "scout-memory",
+      "required": true,
+      "smokeArgs": [
+        "--smoke"
+      ],
+      "marker": "SCOUT_MEMORY_OK"
+    },
+    {
       "id": "scoutJsonWrite",
       "name": "scout-json-write",
       "command": "node",

@@ -6,17 +6,21 @@ import type {
   EventBus,
   ScoutEvent,
 } from "../../../core/events/index.js";
-import { EventMailbox } from "../../../core/events/index.js";
 import { SystemEvents } from "../../../system/events/index.js";
 import { AgentEvents } from "../../events/index.js";
+import { AgentInbox } from "../../core/agent-inbox.js";
 import { AgenticLoop } from "../../core/agentic-loop.js";
 import type {
   AgentOrchestrationDispatchRequestedPayload,
   AgentInterruptEventPayload,
 } from "../../orchestration/orchestrator-events.js";
+import type {
+  AgentTaskEventPayload,
+} from "../../task/task-events.js";
 import type { UserMessageSubmittedPayload } from "../../../interaction/gateway/interaction-events.js";
 import { AgentRunner } from "../types.js";
 import { attachments } from "../../context/attachments.js";
+import { coordinator } from "./coordinator-attachments.js";
 
 export interface CoordinatorRunnerHost {
   readonly agentId: string;
@@ -28,9 +32,8 @@ export class CoordinatorRunner extends AgentRunner {
   readonly runnerKind = "coordinator";
   private readonly host: CoordinatorRunnerHost;
   private readonly eventBus: EventBus;
-  private readonly mailbox: EventMailbox;
-  private readonly mailboxLoop: AgenticLoop<ScoutEvent[]>;
-  private readonly tickLoop: AgenticLoop<CoordinatorPendingMessageTick>;
+  private readonly inbox: AgentInbox;
+  private readonly loop: AgenticLoop<string[]>;
   private pendingMessages: string[] = [];
   private stopped = false;
   private stopReason?: string;
@@ -39,33 +42,24 @@ export class CoordinatorRunner extends AgentRunner {
     super();
     this.host = options.host;
     this.eventBus = options.eventBus;
-    this.mailbox = new EventMailbox({
+    this.loop = new AgenticLoop<string[]>({
+      agentId: this.host.agentId,
+      takeTick: () => this.takeCoordinatorTick(),
+      runTick: (messages) => this.runCoordinatorTick(messages),
+      isStopped: () => this.stopped,
+      onError: (error) => this.publishFailure(error),
+    });
+    this.inbox = new AgentInbox({
       eventBus: this.eventBus,
-      onEvent: () => this.mailboxLoop.schedule(),
+      isStopped: () => this.stopped,
+      onEvents: (events) => this.handleInboxEvents(events),
+      onError: (error) => this.publishFailure(error),
     });
-    this.mailboxLoop = new AgenticLoop<ScoutEvent[]>({
-      agentId: this.host.agentId,
-      handlers: {
-        loopKind: "mailbox",
-        takeMailboxStep: () => this.mailbox.takeAll(),
-        runMailboxStep: (events) => this.runMailboxStep(events),
-        isStopped: () => this.stopped,
-        onError: (error) => this.publishFailure(error),
-      },
-    });
-    this.tickLoop = new AgenticLoop<CoordinatorPendingMessageTick>({
-      agentId: this.host.agentId,
-      handlers: {
-        loopKind: "tick",
-        takeTick: () => this.takePendingMessageTick(),
-        runTick: () => this.runPendingMessageTick(),
-        isStopped: () => this.stopped,
-        onError: (error) => this.publishFailure(error),
-      },
-    });
-    this.mailbox.subscribe<UserMessageSubmittedPayload>(SystemEvents.interaction.userMessageSubmitted);
-    this.mailbox.subscribe<AgentOrchestrationDispatchRequestedPayload>(AgentEvents.orchestration.dispatchRequested);
-    this.mailbox.subscribe<AgentInterruptEventPayload>(AgentEvents.interrupt);
+    this.inbox.subscribe<UserMessageSubmittedPayload>(SystemEvents.interaction.userMessageSubmitted);
+    this.inbox.subscribe<AgentOrchestrationDispatchRequestedPayload>(AgentEvents.orchestration.dispatchRequested);
+    this.inbox.subscribe<AgentInterruptEventPayload>(AgentEvents.interrupt);
+    this.inbox.subscribe<AgentTaskEventPayload>(AgentEvents.task.assigned);
+    this.inbox.subscribe<AgentTaskEventPayload>(AgentEvents.task.outcomeAccepted);
   }
 
   get agentId(): string {
@@ -75,28 +69,68 @@ export class CoordinatorRunner extends AgentRunner {
   stop(reason?: string): void {
     this.stopped = true;
     this.stopReason = reason;
-    this.mailbox.stop();
-    this.mailboxLoop.stop();
-    this.tickLoop.stop();
+    this.inbox.stop();
+    this.loop.stop();
   }
 
-  private async runMailboxStep(events: ScoutEvent[]): Promise<void> {
-    const messages = events
-      .map((event) => readCoordinatorAttachment(event))
-      .filter((message): message is string => typeof message === "string" && message.trim().length > 0);
-    this.queueMessages(messages);
-    this.tickLoop.schedule();
+  private takeCoordinatorTick(): string[] | undefined {
+    return this.countPendingMessages() > 0 ? this.drainPendingMessages() : undefined;
   }
 
-  private takePendingMessageTick(): CoordinatorPendingMessageTick | undefined {
-    return this.countPendingMessages() > 0 ? { type: "pending_messages" } : undefined;
+  private async handleInboxEvents(events: ScoutEvent[]): Promise<void> {
+    for (const event of events) {
+      if (SystemEvents.interaction.userMessageSubmitted.is(event)) {
+        const payload = event.payload as UserMessageSubmittedPayload;
+        if (payload.attachment.trim().length > 0) {
+          this.queueMessages([payload.attachment]);
+        }
+        continue;
+      }
+
+      if (AgentEvents.orchestration.dispatchRequested.is(event)) {
+        const payload = event.payload as AgentOrchestrationDispatchRequestedPayload;
+        if (payload.attachment.trim().length > 0) {
+          this.queueMessages([payload.attachment]);
+        }
+        continue;
+      }
+
+      if (AgentEvents.interrupt.is(event)) {
+        const payload = event.payload as AgentInterruptEventPayload;
+        if (payload.attachment.trim().length > 0) {
+          this.queueMessages([payload.attachment]);
+        }
+        continue;
+      }
+
+      if (AgentEvents.task.assigned.is(event)) {
+        const payload = event.payload as AgentTaskEventPayload;
+        this.queueMessages([coordinator.observation({
+          type: "task_assigned",
+          agentId: payload.task.agentId,
+          taskId: payload.task.taskId,
+        })]);
+        continue;
+      }
+
+      if (AgentEvents.task.outcomeAccepted.is(event)) {
+        const payload = event.payload as AgentTaskEventPayload;
+        const data = typeof payload.data === "object" && payload.data !== null
+          ? payload.data as { outcome?: unknown }
+          : undefined;
+        if (typeof data?.outcome === "object" && data.outcome !== null) {
+          const outcome = data.outcome as NonNullable<AgentTaskEventPayload["task"]["outcome"]>;
+          this.queueMessages([coordinator.observation(outcome)]);
+        }
+      }
+    }
+    this.loop.schedule();
   }
 
-  private async runPendingMessageTick(): Promise<void> {
+  private async runCoordinatorTick(messages: string[]): Promise<void> {
     if (this.stopped) {
       throw new Error(`Coordinator runner ${this.agentId} is stopped.${this.stopReason ? ` Reason: ${this.stopReason}` : ""}`);
     }
-    const messages = this.drainPendingMessages();
     const outcome = await this.host.runTurn({
       prompt: attachments.compose(undefined, ...messages),
       sandbox: "workspaceWrite",
@@ -149,13 +183,4 @@ export class CoordinatorRunner extends AgentRunner {
   private countPendingMessages(): number {
     return this.pendingMessages.length;
   }
-}
-
-function readCoordinatorAttachment(event: ScoutEvent): string | undefined {
-  const payload = event.payload as { attachment?: unknown };
-  return typeof payload.attachment === "string" ? payload.attachment : undefined;
-}
-
-interface CoordinatorPendingMessageTick {
-  type: "pending_messages";
 }

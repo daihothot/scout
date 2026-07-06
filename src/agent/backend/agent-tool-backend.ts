@@ -265,14 +265,10 @@ export class AgentToolBackend {
     const status = readSubmitTaskStatus(call.status);
     const summary = readSubmitTaskSummary(call.summary);
     const completed = caller.runner.completeTaskWithOutcome({
-      taskId: task.taskId,
       outcome: {
+        taskId: task.taskId,
         status,
         summary,
-        artifactRefs: [],
-        evidenceRefs: [],
-        blocker: status === AgentTaskOutcomeStatuses.Complete ? undefined : summary,
-        nextStep: status === AgentTaskOutcomeStatuses.Complete ? undefined : summary,
       },
     });
     return {

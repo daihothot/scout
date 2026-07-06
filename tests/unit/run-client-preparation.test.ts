@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { prepareRunClients } from "../../src/run/index.js";
@@ -18,6 +18,8 @@ test("prepareRunClients builds isolated app-server config and starts the shared 
   const runId = "run-client-prep-test";
   let sessionStarted = false;
   const clientOptions: Array<{
+    isolatedHome: string;
+    isolatedCodexHome: string;
     configToml: string;
     rootPlan: unknown;
     mountRoots?: string[];
@@ -52,6 +54,14 @@ test("prepareRunClients builds isolated app-server config and starts the shared 
   assert.deepEqual(clientOptions[0]?.mountRoots, prepared.rootPlan.mountRoots);
   assert.deepEqual(clientOptions[0]?.trustedRoots, prepared.rootPlan.trustedRoots);
   assert.deepEqual(clientOptions[0]?.defaultWritableRoots, prepared.rootPlan.defaultWritableRoots);
+
+  const expectedHome = resolve(fixtureRoot, "run", runId, "codex-home");
+  const expectedCodexHome = resolve(expectedHome, ".codex");
+  assert.equal(prepared.appServerClient.isolatedHome, expectedHome);
+  assert.equal(prepared.appServerClient.isolatedCodexHome, expectedCodexHome);
+  assert.equal(clientOptions[0]?.isolatedHome, expectedHome);
+  assert.equal(clientOptions[0]?.isolatedCodexHome, expectedCodexHome);
+  assert.equal(existsSync(expectedCodexHome), true);
 
   const coordinatorMount = resolve(fixtureRoot, "run", runId, "agents", "coordinator", "mount");
   const verifierMount = resolve(fixtureRoot, "run", runId, "agents", "verifier", "mount");

@@ -1,10 +1,9 @@
 import {
   type EventBus,
-  EventMailbox,
   type ScoutEvent,
 } from "../../core/events/index.js";
 import { AgentEvents } from "../events/index.js";
-import { AgenticLoop } from "../core/agentic-loop.js";
+import { AgentInbox } from "../core/agent-inbox.js";
 import type {
   AgentHumanInputRequestedEventPayload,
   AgentHumanInputRespondedEventPayload,
@@ -26,26 +25,17 @@ export interface AgentOrchestratorSnapshot {
 
 export class AgentOrchestrator {
   private readonly eventBus: EventBus;
-  private readonly mailbox: EventMailbox;
-  private readonly loop: AgenticLoop<ScoutEvent[]>;
+  private readonly inbox: AgentInbox;
   private started = false;
   private stopped = false;
 
   constructor(options: AgentOrchestratorOptions) {
     this.eventBus = options.eventBus;
-    this.mailbox = new EventMailbox({
+    this.inbox = new AgentInbox({
       eventBus: this.eventBus,
-      onEvent: () => this.loop.schedule(),
-    });
-    this.loop = new AgenticLoop<ScoutEvent[]>({
-      agentId: "agent-orchestrator",
-      handlers: {
-        loopKind: "mailbox",
-        takeMailboxStep: () => this.mailbox.takeAll(),
-        runMailboxStep: (events) => this.runMailboxStep(events),
-        isStopped: () => this.stopped,
-        onError: (error) => this.handleLoopError(error),
-      },
+      isStopped: () => this.stopped,
+      onEvents: (events) => this.handleInboxEvents(events),
+      onError: (error) => this.handleLoopError(error),
     });
   }
 
@@ -55,24 +45,24 @@ export class AgentOrchestrator {
       throw new Error("Cannot restart a stopped AgentOrchestrator.");
     }
     this.started = true;
-    this.mailbox.subscribe<AgentTaskEventPayloadVariant>(AgentEvents.task);
+    this.inbox.subscribe<AgentTaskEventPayloadVariant>(AgentEvents.task);
   }
 
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
-    this.mailbox.stop();
+    this.inbox.stop();
   }
 
   snapshot(): AgentOrchestratorSnapshot {
     return {
       started: this.started,
       stopped: this.stopped,
-      pendingEventCount: this.mailbox.size,
+      pendingEventCount: this.inbox.size,
     };
   }
 
-  private async runMailboxStep(events: ScoutEvent[]): Promise<void> {
+  private async handleInboxEvents(events: ScoutEvent[]): Promise<void> {
     for (const event of events) {
       this.handleSystemObservation(event);
     }

@@ -18,24 +18,20 @@ import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 
-test("task notification XML escapes task content and renders outcome refs", () => {
+test("task notification XML escapes task content and renders outcome", () => {
   const xml = renderTaskNotificationXml(task({
     status: "blocked",
     outcome: {
+      taskId: "task-1",
       status: "blocked",
       summary: "证据 <不足> & 需要确认",
-      artifactRefs: ["artifact://report?x=1&y=2"],
-      evidenceRefs: ["evidence://line<'1'>"],
-      blocker: "缺少用户确认",
-      emittedAt: "2026-06-29T00:00:00.000Z",
     },
     result: "raw <result>",
   }));
 
   assert.match(xml, /<status>blocked<\/status>/);
+  assert.match(xml, /<task-id>task-1<\/task-id>/);
   assert.match(xml, /证据 &lt;不足&gt; &amp; 需要确认/);
-  assert.match(xml, /artifact:\/\/report\?x=1&amp;y=2/);
-  assert.match(xml, /evidence:\/\/line&lt;&apos;1&apos;&gt;/);
   assert.match(xml, /raw &lt;result&gt;/);
 });
 

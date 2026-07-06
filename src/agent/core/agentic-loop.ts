@@ -8,39 +8,27 @@ export interface AgenticTickContinuation<TTick> {
   continueWith?: TTick;
 }
 
-export interface AgenticMailboxLoopHandlers<TMailboxStep> extends AgenticLoopCommonHandlers {
-  loopKind: "mailbox";
-  takeMailboxStep(): TMailboxStep | undefined;
-  runMailboxStep(step: TMailboxStep): Promise<void>;
-}
-
 export interface AgenticTickLoopHandlers<TTick> extends AgenticLoopCommonHandlers {
-  loopKind: "tick";
   takeTick(): TTick | undefined;
   runTick(tick: TTick): Promise<void | AgenticTickContinuation<TTick>>;
 }
 
-export type AgenticLoopHandlers<TWork> =
-  | AgenticMailboxLoopHandlers<TWork>
-  | AgenticTickLoopHandlers<TWork>;
-
-export interface AgenticLoopOptions<TWork> {
+export interface AgenticLoopOptions<TTick> extends AgenticTickLoopHandlers<TTick> {
   agentId: string;
-  handlers: AgenticLoopHandlers<TWork>;
 }
 
-export class AgenticLoop<TWork> {
+export class AgenticLoop<TTick> {
   readonly agentId: string;
-  private readonly handlers: AgenticLoopHandlers<TWork>;
+  private readonly handlers: AgenticTickLoopHandlers<TTick>;
   private execution?: Promise<void>;
-  private pendingWork?: TWork;
-  private delayedWork?: TWork;
+  private pendingWork?: TTick;
+  private delayedWork?: TTick;
   private delayedSchedule?: NodeJS.Timeout;
   private delayedScheduleVersion = 0;
 
-  constructor(options: AgenticLoopOptions<TWork>) {
+  constructor(options: AgenticLoopOptions<TTick>) {
     this.agentId = options.agentId;
-    this.handlers = options.handlers;
+    this.handlers = options;
   }
 
   schedule(): void {
@@ -79,14 +67,10 @@ export class AgenticLoop<TWork> {
     }
   }
 
-  private async runWork(work: TWork): Promise<void> {
+  private async runWork(work: TTick): Promise<void> {
     try {
-      if (this.handlers.loopKind === "mailbox") {
-        await this.handlers.runMailboxStep(work);
-      } else {
-        const continuation = await this.handlers.runTick(work);
-        this.scheduleTickContinuation(work, continuation);
-      }
+      const continuation = await this.handlers.runTick(work);
+      this.scheduleTickContinuation(work, continuation);
     } catch (error) {
       this.handlers.onError(error);
     }
@@ -101,7 +85,7 @@ export class AgenticLoop<TWork> {
     return true;
   }
 
-  private takeWork(): TWork | undefined {
+  private takeWork(): TTick | undefined {
     if (this.pendingWork !== undefined) {
       const work = this.pendingWork;
       this.pendingWork = undefined;
@@ -115,14 +99,11 @@ export class AgenticLoop<TWork> {
     return this.takeWorkFromHandlers();
   }
 
-  private takeWorkFromHandlers(): TWork | undefined {
-    return this.handlers.loopKind === "mailbox"
-      ? this.handlers.takeMailboxStep()
-      : this.handlers.takeTick();
+  private takeWorkFromHandlers(): TTick | undefined {
+    return this.handlers.takeTick();
   }
 
-  private scheduleTickContinuation(work: TWork, continuation: void | AgenticTickContinuation<TWork>): void {
-    if (this.handlers.loopKind !== "tick") return;
+  private scheduleTickContinuation(work: TTick, continuation: void | AgenticTickContinuation<TTick>): void {
     if (!continuation || continuation.continueAfterMs === undefined) return;
     const delayMs = Math.max(0, continuation.continueAfterMs);
     const nextWork = continuation.continueWith ?? work;

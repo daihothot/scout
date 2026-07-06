@@ -2,69 +2,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { AgenticLoop } from "../../src/agent/core/agentic-loop.js";
 
-test("AgenticLoop runs mailbox work until idle", async () => {
-  const pending = [1, 2, 3];
-  let steps = 0;
-  const loop = new AgenticLoop<number>({
-    agentId: "coordinator",
-    handlers: {
-      loopKind: "mailbox",
-      takeMailboxStep: () => pending.shift(),
-      runMailboxStep: async () => {
-        steps += 1;
-      },
-      isStopped: () => false,
-      onError: () => undefined,
-    },
-  });
-
-  loop.schedule();
-  assert.equal(loop.isRunning(), true);
-  await loop.runToIdle();
-
-  assert.equal(steps, 3);
-  assert.equal(loop.isRunning(), false);
-});
-
-test("AgenticLoop reports mailbox step errors and continues when work remains", async () => {
-  const pending = [1, 2];
-  let steps = 0;
-  const errors: unknown[] = [];
-  const loop = new AgenticLoop<number>({
-    agentId: "coordinator",
-    handlers: {
-      loopKind: "mailbox",
-      takeMailboxStep: () => pending.shift(),
-      runMailboxStep: async () => {
-        steps += 1;
-        if (steps === 1) throw new Error("boom");
-      },
-      isStopped: () => false,
-      onError: (error) => errors.push(error),
-    },
-  });
-
-  await loop.runToIdle();
-
-  assert.equal(steps, 2);
-  assert.equal(errors.length, 1);
-  assert.match(String(errors[0]), /boom/);
-});
-
 test("AgenticLoop runs tick work until idle", async () => {
   const pending = [1, 2, 3];
   let ticks = 0;
   const loop = new AgenticLoop<number>({
     agentId: "worker",
-    handlers: {
-      loopKind: "tick",
-      takeTick: () => pending.shift(),
-      runTick: async () => {
-        ticks += 1;
-      },
-      isStopped: () => false,
-      onError: () => undefined,
+    takeTick: () => pending.shift(),
+    runTick: async () => {
+      ticks += 1;
     },
+    isStopped: () => false,
+    onError: () => undefined,
   });
 
   loop.schedule();
@@ -81,18 +29,15 @@ test("AgenticLoop schedules delayed tick continuation", async () => {
   let stopped = false;
   const loop = new AgenticLoop<number>({
     agentId: "worker",
-    handlers: {
-      loopKind: "tick",
-      takeTick: () => pending.shift(),
-      runTick: async (tick) => {
-        ticks.push(tick);
-        if (ticks.length === 1) return { continueAfterMs: 1 };
-        stopped = true;
-        return undefined;
-      },
-      isStopped: () => stopped,
-      onError: () => undefined,
+    takeTick: () => pending.shift(),
+    runTick: async (tick) => {
+      ticks.push(tick);
+      if (ticks.length === 1) return { continueAfterMs: 1 };
+      stopped = true;
+      return undefined;
     },
+    isStopped: () => stopped,
+    onError: () => undefined,
   });
 
   loop.schedule();
@@ -107,18 +52,15 @@ test("AgenticLoop lets immediate tick work replace delayed continuation", async 
   let stopped = false;
   const loop = new AgenticLoop<number>({
     agentId: "worker",
-    handlers: {
-      loopKind: "tick",
-      takeTick: () => pending.shift(),
-      runTick: async (tick) => {
-        ticks.push(tick);
-        if (tick === 1) return { continueAfterMs: 50 };
-        stopped = true;
-        return undefined;
-      },
-      isStopped: () => stopped,
-      onError: () => undefined,
+    takeTick: () => pending.shift(),
+    runTick: async (tick) => {
+      ticks.push(tick);
+      if (tick === 1) return { continueAfterMs: 50 };
+      stopped = true;
+      return undefined;
     },
+    isStopped: () => stopped,
+    onError: () => undefined,
   });
 
   loop.schedule();
@@ -130,56 +72,50 @@ test("AgenticLoop lets immediate tick work replace delayed continuation", async 
   assert.deepEqual(ticks, [1, 2]);
 });
 
-test("AgenticLoop schedules again when new mailbox work appears during finally", async () => {
+test("AgenticLoop schedules again when new tick work appears during finally", async () => {
   const pending = [1];
   let stopped = false;
-  let steps = 0;
+  let ticks = 0;
   const loop = new AgenticLoop<number>({
-    agentId: "coordinator",
-    handlers: {
-      loopKind: "mailbox",
-      takeMailboxStep: () => pending.shift(),
-      runMailboxStep: async () => {
-        steps += 1;
-        if (steps === 1) {
-          queueMicrotask(() => {
-            pending.push(2);
-          });
-        } else {
-          stopped = true;
-        }
-      },
-      isStopped: () => stopped,
-      onError: () => undefined,
+    agentId: "worker",
+    takeTick: () => pending.shift(),
+    runTick: async () => {
+      ticks += 1;
+      if (ticks === 1) {
+        queueMicrotask(() => {
+          pending.push(2);
+        });
+      } else {
+        stopped = true;
+      }
     },
+    isStopped: () => stopped,
+    onError: () => undefined,
   });
 
   loop.schedule();
   await new Promise((resolve) => setImmediate(resolve));
   await loop.runToIdle();
 
-  assert.equal(steps, 2);
+  assert.equal(ticks, 2);
 });
 
-test("AgenticLoop does not run mailbox step when no step can be taken", async () => {
-  let steps = 0;
+test("AgenticLoop does not run tick when no tick can be taken", async () => {
+  let ticks = 0;
   const loop = new AgenticLoop<number>({
-    agentId: "coordinator",
-    handlers: {
-      loopKind: "mailbox",
-      takeMailboxStep: () => undefined,
-      runMailboxStep: async () => {
-        steps += 1;
-      },
-      isStopped: () => false,
-      onError: () => undefined,
+    agentId: "worker",
+    takeTick: () => undefined,
+    runTick: async () => {
+      ticks += 1;
     },
+    isStopped: () => false,
+    onError: () => undefined,
   });
 
   loop.schedule();
   await loop.runToIdle();
 
-  assert.equal(steps, 0);
+  assert.equal(ticks, 0);
   assert.equal(loop.isRunning(), false);
 });
 
