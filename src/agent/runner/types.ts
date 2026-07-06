@@ -38,8 +38,7 @@ export abstract class AgentRunner {
   }
 
   completeTaskWithOutcome(_input: {
-    taskId: string;
-    outcome: Omit<AgentTaskOutcome, "emittedAt">;
+    outcome: AgentTaskOutcome;
   }): AgentTaskState {
     return this.unsupportedTaskMethod("completeTaskWithOutcome");
   }

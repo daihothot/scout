@@ -95,11 +95,7 @@ export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
       toolCalls: step.toolCalls.map((toolCall) => ({ ...toolCall })),
       protocolWarnings: step.protocolWarnings ? [...step.protocolWarnings] : undefined,
     })),
-    outcome: task.outcome ? {
-      ...task.outcome,
-      artifactRefs: [...task.outcome.artifactRefs],
-      evidenceRefs: [...task.outcome.evidenceRefs],
-    } : undefined,
+    outcome: task.outcome ? { ...task.outcome } : undefined,
   };
 }
 

@@ -20,17 +20,6 @@
 - 知识库命中必须降噪，只保留对当前 BDD 验证有用的 capability、约束、历史记录、实现触点和风险。
 - 代码片段在 Researcher 阶段只能作为实现触点候选或导航线索；最终代码证据由 Verifier 负责核验。
 
-## 【ResearchArtifact 要求】
-
-ResearchArtifact 至少包含：
-
-- `input_summary`：用户输入和 BDD 场景摘要。
-- `bdd_facts`：Given / When / Then、验收条件、场景身份和来源。
-- `knowledge_refs`：命中的知识库文件、段落、capability、历史验证或缺口。
-- `implementation_hints`：候选 codebase repo、符号、相对路径、配置、日志或 artifact 线索。
-- `uncertainty_items`：不确定、冲突、缺失或需要人工确认的事项。
-- `replay_context`：知识库路径、收集方法、检索命令、codebase repo/version/branch 候选和 asset/run 信息。
-
 ## 【产物门禁】
 
 - 你的产物必须写入当前 `SCOUT_ARTIFACT_ROOT`。

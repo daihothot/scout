@@ -6,6 +6,7 @@ export * from "./thread/thread-preflight.js";
 export * from "./backend/agent-task-backend.js";
 export * from "./backend/agent-tool-backend.js";
 export * from "./backend/types.js";
+export * from "./core/agent-inbox.js";
 export * from "./core/agentic-loop.js";
 export * from "./runner/index.js";
 export * from "./orchestration/agent-orchestrator.js";

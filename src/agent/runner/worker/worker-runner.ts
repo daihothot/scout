@@ -89,13 +89,10 @@ export class WorkerRunner extends AgentRunner {
     this.eventBus = options.eventBus;
     this.loop = new AgenticLoop<AgentTaskState>({
       agentId: this.host.agentId,
-      handlers: {
-        loopKind: "tick",
-        takeTick: () => this.takeTaskTick(),
-        runTick: (task) => this.runTaskTick(task),
-        isStopped: () => this.stopped,
-        onError: (error) => this.failActiveTask(error),
-      },
+      takeTick: () => this.takeTaskTick(),
+      runTick: (task) => this.runTaskTick(task),
+      isStopped: () => this.stopped,
+      onError: (error) => this.failActiveTask(error),
     });
     if (options.taskInput) {
       this.initializeTask(options.taskInput);
@@ -218,28 +215,22 @@ export class WorkerRunner extends AgentRunner {
   }
 
   completeTaskWithOutcome(input: {
-    taskId: string;
-    outcome: Omit<AgentTaskOutcome, "emittedAt">;
+    outcome: AgentTaskOutcome;
   }): AgentTaskState {
-    const task = this.getTask(input.taskId);
+    const task = this.getTask(input.outcome.taskId);
     if (isTerminalTaskStatus(task.status)) {
       throw new Error(`Cannot complete terminal task ${task.taskId}. Status: ${task.status}`);
     }
-    const emittedAt = new Date().toISOString();
     const taskStatus = input.outcome.status;
+    const finishedAt = new Date().toISOString();
     const completed = this.updateTask(task.taskId, (current) => ({
       ...current,
       status: taskStatus,
       result: input.outcome.summary,
-      error: input.outcome.status === "failed" ? input.outcome.blocker ?? input.outcome.summary : current.error,
-      outcome: {
-        ...input.outcome,
-        artifactRefs: [...input.outcome.artifactRefs],
-        evidenceRefs: [...input.outcome.evidenceRefs],
-        emittedAt,
-      },
-      finishedAt: emittedAt,
-      updatedAt: emittedAt,
+      error: input.outcome.status === "failed" ? input.outcome.summary : current.error,
+      outcome: input.outcome,
+      finishedAt,
+      updatedAt: finishedAt,
     }));
     this.pendingMessages = [];
     this.activeTask = completed;
@@ -566,12 +557,9 @@ export class WorkerRunner extends AgentRunner {
         status: AgentTaskStatuses.Failed,
         error: outcome.turn.error,
         outcome: current.outcome ?? {
+          taskId,
           status: AgentTaskOutcomeStatuses.Failed,
           summary: outcome.turn.error ?? "Agent turn failed.",
-          artifactRefs: [],
-          evidenceRefs: [],
-          blocker: outcome.turn.error,
-          emittedAt: new Date().toISOString(),
         },
         finishedAt: new Date().toISOString(),
       },
@@ -608,12 +596,9 @@ export class WorkerRunner extends AgentRunner {
       status: AgentTaskStatuses.Failed,
       error: error instanceof Error ? error.stack ?? error.message : String(error),
       outcome: current.outcome ?? {
+        taskId,
         status: AgentTaskOutcomeStatuses.Failed,
         summary: error instanceof Error ? error.message : String(error),
-        artifactRefs: [],
-        evidenceRefs: [],
-        blocker: error instanceof Error ? error.stack ?? error.message : String(error),
-        emittedAt: new Date().toISOString(),
       },
       finishedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

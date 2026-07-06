@@ -431,6 +431,10 @@ test("SendMessage rejects human_response when target task is not waiting for hum
     prompt: agent.turn.message("Verify this behavior."),
     isBackgrounded: true,
   });
+  await waitFor(() =>
+    readCoordinatorTaskAssignedObservations(appServer.turnInputs)
+      .some((observation) => observation.agentId === ScoutAgentRoles.Verifier && observation.taskId === "task-1")
+  );
 
   assert.ok(appServer.handler);
   const result = await appServer.handler({
@@ -483,6 +487,8 @@ test("SubmitTask lets a worker complete its active task through a dynamic tool",
       },
     },
   });
+  const coordinator = builder.buildCoordinator();
+  await coordinator.start();
   const verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
   await verifier.start();
   const task = verifier.assignTask({
@@ -509,8 +515,20 @@ test("SubmitTask lets a worker complete its active task through a dynamic tool",
   assert.equal(result.success, true);
   const stored = fixture.taskStore.getTask(task.taskId);
   assert.equal(stored?.status, AgentTaskStatuses.Complete);
+  assert.equal(stored?.outcome?.taskId, "task-1");
   assert.equal(stored?.outcome?.status, "complete");
   assert.equal(stored?.outcome?.summary, "验证完成。");
+  await waitFor(() =>
+    readCoordinatorOutcomeObservations(appServer.turnInputs)
+      .some((outcome) => outcome.taskId === "task-1" && outcome.summary === "验证完成。")
+  );
+  const outcomeObservation = readCoordinatorOutcomeObservations(appServer.turnInputs)
+    .find((outcome) => outcome.taskId === "task-1");
+  assert.deepEqual(Object.keys(outcomeObservation ?? {}).sort(), [
+    "status",
+    "summary",
+    "taskId",
+  ]);
 });
 
 test("AgentOrchestrator maps task human input events to agent interrupts", async () => {
@@ -902,6 +920,66 @@ function readCoordinatorInterruptKeys(turnInputs: Array<{ prompt?: string }>): s
           }
         })
         .filter((key): key is string => typeof key === "string");
+    });
+}
+
+function readCoordinatorOutcomeObservations(turnInputs: Array<{ prompt?: string }>): Array<{
+  taskId?: string;
+  status?: string;
+  summary?: string;
+}> {
+  return turnInputs
+    .map((turn) => turn.prompt)
+    .filter((prompt): prompt is string => typeof prompt === "string")
+    .flatMap((prompt) => {
+      return attachments.readTagBlock(prompt, CoordinatorContextTags.Observation)
+        .map((block) => {
+          try {
+            return JSON.parse(block.body) as {
+              taskId?: string;
+              status?: string;
+              summary?: string;
+            };
+          } catch {
+            return undefined;
+          }
+        })
+        .filter((outcome): outcome is {
+          taskId?: string;
+          status?: string;
+          summary?: string;
+        } => typeof outcome?.taskId === "string" && typeof outcome.summary === "string");
+    });
+}
+
+function readCoordinatorTaskAssignedObservations(turnInputs: Array<{ prompt?: string }>): Array<{
+  type?: string;
+  agentId?: string;
+  taskId?: string;
+}> {
+  return turnInputs
+    .map((turn) => turn.prompt)
+    .filter((prompt): prompt is string => typeof prompt === "string")
+    .flatMap((prompt) => {
+      return attachments.readTagBlock(prompt, CoordinatorContextTags.Observation)
+        .map((block) => {
+          try {
+            return JSON.parse(block.body) as {
+              type?: string;
+              agentId?: string;
+              taskId?: string;
+            };
+          } catch {
+            return undefined;
+          }
+        })
+        .filter((observation): observation is {
+          type?: string;
+          agentId?: string;
+          taskId?: string;
+        } => observation?.type === "task_assigned"
+          && typeof observation.agentId === "string"
+          && typeof observation.taskId === "string");
     });
 }
 

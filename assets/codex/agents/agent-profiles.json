@@ -4,12 +4,14 @@
       "config": "config/base.config.toml",
       "skills": [],
       "shellTools": [
-        "scoutAssets"
+        "scoutAssets",
+        "scoutMemory"
       ],
       "mcpServers": [],
       "plugins": [],
       "trustedRoots": [
-        "${SCOUT_MOUNT_ROOT}"
+        "${SCOUT_MOUNT_ROOT}",
+        "${SCOUT_RUN_ROOT}/codex-home/.codex"
       ],
       "writableRoots": [
         "${SCOUT_MOUNT_ROOT}",
@@ -24,6 +26,7 @@
       ],
       "shellTools": [
         "scoutAssets",
+        "scoutMemory",
         "scoutJsonWrite",
         "jarvis",
         "codegraph",
@@ -56,6 +59,7 @@
       ],
       "shellTools": [
         "scoutAssets",
+        "scoutMemory",
         "scoutJsonWrite",
         "jarvis",
         "codegraph",
@@ -97,6 +101,7 @@
       ],
       "shellTools": [
         "scoutAssets",
+        "scoutMemory",
         "scoutJsonWrite",
         "rg",
         "cat",

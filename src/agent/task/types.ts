@@ -56,13 +56,9 @@ export interface AgentHumanInputResponse {
 }
 
 export interface AgentTaskOutcome {
+  taskId: string;
   status: AgentTaskOutcomeStatus;
   summary: string;
-  artifactRefs: string[];
-  evidenceRefs: string[];
-  blocker?: string;
-  nextStep?: string;
-  emittedAt: string;
 }
 
 export interface AgentTaskStep {

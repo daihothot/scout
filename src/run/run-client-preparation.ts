@@ -1,5 +1,5 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   createCodexAppServerClient,
@@ -52,7 +52,7 @@ export interface PrepareRunClientsOptions {
 
 export async function prepareRunClients(options: PrepareRunClientsOptions): Promise<PreparedRunClients> {
   const rootPlan = buildRunClientRootPlan(options);
-  const isolatedHome = mkdtempSync(join(tmpdir(), `${options.runId}-codex-home-`));
+  const isolatedHome = join(resolve(options.repoRoot), "run", options.runId, "codex-home");
   const isolatedCodexHome = join(isolatedHome, ".codex");
   mkdirSync(isolatedCodexHome, { recursive: true });
   const configToml = buildRunClientConfig({

@@ -165,18 +165,16 @@ test("WorkerRunner accepts explicit outcome as terminal state", () => {
   });
 
   const completed = harness.runtime.completeTaskWithOutcome({
-    taskId: "task-1",
     outcome: {
+      taskId: "task-1",
       status: AgentTaskOutcomeStatuses.Complete,
       summary: "Scenario is supported.",
-      artifactRefs: ["artifact://report"],
-      evidenceRefs: ["evidence://line-1"],
     },
   });
 
   assert.equal(completed.status, AgentTaskStatuses.Complete);
+  assert.equal(completed.outcome?.taskId, "task-1");
   assert.equal(completed.outcome?.status, AgentTaskOutcomeStatuses.Complete);
-  assert.deepEqual(completed.outcome?.evidenceRefs, ["evidence://line-1"]);
   assert.equal(harness.terminalTasks.length, 1);
 });
 
