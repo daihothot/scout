@@ -1,15 +1,25 @@
+import type { CodexModelConfig } from "../agent-server/codex/model-config.js";
+
 export interface AgentProfilesFile {
-  profiles: Record<string, AgentProfile>;
+  defaults: {
+    model: CodexModelConfig;
+  };
+  profiles: Record<string, AgentProfileDefinition>;
 }
 
-export interface AgentProfile {
+export interface AgentProfileDefinition {
   config: string;
+  model?: CodexModelConfig;
   skills: string[];
   shellTools?: string[];
   mcpServers: string[];
   plugins: string[];
   trustedRoots?: string[];
   writableRoots?: string[];
+}
+
+export interface AgentProfile extends AgentProfileDefinition {
+  model: CodexModelConfig;
 }
 
 export interface McpServersFile {

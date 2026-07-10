@@ -6,27 +6,49 @@ import type {
   RuntimeProgressEvent,
 } from "../port.js";
 
-export type TuiLogKind = "disclosure" | "progress" | "task" | "agent" | "input";
+export type TuiLogKind = "disclosure" | "task" | "agent" | "input";
 
 export interface TuiLogEntry {
   id: string;
   kind: TuiLogKind;
   text: string;
   level?: string;
+  agentId?: string;
+  taskId?: string;
   createdAt: string;
 }
 
 export interface TuiTaskSummary {
   taskId: string;
   agentId?: string;
+  role?: string;
   status?: string;
   description?: string;
 }
 
+export type TuiRunStatus = "preparing" | "ready" | "failed" | "stopping";
+
+export interface TuiRuntimeInfo {
+  cwd: string;
+  version: string;
+  model: string;
+  reasoningEffort: string;
+  runId?: string;
+  status: TuiRunStatus;
+}
+
 export interface TuiState {
+  runtime: TuiRuntimeInfo;
   logs: TuiLogEntry[];
   tasks: TuiTaskSummary[];
   progress: RuntimeProgressEvent[];
+}
+
+export interface TuiStoreOptions {
+  cwd: string;
+  version: string;
+  model: string;
+  reasoningEffort: string;
 }
 
 type TuiStoreListener = (state: TuiState) => void;
@@ -40,14 +62,38 @@ export class TuiStore {
   private readonly taskMap = new Map<string, TuiTaskSummary>();
   private readonly progressMap = new Map<string, RuntimeProgressEvent>();
   private readonly logs: TuiLogEntry[] = [];
+  private runtime: TuiRuntimeInfo;
   private sequence = 0;
+
+  constructor(options: TuiStoreOptions) {
+    this.runtime = {
+      cwd: options.cwd,
+      version: options.version,
+      model: options.model,
+      reasoningEffort: options.reasoningEffort,
+      status: "preparing",
+    };
+  }
 
   snapshot(): TuiState {
     return {
+      runtime: { ...this.runtime },
       logs: [...this.logs],
       tasks: [...this.taskMap.values()],
       progress: [...this.progressMap.values()],
     };
+  }
+
+  setRun(input: {
+    runId?: string;
+    status: TuiRunStatus;
+  }): void {
+    this.runtime = {
+      ...this.runtime,
+      runId: input.runId ?? this.runtime.runId,
+      status: input.status,
+    };
+    this.emit();
   }
 
   subscribe(listener: TuiStoreListener): () => void {
@@ -66,6 +112,7 @@ export class TuiStore {
   }
 
   async requestExit(): Promise<void> {
+    this.setRun({ status: "stopping" });
     for (const listener of this.exitListeners) {
       await listener();
     }
@@ -87,11 +134,8 @@ export class TuiStore {
   }
 
   addProgress(event: RuntimeProgressEvent): void {
-    this.progressMap.set(event.itemId, event);
-    this.appendLog({
-      kind: "progress",
-      text: `[${event.status}] ${event.label}${event.detail ? ` - ${event.detail}` : ""}`,
-    });
+    this.progressMap.set(progressKey(event), event);
+    this.emit();
   }
 
   addTaskEvent(event: AgentTaskEvent): void {
@@ -100,12 +144,15 @@ export class TuiStore {
       this.taskMap.set(task.taskId, {
         taskId: task.taskId,
         agentId: task.agentId,
+        role: task.role,
         status: task.status,
         description: task.description,
       });
     }
     this.appendLog({
       kind: "task",
+      agentId: task?.agentId,
+      taskId: task?.taskId,
       text: `${event.key.routeKey}${task?.taskId ? ` ${task.taskId}` : ""}${task?.status ? ` ${task.status}` : ""}`,
     });
   }
@@ -113,6 +160,7 @@ export class TuiStore {
   addAgentMessage(message: string): void {
     this.appendLog({
       kind: "agent",
+      agentId: "coordinator",
       text: message,
     });
   }
@@ -162,4 +210,8 @@ export class TuiStore {
       listener(state);
     }
   }
+}
+
+function progressKey(event: RuntimeProgressEvent): string {
+  return `${event.agentId ?? "runtime"}:${event.itemId}`;
 }

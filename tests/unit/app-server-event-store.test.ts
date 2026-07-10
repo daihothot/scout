@@ -160,6 +160,71 @@ test("AppServerEventStore ignores JSON-RPC responses as timeline events", () => 
   assert.equal(store.snapshot().timeline.length, 0);
 });
 
+test("AppServerEventStore normalizes user messages and aggregates reasoning summaries", () => {
+  const store = new AppServerEventStore();
+
+  store.ingestNotification(notification("item/started", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    item: {
+      id: "user-1",
+      type: "userMessage",
+      content: [{ type: "inputText", text: "inspect checkout" }],
+      clientId: "client-1",
+    },
+  }));
+  store.ingestNotification(notification("item/started", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    item: {
+      id: "reasoning-1",
+      type: "reasoning",
+      summary: [],
+      content: ["raw reasoning must remain private"],
+    },
+  }));
+  store.ingestNotification(notification("item/reasoning/summaryPartAdded", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId: "reasoning-1",
+    summaryIndex: 0,
+  }));
+  store.ingestNotification(notification("item/reasoning/summaryTextDelta", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId: "reasoning-1",
+    summaryIndex: 0,
+    delta: "Inspecting ",
+  }));
+  store.ingestNotification(notification("item/reasoning/summaryTextDelta", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId: "reasoning-1",
+    summaryIndex: 0,
+    delta: "checkout evidence",
+  }));
+
+  const userMessage = store.itemSnapshot({
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId: "user-1",
+  });
+  assert.equal(userMessage?.type, "userMessage");
+  assert.deepEqual(userMessage?.type === "userMessage" ? userMessage.content : undefined, [
+    { type: "inputText", text: "inspect checkout" },
+  ]);
+
+  const summaryEntries = store.timelineSince(0).filter((entry) =>
+    entry.kind === "reasoning_summary_delta"
+  );
+  assert.equal(summaryEntries.length, 2);
+  const resolved = store.resolveTimelineEntry(summaryEntries.at(-1)!);
+  assert.equal(resolved.item?.type, "reasoning");
+  assert.deepEqual(resolved.item?.type === "reasoning" ? resolved.item.summary : undefined, [
+    "Inspecting checkout evidence",
+  ]);
+});
+
 function notification(method: string, params: unknown): JsonRpcNotification {
   return {
     method,

@@ -1,10 +1,80 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import { AppServerTimelineStreams } from "../../src/agent-server/codex/app-server-event-store.js";
+
+test("CodexAppServerClient sends explicit model and reasoning configuration", async () => {
+  const fakeServer = writeFakeAppServer(`
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin });
+    function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+    rl.on("line", (line) => {
+      const message = JSON.parse(line);
+      if (message.method === "initialize") {
+        send({ id: message.id, result: { ok: true } });
+        return;
+      }
+      if (message.method === "thread/start") {
+        send({ id: message.id, result: { thread: { id: "thread-defaults" }, params: message.params } });
+        return;
+      }
+      if (message.method === "turn/start") {
+        send({ id: message.id, result: { turn: { id: "turn-defaults" }, params: message.params } });
+      }
+    });
+  `);
+  const client = new CodexAppServerClient({
+    codexPath: fakeServer,
+    home: tmpdir(),
+    codexHome: tmpdir(),
+    providerName: "missing-provider",
+  });
+
+  try {
+    await client.startSession();
+    const model = {
+      id: "gpt-5.5",
+      provider: "GuruOpenAI",
+      reasoningEffort: "high",
+      reasoningSummary: "concise",
+    } as const;
+    const thread = await client.startThread({
+      cwd: tmpdir(),
+      model: model.id,
+      modelProvider: model.provider,
+      reasoningEffort: model.reasoningEffort,
+    });
+    const turn = await client.startTurn({
+      threadId: thread.threadId,
+      prompt: "inspect defaults",
+      model: model.id,
+      reasoningEffort: model.reasoningEffort,
+      reasoningSummary: model.reasoningSummary,
+    });
+    const threadResponse = thread.response as { params: Record<string, unknown> };
+    const turnResponse = turn.response as { params: Record<string, unknown> };
+
+    assert.equal(threadResponse.params.model, model.id);
+    assert.equal(threadResponse.params.modelProvider, model.provider);
+    assert.deepEqual(threadResponse.params.config, {
+      model_reasoning_effort: model.reasoningEffort,
+    });
+    assert.equal(turnResponse.params.model, model.id);
+    assert.equal(turnResponse.params.effort, model.reasoningEffort);
+    assert.equal(turnResponse.params.summary, model.reasoningSummary);
+  } finally {
+    client.close();
+  }
+});
 
 test("CodexAppServerClient publishes timeline after store state is reduced", async () => {
   const fakeServer = writeFakeAppServer(`
@@ -110,10 +180,108 @@ test("CodexAppServerClient exposes turn interrupt without coupling it to runTurn
   }
 });
 
+test("CodexAppServerClient persists stderr diagnostics and optional NDJSON transport", async () => {
+  const fakeServer = writeFakeAppServer(`
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin });
+    function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+    process.stderr.write("fake app-server diagnostic\\n");
+    rl.on("line", (line) => {
+      const message = JSON.parse(line);
+      if (message.method === "initialize") {
+        send({ id: message.id, result: { ok: true } });
+      }
+    });
+  `);
+  const root = mkdtempSync(join(tmpdir(), "scout-app-server-logging-"));
+  const stderrLogPath = join(root, "logs", "app-server.stderr.log");
+  const transportLogPath = join(root, "logs", "app-server.ndjson");
+  const client = new CodexAppServerClient({
+    codexPath: fakeServer,
+    home: root,
+    codexHome: root,
+    providerName: "missing-provider",
+    logPrefix: "test app-server",
+    stderrLogPath,
+    transportLogPath,
+  });
+
+  try {
+    await client.startSession();
+    await waitFor(() =>
+      existsSync(stderrLogPath)
+      && readFileSync(stderrLogPath, "utf8").includes("fake app-server diagnostic")
+    );
+
+    const stderrText = readFileSync(stderrLogPath, "utf8");
+    assert.match(stderrText, /^\d{4}-\d{2}-\d{2}T.+Z \[test app-server\] fake app-server diagnostic/m);
+
+    const transport = readFileSync(transportLogPath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as {
+        direction?: string;
+        payload?: { method?: string; id?: number; result?: unknown };
+      });
+    assert.ok(transport.some((entry) =>
+      entry.direction === "outgoing" && entry.payload?.method === "initialize"
+    ));
+    assert.ok(transport.some((entry) =>
+      entry.direction === "incoming" && entry.payload?.id === 1 && entry.payload.result !== undefined
+    ));
+  } finally {
+    client.close();
+  }
+});
+
+test("CodexAppServerClient does not report an intentional close as a disconnect", async () => {
+  const fakeServer = writeFakeAppServer(`
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin });
+    function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+    rl.on("line", (line) => {
+      const message = JSON.parse(line);
+      if (message.method === "initialize") {
+        send({ id: message.id, result: { ok: true } });
+      }
+    });
+  `);
+  const root = mkdtempSync(join(tmpdir(), "scout-app-server-close-"));
+  const stderrLogPath = join(root, "logs", "app-server.stderr.log");
+  const client = new CodexAppServerClient({
+    codexPath: fakeServer,
+    home: root,
+    codexHome: root,
+    providerName: "missing-provider",
+    stderrLogPath,
+  });
+  const timelineKinds: string[] = [];
+  client.onTimeline((entry) => timelineKinds.push(entry.kind));
+
+  await client.startSession();
+  client.close();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.equal(timelineKinds.includes("disconnect"), false);
+  assert.equal(
+    existsSync(stderrLogPath) && readFileSync(stderrLogPath, "utf8").includes("exited with signal"),
+    false,
+  );
+});
+
 function writeFakeAppServer(source: string): string {
   const root = mkdtempSync(join(tmpdir(), "scout-fake-app-server-"));
   const path = join(root, "fake-app-server.cjs");
   writeFileSync(path, `#!/usr/bin/env node\n${source.trim()}\n`);
   chmodSync(path, 0o755);
   return path;
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(predicate(), true);
 }

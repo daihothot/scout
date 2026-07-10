@@ -14,7 +14,6 @@ import {
 } from "../core/fs.js";
 import type {
   AgentProfile,
-  AgentProfilesFile,
   CodexMount,
   MaterializedMcpServer,
   MountManifest,
@@ -35,6 +34,10 @@ import {
   buildMountMacroValues,
   resolveMountMacros,
 } from "./mount-macros.js";
+import {
+  readAgentProfilesForRepo,
+  resolveAgentProfile,
+} from "./agent-profiles.js";
 
 export interface MaterializeOptions {
   repoRoot: string;
@@ -53,7 +56,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
   const agentRoot = join(runRoot, "agents", agentId);
   const artifactRoot = join(agentRoot, "artifacts");
   const logsRoot = join(agentRoot, "logs");
-  const agentProfile = readAgentProfile(assetsRoot, agentId);
+  const agentProfile = resolveAgentProfile(readAgentProfilesForRepo(repoRoot), agentId);
   const mountRoot = join(agentRoot, "mount");
 
   if (options.cleanRunRoot ?? true) {
@@ -201,26 +204,6 @@ function sanitizeAgentId(agentId: string): string {
     throw new Error(`Invalid agentId for mount materialization: ${agentId}`);
   }
   return normalized;
-}
-
-function readAgentProfile(
-  assetsRoot: string,
-  agentId: string,
-): AgentProfile {
-  const profiles = readJsonFile<AgentProfilesFile>(join(assetsRoot, CodexAssetLayout.agentProfiles));
-  const profile = profiles.profiles[agentId];
-  if (!profile) {
-    throw new Error(`No agent profile configured for agent: ${agentId}`);
-  }
-  return {
-    config: profile.config,
-    skills: [...profile.skills],
-    shellTools: [...(profile.shellTools ?? [])],
-    mcpServers: [...profile.mcpServers],
-    plugins: [...profile.plugins],
-    trustedRoots: [...(profile.trustedRoots ?? [])],
-    writableRoots: [...(profile.writableRoots ?? [])],
-  };
 }
 
 function assertAssetFileExists(assetsRoot: string, assetPath: string, label: string): void {

@@ -1,4 +1,5 @@
 export * from "./asset-store.js";
+export * from "./agent-profiles.js";
 export * from "./commit.js";
 export * from "./materialize.js";
 export * from "./preflight.js";

@@ -57,32 +57,31 @@ export class AgentBackend {
     agent: ScoutAgent,
     entry: AppServerTimelineEntry,
   ): void {
-    const activeTask = this.findActiveTask(agent);
-    if (!shouldSkipAppServerTimelineLog(entry)) {
-      this.options.logger.info({
-        module: `agent.app_server.${entry.stream}`,
-        event: entry.kind,
-        agentId: agent.agentId,
-        taskId: activeTask?.taskId,
-        data: {
-          runId: this.runId,
-          timeline: entry,
-        },
-      });
-    }
+    this.logAppServerHealthEvent(entry, agent);
     this.task.handleAppServerTimelineEntry(agent, entry, (timelineEntry) =>
       this.options.appServer.resolveTimelineEntry(timelineEntry)
     );
   }
 
   private handleUnboundAppServerTimelineEntry(entry: AppServerTimelineEntry): void {
-    if (shouldSkipAppServerTimelineLog(entry)) return;
-    this.options.logger.info({
-      module: `agent.app_server.${entry.stream}`,
-      event: entry.kind,
+    this.logAppServerHealthEvent(entry);
+  }
+
+  private logAppServerHealthEvent(entry: AppServerTimelineEntry, agent?: ScoutAgent): void {
+    if (entry.kind !== "disconnect") return;
+    const activeTask = agent ? this.findActiveTask(agent) : undefined;
+    this.options.logger.warn({
+      target: "runtime",
+      module: "runtime.app_server",
+      event: "disconnected",
+      agentId: agent?.agentId,
+      taskId: activeTask?.taskId,
       data: {
         runId: this.runId,
-        timeline: entry,
+        seq: entry.seq,
+        threadId: entry.threadId,
+        turnId: entry.turnId,
+        receivedAt: entry.receivedAt,
       },
     });
   }
@@ -90,8 +89,4 @@ export class AgentBackend {
   private findActiveTask(agent: ScoutAgent): AgentTaskState | undefined {
     return this.options.taskStore.findActiveTaskForAgent(agent.agentId);
   }
-}
-
-function shouldSkipAppServerTimelineLog(entry: AppServerTimelineEntry): boolean {
-  return entry.kind === "agent_message_delta";
 }

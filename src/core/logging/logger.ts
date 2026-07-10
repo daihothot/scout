@@ -1,9 +1,9 @@
 import { appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { threadId as workerThreadId } from "node:worker_threads";
 import { ensureDir } from "../fs.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
+export type LogTarget = "runtime" | "agent" | "both";
 
 export interface LogEvent {
   timestamp: string;
@@ -18,6 +18,9 @@ export interface LogEvent {
 
 export type LogRedactor = (event: LogEvent) => LogEvent;
 export type LogSummarizer = (event: LogEvent) => LogEvent;
+export type LogInput = Omit<LogEvent, "timestamp" | "level" | "runId"> & {
+  target?: LogTarget;
+};
 
 export interface LoggerOptions {
   runId: string;
@@ -26,6 +29,8 @@ export interface LoggerOptions {
   redactor?: LogRedactor;
   summarizer?: LogSummarizer;
 }
+
+const LOG_LINE_WIDTH = 120;
 
 export class Logger {
   private readonly runId: string;
@@ -45,36 +50,42 @@ export class Logger {
     this.agentLogPaths.set(agentId, join(logsRoot, fileName));
   }
 
-  debug(input: Omit<LogEvent, "timestamp" | "level" | "runId">): void {
+  debug(input: LogInput): void {
     this.write("debug", input);
   }
 
-  info(input: Omit<LogEvent, "timestamp" | "level" | "runId">): void {
+  info(input: LogInput): void {
     this.write("info", input);
   }
 
-  warn(input: Omit<LogEvent, "timestamp" | "level" | "runId">): void {
+  warn(input: LogInput): void {
     this.write("warn", input);
   }
 
-  error(input: Omit<LogEvent, "timestamp" | "level" | "runId">): void {
+  error(input: LogInput): void {
     this.write("error", input);
   }
 
-  private write(level: LogLevel, input: Omit<LogEvent, "timestamp" | "level" | "runId">): void {
+  private write(level: LogLevel, input: LogInput): void {
+    const { target: requestedTarget, ...eventInput } = input;
     const event = {
       timestamp: new Date().toISOString(),
       level,
       runId: this.runId,
-      ...input,
+      ...eventInput,
     };
     const processed = this.redactor(this.summarizer(event));
     const serialized = formatLogEvent(processed);
-    this.append(this.globalLogPath, serialized);
-    if (!input.agentId) return;
-    const agentLogPath = this.agentLogPaths.get(input.agentId);
-    if (!agentLogPath || agentLogPath === this.globalLogPath) return;
-    this.append(agentLogPath, serialized);
+    const target = requestedTarget ?? defaultLogTarget(level, input.agentId);
+    const agentLogPath = input.agentId ? this.agentLogPaths.get(input.agentId) : undefined;
+    if (target === "runtime" || target === "both" || (target === "agent" && !agentLogPath)) {
+      this.append(this.globalLogPath, serialized);
+    }
+    if ((target === "agent" || target === "both")
+      && agentLogPath
+      && agentLogPath !== this.globalLogPath) {
+      this.append(agentLogPath, serialized);
+    }
   }
 
   private append(logPath: string, serialized: string): void {
@@ -84,159 +95,148 @@ export class Logger {
 }
 
 function formatLogEvent(event: LogEvent): string {
-  const source = event.agentId ?? "runtime";
-  const header = [
-    formatLogTimestamp(event.timestamp),
-    "[Scout]",
-    `[${runtimeThreadId()}]`,
-    `[ ${levelLabel(event.level)} ]`,
-    `[${event.module}]`,
-    `[${source}]`,
+  const fields = [
+    event.timestamp,
+    levelLabel(event.level),
+    `module=${event.module}`,
     `event=${event.event}`,
-    event.taskId ? `task=${event.taskId}` : undefined,
     `run=${event.runId ?? "-"}`,
+    event.agentId ? `agent=${event.agentId}` : undefined,
+    event.taskId ? `task=${event.taskId}` : undefined,
   ].filter((part): part is string => Boolean(part)).join(" ");
-  const body = formatLogBody(event.data);
-  return body ? `\n\n\n${header}\n${body}\n` : `\n\n\n${header}\n`;
-}
-
-function formatLogBody(value: unknown, indentLevel = 1): string {
-  if (value === undefined) return "";
-  const lines = formatValueLines(value, indentLevel);
-  return lines.join("\n");
-}
-
-function formatValueLines(value: unknown, indentLevel: number): string[] {
-  const indentation = indent(indentLevel);
-  if (typeof value === "string") {
-    return formatStringLines(value, indentLevel);
-  }
-  if (Array.isArray(value)) {
-    if (value.length === 0) return [`${indentation}[]`];
-    return value.flatMap((entry, index) => [
-      `${indentation}- [${index}]`,
-      ...formatValueLines(entry, indentLevel + 1),
-    ]);
-  }
-  if (!isPlainObject(value)) return [`${indentation}${String(value)}`];
-  const entries = Object.entries(value);
-  if (entries.length === 0) return [`${indentation}{}`];
-  return entries.flatMap(([key, entry]) => {
-    if (typeof entry === "string" && shouldFormatStringBlock(entry)) {
-      return [
-        `${indentation}${key}:`,
-        ...formatStringLines(entry, indentLevel + 1),
-      ];
-    }
-    if (isScalar(entry)) {
-      return [`${indentation}${key}: ${String(entry)}`];
-    }
-    return [
-      `${indentation}${key}:`,
-      ...formatValueLines(entry, indentLevel + 1),
-    ];
-  });
-}
-
-function formatStringLines(value: string, indentLevel: number): string[] {
-  const indentation = indent(indentLevel);
-  const json = parseReadableJsonString(value);
-  if (json !== undefined) {
-    return JSON.stringify(json, null, 2).split("\n").map((line) => `${indentation}${line}`);
-  }
-  if (looksLikeXml(value)) {
-    return formatXml(value).split("\n").map((line) => `${indentation}${line}`);
-  }
-  if (looksLikeYaml(value)) {
-    return value.split("\n").map((line) => `${indentation}${line}`);
-  }
-  return [`${indentation}${value}`];
-}
-
-function shouldFormatStringBlock(value: string): boolean {
-  return parseReadableJsonString(value) !== undefined
-    || looksLikeXml(value)
-    || looksLikeYaml(value);
-}
-
-function parseReadableJsonString(value: string): unknown | undefined {
-  const trimmed = value.trim();
-  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return undefined;
-  }
-}
-
-function looksLikeXml(value: string): boolean {
-  const trimmed = value.trim();
-  return /^<([A-Za-z_][\w:.-]*)(\s[^>]*)?>[\s\S]*<\/\1>$/.test(trimmed)
-    || /^<\?xml\b/.test(trimmed);
-}
-
-function formatXml(value: string): string {
-  const compact = value.trim().replace(/>\s+</g, "><");
-  const tokens = compact.replace(/></g, ">\n<").split("\n");
-  let depth = 0;
-  return tokens.map((token) => {
-    const trimmed = token.trim();
-    if (/^<\//.test(trimmed)) depth = Math.max(0, depth - 1);
-    const line = `${indent(depth)}${trimmed}`;
-    if (/^<[^!?/][^>]*[^/]>(?!.*<\/[^>]+>$)/.test(trimmed)) depth += 1;
-    return line;
-  }).join("\n");
-}
-
-function looksLikeYaml(value: string): boolean {
-  const trimmed = value.trim();
-  return trimmed.includes("\n")
-    && /^[\w.-]+:\s*.+/m.test(trimmed);
-}
-
-function formatLogTimestamp(value: string): string {
-  const date = new Date(value);
-  const source = Number.isNaN(date.getTime()) ? new Date() : date;
-  const year = source.getFullYear();
-  const month = pad2(source.getMonth() + 1);
-  const day = pad2(source.getDate());
-  const hours = pad2(source.getHours());
-  const minutes = pad2(source.getMinutes());
-  const seconds = pad2(source.getSeconds());
-  const milliseconds = String(source.getMilliseconds()).padStart(3, "0");
-  return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}.${milliseconds}`;
-}
-
-function runtimeThreadId(): string {
-  return `pid:${process.pid}/thread:${workerThreadId}`;
+  if (event.data === undefined) return `${fields}\n\n`;
+  return `${fields}\n${formatLogData(event.data)}\n\n`;
 }
 
 function levelLabel(level: LogLevel): string {
   switch (level) {
     case "debug":
-      return "D";
+      return "DEBUG";
     case "info":
-      return "I";
+      return "INFO";
     case "warn":
-      return "W";
+      return "WARN";
     case "error":
-      return "E";
+      return "ERROR";
   }
+}
+
+function formatLogData(value: unknown): string {
+  if (typeof value === "string" && shouldUseStringBlock(value, "data: ")) {
+    return ["data: |", ...formatStringBlock(value, 1)].join("\n");
+  }
+  if (isScalar(value)) return `data: ${formatScalar(value)}`;
+  return ["data:", ...formatValueLines(value, 1)].join("\n");
+}
+
+function formatValueLines(value: unknown, indentLevel: number): string[] {
+  const indentation = indent(indentLevel);
+  if (typeof value === "string") {
+    return shouldUseStringBlock(value, indentation)
+      ? [`${indentation}|`, ...formatStringBlock(value, indentLevel + 1)]
+      : [`${indentation}${formatScalar(value)}`];
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return [`${indentation}[]`];
+    return value.flatMap((entry) => formatArrayEntry(entry, indentLevel));
+  }
+  if (isPlainObject(value)) {
+    const entries = Object.entries(value);
+    if (entries.length === 0) return [`${indentation}{}`];
+    return entries.flatMap(([key, entry]) => formatObjectEntry(key, entry, indentLevel));
+  }
+  return [`${indentation}${formatScalar(value)}`];
+}
+
+function formatObjectEntry(key: string, value: unknown, indentLevel: number): string[] {
+  const indentation = indent(indentLevel);
+  const label = formatKey(key);
+  if (typeof value === "string" && shouldUseStringBlock(value, `${indentation}${label}: `)) {
+    return [
+      `${indentation}${label}: |`,
+      ...formatStringBlock(value, indentLevel + 1),
+    ];
+  }
+  if (isScalar(value)) {
+    return [`${indentation}${label}: ${formatScalar(value)}`];
+  }
+  if (Array.isArray(value) && value.length === 0) {
+    return [`${indentation}${label}: []`];
+  }
+  if (isPlainObject(value) && Object.keys(value).length === 0) {
+    return [`${indentation}${label}: {}`];
+  }
+  return [
+    `${indentation}${label}:`,
+    ...formatValueLines(value, indentLevel + 1),
+  ];
+}
+
+function formatArrayEntry(value: unknown, indentLevel: number): string[] {
+  const indentation = indent(indentLevel);
+  if (typeof value === "string" && shouldUseStringBlock(value, `${indentation}- `)) {
+    return [
+      `${indentation}- |`,
+      ...formatStringBlock(value, indentLevel + 1),
+    ];
+  }
+  if (isScalar(value)) return [`${indentation}- ${formatScalar(value)}`];
+  if (Array.isArray(value) && value.length === 0) return [`${indentation}- []`];
+  if (isPlainObject(value) && Object.keys(value).length === 0) return [`${indentation}- {}`];
+  return [
+    `${indentation}-`,
+    ...formatValueLines(value, indentLevel + 1),
+  ];
+}
+
+function shouldUseStringBlock(value: string, prefix: string): boolean {
+  return value.includes("\n")
+    || Array.from(`${prefix}${formatScalar(value)}`).length > LOG_LINE_WIDTH;
+}
+
+function formatStringBlock(value: string, indentLevel: number): string[] {
+  const indentation = indent(indentLevel);
+  const width = Math.max(1, LOG_LINE_WIDTH - indentation.length);
+  return value.split("\n").flatMap((line) =>
+    wrapLogLine(line, width).map((part) => `${indentation}${part}`)
+  );
+}
+
+function wrapLogLine(value: string, width: number): string[] {
+  const chars = Array.from(value);
+  if (chars.length === 0) return [""];
+  const lines: string[] = [];
+  for (let index = 0; index < chars.length; index += width) {
+    lines.push(chars.slice(index, index + width).join(""));
+  }
+  return lines;
+}
+
+function formatScalar(value: unknown): string {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return `${value}n`;
+  if (typeof value === "symbol") return value.toString();
+  if (typeof value === "function") return `[function ${value.name || "anonymous"}]`;
+  return String(value);
+}
+
+function formatKey(value: string): string {
+  return /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(value) ? value : JSON.stringify(value);
 }
 
 function isScalar(value: unknown): boolean {
   return value === null
-    || typeof value === "string"
-    || typeof value === "number"
-    || typeof value === "boolean";
+    || value === undefined
+    || (typeof value !== "object");
 }
 
 function indent(level: number): string {
   return "  ".repeat(level);
 }
 
-function pad2(value: number): string {
-  return String(value).padStart(2, "0");
+function defaultLogTarget(level: LogLevel, agentId: string | undefined): LogTarget {
+  if (!agentId) return "runtime";
+  return level === "warn" || level === "error" ? "both" : "agent";
 }
 
 function defaultLogRedactor(event: LogEvent): LogEvent {

@@ -25,6 +25,7 @@ import {
   type ScoutRunOptions,
   type ScoutRunResult,
 } from "./types.js";
+import type { InteractionExitRequestedPayload } from "../interaction/gateway/interaction-events.js";
 
 export class RunManager {
   async startRun(options: ScoutRunOptions): Promise<ScoutRunResult> {
@@ -34,27 +35,43 @@ export class RunManager {
       runId,
       logsRoot: join(options.cwd, "run", runId, "logs"),
     });
-    const preparedClients = await prepareRunClients({
-      repoRoot: options.cwd,
-      runId,
+    const runStartedAt = Date.now();
+    runtimeLogger.info({
+      module: "run.lifecycle",
+      event: "run_started",
+      data: {
+        cwd: options.cwd,
+      },
     });
-    let preparedRun: PreparedRun;
-    try {
-      preparedRun = await prepareRunEnvironment({
+    const preparedClients = await runPreparationStage(runtimeLogger, "clients", () =>
+      prepareRunClients({
         repoRoot: options.cwd,
         runId,
-        preparedClients,
-      });
+      })
+    );
+    const cleanup = new RunCleanup(runtimeLogger);
+    cleanup.add("app_server", () => preparedClients.appServerClient.client.close());
+    let preparedRun: PreparedRun;
+    try {
+      preparedRun = await runPreparationStage(runtimeLogger, "environment", () =>
+        prepareRunEnvironment({
+          repoRoot: options.cwd,
+          runId,
+          preparedClients,
+        })
+      );
     } catch (error) {
-      preparedClients.appServerClient.client.close();
+      await cleanup.run("environment_preparation_failed");
       throw error;
     }
     const eventBus = new InMemoryEventBus();
     const interactionGateway = new InteractionGateway({
       eventBus,
       interactionPort,
+      logger: runtimeLogger,
     });
     interactionGateway.start();
+    cleanup.add("interaction_gateway", () => interactionGateway.stop());
     eventBus.publish(SystemEvents.interaction.disclosureRequested, {
       level: "info",
       source: "run.manager",
@@ -71,8 +88,15 @@ export class RunManager {
           agents: summarizeAgents(preparedRun),
         },
       } satisfies RuntimeDisclosureEvent);
-      interactionGateway.stop();
-      preparedClients.appServerClient.client.close();
+      runtimeLogger.error({
+        module: "run.lifecycle",
+        event: "run_preparation_failed",
+        data: {
+          stage: "environment",
+          agents: summarizeAgents(preparedRun),
+        },
+      });
+      await cleanup.run("preflight_failed");
       return this.toRunResult(preparedRun, "failed");
     }
 
@@ -82,14 +106,16 @@ export class RunManager {
     let preparedAgents: Awaited<ReturnType<typeof prepareAgents>> | undefined;
 
     try {
-      preparedAgents = await prepareAgents({
-        preparedRun,
-        preparedClients,
-        repoRoot: options.cwd,
-        logger: runtimeLogger,
-        eventBus,
-        domain,
-      });
+      preparedAgents = await runPreparationStage(runtimeLogger, "agents", () =>
+        prepareAgents({
+          preparedRun,
+          preparedClients,
+          repoRoot: options.cwd,
+          logger: runtimeLogger,
+          eventBus,
+          domain,
+        })
+      );
     } catch (error) {
       eventBus.publish(SystemEvents.interaction.disclosureRequested, {
         level: "error",
@@ -99,14 +125,19 @@ export class RunManager {
           error: error instanceof Error ? error.stack ?? error.message : String(error),
         },
       } satisfies RuntimeDisclosureEvent);
-      interactionGateway.stop();
-      preparedClients.appServerClient.client.close();
+      runtimeLogger.error({
+        module: "run.lifecycle",
+        event: "run_preparation_failed",
+        data: {
+          stage: "agents",
+          error: errorText(error),
+        },
+      });
+      await cleanup.run("agent_preparation_failed");
       return this.toRunResult(preparedRun, "failed");
     }
 
     const appServer = preparedAgents.appServerClient.client;
-    const cleanup = new RunCleanup();
-    cleanup.add(() => appServer.close());
     const agentBackend = new AgentBackend({
       runId: preparedRun.runId,
       appServer,
@@ -128,26 +159,36 @@ export class RunManager {
 
     let orchestrator: AgentOrchestrator | undefined;
     try {
-      await agentBackend.domain.start?.();
-      cleanup.add(() => agentBackend.domain.stop?.());
-      orchestrator = new AgentOrchestrator({
-        eventBus,
-      });
-      orchestrator.start();
-      cleanup.add(() => orchestrator?.stop());
-      cleanup.add(() => {
-        for (const agent of Object.values(preparedAgents.agents)) {
-          agent.runner.stop("run_cleanup");
-        }
+      await runPreparationStage(runtimeLogger, "runtime", async () => {
+        await agentBackend.domain.start?.();
+        cleanup.add("domain", () => agentBackend.domain.stop?.());
+        orchestrator = new AgentOrchestrator({
+          eventBus,
+        });
+        orchestrator.start();
+        cleanup.add("orchestrator", () => orchestrator?.stop());
+        cleanup.add("agent_runners", () => {
+          for (const agent of Object.values(preparedAgents.agents)) {
+            agent.runner.stop("run_cleanup");
+          }
+        });
       });
       const unsubscribeExitRequested = eventBus.subscribe(
         SystemEvents.interaction.exitRequested,
-        async () => cleanup.run(),
+        async (event) => {
+          const payload = event.payload as InteractionExitRequestedPayload;
+          runtimeLogger.info({
+            module: "run.lifecycle",
+            event: "run_exit_requested",
+            data: {
+              requestedAt: payload.requestedAt,
+            },
+          });
+          await cleanup.run("exit_requested");
+        },
       );
-      cleanup.add(unsubscribeExitRequested);
-      cleanup.add(() => interactionGateway.stop());
+      cleanup.add("exit_subscription", unsubscribeExitRequested);
     } catch (error) {
-      await cleanup.run();
       eventBus.publish(SystemEvents.interaction.disclosureRequested, {
         level: "error",
         source: "run.manager",
@@ -156,6 +197,15 @@ export class RunManager {
           error: error instanceof Error ? error.stack ?? error.message : String(error),
         },
       } satisfies RuntimeDisclosureEvent);
+      runtimeLogger.error({
+        module: "run.lifecycle",
+        event: "run_preparation_failed",
+        data: {
+          stage: "runtime",
+          error: errorText(error),
+        },
+      });
+      await cleanup.run("runtime_start_failed");
       return this.toRunResult(preparedRun, "failed");
     }
 
@@ -167,6 +217,14 @@ export class RunManager {
         runId: preparedRun.runId,
       },
     } satisfies RuntimeDisclosureEvent);
+    runtimeLogger.info({
+      module: "run.lifecycle",
+      event: "run_ready",
+      data: {
+        durationMs: Math.max(0, Date.now() - runStartedAt),
+        agents: Object.keys(preparedAgents.agents),
+      },
+    });
 
     return this.toRunResult(preparedRun, "passed");
   }
@@ -195,26 +253,115 @@ export class RunManager {
 }
 
 class RunCleanup {
-  private readonly handlers: Array<() => void | Promise<void>> = [];
-  private started = false;
+  private readonly handlers: Array<{
+    name: string;
+    handler: () => void | Promise<void>;
+  }> = [];
+  private readonly logger: Logger;
+  private running?: Promise<void>;
 
-  add(handler: () => void | Promise<void>): void {
-    if (this.started) {
-      void Promise.resolve(handler()).catch(() => undefined);
+  constructor(logger: Logger) {
+    this.logger = logger;
+  }
+
+  add(name: string, handler: () => void | Promise<void>): void {
+    if (this.running) {
+      void Promise.resolve(handler()).catch((error) => this.logError(name, error));
       return;
     }
-    this.handlers.push(handler);
+    this.handlers.push({ name, handler });
   }
 
-  async run(): Promise<void> {
-    if (this.started) return;
-    this.started = true;
-    while (this.handlers.length > 0) {
-      const handler = this.handlers.pop();
-      if (!handler) continue;
-      await Promise.resolve(handler()).catch(() => undefined);
-    }
+  run(reason: string): Promise<void> {
+    if (this.running) return this.running;
+    this.running = this.runHandlers(reason);
+    return this.running;
   }
+
+  private async runHandlers(reason: string): Promise<void> {
+    const startedAt = Date.now();
+    const handlerCount = this.handlers.length;
+    let errorCount = 0;
+    this.logger.info({
+      module: "run.lifecycle",
+      event: "cleanup_started",
+      data: {
+        reason,
+        handlerCount,
+      },
+    });
+    while (this.handlers.length > 0) {
+      const entry = this.handlers.pop();
+      if (!entry) continue;
+      try {
+        await entry.handler();
+      } catch (error) {
+        errorCount += 1;
+        this.logError(entry.name, error);
+      }
+    }
+    this.logger.info({
+      module: "run.lifecycle",
+      event: "cleanup_completed",
+      data: {
+        reason,
+        handlerCount,
+        errorCount,
+        durationMs: Math.max(0, Date.now() - startedAt),
+      },
+    });
+  }
+
+  private logError(handler: string, error: unknown): void {
+    this.logger.error({
+      module: "run.lifecycle",
+      event: "cleanup_error",
+      data: {
+        handler,
+        error: errorText(error),
+      },
+    });
+  }
+}
+
+async function runPreparationStage<T>(
+  logger: Logger,
+  stage: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  logger.info({
+    module: "run.lifecycle",
+    event: "preparation_stage_started",
+    data: { stage },
+  });
+  try {
+    const result = await operation();
+    logger.info({
+      module: "run.lifecycle",
+      event: "preparation_stage_completed",
+      data: {
+        stage,
+        durationMs: Math.max(0, Date.now() - startedAt),
+      },
+    });
+    return result;
+  } catch (error) {
+    logger.error({
+      module: "run.lifecycle",
+      event: "preparation_stage_failed",
+      data: {
+        stage,
+        durationMs: Math.max(0, Date.now() - startedAt),
+        error: errorText(error),
+      },
+    });
+    throw error;
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.stack ?? error.message : String(error);
 }
 
 export async function startRun(options: ScoutRunOptions): Promise<ScoutRunResult> {

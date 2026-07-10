@@ -150,6 +150,12 @@ function createMount(root: string, runId: string, role: string): CodexMount {
     agentId: role,
     agentProfile: {
       config: "config/config.toml",
+      model: {
+        id: "gpt-5.5",
+        provider: "GuruOpenAI",
+        reasoningEffort: "high",
+        reasoningSummary: "concise",
+      },
       skills: [],
       mcpServers: [],
       plugins: [],

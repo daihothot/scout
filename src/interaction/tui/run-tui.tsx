@@ -11,10 +11,29 @@ export interface ScoutTuiRuntime {
   waitUntilExit(): Promise<void>;
 }
 
-export function startScoutTui(): ScoutTuiRuntime {
-  const store = new TuiStore();
+export interface StartScoutTuiOptions {
+  cwd: string;
+  version: string;
+  model: string;
+  reasoningEffort: string;
+}
+
+export function startScoutTui(options: StartScoutTuiOptions): ScoutTuiRuntime {
+  const store = new TuiStore(options);
   const interactionPort = new TuiInteractionAdapter(store);
-  const instance = render(<ScoutTuiApp store={store} />);
+  let exitPromise: Promise<void> | undefined;
+  const requestExit = () => {
+    if (exitPromise) return;
+    exitPromise = (async () => {
+      await store.requestExit();
+      await instance.waitUntilRenderFlush();
+      instance.unmount();
+    })();
+  };
+  const instance = render(<ScoutTuiApp store={store} onExit={requestExit} />, {
+    alternateScreen: false,
+    exitOnCtrlC: false,
+  });
   return {
     store,
     interactionPort,

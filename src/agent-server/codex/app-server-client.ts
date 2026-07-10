@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import readline from "node:readline";
 import {
   AppServerEventStore,
@@ -15,6 +15,10 @@ import {
   type AppServerTimelineStream,
   type AppServerTurnState,
 } from "./app-server-event-store.js";
+import {
+  type CodexReasoningEffort,
+  type CodexReasoningSummary,
+} from "./model-config.js";
 
 export interface JsonRpcResponse {
   id: number;
@@ -67,6 +71,8 @@ export interface CodexAppServerOptions {
   codexHome: string;
   providerName?: string;
   logPrefix?: string;
+  stderrLogPath?: string;
+  transportLogPath?: string;
   onDynamicToolCall?: DynamicToolCallHandler;
 }
 
@@ -74,6 +80,7 @@ export interface ThreadStartOptions {
   cwd: string;
   model?: string;
   modelProvider?: string;
+  reasoningEffort?: CodexReasoningEffort;
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
   sandbox?: "read-only" | "workspace-write" | "danger-full-access";
   ephemeral?: boolean;
@@ -92,6 +99,9 @@ export interface TurnStartOptions {
   threadId: string;
   prompt: string;
   timeoutMs?: number;
+  model?: string;
+  reasoningEffort?: CodexReasoningEffort;
+  reasoningSummary?: CodexReasoningSummary;
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
   sandbox?: "readOnly" | "workspaceWrite";
   writableRoots?: string[];
@@ -166,8 +176,11 @@ export class CodexAppServerClient {
   private readonly timelineHandlers = new Set<AppServerTimelineHandler>();
   private readonly eventStore = new AppServerEventStore();
   private readonly logPrefix: string;
+  private readonly stderrLogPath?: string;
+  private readonly transportLogPath?: string;
   private onDynamicToolCall?: DynamicToolCallHandler;
   private nextRequestId = 1;
+  private closing = false;
 
   constructor(options: CodexAppServerOptions) {
     const provider = readProviderConfig(options.providerName ?? "GuruOpenAI");
@@ -184,6 +197,10 @@ export class CodexAppServerClient {
     }
 
     this.logPrefix = options.logPrefix ?? "scout app-server";
+    this.stderrLogPath = options.stderrLogPath;
+    this.transportLogPath = options.transportLogPath;
+    if (this.stderrLogPath) mkdirSync(dirname(this.stderrLogPath), { recursive: true });
+    if (this.transportLogPath) mkdirSync(dirname(this.transportLogPath), { recursive: true });
     this.onDynamicToolCall = options.onDynamicToolCall;
     this.child = spawn(options.codexPath ?? provider.codexCliPath ?? "codex", ["app-server"], {
       env,
@@ -191,15 +208,19 @@ export class CodexAppServerClient {
     });
 
     this.child.stderr.on("data", (chunk: Buffer) => {
-      process.stderr.write(`[${this.logPrefix}] ${chunk.toString("utf8")}`);
+      this.writeDiagnostic(chunk.toString("utf8"));
     });
     this.child.once("exit", (code, signal) => {
+      if (this.closing) return;
       const message = `Codex app-server exited with ${signal ? `signal ${signal}` : `code ${code ?? 1}`}.`;
+      this.writeDiagnostic(message);
       this.handleDisconnect(message);
       this.rejectAll(new Error(message));
     });
     this.child.once("error", (error) => {
+      if (this.closing) return;
       const normalized = error instanceof Error ? error : new Error(String(error));
+      this.writeDiagnostic(normalized.stack ?? normalized.message);
       this.handleDisconnect(normalized.message);
       this.rejectAll(normalized);
     });
@@ -221,15 +242,18 @@ export class CodexAppServerClient {
 
   async startThread(options: ThreadStartOptions): Promise<ThreadStartResult> {
     const response = await this.request("thread/start", cleanUndefined({
-      model: options.model ?? "gpt-5.4-mini",
-      modelProvider: options.modelProvider ?? "GuruOpenAI",
+      model: options.model,
+      modelProvider: options.modelProvider,
       cwd: options.cwd,
       approvalPolicy: options.approvalPolicy ?? "never",
       sandbox: options.sandbox ?? "workspace-write",
       ephemeral: options.ephemeral ?? true,
-      config: options.config ?? {
-        model_reasoning_effort: "minimal",
-      },
+      config: options.reasoningEffort === undefined
+        ? options.config
+        : {
+            ...(options.config ?? {}),
+            model_reasoning_effort: options.reasoningEffort,
+          },
       baseInstructions: options.baseInstructions,
       developerInstructions: options.developerInstructions,
       dynamicTools: options.dynamicTools,
@@ -267,7 +291,6 @@ export class CodexAppServerClient {
   }
 
   async startTurn(options: TurnStartOptions): Promise<TurnStartResult> {
-    const model = "gpt-5.4-mini";
     const response = await this.request("turn/start", cleanUndefined({
       threadId: options.threadId,
       input: [{ type: "text", text: options.prompt, text_elements: [] }],
@@ -276,8 +299,9 @@ export class CodexAppServerClient {
         type: options.sandbox ?? "workspaceWrite",
         writableRoots: options.writableRoots,
       }),
-      model,
-      effort: "minimal",
+      model: options.model,
+      effort: options.reasoningEffort,
+      summary: options.reasoningSummary,
     }));
     return {
       turnId: readTurnId(response),
@@ -349,11 +373,13 @@ export class CodexAppServerClient {
     const id = this.nextRequestId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.child.stdin.write(JSON.stringify({ id, method, params }) + "\n");
+      this.sendMessage({ id, method, params });
     });
   }
 
   close(): void {
+    if (this.closing) return;
+    this.closing = true;
     this.rejectAll(new Error("Codex app-server closed."));
     this.child.stdin.end();
     if (!this.child.killed) {
@@ -442,7 +468,7 @@ export class CodexAppServerClient {
   }
 
   private notify(method: string, params?: unknown): void {
-    this.child.stdin.write(JSON.stringify(params === undefined ? { method } : { method, params }) + "\n");
+    this.sendMessage(params === undefined ? { method } : { method, params });
   }
 
   private startReceiveLoop(): void {
@@ -457,9 +483,11 @@ export class CodexAppServerClient {
     try {
       message = JSON.parse(line) as unknown;
     } catch {
-      process.stderr.write(`[${this.logPrefix}] non-json: ${line}\n`);
+      this.writeTransport("incoming_non_json", line);
+      this.writeDiagnostic(`non-json: ${line}`);
       return;
     }
+    this.writeTransport("incoming", message);
 
     if (isAppServerMessage(message)) {
       this.emitMessage(message);
@@ -500,7 +528,7 @@ export class CodexAppServerClient {
         const handled = await handler(request, controller);
         if (handled) return;
       } catch (error) {
-        process.stderr.write(`[${this.logPrefix}] server request handler failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+        this.writeDiagnostic(`server request handler failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
       }
     }
 
@@ -510,7 +538,7 @@ export class CodexAppServerClient {
     }
 
     if (request.method === "mcpServer/elicitation/request") {
-      process.stderr.write(`[${this.logPrefix}] auto-accepted app-server request: ${request.method}\n`);
+      this.writeDiagnostic(`auto-accepted app-server request: ${request.method}`);
       this.sendServerRequestResult(request.id, {
         action: "accept",
         content: {},
@@ -520,7 +548,7 @@ export class CodexAppServerClient {
 
     if (process.env.SCOUT_AUTO_ACCEPT_APP_SERVER_CONFIRMATIONS === "1"
       && isAppServerConfirmationRequest(request.method)) {
-      process.stderr.write(`[${this.logPrefix}] auto-accepted app-server request: ${request.method}\n`);
+      this.writeDiagnostic(`auto-accepted app-server request: ${request.method}`);
       this.sendServerRequestResult(request.id, {
         action: "accept",
         content: {},
@@ -528,7 +556,7 @@ export class CodexAppServerClient {
       return;
     }
 
-    process.stderr.write(`[${this.logPrefix}] unhandled app-server request: ${request.method}\n`);
+    this.writeDiagnostic(`unhandled app-server request: ${request.method}`);
     this.sendServerRequestError(request.id, -32601, `Method not found: ${request.method}`);
   }
 
@@ -586,11 +614,37 @@ export class CodexAppServerClient {
   }
 
   private sendResult(id: number | string, result: unknown): void {
-    this.child.stdin.write(JSON.stringify({ id, result }) + "\n");
+    this.sendMessage({ id, result });
   }
 
   private sendError(id: number | string, code: number, message: string): void {
-    this.child.stdin.write(JSON.stringify({ id, error: { code, message } }) + "\n");
+    this.sendMessage({ id, error: { code, message } });
+  }
+
+  private sendMessage(message: Record<string, unknown>): void {
+    this.writeTransport("outgoing", message);
+    this.child.stdin.write(JSON.stringify(message) + "\n");
+  }
+
+  private writeDiagnostic(message: string): void {
+    const normalized = message.endsWith("\n") ? message : `${message}\n`;
+    const rendered = `[${this.logPrefix}] ${normalized}`;
+    process.stderr.write(rendered);
+    if (!this.stderrLogPath) return;
+    appendFileSync(
+      this.stderrLogPath,
+      `${new Date().toISOString()} ${rendered}`,
+      "utf8",
+    );
+  }
+
+  private writeTransport(direction: string, payload: unknown): void {
+    if (!this.transportLogPath) return;
+    appendFileSync(this.transportLogPath, JSON.stringify({
+      timestamp: new Date().toISOString(),
+      direction,
+      payload,
+    }) + "\n", "utf8");
   }
 
   private emitMessage(message: JsonRpcMessage): void {
@@ -598,7 +652,7 @@ export class CodexAppServerClient {
       try {
         handler(message);
       } catch (error) {
-        process.stderr.write(`[${this.logPrefix}] message handler failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+        this.writeDiagnostic(`message handler failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
       }
     }
   }
@@ -609,7 +663,7 @@ export class CodexAppServerClient {
         try {
           handler(entry);
         } catch (error) {
-          process.stderr.write(`[${this.logPrefix}] timeline handler failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+          this.writeDiagnostic(`timeline handler failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
         }
       }
     }
@@ -620,7 +674,7 @@ export class CodexAppServerClient {
       try {
         handler(notification);
       } catch (error) {
-        process.stderr.write(`[${this.logPrefix}] notification handler failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
+        this.writeDiagnostic(`notification handler failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
       }
     }
 

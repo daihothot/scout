@@ -21,6 +21,9 @@ test("prepareRunClients builds isolated app-server config and starts the shared 
     isolatedHome: string;
     isolatedCodexHome: string;
     configToml: string;
+    providerName: string;
+    stderrLogPath: string;
+    transportLogPath?: string;
     rootPlan: unknown;
     mountRoots?: string[];
     trustedRoots?: string[];
@@ -51,6 +54,12 @@ test("prepareRunClients builds isolated app-server config and starts the shared 
   assert.equal(sessionStarted, true);
   assert.equal(clientOptions.length, 1);
   assert.equal(clientOptions[0]?.rootPlan, prepared.rootPlan);
+  assert.equal(clientOptions[0]?.providerName, "GuruOpenAI");
+  assert.equal(
+    clientOptions[0]?.stderrLogPath,
+    resolve(fixtureRoot, "run", runId, "logs", "app-server.stderr.log"),
+  );
+  assert.equal(clientOptions[0]?.transportLogPath, undefined);
   assert.deepEqual(clientOptions[0]?.mountRoots, prepared.rootPlan.mountRoots);
   assert.deepEqual(clientOptions[0]?.trustedRoots, prepared.rootPlan.trustedRoots);
   assert.deepEqual(clientOptions[0]?.defaultWritableRoots, prepared.rootPlan.defaultWritableRoots);
@@ -72,6 +81,9 @@ test("prepareRunClients builds isolated app-server config and starts the shared 
   assert.ok(prepared.rootPlan.defaultWritableRoots.includes(resolve(homedir(), ".guru", "codebase")));
   assert.match(clientOptions[0]?.configToml ?? "", new RegExp(escapeRegExp(`[projects."${coordinatorMount}"]`)));
   assert.match(clientOptions[0]?.configToml ?? "", new RegExp(escapeRegExp(`[projects."${resolve(fixtureRoot)}"]`)));
+  assert.match(clientOptions[0]?.configToml ?? "", /^model = "gpt-5\.5"$/m);
+  assert.match(clientOptions[0]?.configToml ?? "", /^model_reasoning_effort = "high"$/m);
+  assert.match(clientOptions[0]?.configToml ?? "", /^model_reasoning_summary = "concise"$/m);
 });
 
 function escapeRegExp(value: string): string {

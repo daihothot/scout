@@ -1,8 +1,18 @@
 {
+  "defaults": {
+    "model": {
+      "id": "gpt-5.5",
+      "provider": "GuruOpenAI",
+      "reasoningEffort": "high",
+      "reasoningSummary": "concise"
+    }
+  },
   "profiles": {
     "coordinator": {
       "config": "config/base.config.toml",
-      "skills": [],
+      "skills": [
+        "scout-boundary-inspector"
+      ],
       "shellTools": [
         "scoutAssets",
         "scoutMemory"
@@ -21,8 +31,9 @@
     "researcher": {
       "config": "config/base.config.toml",
       "skills": [
-        "scout-bdd-verification",
-        "jarvis-codebase"
+        "guru-knowledge-research",
+        "jarvis-codebase",
+        "scout-boundary-inspector"
       ],
       "shellTools": [
         "scoutAssets",
@@ -54,8 +65,8 @@
     "verifier": {
       "config": "config/base.config.toml",
       "skills": [
-        "scout-bdd-verification",
-        "jarvis-codebase"
+        "jarvis-codebase",
+        "scout-boundary-inspector"
       ],
       "shellTools": [
         "scoutAssets",
@@ -97,7 +108,7 @@
     "validator": {
       "config": "config/base.config.toml",
       "skills": [
-        "scout-bdd-verification"
+        "scout-boundary-inspector"
       ],
       "shellTools": [
         "scoutAssets",

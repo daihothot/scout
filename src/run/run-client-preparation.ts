@@ -8,8 +8,6 @@ import {
 } from "../agent-server/codex/app-server-factory.js";
 import { CodexAssetLayout } from "../asset-store/asset-layout.js";
 import {
-  type AgentProfile,
-  type AgentProfilesFile,
   type McpServersFile,
 } from "../asset-store/types.js";
 import { readJsonFile } from "../core/fs.js";
@@ -21,6 +19,12 @@ import {
   buildMountMacroValues,
   resolveMountMacros,
 } from "../asset-store/mount-macros.js";
+import {
+  readAgentProfilesForRepo,
+  resolveAgentProfile,
+  resolveDefaultAgentModel,
+} from "../asset-store/agent-profiles.js";
+import type { CodexModelConfig } from "../agent-server/codex/model-config.js";
 
 export const RunClientAgentRoles = [
   ScoutAgentRoles.Coordinator,
@@ -52,18 +56,27 @@ export interface PrepareRunClientsOptions {
 
 export async function prepareRunClients(options: PrepareRunClientsOptions): Promise<PreparedRunClients> {
   const rootPlan = buildRunClientRootPlan(options);
-  const isolatedHome = join(resolve(options.repoRoot), "run", options.runId, "codex-home");
+  const defaultModel = resolveDefaultAgentModel(readAgentProfilesForRepo(options.repoRoot));
+  const runRoot = join(resolve(options.repoRoot), "run", options.runId);
+  const logsRoot = join(runRoot, "logs");
+  const isolatedHome = join(runRoot, "codex-home");
   const isolatedCodexHome = join(isolatedHome, ".codex");
   mkdirSync(isolatedCodexHome, { recursive: true });
   const configToml = buildRunClientConfig({
     mountRoots: rootPlan.mountRoots,
     trustedRoots: rootPlan.trustedRoots,
+    model: defaultModel,
   });
   const clientOptions = {
     isolatedHome,
     isolatedCodexHome,
     configToml,
+    providerName: defaultModel.provider,
     logPrefix: `scout ${options.runId} app-server`,
+    stderrLogPath: join(logsRoot, "app-server.stderr.log"),
+    transportLogPath: process.env.SCOUT_APP_SERVER_TRACE === "1"
+      ? join(logsRoot, "app-server.ndjson")
+      : undefined,
     defaultWritableRoots: rootPlan.defaultWritableRoots,
     mountRoots: rootPlan.mountRoots,
     trustedRoots: rootPlan.trustedRoots,
@@ -87,7 +100,7 @@ export function buildRunClientRootPlan(options: {
   const repoRoot = resolve(options.repoRoot);
   const runRoot = join(repoRoot, "run", options.runId);
   const assetsRoot = join(repoRoot, "assets", "codex");
-  const profiles = readJsonFile<AgentProfilesFile>(join(assetsRoot, CodexAssetLayout.agentProfiles));
+  const profiles = readAgentProfilesForRepo(repoRoot);
   const mcpServers = readJsonFile<McpServersFile>(join(assetsRoot, CodexAssetLayout.mcpServers));
   const agentRoles = options.agentRoles ?? RunClientAgentRoles;
   const mountRoots: string[] = [];
@@ -95,7 +108,7 @@ export function buildRunClientRootPlan(options: {
   const writableRoots: string[] = [];
 
   for (const role of agentRoles) {
-    const profile = requireProfile(profiles, role);
+    const profile = resolveAgentProfile(profiles, role);
     const agentRoot = join(runRoot, "agents", role);
     const mountRoot = join(agentRoot, "mount");
     const artifactRoot = join(agentRoot, "artifacts");
@@ -148,19 +161,22 @@ export function buildRunClientRootPlan(options: {
 export function buildRunClientConfig(input: {
   mountRoots: string[];
   trustedRoots: string[];
+  model: CodexModelConfig;
 }): string {
-  const homeConfig = readHomeProviderConfig();
+  const homeConfig = readHomeProviderConfig(input.model.provider);
   const mountRoots = uniqueResolved(input.mountRoots);
   const trustedRoots = uniqueResolved(input.trustedRoots);
   const lines = [
-    'model = "gpt-5.4-mini"',
-    'model_provider = "GuruOpenAI"',
+    `model = "${escapeToml(input.model.id)}"`,
+    `model_provider = "${escapeToml(input.model.provider)}"`,
+    `model_reasoning_effort = "${input.model.reasoningEffort}"`,
+    `model_reasoning_summary = "${input.model.reasoningSummary}"`,
     "",
     "[features]",
     "shell_snapshot = false",
     "",
-    "[model_providers.GuruOpenAI]",
-    'name = "GuruOpenAI"',
+    `[model_providers.${input.model.provider}]`,
+    `name = "${escapeToml(input.model.provider)}"`,
     `base_url = "${escapeToml(homeConfig.baseUrl ?? "https://api.openai.com/v1")}"`,
     `env_key = "${escapeToml(homeConfig.envKey ?? "OPENAI_API_KEY")}"`,
     'wire_api = "responses"',
@@ -182,12 +198,6 @@ export function buildRunClientConfig(input: {
     );
   }
   return lines.join("\n");
-}
-
-function requireProfile(profiles: AgentProfilesFile, role: ScoutAgentRole): AgentProfile {
-  const profile = profiles.profiles[role];
-  if (!profile) throw new Error(`No agent profile configured for agent: ${role}`);
-  return profile;
 }
 
 function resolveProfileRoots(input: {
@@ -227,10 +237,14 @@ function resolveProfileRoot(root: string, repoRoot: string): string {
   return resolve(repoRoot, root);
 }
 
-function readHomeProviderConfig(): { baseUrl?: string; envKey?: string } {
+function readHomeProviderConfig(providerName: string): { baseUrl?: string; envKey?: string } {
   try {
     const text = readFileSync(join(homedir(), ".codex", "config.toml"), "utf8");
-    const block = text.match(/^\[model_providers\.GuruOpenAI\]\n([\s\S]*?)(?=^\[|\z)/m)?.[1] ?? "";
+    const escapedProvider = providerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const block = text.match(new RegExp(
+      `^\\[model_providers\\.${escapedProvider}\\]\\n([\\s\\S]*?)(?=^\\[|\\z)`,
+      "m",
+    ))?.[1] ?? "";
     return {
       baseUrl: block.match(/^base_url\s*=\s*"([^"]*)"/m)?.[1],
       envKey: block.match(/^env_key\s*=\s*"([^"]*)"/m)?.[1],

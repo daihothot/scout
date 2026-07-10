@@ -20,6 +20,12 @@ export interface AppServerBaseItem {
   status?: AppServerItemStatus;
 }
 
+export interface AppServerUserMessageItem extends AppServerBaseItem {
+  type: "userMessage";
+  content: unknown[];
+  clientId?: string | null;
+}
+
 export interface AppServerAgentMessageItem extends AppServerBaseItem {
   type: "agentMessage";
   text: string;
@@ -78,6 +84,7 @@ export interface AppServerUnknownItem extends AppServerBaseItem {
 }
 
 export type AppServerItem =
+  | AppServerUserMessageItem
   | AppServerAgentMessageItem
   | AppServerReasoningItem
   | AppServerCommandExecutionItem
@@ -596,6 +603,35 @@ export class AppServerEventStore {
         turn.updatedAt = nowIso();
         return;
       }
+      case "item/reasoning/summaryPartAdded": {
+        const threadId = readString(params, "threadId");
+        const turnId = readString(params, "turnId");
+        const itemId = readString(params, "itemId");
+        const summaryIndex = readNumber(params, "summaryIndex");
+        if (!threadId || !turnId || !itemId || summaryIndex === undefined) return;
+        this.updateReasoningSummary({
+          threadId,
+          turnId,
+          itemId,
+          summaryIndex,
+        });
+        return;
+      }
+      case "item/reasoning/summaryTextDelta": {
+        const threadId = readString(params, "threadId");
+        const turnId = readString(params, "turnId");
+        const itemId = readString(params, "itemId");
+        const summaryIndex = readNumber(params, "summaryIndex");
+        if (!threadId || !turnId || !itemId || summaryIndex === undefined) return;
+        this.updateReasoningSummary({
+          threadId,
+          turnId,
+          itemId,
+          summaryIndex,
+          delta: readString(params, "delta") ?? "",
+        });
+        return;
+      }
       case "serverRequest/resolved": {
         const requestId = readString(params, "requestId") ?? readNumber(params, "requestId")?.toString();
         if (requestId) this.pendingRequests.delete(requestId);
@@ -623,6 +659,27 @@ export class AppServerEventStore {
       this.threadOrder.unshift(threadId);
     }
     return state;
+  }
+
+  private updateReasoningSummary(input: {
+    threadId: string;
+    turnId: string;
+    itemId: string;
+    summaryIndex: number;
+    delta?: string;
+  }): void {
+    const turn = this.ensureTurn(input.threadId, input.turnId);
+    const item = turn.items[input.itemId];
+    if (!item || item.type !== "reasoning") return;
+    const summary = [...(item.summary ?? [])];
+    while (summary.length <= input.summaryIndex) summary.push("");
+    summary[input.summaryIndex] = `${summary[input.summaryIndex] ?? ""}${input.delta ?? ""}`;
+    item.summary = summary;
+    turn.updatedAt = nowIso();
+    const thread = this.ensureThread(input.threadId);
+    thread.latestTurnId = input.turnId;
+    thread.updatedAt = turn.updatedAt;
+    this.moveThreadToFront(input.threadId);
   }
 
   private ensureTurn(threadId: string, turnId: string): AppServerTurnState {
@@ -774,6 +831,24 @@ function timelineEntryFromNotification(
         params,
         turnId: readString(params, "turnId"),
       });
+    case "item/reasoning/summaryPartAdded":
+      return appServerTimelineEntry({
+        stream: AppServerTimelineStreams.Item,
+        kind: "reasoning_summary_part_added",
+        receivedAt,
+        params,
+        turnId: readString(params, "turnId"),
+        itemId: readString(params, "itemId"),
+      });
+    case "item/reasoning/summaryTextDelta":
+      return appServerTimelineEntry({
+        stream: AppServerTimelineStreams.Item,
+        kind: "reasoning_summary_delta",
+        receivedAt,
+        params,
+        turnId: readString(params, "turnId"),
+        itemId: readString(params, "itemId"),
+      });
     case "serverRequest/resolved":
       return undefined;
     default:
@@ -851,6 +926,14 @@ function normalizeItem(value: unknown): AppServerItem | undefined {
   if (!raw || !id || !type) return undefined;
 
   switch (type) {
+    case "userMessage":
+      return {
+        ...raw,
+        id,
+        type,
+        content: readArray(raw.content),
+        clientId: readString(raw, "clientId") ?? null,
+      };
     case "agentMessage":
       return {
         ...raw,
