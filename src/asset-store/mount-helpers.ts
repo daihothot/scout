@@ -231,19 +231,19 @@ function resolveDynamicRecord(
 
 function resolveCommand(command: string, assetsRoot: string): string {
   if (command === "node") return process.execPath;
-  if (existsSync(command)) return command;
   if (command.startsWith("assets/")) return join(resolve(assetsRoot, "..", ".."), command);
+  if (existsSync(command)) return command;
   return resolveExecutableFromPath(command) ?? command;
 }
 
 function resolveShellToolCommand(tool: ShellToolContract, assetsRoot: string): string | undefined {
   const command = tool.command;
   if (command === "node") return process.execPath;
-  if (existsSync(command)) return command;
   if (command.startsWith("assets/")) {
     const assetPath = join(resolve(assetsRoot, "..", ".."), command);
     return existsSync(assetPath) ? assetPath : undefined;
   }
+  if (existsSync(command)) return command;
   if (command.includes("/") || isAbsolute(command)) return undefined;
   return resolveExecutableFromPath(command);
 }

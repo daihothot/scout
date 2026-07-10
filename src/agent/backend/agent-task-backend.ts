@@ -13,6 +13,8 @@ import {
   AgentTaskStore,
   cloneAgentTaskState,
 } from "../task/agent-task-store.js";
+import type { RuntimeProgressEvent } from "../../interaction/port.js";
+import { SystemEvents } from "../../system/events/index.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import type {
   AgentTaskEventPayload,
@@ -81,10 +83,16 @@ export class AgentTaskBackend {
     const activeTask = this.taskStore.findActiveTaskForAgent(agent.agentId);
     switch (entry.stream) {
       case "item": {
-        if (entry.kind !== "item_started" && entry.kind !== "item_completed") return;
+        if (
+          entry.kind !== "item_started"
+          && entry.kind !== "item_completed"
+          && entry.kind !== "reasoning_summary_part_added"
+          && entry.kind !== "reasoning_summary_delta"
+        ) return;
         const resolved = resolver(entry);
-        if (resolved.progressItem) {
-          this.applyProgressUpdate(agent, activeTask, entry, resolved.progressItem);
+        const progress = resolveRuntimeProgressEvent(agent, activeTask, entry, resolved);
+        if (progress) {
+          this.applyProgressUpdate(entry, progress);
         }
         return;
       }
@@ -105,10 +113,7 @@ export class AgentTaskBackend {
           }
           return;
         }
-        if (entry.kind === "token_usage_updated") {
-          const resolved = resolver(entry);
-          this.applyTokenUsageUpdate(agent, activeTask, entry, resolved.tokenUsage);
-        }
+        return;
       }
     }
   }
@@ -153,19 +158,14 @@ export class AgentTaskBackend {
   }
 
   private handleTaskEvent(event: ScoutEvent<AgentTaskEventPayload>): void {
-    const { task, data } = event.payload;
+    const { task } = event.payload;
     this.logger.info({
+      target: "runtime",
       module: "agent.task",
       event: event.key.routeKey,
       agentId: task.agentId,
       taskId: task.taskId,
-      data: {
-        eventKey: event.key.routeKey,
-        status: task.status,
-        role: task.role,
-        description: task.description,
-        ...asLogObject(data),
-      },
+      data: taskEventLogData(event, task),
     });
   }
 
@@ -180,19 +180,6 @@ export class AgentTaskBackend {
       updatedAt: new Date().toISOString(),
     };
     const stored = this.taskStore.updateTask(updated.taskId, () => updated);
-    this.logger.info({
-      module: "agent.task",
-      event: "goal_updated",
-      agentId: stored.agentId,
-      taskId: stored.taskId,
-      data: {
-        status: stored.status,
-        role: stored.role,
-        description: stored.description,
-        seq: entry.seq,
-        goal,
-      },
-    });
     this.eventBus.publish(AgentEvents.task.goalUpdated, {
       task: cloneAgentTaskState(stored),
       data: {
@@ -215,19 +202,6 @@ export class AgentTaskBackend {
       updatedAt: new Date().toISOString(),
     };
     const stored = this.taskStore.updateTask(updated.taskId, () => updated);
-    this.logger.info({
-      module: "agent.task",
-      event: "plan_updated",
-      agentId: stored.agentId,
-      taskId: stored.taskId,
-      data: {
-        status: stored.status,
-        role: stored.role,
-        description: stored.description,
-        seq: entry.seq,
-        plan,
-      },
-    });
     this.eventBus.publish(AgentEvents.task.planUpdated, {
       task: cloneAgentTaskState(stored),
       data: {
@@ -239,50 +213,204 @@ export class AgentTaskBackend {
   }
 
   private applyProgressUpdate(
-    agent: ScoutAgent,
-    activeTask: AgentTaskState | undefined,
     entry: AppServerTimelineEntry,
-    progressItem: NonNullable<AppServerResolvedTimelineEntry["progressItem"]>,
+    progress: RuntimeProgressEvent,
   ): void {
-    this.logger.info({
-      module: "agent.progress",
-      event: "progress_item",
-      agentId: agent.agentId,
-      taskId: activeTask?.taskId,
-      data: {
-        seq: entry.seq,
-        threadId: progressItem.threadId,
-        turnId: progressItem.turnId,
-        itemId: progressItem.itemId,
-        type: progressItem.type,
-        status: progressItem.status,
-        label: progressItem.label,
-        detail: progressItem.detail,
-        updatedAt: progressItem.updatedAt,
-      },
-    });
+    if (shouldLogProgress(entry, progress)) {
+      this.logger.info({
+        module: "agent.item",
+        event: progress.type === "reasoning" ? "reasoning_completed" : entry.kind,
+        agentId: progress.agentId,
+        taskId: progress.taskId,
+        data: {
+          seq: entry.seq,
+          threadId: progress.threadId,
+          turnId: progress.turnId,
+          itemId: progress.itemId,
+          type: progress.type,
+          status: progress.status,
+          label: progress.label,
+          summary: progress.type === "reasoning" ? progress.detail : undefined,
+          updatedAt: progress.updatedAt,
+        },
+      });
+    }
+    this.eventBus.publish(SystemEvents.interaction.progressRequested, progress);
   }
 
-  private applyTokenUsageUpdate(
-    agent: ScoutAgent,
-    activeTask: AgentTaskState | undefined,
-    entry: AppServerTimelineEntry,
-    tokenUsage: AppServerResolvedTimelineEntry["tokenUsage"],
-  ): void {
-    this.logger.info({
-      module: "agent.state",
-      event: "thread_token_usage_updated",
+}
+
+function resolveRuntimeProgressEvent(
+  agent: ScoutAgent,
+  activeTask: AgentTaskState | undefined,
+  entry: AppServerTimelineEntry,
+  resolved: AppServerResolvedTimelineEntry,
+): RuntimeProgressEvent | undefined {
+  const progressItem = resolved.progressItem;
+  if (progressItem) {
+    return {
+      source: "agent.app_server.item",
+      seq: entry.seq,
       agentId: agent.agentId,
       taskId: activeTask?.taskId,
+      threadId: progressItem.threadId,
+      turnId: progressItem.turnId,
+      itemId: progressItem.itemId,
+      type: progressItem.type,
+      status: progressItem.status,
+      label: progressItem.label,
+      detail: progressItem.detail,
+      updatedAt: progressItem.updatedAt,
       data: {
-        seq: entry.seq,
-        threadId: entry.threadId,
-        turnId: entry.turnId,
-        tokenUsage,
+        role: agent.role,
       },
-    });
+    };
   }
 
+  const item = resolved.item;
+  if (!item) return undefined;
+  if (item.type === "agentMessage" || item.type === "userMessage") return undefined;
+  return {
+    source: "agent.app_server.item",
+    seq: entry.seq,
+    agentId: agent.agentId,
+    taskId: activeTask?.taskId,
+    threadId: entry.threadId,
+    turnId: entry.turnId,
+    itemId: item.id,
+    type: item.type,
+    status: item.status ?? (entry.kind === "item_completed" ? "completed" : "inProgress"),
+    label: itemLabel(item),
+    detail: item.type === "reasoning" ? reasoningSummary(item.summary) : undefined,
+    updatedAt: entry.receivedAt,
+    data: {
+      role: agent.role,
+    },
+  };
+}
+
+function itemLabel(item: NonNullable<AppServerResolvedTimelineEntry["item"]>): string {
+  switch (item.type) {
+    case "reasoning":
+      return "Reasoning";
+    case "fileChange":
+      return "File changes";
+    case "unknown":
+      return `Unknown item (${item.rawType})`;
+    default:
+      return item.type;
+  }
+}
+
+function reasoningSummary(summary: string[] | undefined): string | undefined {
+  const text = (summary ?? []).map((part) => part.trim()).filter(Boolean).join("\n").trim();
+  return text.length > 0 ? text : undefined;
+}
+
+function shouldLogProgress(
+  entry: AppServerTimelineEntry,
+  progress: RuntimeProgressEvent,
+): boolean {
+  if (progress.type === "reasoning") return entry.kind === "item_completed";
+  if (progress.type === "dynamicToolCall") return false;
+  return entry.kind === "item_started" || entry.kind === "item_completed";
+}
+
+function taskEventLogData(
+  event: ScoutEvent<AgentTaskEventPayload>,
+  task: AgentTaskState,
+): Record<string, unknown> {
+  const base = {
+    status: task.status,
+    role: task.role,
+  };
+  if (AgentEvents.task.assigned.is(event)) {
+    return {
+      ...base,
+      description: task.description,
+      backgrounded: task.isBackgrounded,
+    };
+  }
+  if (AgentEvents.task.threadAttached.is(event)) {
+    return {
+      ...base,
+      threadId: task.thread?.threadId,
+    };
+  }
+  if (AgentEvents.task.planUpdated.is(event)) {
+    return {
+      ...base,
+      plan: task.plan ? {
+        turnId: task.plan.turnId,
+        explanation: task.plan.explanation,
+        steps: task.plan.steps.map((step) => ({
+          step: step.step,
+          status: step.status,
+        })),
+      } : undefined,
+    };
+  }
+  if (AgentEvents.task.goalUpdated.is(event)) {
+    return {
+      ...base,
+      goal: task.goal ? {
+        objective: task.goal.objective,
+        status: task.goal.status,
+      } : undefined,
+    };
+  }
+  if (AgentEvents.task.stepStarted.is(event)
+    || AgentEvents.task.stepCompleted.is(event)
+    || AgentEvents.task.stepOutput.is(event)) {
+    const step = task.steps?.at(-1);
+    return {
+      ...base,
+      step: step ? {
+        stepId: step.stepId,
+        turnId: step.turnId,
+        status: step.status,
+        durationMs: step.durationMs,
+        toolCallCount: step.toolCalls.length,
+      } : undefined,
+    };
+  }
+  if (AgentEvents.task.humanInputRequested.is(event)) {
+    const request = task.steps?.at(-1)?.humanInputRequest;
+    return {
+      ...base,
+      request: request ? {
+        requestId: request.requestId,
+        kind: request.kind,
+        status: request.status,
+      } : undefined,
+    };
+  }
+  if (AgentEvents.task.humanInputResponded.is(event)) {
+    const response = task.steps?.at(-1)?.humanInputResponse;
+    return {
+      ...base,
+      response: response ? {
+        requestId: response.requestId,
+      } : undefined,
+    };
+  }
+  if (AgentEvents.task.terminal.is(event)) {
+    return {
+      ...base,
+      durationMs: elapsedMs(task.startedAt, task.finishedAt),
+      outcome: task.outcome,
+      error: task.error,
+    };
+  }
+  return base;
+}
+
+function elapsedMs(startedAt: string | undefined, finishedAt: string | undefined): number | undefined {
+  if (!startedAt || !finishedAt) return undefined;
+  const started = Date.parse(startedAt);
+  const finished = Date.parse(finishedAt);
+  if (!Number.isFinite(started) || !Number.isFinite(finished)) return undefined;
+  return Math.max(0, finished - started);
 }
 
 export type AgentTaskTimelineResolver = (
@@ -295,8 +423,4 @@ export function cloneTask(task: AgentTaskState): AgentTaskState {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function asLogObject(value: unknown): Record<string, unknown> {
-  return isPlainObject(value) ? value : {};
 }

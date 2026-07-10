@@ -67,6 +67,7 @@ export interface ScoutAgentOptions {
   eventBus: EventBus;
   registry: AgentRegistry;
   dynamicTools?: AgentThreadSpec["dynamicTools"];
+  turnSilenceWarningMs?: number;
 }
 
 export class ScoutAgent {
@@ -79,6 +80,7 @@ export class ScoutAgent {
   protected readonly logger: Logger;
   protected readonly eventBus: EventBus;
   protected readonly registry: AgentRegistry;
+  private readonly turnSilenceWarningMs: number;
   runner!: AgentRunner;
   private thread?: AgentThreadSnapshot;
   private threadPreflightPromise?: Promise<void>;
@@ -96,6 +98,7 @@ export class ScoutAgent {
     this.logger = input.logger;
     this.eventBus = input.eventBus;
     this.registry = input.registry;
+    this.turnSilenceWarningMs = input.turnSilenceWarningMs ?? readTurnSilenceWarningMs();
     this.logger.registerAgentLogRoot(this.agentId, input.agentMount.logsRoot);
   }
 
@@ -122,14 +125,13 @@ export class ScoutAgent {
   async start(): Promise<AgentThreadSnapshot> {
     if (this.thread) return this.thread;
     const started = await this.appServer.startThread({
-      model: "gpt-5.4-mini",
-      modelProvider: "GuruOpenAI",
+      model: this.spec.model.id,
+      modelProvider: this.spec.model.provider,
+      reasoningEffort: this.spec.model.reasoningEffort,
       cwd: this.spec.cwd,
       approvalPolicy: this.spec.approvalPolicy,
       sandbox: this.spec.sandbox,
-      config: this.spec.config ?? {
-        model_reasoning_effort: "minimal",
-      },
+      config: this.spec.config,
       baseInstructions: this.spec.baseInstructions,
       developerInstructions: this.spec.developerInstructions,
       dynamicTools: this.spec.dynamicTools,
@@ -151,43 +153,52 @@ export class ScoutAgent {
     }
     const invocationId = this.nextInvocationId(thread.threadId);
     const startedAt = new Date().toISOString();
+    const startedAtMs = Date.now();
+    const prompt = textPreview(input.prompt);
 
     this.logger.debug({
       module: "agent",
       event: "turn_started",
       agentId: this.agentId,
-        data: {
-          invocationId,
-          role: thread.spec.role,
-          threadId: thread.threadId,
-          prompt: input.prompt,
-          outputContract: input.outputContract,
+      data: {
+        invocationId,
+        role: thread.spec.role,
+        threadId: thread.threadId,
+        prompt,
+        outputContract: input.outputContract,
       },
     });
+    const silenceMonitor = new TurnSilenceMonitor({
+      appServer: this.appServer,
+      threadId: thread.threadId,
+      warningMs: this.turnSilenceWarningMs,
+      onWarning: (warning) => {
+        this.logger.warn({
+          module: "agent.turn",
+          event: "turn_silence_warning",
+          agentId: this.agentId,
+          data: {
+            invocationId,
+            role: thread.spec.role,
+            threadId: thread.threadId,
+            ...warning,
+          },
+        });
+      },
+    });
+    silenceMonitor.start();
 
     try {
       const result = await this.appServer.runTurn({
         threadId: thread.threadId,
         prompt: input.prompt,
+        model: thread.spec.model.id,
+        reasoningEffort: thread.spec.model.reasoningEffort,
+        reasoningSummary: thread.spec.model.reasoningSummary,
         timeoutMs: input.timeoutMs,
         sandbox: input.sandbox,
         writableRoots: input.writableRoots ?? this.defaultWritableRoots(),
         onStatusMessage: input.onStatusMessage,
-      });
-      this.logger.debug({
-        module: "agent",
-        event: "turn_event_snapshot",
-        agentId: this.agentId,
-        data: {
-          invocationId,
-          role: thread.spec.role,
-          threadId: thread.threadId,
-          turnId: result.turnId,
-          tokenUsage: result.eventStoreSnapshot?.threads[thread.threadId]?.tokenUsage,
-          pendingRequestCount: Object.keys(result.eventStoreSnapshot?.pendingRequests ?? {}).length,
-          appServerEventSeq: result.eventStoreSnapshot?.currentSeq ?? 0,
-          droppedTimelineCount: result.eventStoreSnapshot?.droppedTimelineCount ?? 0,
-        },
       });
       const turn: ScoutAgentTurnResult = {
         invocationId,
@@ -205,8 +216,17 @@ export class ScoutAgent {
         event: "turn_completed",
         agentId: this.agentId,
         data: {
-          ...turn,
-          finalResponse: result.finalResponse,
+          invocationId,
+          role: thread.spec.role,
+          threadId: thread.threadId,
+          turnId: result.turnId,
+          durationMs: Math.max(0, Date.now() - startedAtMs),
+          prompt,
+          response: textPreview(result.finalResponse ?? ""),
+          outputContract: input.outputContract,
+          tokenUsage: result.eventStoreSnapshot?.threads[thread.threadId]?.tokenUsage,
+          pendingRequestCount: Object.keys(result.eventStoreSnapshot?.pendingRequests ?? {}).length,
+          droppedTimelineCount: result.eventStoreSnapshot?.droppedTimelineCount ?? 0,
         },
       });
       return {
@@ -232,9 +252,19 @@ export class ScoutAgent {
         module: "agent",
         event: "turn_failed",
         agentId: this.agentId,
-        data: turn,
+        data: {
+          invocationId,
+          role: thread.spec.role,
+          threadId: thread.threadId,
+          durationMs: Math.max(0, Date.now() - startedAtMs),
+          prompt,
+          outputContract: input.outputContract,
+          error: turn.error,
+        },
       });
       return { turn };
+    } finally {
+      silenceMonitor.stop();
     }
   }
 
@@ -257,8 +287,8 @@ export class ScoutAgent {
         agentId: this.agentId,
         data: {
           threadId: thread.threadId,
-          objective: input.objective,
-          error: error instanceof Error ? error.stack ?? error.message : String(error),
+          objective: textPreview(input.objective),
+          error: error instanceof Error ? error.message : String(error),
         },
       });
       return undefined;
@@ -325,6 +355,91 @@ export class ScoutAgent {
     this.invocationSequence += 1;
     return `${safePathSegment(this.agentId)}-${safePathSegment(threadId)}-invocation-${String(this.invocationSequence).padStart(4, "0")}`;
   }
+}
+
+interface TurnSilenceWarning {
+  turnId?: string;
+  warningCount: number;
+  silentForMs: number;
+  thresholdMs: number;
+  lastActivityAt: string;
+}
+
+class TurnSilenceMonitor {
+  private readonly appServer: CodexAppServerClient;
+  private readonly threadId: string;
+  private readonly warningMs: number;
+  private readonly onWarning: (warning: TurnSilenceWarning) => void;
+  private lastActivityMs = Date.now();
+  private warningCount = 0;
+  private turnId?: string;
+  private timer?: NodeJS.Timeout;
+  private unsubscribe?: () => void;
+
+  constructor(input: {
+    appServer: CodexAppServerClient;
+    threadId: string;
+    warningMs: number;
+    onWarning: (warning: TurnSilenceWarning) => void;
+  }) {
+    this.appServer = input.appServer;
+    this.threadId = input.threadId;
+    this.warningMs = input.warningMs;
+    this.onWarning = input.onWarning;
+  }
+
+  start(): void {
+    if (this.warningMs <= 0 || this.timer) return;
+    this.lastActivityMs = Date.now();
+    this.unsubscribe = this.appServer.onTimeline((entry) => {
+      if (entry.threadId !== this.threadId) return;
+      this.lastActivityMs = Date.now();
+      this.warningCount = 0;
+      this.turnId = entry.turnId ?? this.turnId;
+    });
+    this.timer = setInterval(() => this.check(), this.warningMs);
+    this.timer.unref();
+  }
+
+  stop(): void {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = undefined;
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
+  }
+
+  private check(): void {
+    const now = Date.now();
+    const silentForMs = now - this.lastActivityMs;
+    const expectedWarningCount = Math.floor(silentForMs / this.warningMs);
+    if (expectedWarningCount <= this.warningCount) return;
+    this.warningCount = expectedWarningCount;
+    this.onWarning({
+      turnId: this.turnId,
+      warningCount: this.warningCount,
+      silentForMs,
+      thresholdMs: this.warningMs,
+      lastActivityAt: new Date(this.lastActivityMs).toISOString(),
+    });
+  }
+}
+
+function readTurnSilenceWarningMs(): number {
+  const configured = Number(process.env.SCOUT_TURN_SILENCE_WARNING_MS ?? 60_000);
+  return Number.isFinite(configured) && configured >= 0 ? configured : 60_000;
+}
+
+function textPreview(value: string, maxChars = 400): {
+  chars: number;
+  preview: string;
+  truncated: boolean;
+} {
+  const compact = value.replaceAll(/\s+/g, " ").trim();
+  return {
+    chars: value.length,
+    preview: compact.length > maxChars ? `${compact.slice(0, maxChars)}...` : compact,
+    truncated: compact.length > maxChars,
+  };
 }
 
 function safePathSegment(value: string): string {

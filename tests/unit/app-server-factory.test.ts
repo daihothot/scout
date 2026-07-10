@@ -10,6 +10,12 @@ test("run client preparation config trusts all prepared agent mount roots", () =
   const guruKnowledge = "/Users/chengdai/.guru/knowledge";
 
   const configToml = buildRunClientConfig({
+    model: {
+      id: "gpt-5.5",
+      provider: "GuruOpenAI",
+      reasoningEffort: "high",
+      reasoningSummary: "concise",
+    },
     mountRoots: [
       coordinatorMount,
       researcherMount,

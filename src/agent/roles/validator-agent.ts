@@ -14,8 +14,8 @@ export class ValidatorAgent extends WorkerAgent {
         approvalPolicy: "never",
         sandbox: "read-only",
         contextBundleId: options.contextBundle.contextBundleId,
+        model: { ...options.agentMount.agentProfile.model },
         config: {
-          model_reasoning_effort: "minimal",
           features: {
             multi_agent: false,
           },

@@ -86,7 +86,7 @@ export class AgentToolBackend {
         data: {
           tool: input.tool,
           callId: input.callId,
-          result,
+          result: summarizeAgentToolResult(call.tool, result),
         },
       });
       return dynamicToolSuccess(result);
@@ -370,6 +370,31 @@ function dynamicToolFailure(message: string): DynamicToolCallResult {
       text: message,
     }],
   };
+}
+
+function summarizeAgentToolResult(
+  tool: AgentDynamicToolCall["tool"],
+  result: Record<string, unknown>,
+): Record<string, unknown> {
+  switch (tool) {
+    case "AssignTask":
+      return pickLogFields(result, ["status", "taskId", "agentId", "role"]);
+    case "RequestHumanInput":
+      return pickLogFields(result, ["status", "requestId", "routedTo", "taskId"]);
+    case "SendMessage":
+      return pickLogFields(result, ["status", "taskId", "agentId"]);
+    case "SubmitTask":
+      return pickLogFields(result, ["status", "taskId", "agentId", "taskStatus"]);
+  }
+}
+
+function pickLogFields(
+  source: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> {
+  return Object.fromEntries(
+    keys.flatMap((key) => source[key] === undefined ? [] : [[key, source[key]]]),
+  );
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

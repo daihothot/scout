@@ -24,6 +24,9 @@ test("AssetStore materializes per-agent trusted and writable roots from agent pr
   const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as {
     trustedRoots: string[];
     writableRoots: string[];
+    agentProfile: AgentProfilesFile["profiles"][string] & {
+      model: NonNullable<AgentProfilesFile["profiles"][string]["model"]>;
+    };
   };
   const expectedMountRoot = join(fixtureRoot, "run", runId, "agents", "verifier", "mount");
   const expectedArtifactRoot = join(fixtureRoot, "run", runId, "agents", "verifier", "artifacts");
@@ -50,6 +53,54 @@ test("AssetStore materializes per-agent trusted and writable roots from agent pr
     relativeFromMount(expectedMountRoot, join(homedir(), ".guru", "codebase")),
   ].sort());
   assert.equal(mount.mcpServers.some((server) => server.name === "codegraph"), false);
+  assert.deepEqual(mount.agentProfile.model, {
+    id: "gpt-5.5",
+    provider: "GuruOpenAI",
+    reasoningEffort: "high",
+    reasoningSummary: "concise",
+  });
+  assert.deepEqual(manifest.agentProfile.model, mount.agentProfile.model);
+});
+
+test("AssetStore resolves a complete per-agent model override", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-agent-model-profile-");
+  updateAgentProfile(fixtureRoot, "coordinator", {
+    model: {
+      id: "gpt-5.4",
+      provider: "GuruOpenAI",
+      reasoningEffort: "low",
+      reasoningSummary: "detailed",
+    },
+  });
+
+  const mount = new AssetStore().materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-model-override-test",
+    agentId: "coordinator",
+  });
+
+  assert.deepEqual(mount.agentProfile.model, {
+    id: "gpt-5.4",
+    provider: "GuruOpenAI",
+    reasoningEffort: "low",
+    reasoningSummary: "detailed",
+  });
+});
+
+test("AssetStore rejects an incomplete per-agent model override", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-agent-model-profile-");
+  updateAgentProfile(fixtureRoot, "coordinator", {
+    model: {
+      id: "gpt-5.4",
+      provider: "GuruOpenAI",
+    } as NonNullable<AgentProfilesFile["profiles"][string]["model"]>,
+  });
+
+  assert.throws(() => new AssetStore().materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-incomplete-model-override-test",
+    agentId: "coordinator",
+  }), /model for agent coordinator\.reasoningEffort/);
 });
 
 test("AssetStore exposes effective permission roots", () => {

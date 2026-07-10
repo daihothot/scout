@@ -37,6 +37,8 @@ import type {
   AppServerThreadGoalState,
   AppServerTimelineEntry,
 } from "../../src/agent-server/codex/app-server-event-store.js";
+import type { RuntimeProgressEvent } from "../../src/interaction/port.js";
+import { SystemEvents } from "../../src/system/events/index.js";
 
 test("WorkerRunner keeps task running and schedules a tick when a turn completes without terminal outcome", async () => {
   let runtime: WorkerRunner | undefined;
@@ -396,6 +398,63 @@ test("AgentTaskBackend reduces app-server plan and goal timeline entries into ta
   assert.equal(task?.goal?.status, "active");
 });
 
+test("AgentTaskBackend publishes Coordinator and Worker items to interaction progress", () => {
+  const eventBus = new InMemoryEventBus();
+  const progress: RuntimeProgressEvent[] = [];
+  eventBus.subscribe(SystemEvents.interaction.progressRequested, (event) => {
+    progress.push(event.payload as RuntimeProgressEvent);
+  });
+  const store = new AgentTaskStore();
+  const registry = new AgentRegistry();
+  const coordinator = createScoutAgentStub("coordinator");
+  const verifier = createScoutAgentStub("verifier");
+  registry.registerAgent(coordinator);
+  registry.registerAgent(verifier);
+  store.addTask(taskState({
+    taskId: "task-1",
+    agentId: "verifier",
+  }));
+  const backend = new AgentTaskBackend({
+    registry,
+    taskStore: store,
+    eventBus,
+    logger: {
+      info: () => undefined,
+      warn: () => undefined,
+    },
+  });
+
+  backend.handleAppServerTimelineEntry(
+    coordinator,
+    itemTimelineEntry(1, "item-1"),
+    () => resolvedItemEntry("item-1"),
+  );
+  backend.handleAppServerTimelineEntry(
+    verifier,
+    itemTimelineEntry(2, "item-1"),
+    () => resolvedProgressEntry("item-1", "Verifier command"),
+  );
+  backend.handleAppServerTimelineEntry(
+    coordinator,
+    itemTimelineEntry(3, "agent-message-1"),
+    () => resolvedMessageEntry("agentMessage", "agent-message-1"),
+  );
+  backend.handleAppServerTimelineEntry(
+    coordinator,
+    itemTimelineEntry(4, "user-message-1"),
+    () => resolvedMessageEntry("userMessage", "user-message-1"),
+  );
+
+  assert.deepEqual(
+    progress.map((event) => [event.agentId, event.taskId, event.label, event.detail]),
+    [
+      ["coordinator", undefined, "Reasoning", "Inspecting public evidence."],
+      ["verifier", "task-1", "Verifier command", undefined],
+    ],
+  );
+  assert.equal(JSON.stringify(progress).includes("raw private reasoning"), false);
+});
+
 function createHarness(input: {
   taskInput?: AssignAgentTaskInput;
   runTurn?: (turn: ScoutAgentTurnInput) => Promise<ScoutAgentTurnOutcome>;
@@ -438,6 +497,12 @@ function createHarness(input: {
       approvalPolicy: "never",
       sandbox: "workspace-write",
       contextBundleId: "context-1",
+      model: {
+        id: "gpt-5.5",
+        provider: "GuruOpenAI",
+        reasoningEffort: "high",
+        reasoningSummary: "concise",
+      },
     },
     response: {
       thread: { id: "thread-1" },
@@ -548,6 +613,18 @@ function goalTimelineEntry(seq: number): AppServerTimelineEntry {
   };
 }
 
+function itemTimelineEntry(seq: number, itemId: string): AppServerTimelineEntry {
+  return {
+    seq,
+    receivedAt: new Date().toISOString(),
+    stream: "item",
+    kind: "item_started",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId,
+  };
+}
+
 function resolvedPlanEntry(plan: AppServerPlanState): AppServerResolvedTimelineEntry {
   return {
     entry: planTimelineEntry(0, plan.turnId ?? "turn"),
@@ -559,6 +636,63 @@ function resolvedGoalEntry(goal: AppServerThreadGoalState): AppServerResolvedTim
   return {
     entry: goalTimelineEntry(0),
     goal,
+  };
+}
+
+function resolvedProgressEntry(itemId: string, label: string): AppServerResolvedTimelineEntry {
+  const entry = itemTimelineEntry(0, itemId);
+  return {
+    entry,
+    progressItem: {
+      itemId,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      type: "commandExecution",
+      status: "inProgress",
+      label,
+      item: {
+        id: itemId,
+        type: "commandExecution",
+        command: label,
+        status: "inProgress",
+      },
+      updatedAt: entry.receivedAt,
+    },
+  };
+}
+
+function resolvedItemEntry(itemId: string): AppServerResolvedTimelineEntry {
+  const entry = itemTimelineEntry(0, itemId);
+  return {
+    entry,
+    item: {
+      id: itemId,
+      type: "reasoning",
+      status: "inProgress",
+      summary: ["Inspecting public evidence."],
+      content: ["raw private reasoning"],
+    },
+  };
+}
+
+function resolvedMessageEntry(
+  type: "agentMessage" | "userMessage",
+  itemId: string,
+): AppServerResolvedTimelineEntry {
+  const entry = itemTimelineEntry(0, itemId);
+  return {
+    entry,
+    item: type === "agentMessage"
+      ? {
+          id: itemId,
+          type,
+          text: "progress placeholder",
+        }
+      : {
+          id: itemId,
+          type,
+          content: [{ type: "inputText", text: "user prompt" }],
+        },
   };
 }
 

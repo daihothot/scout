@@ -74,6 +74,12 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
 
   assert.ok(agent instanceof CoordinatorAgent);
   assert.equal(agent.runner.runnerKind, "coordinator");
+  assert.deepEqual(agent.spec.model, {
+    id: "gpt-5.5",
+    provider: "GuruOpenAI",
+    reasoningEffort: "high",
+    reasoningSummary: "concise",
+  });
   assert.equal(fixture.registry.listAgents()[0], agent);
   assert.ok(tools.some((tool) => tool.namespace === AGENT_ASSIGN_TASK_TOOL_NAMESPACE && tool.name === "AssignTask"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SEND_MESSAGE_TOOL_NAMESPACE && tool.name === "SendMessage"));
@@ -150,9 +156,106 @@ test("ScoutAgent starts a thread, runs preflight, and binds it to registry", asy
 
   assert.equal(thread.threadId, "thread-test");
   assert.deepEqual(thread.response, { thread: { id: "thread-test" } });
+  assert.deepEqual({
+    model: appServer.threadInputs[0]?.model,
+    modelProvider: appServer.threadInputs[0]?.modelProvider,
+    reasoningEffort: appServer.threadInputs[0]?.reasoningEffort,
+  }, {
+    model: "gpt-5.5",
+    modelProvider: "GuruOpenAI",
+    reasoningEffort: "high",
+  });
   assert.equal(fixture.registry.resolveAgentByThreadId("thread-test"), agent);
   await waitFor(() => agent.threadSnapshot?.threadPreflight?.result.status === "passed");
   assert.equal(agent.threadSnapshot?.threadPreflight?.threadId, "thread-test");
+
+  await agent.runTurn({ prompt: "check model profile" });
+  assert.deepEqual({
+    prompt: appServer.turnInputs[0]?.prompt,
+    model: appServer.turnInputs[0]?.model,
+    reasoningEffort: appServer.turnInputs[0]?.reasoningEffort,
+    reasoningSummary: appServer.turnInputs[0]?.reasoningSummary,
+  }, {
+    prompt: "check model profile",
+    model: "gpt-5.5",
+    reasoningEffort: "high",
+    reasoningSummary: "concise",
+  });
+});
+
+test("ScoutAgent warns about a silent turn without interrupting it", async () => {
+  let releaseTurn!: () => void;
+  const turnGate = new Promise<void>((resolve) => {
+    releaseTurn = resolve;
+  });
+  const appServer = createFakeAppServer({
+    onRunTurn: () => turnGate,
+    finalResponse: "Completed after the warning.",
+  });
+  const fixture = createAgentFixture("silent-turn", appServer);
+  const logs: Array<Omit<LogEvent, "timestamp" | "level" | "runId"> & { level: string }> = [];
+  const logger = createCaptureLogger(logs);
+  const coordinator = new CoordinatorAgent({
+    ...fixture.options,
+    logger,
+    turnSilenceWarningMs: 10,
+  });
+  fixture.registry.registerAgent(coordinator);
+  await coordinator.start();
+
+  const turnPromise = coordinator.runTurn({
+    prompt: `Inspect ${"a".repeat(500)}`,
+  });
+  await waitFor(() => logs.some((log) => log.event === "turn_silence_warning"));
+  releaseTurn();
+  const outcome = await turnPromise;
+
+  assert.equal(outcome.turn.status, "completed");
+  assert.equal(outcome.finalResponse, "Completed after the warning.");
+  const completed = logs.find((log) => log.event === "turn_completed");
+  const completedData = completed?.data as {
+    durationMs?: unknown;
+    prompt?: { chars?: number; preview?: string; truncated?: boolean };
+    response?: { preview?: string };
+  } | undefined;
+  assert.equal(typeof completedData?.durationMs, "number");
+  assert.equal(completedData?.prompt?.chars, 508);
+  assert.equal(completedData?.prompt?.truncated, true);
+  assert.ok((completedData?.prompt?.preview?.length ?? 0) < 500);
+  assert.equal(completedData?.response?.preview, "Completed after the warning.");
+
+  const warningCount = logs.filter((log) => log.event === "turn_silence_warning").length;
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(logs.filter((log) => log.event === "turn_silence_warning").length, warningCount);
+  coordinator.runner.stop();
+});
+
+test("ScoutAgent compacts objective and error details when setting a goal fails", async () => {
+  const appServer = createFakeAppServer();
+  const fixture = createAgentFixture("goal-log-preview", appServer);
+  const logs: Array<Omit<LogEvent, "timestamp" | "level" | "runId"> & { level: string }> = [];
+  const coordinator = new CoordinatorAgent({
+    ...fixture.options,
+    logger: createCaptureLogger(logs),
+  });
+  fixture.registry.registerAgent(coordinator);
+  await coordinator.start();
+
+  const goal = await coordinator.setGoal({
+    objective: "g".repeat(1000),
+  });
+
+  assert.equal(goal, undefined);
+  const warning = logs.find((log) => log.event === "thread_goal_set_failed");
+  const data = warning?.data as {
+    objective?: { chars?: number; preview?: string; truncated?: boolean };
+    error?: string;
+  } | undefined;
+  assert.equal(data?.objective?.chars, 1000);
+  assert.equal(data?.objective?.truncated, true);
+  assert.ok((data?.objective?.preview?.length ?? 0) < 500);
+  assert.equal(data?.error, "ephemeral thread does not support goals");
+  coordinator.runner.stop();
 });
 
 test("AgentToolBackend routes non-agent dynamic tools to the registered domain", async () => {
@@ -255,6 +358,49 @@ test("AgentBackend does not write app-server agent message deltas to runtime log
   assert.equal(
     logs.some((log) => log.module === "agent.app_server.item" && log.event === "agent_message_delta"),
     false,
+  );
+});
+
+test("AgentBackend logs only health failures from an unbound app-server event burst", () => {
+  const appServer = createFakeAppServer();
+  const fixture = createAgentFixture("app-server-log-volume", appServer);
+  const logs: Array<Omit<LogEvent, "timestamp" | "level" | "runId"> & { level: string }> = [];
+  const logger = createCaptureLogger(logs);
+  new AgentBackend({
+    appServer,
+    runId: "run-app-server-log-volume",
+    registry: fixture.registry,
+    taskStore: fixture.taskStore,
+    eventBus: fixture.options.eventBus,
+    agentProvider: {
+      resolveWorker(input): WorkerAgent {
+        return fixture.registry.resolveAgent(input.role) as WorkerAgent;
+      },
+    },
+    logger,
+    domain: createStaticDomain("domain-app-server-log-volume", []),
+  });
+
+  for (let seq = 1; seq <= 500; seq += 1) {
+    appServer.emitTimeline({
+      seq,
+      stream: "item",
+      kind: "reasoning_summary_delta",
+      receivedAt: "2026-07-10T00:00:00.000Z",
+      threadId: "unbound-thread",
+      turnId: "turn-1",
+    });
+  }
+  appServer.emitTimeline({
+    seq: 501,
+    stream: "lifecycle",
+    kind: "disconnect",
+    receivedAt: "2026-07-10T00:01:00.000Z",
+  });
+
+  assert.deepEqual(
+    logs.map((log) => [log.level, log.module, log.event]),
+    [["warn", "runtime.app_server", "disconnected"]],
   );
 });
 
@@ -457,6 +603,8 @@ test("SendMessage rejects human_response when target task is not waiting for hum
 test("SubmitTask lets a worker complete its active task through a dynamic tool", async () => {
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("submit-task-complete", appServer);
+  const logs: Array<Omit<LogEvent, "timestamp" | "level" | "runId"> & { level: string }> = [];
+  const logger = createCaptureLogger(logs);
   const domain = createStaticDomain("domain-submit-task-complete", []);
   const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
   const verifierCommit = createAssetCommit(verifierMount);
@@ -471,14 +619,17 @@ test("SubmitTask lets a worker complete its active task through a dynamic tool",
         return fixture.registry.resolveAgent(input.role) as WorkerAgent;
       },
     },
-    logger: fixture.options.logger,
+    logger,
     domain,
   });
   const builder = new AgentBuilder({
     domain,
     registry: fixture.registry,
     taskStore: fixture.taskStore,
-    runtime: fixture.runtime,
+    runtime: {
+      ...fixture.runtime,
+      logger,
+    },
     preparedAgents: {
       ...fixture.preparedAgents,
       [ScoutAgentRoles.Verifier]: {
@@ -518,6 +669,18 @@ test("SubmitTask lets a worker complete its active task through a dynamic tool",
   assert.equal(stored?.outcome?.taskId, "task-1");
   assert.equal(stored?.outcome?.status, "complete");
   assert.equal(stored?.outcome?.summary, "验证完成。");
+  const toolCompleted = logs.find((log) => log.event === "agent_tool_call_completed");
+  const toolCompletedData = toolCompleted?.data as {
+    result?: Record<string, unknown>;
+  } | undefined;
+  assert.deepEqual(toolCompletedData?.result, {
+    status: "accepted",
+    taskId: "task-1",
+    agentId: "verifier",
+    taskStatus: "complete",
+  });
+  assert.equal(JSON.stringify(toolCompletedData).includes("outcome"), false);
+  assert.equal(JSON.stringify(toolCompletedData).includes("验证完成。"), false);
   await waitFor(() =>
     readCoordinatorOutcomeObservations(appServer.turnInputs)
       .some((outcome) => outcome.taskId === "task-1" && outcome.summary === "验证完成。")
@@ -793,6 +956,12 @@ function createMount(root: string, role: string): CodexMount {
     agentId: role,
     agentProfile: {
       config: "config/config.toml",
+      model: {
+        id: "gpt-5.5",
+        provider: "GuruOpenAI",
+        reasoningEffort: "high",
+        reasoningSummary: "concise",
+      },
       skills: [],
       mcpServers: [],
       plugins: [],
@@ -985,31 +1154,63 @@ function readCoordinatorTaskAssignedObservations(turnInputs: Array<{ prompt?: st
 
 function createFakeAppServer(options: {
   onRunTurn?: (turn: { prompt?: string }) => void | Promise<void>;
+  finalResponse?: string;
 } = {}): ScoutAgentOptions["appServer"] & {
   handler?: DynamicToolCallHandler;
-  turnInputs: Array<{ prompt?: string }>;
+  turnInputs: Array<{
+    prompt?: string;
+    model?: string;
+    reasoningEffort?: string;
+    reasoningSummary?: string;
+  }>;
+  threadInputs: Array<{
+    model?: string;
+    modelProvider?: string;
+    reasoningEffort?: string;
+  }>;
   emitTimeline(entry: AppServerTimelineEntry): void;
 } {
   const timelineHandlers: Array<(entry: AppServerTimelineEntry) => void> = [];
   const appServer = {
-    turnInputs: [] as Array<{ prompt?: string }>,
+    turnInputs: [] as Array<{
+      prompt?: string;
+      model?: string;
+      reasoningEffort?: string;
+      reasoningSummary?: string;
+    }>,
+    threadInputs: [] as Array<{
+      model?: string;
+      modelProvider?: string;
+      reasoningEffort?: string;
+    }>,
     setDynamicToolCallHandler(handler: DynamicToolCallHandler): void {
       appServer.handler = handler;
     },
-    onTimeline(handler: (entry: AppServerTimelineEntry) => void): void {
+    onTimeline(handler: (entry: AppServerTimelineEntry) => void): () => void {
       timelineHandlers.push(handler);
+      return () => {
+        const index = timelineHandlers.indexOf(handler);
+        if (index >= 0) timelineHandlers.splice(index, 1);
+      };
     },
     emitTimeline(entry: AppServerTimelineEntry): void {
       for (const handler of timelineHandlers) {
         handler(entry);
       }
     },
-    startThread: async () => ({
-      threadId: "thread-test",
-      response: {
-        thread: { id: "thread-test" },
-      },
-    }),
+    startThread: async (threadInput: {
+      model?: string;
+      modelProvider?: string;
+      reasoningEffort?: string;
+    }) => {
+      appServer.threadInputs.push(threadInput);
+      return {
+        threadId: "thread-test",
+        response: {
+          thread: { id: "thread-test" },
+        },
+      };
+    },
     startSession: async () => undefined,
     close: () => undefined,
     request: async (method: string, params: unknown) => {
@@ -1025,17 +1226,35 @@ function createFakeAppServer(options: {
         params,
       };
     },
-    runTurn: async (turnInput: { prompt?: string }) => {
+    setThreadGoal: async () => {
+      throw new Error("ephemeral thread does not support goals");
+    },
+    runTurn: async (turnInput: {
+      prompt?: string;
+      model?: string;
+      reasoningEffort?: string;
+      reasoningSummary?: string;
+    }) => {
       appServer.turnInputs.push(turnInput);
       await options.onRunTurn?.(turnInput);
       return {
-        finalResponse: "",
+        finalResponse: options.finalResponse ?? "",
         response: {},
       };
     },
   } as unknown as ScoutAgentOptions["appServer"] & {
     handler?: DynamicToolCallHandler;
-    turnInputs: Array<{ prompt?: string }>;
+    turnInputs: Array<{
+      prompt?: string;
+      model?: string;
+      reasoningEffort?: string;
+      reasoningSummary?: string;
+    }>;
+    threadInputs: Array<{
+      model?: string;
+      modelProvider?: string;
+      reasoningEffort?: string;
+    }>;
     emitTimeline(entry: AppServerTimelineEntry): void;
   };
   return appServer;

@@ -67,7 +67,7 @@
     {
       "id": "rg",
       "name": "rg",
-      "command": "/Users/chengdai/.vscode/extensions/openai.chatgpt-26.623.101652-darwin-arm64/bin/macos-aarch64/rg",
+      "command": "assets/codex/tools/ripgrep/15.1.0/darwin-arm64/rg",
       "exposeAs": "rg",
       "required": true,
       "smokeArgs": [

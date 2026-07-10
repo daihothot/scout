@@ -2,6 +2,7 @@ import type {
   AgentDynamicToolSpec,
   AgentJsonValue,
 } from "../tools/types.js";
+import type { CodexModelConfig } from "../../agent-server/codex/model-config.js";
 import type { ScoutAgentThreadPreflightSnapshot } from "./thread-preflight.js";
 
 export const ScoutAgentRoles = {
@@ -29,6 +30,7 @@ export interface AgentThreadSpec {
   approvalPolicy: "never";
   sandbox: "read-only" | "workspace-write";
   contextBundleId: string;
+  model: CodexModelConfig;
   config?: Record<string, AgentJsonValue>;
   baseInstructions?: string;
   developerInstructions?: string;

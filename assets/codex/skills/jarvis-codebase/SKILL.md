@@ -13,18 +13,11 @@ dependencies:
     optional: [rg, sed, find, cat]
 summary: 先用 jarvis codebase 解析托管代码库，再用 codegraph 和源码行号形成可追溯代码证据。
 ---
-
 # Jarvis Codebase
 
 当 Scout Agent 需要从 Guru 托管代码库定位当前版本源码语义、CodeGraph 符号、调用关系或代码行证据时使用本技能。
 
 本技能的目标是把 Guru managed codebase 的路径、版本、索引状态、CodeGraph 查询和源码符号证据整理成可复查的 `E-CG-*` 与 `E-CODE-*` evidence。
-
-## Skill Type
-
-- type: tool
-- structure_level: full
-- note: 本技能是多阶段工具链 Skill，重点规范命令副作用、CodeGraph 查询和源码 evidence artifact。
 
 ## Core Use
 
@@ -459,12 +452,12 @@ Partial：
 
 ## Workflow Exit Rules (Enforcement)
 
-- XR-001：不得绕过 mount 能力确认、supported repo 判断、version / branch / commit 确认或 CodeGraph 状态确认来生成代码证据。
-- XR-002：任何有副作用命令缺少明确版本目标或上游授权时，不得继续依赖其结果。
-- XR-003：`E-CG-*` 只能作为候选语义定位；没有 `E-CODE-*` 时不得宣称 source-verified implementation evidence 完成。
-- XR-004：任何 artifact ref、repo-relative locator、symbol line range、failed_commands、retry_log 或 limitations 缺失时，不得宣称本技能输出完成。
-- XR-005：下游聚合 `E-CG-*` / `E-CODE-*` 时，必须保留本技能产出的 artifact ref 和 source locator。
-- XR-006：CodeGraph 或源码证据不得替代 runtime behavior evidence、BDD 通过结论或业务 validation gate。
+- XR-001：Phase 1 只有在 required shell tools 可见且目标 repo 能用当前 `jarvis codebase supported` 输出判断时，才能进入 Phase 2。
+- XR-002：Phase 2 只有在 managed codebase path 已解析并记录 provenance 后，才能进入 Phase 3。
+- XR-003：Phase 3 只有在 version / branch / commit 和 CodeGraph status 已记录，或缺口已标记为需人工确认项或阻塞项后，才能进入 Phase 4。
+- XR-004：Phase 4 只有在 CodeGraph 查询结果已整理为 `E-CG-*` 候选，且未把候选当作实现事实时，才能进入 Phase 5。
+- XR-005：Phase 5 只有在源码符号、repo-relative file、start_line / end_line、signature 和 key lines 已核对后，才能进入 Phase 6。
+- XR-006：Phase 6 只有在 `E-CG-*` 和 `E-CODE-*` artifact ref、failed_commands、retry_log 和 limitations 已按需记录后，才能宣称本技能输出完成。
 
 ## Evidence Rules (Enforcement)
 

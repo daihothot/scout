@@ -19,8 +19,8 @@ export class CoordinatorAgent extends ScoutAgent {
         approvalPolicy: "never",
         sandbox: "workspace-write",
         contextBundleId: options.contextBundle.contextBundleId,
+        model: { ...options.agentMount.agentProfile.model },
         config: {
-          model_reasoning_effort: "minimal",
           web_search: "disabled",
           features: {
             shell_tool: false,

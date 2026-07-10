@@ -7,6 +7,9 @@ export interface CreateCodexAppServerClientOptions {
   isolatedCodexHome: string;
   configToml: string;
   logPrefix: string;
+  providerName: string;
+  stderrLogPath: string;
+  transportLogPath?: string;
   defaultWritableRoots?: string[];
   mountRoots?: string[];
   trustedRoots?: string[];
@@ -31,7 +34,10 @@ export function createCodexAppServerClient(options: CreateCodexAppServerClientOp
     client: new CodexAppServerClient({
       home: options.isolatedHome,
       codexHome: options.isolatedCodexHome,
+      providerName: options.providerName,
       logPrefix: options.logPrefix,
+      stderrLogPath: options.stderrLogPath,
+      transportLogPath: options.transportLogPath,
     }),
     isolatedHome: options.isolatedHome,
     isolatedCodexHome: options.isolatedCodexHome,
