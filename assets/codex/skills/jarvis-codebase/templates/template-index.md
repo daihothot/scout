@@ -15,8 +15,8 @@ status: ready
 | template | 用途 | 是否必读 | 说明 |
 |---|---|---|---|
 | templates/template-index.md | 模板目录导航和读取顺序说明。 | 是 | 维护模板目录时必须同步更新本文件。 |
-| templates/codegraph-evidence.md | `E-CG-*` 使用的单条 CodeGraph evidence 模板。 | 是 | 记录 query command、matched symbol、matched file、relation 和 located symbols。 |
-| templates/source-code-evidence.md | `E-CODE-*` 使用的单条 source code evidence 模板。 | 是 | 记录 symbol lines、key lines、collection commands、supports 和 limitations。 |
+| templates/codegraph-evidence.md | `E-CG-*` 使用的单条 CodeGraph evidence 模板。 | 是 | 记录 root/source repo、gitlink、CodeGraph status、query、matched file 和 located symbols。 |
+| templates/source-code-evidence.md | `E-CODE-*` 使用的单条 source code evidence 模板。 | 是 | 记录可重放 locator、唯一 primary symbol、key lines、collection commands、supports 和 limitations。 |
 
 ## 维护规则
 

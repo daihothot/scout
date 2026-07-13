@@ -2,6 +2,7 @@
 artifact_type: CodeEvidencePack
 artifact_version: 1
 status: draft
+completion_state: partial
 ---
 
 # Code Evidence
@@ -17,16 +18,27 @@ status: draft
 
 状态枚举：
 
-- status: draft | ready | blocked
-- completion_state: complete | partial | blocked
+- `draft + partial`
+- `ready + complete`
+- `blocked + blocked`
+
+## Root Repository Provenance
+
+- root_repo:
+- root_version:
+- root_branch:
+- root_commit:
+- root_worktree_state:
+- root_codebase_path:
+
+## Source Repository Provenance
+
+| source_id | source_repo | source_version | source_branch | source_commit | source_worktree_state | source_codebase_path | gitlink_path | gitlink_commit | codegraph_status |
+|---|---|---|---|---|---|---|---|---|---|
+| SRC-001 |  |  |  |  |  |  |  |  |  |
 
 ## Scope
 
-- repo:
-- version:
-- branch:
-- commit:
-- codebase_path:
 - source_query_targets:
 
 ## Source Query Targets
@@ -37,9 +49,9 @@ status: draft
 
 ## Implementation Claims
 
-| claim_id | claim | supported_by | code_evidence | limitations |
-|---|---|---|---|---|
-| IC-001 |  | E-CG-001 | E-CODE-001 |  |
+| claim_id | claim | source_id | supported_by | code_evidence | limitations |
+|---|---|---|---|---|---|
+| IC-001 |  | SRC-001 | E-CG-001 | E-CODE-001 |  |
 
 ## CodeGraph Evidence Refs
 

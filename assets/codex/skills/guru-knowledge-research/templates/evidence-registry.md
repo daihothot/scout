@@ -2,6 +2,7 @@
 artifact_type: EvidenceRegistry
 artifact_version: 1
 status: draft
+completion_state: partial
 ---
 
 # Evidence Registry
@@ -17,8 +18,9 @@ status: draft
 
 状态枚举：
 
-- status: draft | ready | blocked
-- completion_state: complete | partial | blocked
+- `draft + partial`
+- `ready + complete`
+- `blocked + blocked`
 
 ## BDD Evidence
 

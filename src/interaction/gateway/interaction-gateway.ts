@@ -130,6 +130,14 @@ export class InteractionGateway {
   }
 
   private async handleTaskEvent(event: AgentTaskEvent): Promise<void> {
+    try {
+      await this.interactionPort.publishTaskEvent(event);
+    } catch (error) {
+      this.warnInteractionError("task_event_publish_failed", error, {
+        eventId: event.id,
+        eventKey: event.key.routeKey,
+      });
+    }
     if (!shouldNotifyTaskEvent(event)) return;
     try {
       await this.interactionPort.notify(event);

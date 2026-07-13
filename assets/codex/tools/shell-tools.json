@@ -43,6 +43,20 @@
       "marker": "SCOUT_JSON_WRITE_OK"
     },
     {
+      "id": "scoutResearchValidate",
+      "name": "scout-research-validate",
+      "command": "node",
+      "args": [
+        "assets/codex/tools/scout-research-validate/cli.cjs"
+      ],
+      "exposeAs": "scout-research-validate",
+      "required": true,
+      "smokeArgs": [
+        "--smoke"
+      ],
+      "marker": "SCOUT_RESEARCH_VALIDATE_OK"
+    },
+    {
       "id": "jarvis",
       "name": "jarvis",
       "command": "/Users/chengdai/.guru/guru-jarvis/scripts/jarvis",
