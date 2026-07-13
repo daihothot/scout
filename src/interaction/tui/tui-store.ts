@@ -1,4 +1,5 @@
 import type { AgentTaskEvent } from "../../agent/task/task-events.js";
+import { AgentEvents } from "../../agent/events/index.js";
 import type {
   AgentMessageReply,
   AgentMessageSend,
@@ -6,7 +7,7 @@ import type {
   RuntimeProgressEvent,
 } from "../port.js";
 
-export type TuiLogKind = "disclosure" | "task" | "agent" | "input";
+export type TuiLogKind = "disclosure" | "agent" | "input";
 
 export interface TuiLogEntry {
   id: string;
@@ -14,16 +15,23 @@ export interface TuiLogEntry {
   text: string;
   level?: string;
   agentId?: string;
-  taskId?: string;
   createdAt: string;
 }
 
 export interface TuiTaskSummary {
   taskId: string;
+  taskSequence: number;
   agentId?: string;
   role?: string;
   status?: string;
   description?: string;
+  updatedAt: string;
+  planSteps: TuiTaskPlanStep[];
+}
+
+export interface TuiTaskPlanStep {
+  step: string;
+  status: string;
 }
 
 export type TuiRunStatus = "preparing" | "ready" | "failed" | "stopping";
@@ -134,27 +142,29 @@ export class TuiStore {
   }
 
   addProgress(event: RuntimeProgressEvent): void {
+    if (event.type === "dynamicToolCall") return;
     this.progressMap.set(progressKey(event), event);
     this.emit();
   }
 
   addTaskEvent(event: AgentTaskEvent): void {
     const task = "task" in event.payload ? event.payload.task : undefined;
-    if (task?.taskId) {
-      this.taskMap.set(task.taskId, {
-        taskId: task.taskId,
-        agentId: task.agentId,
-        role: task.role,
-        status: task.status,
-        description: task.description,
-      });
-    }
-    this.appendLog({
-      kind: "task",
-      agentId: task?.agentId,
-      taskId: task?.taskId,
-      text: `${event.key.routeKey}${task?.taskId ? ` ${task.taskId}` : ""}${task?.status ? ` ${task.status}` : ""}`,
+    if (!task?.taskId) return;
+    if (!this.taskMap.has(task.taskId) && !AgentEvents.task.assigned.is(event)) return;
+    this.taskMap.set(task.taskId, {
+      taskId: task.taskId,
+      taskSequence: task.taskSequence,
+      agentId: task.agentId,
+      role: task.role,
+      status: task.status,
+      description: task.description,
+      updatedAt: task.updatedAt,
+      planSteps: (task.plan?.steps ?? []).map((step) => ({
+        step: step.step,
+        status: step.status,
+      })),
     });
+    this.emit();
   }
 
   addAgentMessage(message: string): void {
@@ -213,5 +223,5 @@ export class TuiStore {
 }
 
 function progressKey(event: RuntimeProgressEvent): string {
-  return `${event.agentId ?? "runtime"}:${event.itemId}`;
+  return `${event.agentId ?? "runtime"}:${event.taskId ?? "no-task"}:${event.itemId}`;
 }

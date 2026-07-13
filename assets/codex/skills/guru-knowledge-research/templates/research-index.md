@@ -2,6 +2,7 @@
 artifact_type: ResearchIndex
 artifact_version: 1
 status: draft
+completion_state: partial
 ---
 
 # Research Index
@@ -19,8 +20,9 @@ status: draft
 
 状态枚举：
 
-- status: draft | ready | blocked
-- completion_state: complete | partial | blocked
+- `draft + partial`
+- `ready + complete`
+- `blocked + blocked`
 
 ## Scope
 
@@ -63,9 +65,32 @@ status: draft
 - CodeGraph evidence:
 - source code evidence:
 
-## Provenance
+## Knowledge Repository Provenance
 
+- knowledge_repo:
+- knowledge_branch:
+- knowledge_commit:
+- knowledge_worktree_state:
 - knowledge_root:
 - knowledge_refs:
-- codebase_refs:
+
+## Root Repository Provenance
+
+- root_repo:
+- root_version:
+- root_branch:
+- root_commit:
+- root_worktree_state:
+- root_codebase_path:
+
+## Source Repository Provenance
+
+| source_id | source_repo | source_version | source_branch | source_commit | source_worktree_state | source_codebase_path | gitlink_path | gitlink_commit | codegraph_status |
+|---|---|---|---|---|---|---|---|---|---|
+| SRC-001 |  |  |  |  |  |  |  |  |  |
+
+## Collection Provenance
+
 - commands:
+- codegraph_project_root:
+- codegraph_status:

@@ -21,13 +21,24 @@ status: candidate
 
 -
 
-## Repository
+## Repository Provenance
 
-- repo:
-- version:
-- branch:
-- commit:
-- codebase_path:
+- root_repo:
+- root_version:
+- root_branch:
+- root_commit:
+- root_worktree_state:
+- root_codebase_path:
+- source_repo:
+- source_version:
+- source_branch:
+- source_commit:
+- source_worktree_state:
+- source_codebase_path:
+- gitlink_path:
+- gitlink_commit:
+- gitlink_matches_source_commit:
+- codegraph_status:
 
 ## Query
 
@@ -41,6 +52,7 @@ status: candidate
 - result_type:
 - matched_symbol:
 - matched_file:
+- source_relative_file:
 - relation:
 - confidence:
 

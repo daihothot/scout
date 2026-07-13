@@ -2,6 +2,7 @@
 artifact_type: KnowledgeEvidencePack
 artifact_version: 1
 status: draft
+completion_state: partial
 ---
 
 # Knowledge Evidence
@@ -18,8 +19,17 @@ status: draft
 
 状态枚举：
 
-- status: draft | ready | blocked
-- completion_state: complete | partial | blocked
+- `draft + partial`
+- `ready + complete`
+- `blocked + blocked`
+
+## Knowledge Repository Provenance
+
+- knowledge_repo:
+- knowledge_branch:
+- knowledge_commit:
+- knowledge_worktree_state:
+- knowledge_root:
 
 ## BDD Evidence
 
@@ -80,6 +90,29 @@ status: draft
 - claim_supported:
 - supports:
 - limitations:
+
+## Specification Coverage Matrix
+
+| dimension | coverage_state | evidence_refs | gap_or_rationale |
+|---|---|---|---|
+| 系统目标 |  |  |  |
+| 系统边界 |  |  |  |
+| 用户角色 |  |  |  |
+| 核心能力 |  |  |  |
+| 关键流程 |  |  |  |
+| 领域对象 |  |  |  |
+| 状态变化 |  |  |  |
+| 业务规则 |  |  |  |
+| 数据与接口 |  |  |  |
+| 非功能要求 |  |  |  |
+| 验收场景 |  |  |  |
+
+覆盖状态枚举：
+
+- `covered`
+- `not_applicable`
+- `not_found`
+- `needs_confirmation`
 
 ## 聚合说明
 

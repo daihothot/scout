@@ -13,6 +13,8 @@ import type {
   TuiRunStatus,
   TuiState,
   TuiStore,
+  TuiTaskPlanStep,
+  TuiTaskSummary,
 } from "./tui-store.js";
 import {
   mouseWheelDelta,
@@ -30,22 +32,30 @@ import {
   truncateByDisplayWidth,
   wrapByDisplayWidth,
 } from "./terminal-text.js";
+import {
+  buildTaskStepDisplay,
+  isTerminalTaskStatus,
+  resolveTaskStepWindow,
+  resolveTuiWorkspaceLayout,
+  selectCurrentTask,
+} from "./workspace-layout.js";
 
 export interface ScoutTuiAppProps {
   store: TuiStore;
   onExit: () => void;
 }
 
+type ActivityViewport = "coordinator" | "worker";
+
 const ROOT_PADDING_X = 2;
 const INPUT_BORDER_WIDTH = 1;
 const INPUT_PADDING_X = 1;
 const INPUT_PROMPT = "> ";
 const MIN_APP_HEIGHT = 14;
-const COMPACT_FIXED_ROWS = 19;
-const FULL_FIXED_ROWS = 25;
-// SGR mouse coordinates are 1-based; these point to the first rendered Activity body row.
-const COMPACT_ACTIVITY_BODY_TOP = 15;
-const FULL_ACTIVITY_BODY_TOP = 21;
+const MIN_INLINE_ACTIVITY_BODY_WIDTH = 16;
+const COMPACT_PRE_WORKSPACE_ROWS = 12;
+const FULL_PRE_WORKSPACE_ROWS = 18;
+const PROMPT_ROWS = 5;
 const MOUSE_TRACKING_ON = "\u001b[?1000h\u001b[?1006h";
 const MOUSE_TRACKING_OFF = "\u001b[?1006l\u001b[?1000l";
 const FULL_LOGO = [
@@ -56,21 +66,64 @@ const FULL_LOGO = [
   " |____/ \\____\\___/ \\___/  |_|",
 ];
 
+export interface TuiWidths {
+  terminalWidth: number;
+  rootPaddingX: number;
+  contentWidth: number;
+  inputValueWidth: number;
+}
+
+export function resolveTuiWidths(columns: number): TuiWidths {
+  const terminalWidth = Math.max(1, Number.isFinite(columns) ? Math.floor(columns) : 1);
+  const rootPaddingX = terminalWidth < 24 ? 0 : terminalWidth < 48 ? 1 : ROOT_PADDING_X;
+  const contentWidth = Math.max(1, terminalWidth - (rootPaddingX * 2));
+  const inputValueWidth = Math.max(
+    0,
+    contentWidth
+      - (INPUT_BORDER_WIDTH * 2)
+      - (INPUT_PADDING_X * 2)
+      - terminalDisplayWidth(INPUT_PROMPT),
+  );
+  return {
+    terminalWidth,
+    rootPaddingX,
+    contentWidth,
+    inputValueWidth,
+  };
+}
+
 export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
   const [state, setState] = useState<TuiState>(() => store.snapshot());
   const [input, setInput] = useState("");
-  const [activityScrollTop, setActivityScrollTop] = useState<number | null>(null);
+  const [coordinatorScrollTop, setCoordinatorScrollTop] = useState<number | null>(null);
+  const [workerScrollTop, setWorkerScrollTop] = useState<number | null>(null);
+  const [focusedViewport, setFocusedViewport] = useState<ActivityViewport>("coordinator");
   const { stdout } = useStdout();
   const { columns, rows } = useWindowSize();
+  const widths = resolveTuiWidths(columns);
   const appHeight = Math.max(MIN_APP_HEIGHT, rows - 1);
-  const compact = columns < 68 || rows < 30;
-  const rootPaddingX = columns < 48 ? 1 : ROOT_PADDING_X;
-  const activityViewportRows = Math.max(
+  const currentTask = useMemo(() => selectCurrentTask(state.tasks), [state.tasks]);
+  const workerOpen = Boolean(currentTask && !isTerminalTaskStatus(currentTask.status));
+  const compact = widths.terminalWidth < 68
+    || rows < 30
+    || (currentTask !== undefined && rows < 40);
+  const preWorkspaceRows = compact
+    ? COMPACT_PRE_WORKSPACE_ROWS
+    : FULL_PRE_WORKSPACE_ROWS;
+  const availableWorkspaceRows = Math.max(
     1,
-    appHeight - (compact ? COMPACT_FIXED_ROWS : FULL_FIXED_ROWS),
+    appHeight - preWorkspaceRows - PROMPT_ROWS,
   );
-  const activityBodyTop = compact ? COMPACT_ACTIVITY_BODY_TOP : FULL_ACTIVITY_BODY_TOP;
-  const activityWidth = Math.max(8, columns - (rootPaddingX * 2));
+  const workspaceLayout = resolveTuiWorkspaceLayout({
+    availableRows: availableWorkspaceRows,
+    hasTask: currentTask !== undefined,
+    workerOpen,
+    planStepCount: currentTask?.planSteps.length ?? 0,
+  });
+  const taskStepWindow = resolveTaskStepWindow(
+    currentTask?.planSteps ?? [],
+    workspaceLayout.taskStepRows,
+  );
 
   useEffect(() => store.subscribe(setState), [store]);
   useEffect(() => {
@@ -85,39 +138,115 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
     () => state.tasks.filter((task) => isActiveStatus(task.status)).length,
     [state.tasks],
   );
-  const activityRows = useMemo(
-    () => buildActivityRows(state, activityWidth),
-    [activityWidth, state],
+  const coordinatorActivityRows = useMemo(
+    () => buildCoordinatorActivityRows(state, widths.contentWidth),
+    [state, widths.contentWidth],
   );
-  const resolvedScrollTop = resolveActivityScrollTop(
-    activityRows.length,
-    activityViewportRows,
-    activityScrollTop,
+  const workerActivityRows = useMemo(
+    () => currentTask
+      ? buildWorkerActivityRows(state, currentTask.taskId, widths.contentWidth)
+      : [],
+    [currentTask, state, widths.contentWidth],
   );
-  const visibleActivityRows = activityRows.slice(
-    resolvedScrollTop,
-    resolvedScrollTop + activityViewportRows,
+  const resolvedCoordinatorScrollTop = resolveActivityScrollTop(
+    coordinatorActivityRows.length,
+    workspaceLayout.coordinatorViewportRows,
+    coordinatorScrollTop,
+  );
+  const resolvedWorkerScrollTop = resolveActivityScrollTop(
+    workerActivityRows.length,
+    Math.max(1, workspaceLayout.workerViewportRows),
+    workerScrollTop,
+  );
+  const visibleCoordinatorRows = coordinatorActivityRows.slice(
+    resolvedCoordinatorScrollTop,
+    resolvedCoordinatorScrollTop + workspaceLayout.coordinatorViewportRows,
+  );
+  const visibleWorkerRows = workerActivityRows.slice(
+    resolvedWorkerScrollTop,
+    resolvedWorkerScrollTop + workspaceLayout.workerViewportRows,
   );
 
   useEffect(() => {
-    if (activityScrollTop === null || activityScrollTop === resolvedScrollTop) return;
-    setActivityScrollTop(resolvedScrollTop);
-  }, [activityScrollTop, resolvedScrollTop]);
+    if (coordinatorScrollTop === null || coordinatorScrollTop === resolvedCoordinatorScrollTop) return;
+    setCoordinatorScrollTop(resolvedCoordinatorScrollTop);
+  }, [coordinatorScrollTop, resolvedCoordinatorScrollTop]);
+  useEffect(() => {
+    if (workerScrollTop === null || workerScrollTop === resolvedWorkerScrollTop) return;
+    setWorkerScrollTop(resolvedWorkerScrollTop);
+  }, [resolvedWorkerScrollTop, workerScrollTop]);
+  useEffect(() => {
+    setWorkerScrollTop(null);
+  }, [currentTask?.taskId]);
+  useEffect(() => {
+    if (workerOpen) return;
+    setFocusedViewport("coordinator");
+    setWorkerScrollTop(null);
+  }, [workerOpen]);
 
-  const scrollBy = (delta: number) => {
-    setActivityScrollTop((current) =>
-      scrollActivity(activityRows.length, activityViewportRows, current, delta)
+  const scrollCoordinatorBy = (delta: number) => {
+    setCoordinatorScrollTop((current) =>
+      scrollActivity(
+        coordinatorActivityRows.length,
+        workspaceLayout.coordinatorViewportRows,
+        current,
+        delta,
+      )
     );
   };
+  const scrollWorkerBy = (delta: number) => {
+    setWorkerScrollTop((current) =>
+      scrollActivity(
+        workerActivityRows.length,
+        Math.max(1, workspaceLayout.workerViewportRows),
+        current,
+        delta,
+      )
+    );
+  };
+  const scrollFocusedBy = (delta: number) => {
+    if (focusedViewport === "worker" && workerOpen) {
+      scrollWorkerBy(delta);
+      return;
+    }
+    scrollCoordinatorBy(delta);
+  };
+  const setFocusedScrollTop = (value: number | null) => {
+    if (focusedViewport === "worker" && workerOpen) {
+      setWorkerScrollTop(value);
+      return;
+    }
+    setCoordinatorScrollTop(value);
+  };
+  const coordinatorStartY = preWorkspaceRows + workspaceLayout.coordinatorHeaderOffset + 1;
+  const coordinatorEndY = preWorkspaceRows
+    + workspaceLayout.coordinatorBodyOffset
+    + workspaceLayout.coordinatorViewportRows;
+  const workerStartY = workspaceLayout.workerHeaderOffset === undefined
+    ? undefined
+    : preWorkspaceRows + workspaceLayout.workerHeaderOffset + 1;
+  const workerEndY = workspaceLayout.workerBodyOffset === undefined
+    ? undefined
+    : preWorkspaceRows + workspaceLayout.workerBodyOffset + workspaceLayout.workerViewportRows;
 
   useInput((value, key) => {
     const mouse = parseSgrMouseEvent(value);
     if (mouse) {
       const delta = mouseWheelDelta(mouse);
-      const activityStartY = activityBodyTop;
-      const activityEndY = activityBodyTop + activityViewportRows - 1;
-      if (delta !== undefined && mouse.y >= activityStartY && mouse.y <= activityEndY) {
-        scrollBy(delta);
+      if (
+        workerOpen
+        && workerStartY !== undefined
+        && workerEndY !== undefined
+        && mouse.y >= workerStartY
+        && mouse.y <= workerEndY
+      ) {
+        setFocusedViewport("worker");
+        if (delta !== undefined) scrollWorkerBy(delta);
+        return;
+      }
+      if (mouse.y >= coordinatorStartY && mouse.y <= coordinatorEndY) {
+        setFocusedViewport("coordinator");
+        if (delta !== undefined) scrollCoordinatorBy(delta);
       }
       return;
     }
@@ -125,28 +254,44 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
       onExit();
       return;
     }
+    if (key.tab && workerOpen) {
+      setFocusedViewport((current) => current === "coordinator" ? "worker" : "coordinator");
+      return;
+    }
     if (key.upArrow) {
-      scrollBy(-1);
+      scrollFocusedBy(-1);
       return;
     }
     if (key.downArrow) {
-      scrollBy(1);
+      scrollFocusedBy(1);
       return;
     }
     if (key.pageUp) {
-      scrollBy(-activityViewportRows);
+      const pageRows = focusedViewport === "worker" && workerOpen
+        ? workspaceLayout.workerViewportRows
+        : workspaceLayout.coordinatorViewportRows;
+      scrollFocusedBy(-pageRows);
       return;
     }
     if (key.pageDown) {
-      scrollBy(activityViewportRows);
+      const pageRows = focusedViewport === "worker" && workerOpen
+        ? workspaceLayout.workerViewportRows
+        : workspaceLayout.coordinatorViewportRows;
+      scrollFocusedBy(pageRows);
       return;
     }
     if (key.home) {
-      setActivityScrollTop(activityRows.length > activityViewportRows ? 0 : null);
+      const totalRows = focusedViewport === "worker" && workerOpen
+        ? workerActivityRows.length
+        : coordinatorActivityRows.length;
+      const viewportRows = focusedViewport === "worker" && workerOpen
+        ? workspaceLayout.workerViewportRows
+        : workspaceLayout.coordinatorViewportRows;
+      setFocusedScrollTop(totalRows > viewportRows ? 0 : null);
       return;
     }
     if (key.end) {
-      setActivityScrollTop(null);
+      setFocusedScrollTop(null);
       return;
     }
     if (key.return) {
@@ -178,11 +323,12 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
   return (
     <Box
       flexDirection="column"
+      width={widths.terminalWidth}
       height={appHeight}
-      paddingX={rootPaddingX}
+      paddingX={widths.rootPaddingX}
       overflow="hidden"
     >
-      <TopLine state={state} terminalColumns={columns} rootPaddingX={rootPaddingX} />
+      <TopLine state={state} width={widths.contentWidth} />
 
       <Box marginTop={compact ? 0 : 1} flexDirection="column" flexShrink={0}>
         <Text bold>scout</Text>
@@ -195,41 +341,79 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
         state={state}
         activeTasks={activeTasks}
         compact={compact}
-        terminalColumns={columns}
-        rootPaddingX={rootPaddingX}
+        width={widths.contentWidth}
       />
 
-      <RuntimeStatusLine state={state} activeTasks={activeTasks} />
-
-      <ActivityFeed
-        rows={visibleActivityRows}
-        totalRows={activityRows.length}
-        scrollTop={resolvedScrollTop}
-        viewportRows={activityViewportRows}
-        followingTail={activityScrollTop === null}
+      <RuntimeStatusLine
+        state={state}
+        activeTasks={activeTasks}
+        width={widths.contentWidth}
       />
+
+      <Box
+        flexDirection="column"
+        width={widths.contentWidth}
+        height={workspaceLayout.totalRows}
+        overflow="hidden"
+        flexShrink={0}
+      >
+        <ActivityFeed
+          title="Activity"
+          width={widths.contentWidth}
+          marginTop={workspaceLayout.topMarginRows}
+          rows={visibleCoordinatorRows}
+          totalRows={coordinatorActivityRows.length}
+          scrollTop={resolvedCoordinatorScrollTop}
+          viewportRows={workspaceLayout.coordinatorViewportRows}
+          followingTail={coordinatorScrollTop === null}
+          focused={focusedViewport === "coordinator"}
+          emptyText="Waiting for Coordinator activity."
+        />
+
+        {currentTask && (
+          <TaskPanel
+            task={currentTask}
+            width={widths.contentWidth}
+            marginTop={workspaceLayout.sectionGapRows}
+            stepWindow={taskStepWindow}
+          />
+        )}
+
+        {workerOpen && (
+          <ActivityFeed
+            title="Worker Activity"
+            width={widths.contentWidth}
+            marginTop={workspaceLayout.sectionGapRows}
+            rows={visibleWorkerRows}
+            totalRows={workerActivityRows.length}
+            scrollTop={resolvedWorkerScrollTop}
+            viewportRows={workspaceLayout.workerViewportRows}
+            followingTail={workerScrollTop === null}
+            focused={focusedViewport === "worker"}
+            emptyText="Waiting for Worker activity."
+          />
+        )}
+      </Box>
 
       <PromptInput
         value={input}
         appHeight={appHeight}
-        terminalColumns={columns}
-        rootPaddingX={rootPaddingX}
+        widths={widths}
         cwd={state.runtime.cwd}
       />
     </Box>
   );
 }
 
-function TopLine({ state, terminalColumns, rootPaddingX }: {
+function TopLine({ state, width }: {
   state: TuiState;
-  terminalColumns: number;
-  rootPaddingX: number;
+  width: number;
 }) {
   const run = state.runtime.runId ?? state.runtime.status;
   const text = `v${state.runtime.version}  ${state.runtime.cwd}  run:${run}`;
   return (
     <Text dimColor>
-      {truncateByDisplayWidth(text, Math.max(0, terminalColumns - (rootPaddingX * 2)))}
+      {truncateByDisplayWidth(text, width)}
     </Text>
   );
 }
@@ -238,16 +422,14 @@ function RuntimeCard({
   state,
   activeTasks,
   compact,
-  terminalColumns,
-  rootPaddingX,
+  width,
 }: {
   state: TuiState;
   activeTasks: number;
   compact: boolean;
-  terminalColumns: number;
-  rootPaddingX: number;
+  width: number;
 }) {
-  const contentWidth = Math.max(8, terminalColumns - (rootPaddingX * 2) - 4);
+  const contentWidth = Math.max(0, width - 4);
   const runId = state.runtime.runId ?? "pending";
   return (
     <Box
@@ -256,6 +438,7 @@ function RuntimeCard({
       borderColor="gray"
       paddingX={1}
       marginTop={1}
+      width={width}
       flexShrink={0}
     >
       <Text wrap="truncate-end">
@@ -288,25 +471,44 @@ function RuntimeCard({
   );
 }
 
-function RuntimeStatusLine({ state, activeTasks }: {
+function RuntimeStatusLine({ state, activeTasks, width }: {
   state: TuiState;
   activeTasks: number;
+  width: number;
 }) {
   const presentation = runtimeStatusPresentation(state.runtime.status, activeTasks);
   return (
-    <Box marginTop={1} flexShrink={0}>
-      <Text color={presentation.color} bold>{presentation.marker} {presentation.label}</Text>
-      <Text dimColor> - {presentation.detail}</Text>
+    <Box marginTop={1} width={width} flexShrink={0}>
+      <Text wrap="truncate-end">
+        <Text color={presentation.color} bold>{presentation.marker} {presentation.label}</Text>
+        <Text dimColor> - {presentation.detail}</Text>
+      </Text>
     </Box>
   );
 }
 
-function ActivityFeed({ rows, totalRows, scrollTop, viewportRows, followingTail }: {
+function ActivityFeed({
+  title,
+  width,
+  marginTop,
+  rows,
+  totalRows,
+  scrollTop,
+  viewportRows,
+  followingTail,
+  focused,
+  emptyText,
+}: {
+  title: string;
+  width: number;
+  marginTop: number;
   rows: ActivityDisplayRow[];
   totalRows: number;
   scrollTop: number;
   viewportRows: number;
   followingTail: boolean;
+  focused: boolean;
+  emptyText: string;
 }) {
   const visibleEnd = Math.min(totalRows, scrollTop + viewportRows);
   const newerRows = Math.max(0, totalRows - visibleEnd);
@@ -315,53 +517,121 @@ function ActivityFeed({ rows, totalRows, scrollTop, viewportRows, followingTail 
     : newerRows > 0
       ? `${scrollTop + 1}-${visibleEnd}/${totalRows}  ${newerRows} newer`
       : `${Math.min(totalRows, scrollTop + 1)}-${visibleEnd}/${totalRows}${followingTail ? "" : "  end"}`;
+  const visiblePosition = width > terminalDisplayWidth(title) + 1
+    ? truncateByDisplayWidth(position, width - terminalDisplayWidth(title) - 1)
+    : "";
   return (
-    <Box flexDirection="column" flexGrow={1} flexShrink={1} minHeight={3} marginTop={1} overflow="hidden">
-      <Box justifyContent="space-between" flexShrink={0}>
-        <Text bold>Activity</Text>
-        <Text dimColor>{position}</Text>
+    <Box
+      flexDirection="column"
+      width={width}
+      height={viewportRows + 1}
+      marginTop={marginTop}
+      flexShrink={0}
+      overflow="hidden"
+    >
+      <Box width={width} justifyContent="space-between" flexShrink={0}>
+        <Text color={focused ? "cyan" : undefined} bold wrap="truncate-end">{title}</Text>
+        <Text dimColor wrap="truncate-end">{visiblePosition}</Text>
       </Box>
-      {rows.length === 0
-        ? <Text dimColor>Waiting for Coordinator and Worker activity.</Text>
+      {totalRows === 0
+        ? <Text dimColor>{emptyText}</Text>
         : rows.map((row) => <ActivityLine key={row.id} row={row} />)}
     </Box>
+  );
+}
+
+function TaskPanel({ task, width, marginTop, stepWindow }: {
+  task: TuiTaskSummary;
+  width: number;
+  marginTop: number;
+  stepWindow: {
+    start: number;
+    steps: TuiTaskPlanStep[];
+  };
+}) {
+  const status = task.status ?? "unknown";
+  const range = stepWindow.steps.length < task.planSteps.length
+    ? ` ${stepWindow.start + 1}-${stepWindow.start + stepWindow.steps.length}/${task.planSteps.length}`
+    : "";
+  const statusWidth = Math.min(width, terminalDisplayWidth(status));
+  const titleWidth = Math.max(0, width - statusWidth - (statusWidth > 0 ? 1 : 0));
+  const title = truncateByDisplayWidth(`Task ${task.taskId}${range}`, titleWidth);
+  return (
+    <Box
+      flexDirection="column"
+      width={width}
+      height={stepWindow.steps.length + 1}
+      marginTop={marginTop}
+      flexShrink={0}
+      overflow="hidden"
+    >
+      <Box width={width} justifyContent="space-between" flexShrink={0}>
+        <Text bold wrap="truncate-end">{title}</Text>
+        <Text color={statusColor(status)}>{status}</Text>
+      </Box>
+      {stepWindow.steps.map((step, index) => (
+        <TaskStepLine
+          key={`${stepWindow.start + index}:${step.step}`}
+          step={step}
+          width={width}
+        />
+      ))}
+    </Box>
+  );
+}
+
+function TaskStepLine({ step, width }: {
+  step: TuiTaskPlanStep;
+  width: number;
+}) {
+  const display = buildTaskStepDisplay(step, width);
+  return (
+    <Text wrap="truncate-end">
+      <Text color={statusColor(step.status)}>{display.marker} </Text>
+      <Text>{display.label}{display.labelPadding}</Text>
+      <Text color={statusColor(step.status)}>{display.status}</Text>
+    </Text>
   );
 }
 
 function ActivityLine({ row }: { row: ActivityDisplayRow }) {
   if (row.spacer) return <Text> </Text>;
   const { entry } = row;
-  if (entry.kind === "progress") {
-    const prefixWidth = progressPrefixWidth(entry);
-    return (
-      <Text wrap="truncate-end">
-        {row.first
-          ? <>
-              <Text color={agentColor(entry.agentId)} bold>{agentLabel(entry.agentId)}</Text>
-              <Text color={entry.type === "reasoning" ? "gray" : statusColor(entry.status)}>
-                {` ${statusMarker(entry.status)} `}
-              </Text>
-            </>
-          : <Text>{" ".repeat(prefixWidth)}</Text>}
-        <ActivityText
-          spans={row.spans}
-          text={row.text}
-          dimColor={entry.type === "reasoning"}
-        />
-      </Text>
-    );
+  if (!row.first && row.leadingWidth === 0 && row.text.length === 0) {
+    return <Text> </Text>;
   }
-  const prefixWidth = logPrefixWidth(entry);
   return (
     <Text wrap="truncate-end">
       {row.first
-        ? <>
-            <Text color={logColor(entry.log)} bold>{logLabel(entry.log)}</Text>
-            <Text> </Text>
-          </>
-        : <Text>{" ".repeat(prefixWidth)}</Text>}
-      <ActivityText spans={row.spans} text={row.text} />
+        ? <ActivityPrefix entry={entry} />
+        : <Text>{" ".repeat(row.leadingWidth)}</Text>}
+      {!row.prefixOnly && (
+        <ActivityText
+          spans={row.spans}
+          text={row.text}
+          dimColor={entry.kind === "progress" && entry.type === "reasoning"}
+        />
+      )}
     </Text>
+  );
+}
+
+function ActivityPrefix({ entry }: { entry: ActivityEntry }) {
+  if (entry.kind === "progress") {
+    return (
+      <>
+        <Text color={agentColor(entry.agentId)} bold>{agentLabel(entry.agentId)}</Text>
+        <Text color={entry.type === "reasoning" ? "gray" : statusColor(entry.status)}>
+          {` ${statusMarker(entry.status)} `}
+        </Text>
+      </>
+    );
+  }
+  return (
+    <>
+      <Text color={logColor(entry.log)} bold>{logLabel(entry.log)}</Text>
+      <Text> </Text>
+    </>
   );
 }
 
@@ -391,27 +661,26 @@ function ActivityText({ spans, text, dimColor = false }: {
   );
 }
 
-function PromptInput({ value, appHeight, terminalColumns, rootPaddingX, cwd }: {
+function PromptInput({ value, appHeight, widths, cwd }: {
   value: string;
   appHeight: number;
-  terminalColumns: number;
-  rootPaddingX: number;
+  widths: TuiWidths;
   cwd: string;
 }) {
   const { setCursorPosition } = useCursor();
-  const inputStartX = rootPaddingX
+  const inputStartX = widths.rootPaddingX
     + INPUT_BORDER_WIDTH
     + INPUT_PADDING_X
     + terminalDisplayWidth(INPUT_PROMPT);
   const inputLineY = Math.max(0, appHeight - 3);
-  const visibleValue = tailByDisplayWidth(
-    value,
-    Math.max(0, terminalColumns - inputStartX - 2),
-  );
+  const visibleValue = tailByDisplayWidth(value, widths.inputValueWidth);
   const footer = `enter to send - /exit to quit - Ctrl+C to quit - cwd ${cwd}`;
 
   setCursorPosition({
-    x: inputStartX + terminalDisplayWidth(visibleValue),
+    x: Math.min(
+      widths.terminalWidth - 1,
+      inputStartX + terminalDisplayWidth(visibleValue),
+    ),
     y: inputLineY,
   });
 
@@ -422,6 +691,7 @@ function PromptInput({ value, appHeight, terminalColumns, rootPaddingX, cwd }: {
         borderColor="cyan"
         paddingX={INPUT_PADDING_X}
         marginTop={1}
+        width={widths.contentWidth}
         flexShrink={0}
       >
         <Text wrap="truncate-end">
@@ -432,7 +702,7 @@ function PromptInput({ value, appHeight, terminalColumns, rootPaddingX, cwd }: {
         </Text>
       </Box>
       <Text dimColor>
-        {truncateByDisplayWidth(footer, Math.max(0, terminalColumns - (rootPaddingX * 2)))}
+        {truncateByDisplayWidth(footer, widths.contentWidth)}
       </Text>
     </Box>
   );
@@ -462,27 +732,42 @@ export interface ActivityDisplayRow {
   id: string;
   entry: ActivityEntry;
   first: boolean;
+  leadingWidth: number;
   text: string;
   spans?: TerminalMarkdownSpan[];
+  prefixOnly?: boolean;
   spacer?: boolean;
 }
 
-function buildActivity(state: TuiState): ActivityEntry[] {
-  const progress = state.progress.map(toProgressActivity);
-  const logs = state.logs.map((log): LogActivityEntry => ({
-    id: log.id,
-    kind: "log",
-    createdAt: log.createdAt,
-    log,
-  }));
-  return [...progress, ...logs].sort((left, right) =>
-    left.createdAt.localeCompare(right.createdAt)
-  );
+function buildCoordinatorActivity(state: TuiState): ActivityEntry[] {
+  const progress = state.progress
+    .filter((event) => !event.agentId || event.agentId === "coordinator")
+    .map(toProgressActivity);
+  const logs = state.logs
+    .filter((log) => !log.agentId || log.agentId === "coordinator")
+    .map((log): LogActivityEntry => ({
+      id: log.id,
+      kind: "log",
+      createdAt: log.createdAt,
+      log,
+    }));
+  return sortActivity([...progress, ...logs]);
+}
+
+function buildWorkerActivity(state: TuiState, taskId: string): ActivityEntry[] {
+  const progress = state.progress
+    .filter((event) => event.taskId === taskId && event.agentId !== "coordinator")
+    .map(toProgressActivity);
+  return sortActivity(progress);
+}
+
+function sortActivity(activity: ActivityEntry[]): ActivityEntry[] {
+  return activity.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
 function toProgressActivity(event: RuntimeProgressEvent): ProgressActivityEntry {
   return {
-    id: `progress:${event.agentId ?? "runtime"}:${event.itemId}`,
+    id: `progress:${event.agentId ?? "runtime"}:${event.taskId ?? "no-task"}:${event.itemId}`,
     kind: "progress",
     createdAt: event.updatedAt,
     agentId: event.agentId,
@@ -493,26 +778,65 @@ function toProgressActivity(event: RuntimeProgressEvent): ProgressActivityEntry 
   };
 }
 
-export function buildActivityRows(state: TuiState, width: number): ActivityDisplayRow[] {
-  const activity = buildActivity(state);
+export function buildCoordinatorActivityRows(
+  state: TuiState,
+  width: number,
+): ActivityDisplayRow[] {
+  return buildActivityRows(buildCoordinatorActivity(state), width);
+}
+
+export function buildWorkerActivityRows(
+  state: TuiState,
+  taskId: string,
+  width: number,
+): ActivityDisplayRow[] {
+  return buildActivityRows(buildWorkerActivity(state, taskId), width);
+}
+
+function buildActivityRows(
+  activity: ActivityEntry[],
+  width: number,
+): ActivityDisplayRow[] {
   return activity.flatMap((entry, entryIndex) => {
     const prefixWidth = entry.kind === "progress"
       ? progressPrefixWidth(entry)
       : logPrefixWidth(entry);
-    const bodyWidth = Math.max(1, width - prefixWidth);
+    const stackPrefix = width < prefixWidth + MIN_INLINE_ACTIVITY_BODY_WIDTH;
+    const bodyWidth = Math.max(1, stackPrefix ? width : width - prefixWidth);
     const content = activityContentRows(entry, bodyWidth);
-    const rows: ActivityDisplayRow[] = content.map((line, index) => ({
-      id: `${entry.id}:row:${index}`,
-      entry,
-      first: index === 0,
-      text: line.text,
-      spans: line.spans,
-    }));
+    const rows: ActivityDisplayRow[] = stackPrefix
+      ? [
+          {
+            id: `${entry.id}:prefix`,
+            entry,
+            first: true,
+            leadingWidth: prefixWidth,
+            text: "",
+            prefixOnly: true,
+          },
+          ...content.map((line, index) => ({
+            id: `${entry.id}:row:${index}`,
+            entry,
+            first: false,
+            leadingWidth: 0,
+            text: line.text,
+            spans: line.spans,
+          })),
+        ]
+      : content.map((line, index) => ({
+          id: `${entry.id}:row:${index}`,
+          entry,
+          first: index === 0,
+          leadingWidth: prefixWidth,
+          text: line.text,
+          spans: line.spans,
+        }));
     if (entryIndex < activity.length - 1) {
       rows.push({
         id: `${entry.id}:spacer`,
         entry,
         first: false,
+        leadingWidth: 0,
         text: "",
         spacer: true,
       });
@@ -538,7 +862,10 @@ function activityContentRows(
     return wrapByDisplayWidth(entry.log.text, bodyWidth).map((text) => ({ text }));
   }
   const text = `${entry.label}${entry.detail ? `  ${entry.detail}` : ""}`;
-  return [{ text: truncateByDisplayWidth(text.replace(/\s+/g, " ").trim(), bodyWidth) }];
+  return wrapByDisplayWidth(
+    text.replace(/\s+/g, " ").trim(),
+    bodyWidth,
+  ).map((wrapped) => ({ text: wrapped }));
 }
 
 function shouldRenderMarkdown(entry: ActivityEntry): boolean {
@@ -611,20 +938,18 @@ function statusMarker(status: string | undefined): string {
   return "o";
 }
 
-function logColor(entry: TuiLogEntry): "cyan" | "green" | "yellow" | "red" | "blue" | "gray" {
+function logColor(entry: TuiLogEntry): "cyan" | "green" | "yellow" | "red" | "gray" {
   if (entry.level === "error") return "red";
   if (entry.level === "warn") return "yellow";
   if (entry.agentId === "coordinator") return "cyan";
   if (entry.agentId) return "green";
   if (entry.kind === "input") return "yellow";
-  if (entry.kind === "task") return "blue";
   return "gray";
 }
 
 function logLabel(entry: TuiLogEntry): string {
   if (entry.agentId) return agentLabel(entry.agentId);
   if (entry.kind === "input") return "YOU";
-  if (entry.kind === "task") return "TASK";
   return "RUNTIME";
 }
 

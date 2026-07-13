@@ -18,6 +18,10 @@ export class CliInteractionAdapter implements RuntimeInteractionPort {
     process.stdout.write(rendered);
   }
 
+  async publishTaskEvent(): Promise<void> {
+    // CLI task output is limited to user-facing notifications.
+  }
+
   async notify(event: AgentTaskEvent): Promise<void> {
     process.stdout.write(renderEventNotification(event));
   }

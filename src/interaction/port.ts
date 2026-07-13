@@ -42,6 +42,7 @@ export type RuntimeInteractionUnsubscribe = () => void;
 export interface RuntimeInteractionPort {
   disclose(event: RuntimeDisclosureEvent): Promise<void>;
   publishProgress(event: RuntimeProgressEvent): Promise<void>;
+  publishTaskEvent(event: AgentTaskEvent): Promise<void>;
   notify(event: AgentTaskEvent): Promise<void>;
   receiveAgentMessage(message: AgentMessageReply): Promise<void>;
   sendAgentMessage?(handler: (message: AgentMessageSend) => void | Promise<void>): RuntimeInteractionUnsubscribe;
@@ -54,6 +55,10 @@ export class NoopRuntimeInteractionPort implements RuntimeInteractionPort {
   }
 
   async publishProgress(): Promise<void> {
+    // no-op
+  }
+
+  async publishTaskEvent(): Promise<void> {
     // no-op
   }
 

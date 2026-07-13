@@ -90,6 +90,56 @@ test("AssetStore exposes scout-memory for all agent mounts", () => {
   }
 });
 
+test("AssetStore statically binds the Validation Domain skill for every role", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-validation-skills-");
+  const expectedSkills = {
+    coordinator: "coordinator-validation",
+    researcher: "researcher-validation",
+    verifier: "verifier-validation",
+    validator: "validator-validation",
+  } as const;
+  const store = new AssetStore();
+
+  for (const [agentId, skill] of Object.entries(expectedSkills)) {
+    const mount = store.materializeMount({
+      repoRoot: fixtureRoot,
+      runId: `run-validation-skill-${agentId}-test`,
+      agentId,
+    });
+    const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
+
+    assert.ok(mount.skills.includes(skill));
+    assert.ok(manifest.skills.includes(skill));
+    assert.equal(existsSync(join(
+      mount.mountRoot,
+      ".agents",
+      "skills",
+      skill,
+      "SKILL.md",
+    )), true);
+  }
+});
+
+test("AssetStore exposes Research validation and git tools to the researcher", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-research-tools-");
+  const mount = new AssetStore().materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-shell-tool-researcher-validation-test",
+    agentId: "researcher",
+  });
+  const validator = mount.shellTools.find((tool) => tool.id === "scoutResearchValidate");
+  const git = mount.shellTools.find((tool) => tool.id === "git");
+  const wrapperPath = join(mount.mountRoot, "bin", "scout-research-validate");
+
+  assert.ok(validator);
+  assert.ok(git);
+  assert.equal(existsSync(wrapperPath), true);
+  assert.match(execFileSync(wrapperPath, ["--smoke"], {
+    cwd: mount.mountRoot,
+    encoding: "utf8",
+  }), /SCOUT_RESEARCH_VALIDATE_OK/);
+});
+
 test("AssetStore resolves asset-local shell tool commands against the repo root", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-shell-tools-");
   const assetsRoot = join(fixtureRoot, "assets", "codex");

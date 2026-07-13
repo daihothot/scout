@@ -1015,6 +1015,7 @@ function buildDomainTool(namespace: string): AgentDynamicToolSpec {
 class CapturingInteractionPort implements RuntimeInteractionPort {
   readonly disclosures: RuntimeDisclosureEvent[] = [];
   readonly progress: RuntimeProgressEvent[] = [];
+  readonly taskEvents: AgentTaskEvent[] = [];
   readonly notifications: AgentTaskEvent[] = [];
   readonly agentMessages: AgentMessageReply[] = [];
 
@@ -1026,6 +1027,10 @@ class CapturingInteractionPort implements RuntimeInteractionPort {
 
   async publishProgress(event: RuntimeProgressEvent): Promise<void> {
     this.progress.push(event);
+  }
+
+  async publishTaskEvent(event: AgentTaskEvent): Promise<void> {
+    this.taskEvents.push(event);
   }
 
   async notify(event: AgentTaskEvent): Promise<void> {

@@ -3,6 +3,7 @@ artifact_type: VerificationManual
 artifact_version: 1
 manual_id:
 status: draft
+completion_state: partial
 source_artifacts:
   - index.md
   - bdd-fact.md
@@ -26,8 +27,9 @@ evidence_registry_ref: evidence-registry.md
 
 状态枚举：
 
-- status: draft | ready | blocked
-- completion_state: complete | partial | blocked
+- `draft + partial`
+- `ready + complete`
+- `blocked + blocked`
 
 ## Manual Identity
 
@@ -62,6 +64,12 @@ evidence_registry_ref: evidence-registry.md
 - app_version:
 - confirmation_needed:
 
+画像字段规则：
+
+- 已确认字段写实际值。
+- 与当前 BDD 无关的字段写 `irrelevant`。
+- 仍需确认的字段写 `unknown`，并在 `confirmation_needed` 中列出；此时 manual 只能是 `draft + partial`。
+
 ## Verification Points
 
 ### VP-001: <验证点标题>
@@ -70,6 +78,7 @@ evidence_registry_ref: evidence-registry.md
 - function_point:
 - user_role:
 - persona_ref:
+- bdd_evidence_ref: E-BDD-001
 - evidence_registry_ref: evidence-registry.md
 
 #### Given
@@ -116,6 +125,7 @@ evidence_registry_ref: evidence-registry.md
 - function_point:
 - user_role:
 - persona_ref:
+- bdd_evidence_ref: E-BDD-002
 - evidence_registry_ref: evidence-registry.md
 
 #### Given

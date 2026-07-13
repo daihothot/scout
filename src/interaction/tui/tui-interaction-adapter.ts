@@ -20,8 +20,12 @@ export class TuiInteractionAdapter implements RuntimeInteractionPort {
     this.store.addProgress(event);
   }
 
-  async notify(event: AgentTaskEvent): Promise<void> {
+  async publishTaskEvent(event: AgentTaskEvent): Promise<void> {
     this.store.addTaskEvent(event);
+  }
+
+  async notify(): Promise<void> {
+    // Task notifications are already represented by the lifecycle projection.
   }
 
   async receiveAgentMessage(message: AgentMessageReply): Promise<void> {

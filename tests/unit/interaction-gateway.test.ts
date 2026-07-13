@@ -13,7 +13,11 @@ import type {
   RuntimeInteractionUnsubscribe,
   RuntimeProgressEvent,
 } from "../../src/interaction/port.js";
-import type { AgentTaskEvent } from "../../src/agent/task/task-events.js";
+import type {
+  AgentTaskEvent,
+  AgentTaskEventPayload,
+} from "../../src/agent/task/task-events.js";
+import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type {
@@ -21,6 +25,8 @@ import type {
   UserMessageSubmittedPayload,
 } from "../../src/interaction/gateway/interaction-events.js";
 import { AgentTaskStatuses } from "../../src/agent/task/types.js";
+import { TuiInteractionAdapter } from "../../src/interaction/tui/tui-interaction-adapter.js";
+import { TuiStore } from "../../src/interaction/tui/tui-store.js";
 
 test("interaction gateway publishes exit request from interaction port", async () => {
   const bus = new InMemoryEventBus();
@@ -88,6 +94,7 @@ test("interaction gateway separates receiving agent message from sending human m
   await flushMicrotasks();
 
   assert.equal(port.receivedMessages.length, 0);
+  assert.equal(port.taskEvents.length, 1);
   assert.equal(port.notifications.length, 1);
   assert.equal(port.notifications[0]?.payload.task.taskId, "task-1");
   assert.equal(observed.length, 0);
@@ -104,10 +111,101 @@ test("interaction gateway separates receiving agent message from sending human m
   gateway.stop();
 });
 
+test("interaction gateway projects every task event while limiting notifications", async () => {
+  const bus = new InMemoryEventBus();
+  const port = new TestInteractionPort();
+  const gateway = new InteractionGateway({
+    eventBus: bus,
+    interactionPort: port,
+  });
+
+  gateway.start();
+  await bus.publishAndWait(AgentEvents.task.assigned, {
+    task: taskState({ status: AgentTaskStatuses.Queued }),
+  } satisfies AgentTaskEventPayload);
+  await bus.publishAndWait(AgentEvents.task.planUpdated, {
+    task: taskState({ plan: taskPlan("inProgress") }),
+  } satisfies AgentTaskEventPayload);
+  await bus.publishAndWait(AgentEvents.task.terminal, {
+    task: taskState({
+      status: AgentTaskStatuses.Complete,
+      updatedAt: "2026-07-10T00:00:03.000Z",
+      plan: taskPlan("completed"),
+    }),
+  } satisfies AgentTaskEventPayload);
+  gateway.stop();
+
+  assert.deepEqual(
+    port.taskEvents.map((event) => event.key.routeKey),
+    [
+      AgentEvents.task.assigned.routeKey,
+      AgentEvents.task.planUpdated.routeKey,
+      AgentEvents.task.terminal.routeKey,
+    ],
+  );
+  assert.deepEqual(
+    port.notifications.map((event) => event.key.routeKey),
+    [AgentEvents.task.terminal.routeKey],
+  );
+});
+
+test("interaction gateway projects assigned task plan and Worker progress into TuiStore", async () => {
+  const bus = new InMemoryEventBus();
+  const store = new TuiStore({
+    cwd: "/repo/scout",
+    version: "0.1.0",
+    model: "gpt-5.5",
+    reasoningEffort: "high",
+  });
+  const gateway = new InteractionGateway({
+    eventBus: bus,
+    interactionPort: new TuiInteractionAdapter(store),
+  });
+
+  gateway.start();
+  await bus.publishAndWait(AgentEvents.task.assigned, {
+    task: taskState({ status: AgentTaskStatuses.Queued }),
+  } satisfies AgentTaskEventPayload);
+  await bus.publishAndWait(AgentEvents.task.planUpdated, {
+    task: taskState({ plan: taskPlan("inProgress") }),
+  } satisfies AgentTaskEventPayload);
+  await bus.publishAndWait(SystemEvents.interaction.progressRequested, {
+    source: "agent.app_server.item",
+    agentId: "researcher",
+    taskId: "researcher-task-0001",
+    itemId: "worker-item-1",
+    type: "reasoning",
+    status: "completed",
+    label: "Reasoning",
+    detail: "Locate the current Behavior source.",
+    updatedAt: "2026-07-10T00:00:02.000Z",
+  } satisfies RuntimeProgressEvent);
+
+  assert.deepEqual(store.snapshot().tasks[0]?.planSteps, [{
+    step: "Locate BDD and Behavior source",
+    status: "inProgress",
+  }]);
+  assert.equal(store.snapshot().progress[0]?.taskId, "researcher-task-0001");
+
+  await bus.publishAndWait(AgentEvents.task.terminal, {
+    task: taskState({
+      status: AgentTaskStatuses.Complete,
+      updatedAt: "2026-07-10T00:00:03.000Z",
+      plan: taskPlan("completed"),
+    }),
+  } satisfies AgentTaskEventPayload);
+  gateway.stop();
+
+  assert.equal(store.snapshot().tasks.length, 1);
+  assert.equal(store.snapshot().tasks[0]?.status, AgentTaskStatuses.Complete);
+  assert.equal(store.snapshot().tasks[0]?.planSteps[0]?.status, "completed");
+});
+
 class TestInteractionPort implements RuntimeInteractionPort {
   private exitHandler?: () => void | Promise<void>;
   private sendHandler?: (message: AgentMessageSend) => void | Promise<void>;
   readonly receivedMessages: AgentMessageReply[] = [];
+  readonly taskEvents: AgentTaskEvent[] = [];
   readonly notifications: AgentTaskEvent[] = [];
 
   async disclose(_event: RuntimeDisclosureEvent): Promise<void> {
@@ -116,6 +214,10 @@ class TestInteractionPort implements RuntimeInteractionPort {
 
   async publishProgress(_event: RuntimeProgressEvent): Promise<void> {
     return undefined;
+  }
+
+  async publishTaskEvent(event: AgentTaskEvent): Promise<void> {
+    this.taskEvents.push(event);
   }
 
   async notify(_event: AgentTaskEvent): Promise<void> {
@@ -153,4 +255,33 @@ class TestInteractionPort implements RuntimeInteractionPort {
 
 async function flushMicrotasks(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function taskState(input: Partial<AgentTaskState> = {}): AgentTaskState {
+  return {
+    type: "local_agent",
+    taskId: "researcher-task-0001",
+    taskSequence: 1,
+    agentId: "researcher",
+    role: "researcher",
+    description: "Research current BDD evidence",
+    initialPrompt: "Research current BDD evidence",
+    status: AgentTaskStatuses.Running,
+    isBackgrounded: true,
+    createdAt: "2026-07-10T00:00:00.000Z",
+    updatedAt: "2026-07-10T00:00:01.000Z",
+    ...input,
+  };
+}
+
+function taskPlan(status: "inProgress" | "completed") {
+  return {
+    turnId: "turn-1",
+    explanation: "Research current-version evidence.",
+    steps: [{
+      step: "Locate BDD and Behavior source",
+      status,
+      raw: {},
+    }],
+  };
 }
