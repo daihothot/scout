@@ -1,21 +1,19 @@
-import { CodexAppServerClient } from "../../agent-server/codex/app-server-client.js";
 import type {
   AppServerPlanState,
   AppServerThreadGoalState,
 } from "../../agent-server/codex/app-server-event-store.js";
+import type { CodexAppServerClient } from "../../agent-server/codex/app-server-client.js";
 import type { AssetCommit, CodexMount } from "../../asset-store/types.js";
-import type { EventBus } from "../../core/events/index.js";
-import type { Logger } from "../../core/logging/index.js";
-import type { RunContextBundle } from "../../run/types.js";
+import type { Result } from "../../core/result.js";
+import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import { AgentRunner } from "../runner/types.js";
-import type { AgentTaskStore } from "../task/agent-task-store.js";
 import type {
   AgentTaskStepToolCall,
   AgentTaskState,
+  SendAgentMessageInput,
 } from "../task/types.js";
 import type { AgentThreadSnapshot, AgentThreadSpec } from "../thread/types.js";
 import { runThreadPreflight } from "../thread/thread-preflight.js";
-import type { AgentRegistry } from "./agent-registry.js";
 
 export interface ScoutAgentTurnInput {
   prompt: string;
@@ -26,7 +24,7 @@ export interface ScoutAgentTurnInput {
   onStatusMessage?: (message: string) => void;
 }
 
-export interface ScoutAgentTurnResult {
+export interface ScoutAgentTurnRecord {
   invocationId: string;
   agentId: string;
   role: AgentThreadSpec["role"];
@@ -40,7 +38,7 @@ export interface ScoutAgentTurnResult {
 }
 
 export interface ScoutAgentTurnOutcome {
-  turn: ScoutAgentTurnResult;
+  turn: ScoutAgentTurnRecord;
   finalResponse?: string;
   toolCalls?: AgentTaskStepToolCall[];
   plan?: AppServerPlanState;
@@ -50,38 +48,28 @@ export interface ScoutAgentTurnOutcome {
 export interface ScoutAgentSnapshot {
   agentId: string;
   thread?: AgentThreadSnapshot;
-  tasks: AgentTaskState[];
   activeTask?: AgentTaskState;
   pendingMessageCount: number;
 }
 
 export interface ScoutAgentOptions {
   agentId?: string;
-  repoRoot: string;
-  appServer: CodexAppServerClient;
-  contextBundle: RunContextBundle;
   agentMount: CodexMount;
   assetCommit: AssetCommit;
-  logger: Logger;
-  taskStore: AgentTaskStore;
-  eventBus: EventBus;
-  registry: AgentRegistry;
   dynamicTools?: AgentThreadSpec["dynamicTools"];
-  turnSilenceWarningMs?: number;
 }
 
-export class ScoutAgent {
+export abstract class ScoutAgent {
   readonly agentId: string;
   readonly spec: AgentThreadSpec;
-  protected readonly appServer: CodexAppServerClient;
-  protected readonly contextBundle: RunContextBundle;
+  protected readonly runScope: RunScope;
+  protected readonly appServer: RunScope["appServer"];
+  protected readonly contextBundle: RunScope["contextBundle"];
   protected readonly agentMount: CodexMount;
   protected readonly assetCommit: AssetCommit;
-  protected readonly logger: Logger;
-  protected readonly eventBus: EventBus;
-  protected readonly registry: AgentRegistry;
-  private readonly turnSilenceWarningMs: number;
-  runner!: AgentRunner;
+  protected readonly eventBus: RunScope["eventBus"];
+  protected readonly registry: RunScope["agentRegistry"];
+  runner?: AgentRunner;
   private thread?: AgentThreadSnapshot;
   private threadPreflightPromise?: Promise<void>;
   private invocationSequence = 0;
@@ -89,17 +77,16 @@ export class ScoutAgent {
   constructor(input: ScoutAgentOptions & {
     spec: AgentThreadSpec;
   }) {
+    const scope = currentRunScope();
     this.agentId = input.agentId ?? input.spec.role;
     this.spec = input.spec;
-    this.appServer = input.appServer;
-    this.contextBundle = input.contextBundle;
+    this.runScope = scope;
+    this.appServer = scope.appServer;
+    this.contextBundle = scope.contextBundle;
     this.agentMount = input.agentMount;
     this.assetCommit = input.assetCommit;
-    this.logger = input.logger;
-    this.eventBus = input.eventBus;
-    this.registry = input.registry;
-    this.turnSilenceWarningMs = input.turnSilenceWarningMs ?? readTurnSilenceWarningMs();
-    this.logger.registerAgentLogRoot(this.agentId, input.agentMount.logsRoot);
+    this.eventBus = scope.eventBus;
+    this.registry = scope.agentRegistry;
   }
 
   get role(): AgentThreadSpec["role"] {
@@ -121,6 +108,8 @@ export class ScoutAgent {
   get mount(): CodexMount {
     return this.agentMount;
   }
+
+  abstract sendMessage(input: SendAgentMessageInput): Result<void, string>;
 
   async start(): Promise<AgentThreadSnapshot> {
     if (this.thread) return this.thread;
@@ -153,40 +142,6 @@ export class ScoutAgent {
     }
     const invocationId = this.nextInvocationId(thread.threadId);
     const startedAt = new Date().toISOString();
-    const startedAtMs = Date.now();
-    const prompt = textPreview(input.prompt);
-
-    this.logger.debug({
-      module: "agent",
-      event: "turn_started",
-      agentId: this.agentId,
-      data: {
-        invocationId,
-        role: thread.spec.role,
-        threadId: thread.threadId,
-        prompt,
-        outputContract: input.outputContract,
-      },
-    });
-    const silenceMonitor = new TurnSilenceMonitor({
-      appServer: this.appServer,
-      threadId: thread.threadId,
-      warningMs: this.turnSilenceWarningMs,
-      onWarning: (warning) => {
-        this.logger.warn({
-          module: "agent.turn",
-          event: "turn_silence_warning",
-          agentId: this.agentId,
-          data: {
-            invocationId,
-            role: thread.spec.role,
-            threadId: thread.threadId,
-            ...warning,
-          },
-        });
-      },
-    });
-    silenceMonitor.start();
 
     try {
       const result = await this.appServer.runTurn({
@@ -200,7 +155,7 @@ export class ScoutAgent {
         writableRoots: input.writableRoots ?? this.defaultWritableRoots(),
         onStatusMessage: input.onStatusMessage,
       });
-      const turn: ScoutAgentTurnResult = {
+      const turn: ScoutAgentTurnRecord = {
         invocationId,
         agentId: this.agentId,
         role: thread.spec.role,
@@ -211,24 +166,6 @@ export class ScoutAgent {
         status: "completed",
         outputContract: input.outputContract,
       };
-      this.logger.info({
-        module: "agent",
-        event: "turn_completed",
-        agentId: this.agentId,
-        data: {
-          invocationId,
-          role: thread.spec.role,
-          threadId: thread.threadId,
-          turnId: result.turnId,
-          durationMs: Math.max(0, Date.now() - startedAtMs),
-          prompt,
-          response: textPreview(result.finalResponse ?? ""),
-          outputContract: input.outputContract,
-          tokenUsage: result.eventStoreSnapshot?.threads[thread.threadId]?.tokenUsage,
-          pendingRequestCount: Object.keys(result.eventStoreSnapshot?.pendingRequests ?? {}).length,
-          droppedTimelineCount: result.eventStoreSnapshot?.droppedTimelineCount ?? 0,
-        },
-      });
       return {
         turn,
         finalResponse: result.finalResponse,
@@ -237,7 +174,7 @@ export class ScoutAgent {
         goal: result.goal,
       };
     } catch (error) {
-      const turn: ScoutAgentTurnResult = {
+      const turn: ScoutAgentTurnRecord = {
         invocationId,
         agentId: this.agentId,
         role: thread.spec.role,
@@ -248,23 +185,7 @@ export class ScoutAgent {
         outputContract: input.outputContract,
         error: error instanceof Error ? error.stack ?? error.message : String(error),
       };
-      this.logger.error({
-        module: "agent",
-        event: "turn_failed",
-        agentId: this.agentId,
-        data: {
-          invocationId,
-          role: thread.spec.role,
-          threadId: thread.threadId,
-          durationMs: Math.max(0, Date.now() - startedAtMs),
-          prompt,
-          outputContract: input.outputContract,
-          error: turn.error,
-        },
-      });
       return { turn };
-    } finally {
-      silenceMonitor.stop();
     }
   }
 
@@ -280,23 +201,15 @@ export class ScoutAgent {
         tokenBudget: input.tokenBudget,
       });
       return goal;
-    } catch (error) {
-      this.logger.warn({
-        module: "agent",
-        event: "thread_goal_set_failed",
-        agentId: this.agentId,
-        data: {
-          threadId: thread.threadId,
-          objective: textPreview(input.objective),
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
+    } catch {
       return undefined;
     }
   }
 
   snapshot(): ScoutAgentSnapshot {
-    const taskSnapshot = this.runner.snapshot();
+    const taskSnapshot = this.runner?.snapshot() ?? {
+      pendingMessageCount: 0,
+    };
     return {
       agentId: this.agentId,
       thread: this.thread,
@@ -319,27 +232,8 @@ export class ScoutAgent {
             threadPreflight,
           };
         }
-        this.logger.info({
-          module: "agent.thread",
-          event: "thread_preflight_completed",
-          agentId: this.agentId,
-          data: {
-            threadId: thread.threadId,
-            status: threadPreflight.result.status,
-          },
-        });
       })
-      .catch((error) => {
-        this.logger.error({
-          module: "agent.thread",
-          event: "thread_preflight_failed",
-          agentId: this.agentId,
-          data: {
-            threadId: thread.threadId,
-            error: error instanceof Error ? error.stack ?? error.message : String(error),
-          },
-        });
-      });
+      .catch(() => undefined);
     return this.threadPreflightPromise;
   }
 
@@ -355,91 +249,6 @@ export class ScoutAgent {
     this.invocationSequence += 1;
     return `${safePathSegment(this.agentId)}-${safePathSegment(threadId)}-invocation-${String(this.invocationSequence).padStart(4, "0")}`;
   }
-}
-
-interface TurnSilenceWarning {
-  turnId?: string;
-  warningCount: number;
-  silentForMs: number;
-  thresholdMs: number;
-  lastActivityAt: string;
-}
-
-class TurnSilenceMonitor {
-  private readonly appServer: CodexAppServerClient;
-  private readonly threadId: string;
-  private readonly warningMs: number;
-  private readonly onWarning: (warning: TurnSilenceWarning) => void;
-  private lastActivityMs = Date.now();
-  private warningCount = 0;
-  private turnId?: string;
-  private timer?: NodeJS.Timeout;
-  private unsubscribe?: () => void;
-
-  constructor(input: {
-    appServer: CodexAppServerClient;
-    threadId: string;
-    warningMs: number;
-    onWarning: (warning: TurnSilenceWarning) => void;
-  }) {
-    this.appServer = input.appServer;
-    this.threadId = input.threadId;
-    this.warningMs = input.warningMs;
-    this.onWarning = input.onWarning;
-  }
-
-  start(): void {
-    if (this.warningMs <= 0 || this.timer) return;
-    this.lastActivityMs = Date.now();
-    this.unsubscribe = this.appServer.onTimeline((entry) => {
-      if (entry.threadId !== this.threadId) return;
-      this.lastActivityMs = Date.now();
-      this.warningCount = 0;
-      this.turnId = entry.turnId ?? this.turnId;
-    });
-    this.timer = setInterval(() => this.check(), this.warningMs);
-    this.timer.unref();
-  }
-
-  stop(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = undefined;
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
-  }
-
-  private check(): void {
-    const now = Date.now();
-    const silentForMs = now - this.lastActivityMs;
-    const expectedWarningCount = Math.floor(silentForMs / this.warningMs);
-    if (expectedWarningCount <= this.warningCount) return;
-    this.warningCount = expectedWarningCount;
-    this.onWarning({
-      turnId: this.turnId,
-      warningCount: this.warningCount,
-      silentForMs,
-      thresholdMs: this.warningMs,
-      lastActivityAt: new Date(this.lastActivityMs).toISOString(),
-    });
-  }
-}
-
-function readTurnSilenceWarningMs(): number {
-  const configured = Number(process.env.SCOUT_TURN_SILENCE_WARNING_MS ?? 60_000);
-  return Number.isFinite(configured) && configured >= 0 ? configured : 60_000;
-}
-
-function textPreview(value: string, maxChars = 400): {
-  chars: number;
-  preview: string;
-  truncated: boolean;
-} {
-  const compact = value.replaceAll(/\s+/g, " ").trim();
-  return {
-    chars: value.length,
-    preview: compact.length > maxChars ? `${compact.slice(0, maxChars)}...` : compact,
-    truncated: compact.length > maxChars,
-  };
 }
 
 function safePathSegment(value: string): string {

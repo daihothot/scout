@@ -53,7 +53,7 @@ test("workspace fits Coordinator, five task steps and Worker into twelve rows", 
   });
 });
 
-test("terminal task keeps its plan and returns remaining rows to Coordinator", () => {
+test("closed Worker activity keeps its task plan and returns remaining rows to Coordinator", () => {
   const layout = resolveTuiWorkspaceLayout({
     availableRows: 12,
     hasTask: true,
@@ -100,9 +100,9 @@ test("task step statuses start in one aligned column", () => {
 });
 
 test("current task selection follows serial task sequence", () => {
-  const tasks = [taskSummary(1, "complete"), taskSummary(3, "running"), taskSummary(2, "complete")];
+  const tasks = [taskSummary(1, "done"), taskSummary(3, "running"), taskSummary(2, "done")];
   assert.equal(selectCurrentTask(tasks)?.taskId, "task-3");
-  assert.equal(isTerminalTaskStatus("complete"), true);
+  assert.equal(isTerminalTaskStatus("done"), false);
   assert.equal(isTerminalTaskStatus("stopped"), true);
   assert.equal(isTerminalTaskStatus("running"), false);
 });

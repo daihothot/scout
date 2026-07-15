@@ -7,7 +7,8 @@ import {
   useStdout,
   useWindowSize,
 } from "ink";
-import type { RuntimeProgressEvent } from "../port.js";
+import type { AgentActivity } from "../../agent/activity/activity-event.js";
+import type { BootSnapshot } from "../../run/boot/boot-stage.js";
 import type {
   TuiLogEntry,
   TuiRunStatus,
@@ -55,6 +56,8 @@ const MIN_APP_HEIGHT = 14;
 const MIN_INLINE_ACTIVITY_BODY_WIDTH = 16;
 const COMPACT_PRE_WORKSPACE_ROWS = 12;
 const FULL_PRE_WORKSPACE_ROWS = 18;
+const BOOT_PROGRESS_ROWS = 1;
+const BOOT_PROGRESS_MAX_WIDTH = 42;
 const PROMPT_ROWS = 5;
 const MOUSE_TRACKING_ON = "\u001b[?1000h\u001b[?1006h";
 const MOUSE_TRACKING_OFF = "\u001b[?1006l\u001b[?1000l";
@@ -103,16 +106,22 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
   const widths = resolveTuiWidths(columns);
   const appHeight = Math.max(MIN_APP_HEIGHT, rows - 1);
   const currentTask = useMemo(() => selectCurrentTask(state.tasks), [state.tasks]);
-  const workerOpen = Boolean(currentTask && !isTerminalTaskStatus(currentTask.status));
+  const workerOpen = Boolean(
+    currentTask
+    && currentTask.status !== "done"
+    && !isTerminalTaskStatus(currentTask.status),
+  );
   const compact = widths.terminalWidth < 68
     || rows < 30
     || (currentTask !== undefined && rows < 40);
-  const preWorkspaceRows = compact
+  const inputReady = state.runtime.status === "ready";
+  const showBootProgress = Boolean(state.boot && state.runtime.status !== "ready");
+  const preWorkspaceRows = (compact
     ? COMPACT_PRE_WORKSPACE_ROWS
-    : FULL_PRE_WORKSPACE_ROWS;
+    : FULL_PRE_WORKSPACE_ROWS) + (showBootProgress ? BOOT_PROGRESS_ROWS : 0);
   const availableWorkspaceRows = Math.max(
     1,
-    appHeight - preWorkspaceRows - PROMPT_ROWS,
+    appHeight - preWorkspaceRows - (inputReady ? PROMPT_ROWS : 0),
   );
   const workspaceLayout = resolveTuiWorkspaceLayout({
     availableRows: availableWorkspaceRows,
@@ -294,6 +303,7 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
       setFocusedScrollTop(null);
       return;
     }
+    if (!inputReady) return;
     if (key.return) {
       const submitted = input.trim();
       if (submitted === "/exit") {
@@ -350,6 +360,10 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
         width={widths.contentWidth}
       />
 
+      {showBootProgress && state.boot && (
+        <BootProgress snapshot={state.boot} width={widths.contentWidth} />
+      )}
+
       <Box
         flexDirection="column"
         width={widths.contentWidth}
@@ -395,12 +409,14 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
         )}
       </Box>
 
-      <PromptInput
-        value={input}
-        appHeight={appHeight}
-        widths={widths}
-        cwd={state.runtime.cwd}
-      />
+      {inputReady && (
+        <PromptInput
+          value={input}
+          appHeight={appHeight}
+          widths={widths}
+          cwd={state.runtime.cwd}
+        />
+      )}
     </Box>
   );
 }
@@ -459,7 +475,7 @@ function RuntimeCard({
       {!compact && (
         <Text wrap="truncate-end">
           <Text dimColor>activity: </Text>
-          <Text>{`${state.progress.length} items`}</Text>
+          <Text>{`${state.activities.length} items`}</Text>
           <Text dimColor>{`  tasks: ${activeTasks} active / ${state.tasks.length} total`}</Text>
         </Text>
       )}
@@ -485,6 +501,51 @@ function RuntimeStatusLine({ state, activeTasks, width }: {
       </Text>
     </Box>
   );
+}
+
+function BootProgress({ snapshot, width }: {
+  snapshot: BootSnapshot;
+  width: number;
+}) {
+  const presentation = buildBootProgressPresentation(snapshot, width);
+  return (
+    <Box
+      flexDirection="column"
+      width={presentation.width}
+      height={BOOT_PROGRESS_ROWS}
+      flexShrink={0}
+      overflow="hidden"
+    >
+      <Text wrap="truncate-end">
+        <Text backgroundColor="yellow">
+          {presentation.filled}
+        </Text>
+        <Text backgroundColor="gray">
+          {presentation.remaining}
+        </Text>
+      </Text>
+    </Box>
+  );
+}
+
+export function buildBootProgressPresentation(
+  snapshot: BootSnapshot,
+  width: number,
+): {
+  width: number;
+  filled: string;
+  remaining: string;
+} {
+  const ratio = snapshot.totalStages === 0
+    ? 0
+    : Math.min(1, Math.max(0, snapshot.completedStages / snapshot.totalStages));
+  const barWidth = Math.max(1, Math.min(width, BOOT_PROGRESS_MAX_WIDTH));
+  const filledWidth = Math.min(barWidth, Math.round(ratio * barWidth));
+  return {
+    width: barWidth,
+    filled: " ".repeat(filledWidth),
+    remaining: " ".repeat(barWidth - filledWidth),
+  };
 }
 
 function ActivityFeed({
@@ -609,7 +670,7 @@ function ActivityLine({ row }: { row: ActivityDisplayRow }) {
         <ActivityText
           spans={row.spans}
           text={row.text}
-          dimColor={entry.kind === "progress" && entry.type === "reasoning"}
+          dimColor={entry.kind === "agent_activity" && entry.type === "reasoning"}
         />
       )}
     </Text>
@@ -617,7 +678,7 @@ function ActivityLine({ row }: { row: ActivityDisplayRow }) {
 }
 
 function ActivityPrefix({ entry }: { entry: ActivityEntry }) {
-  if (entry.kind === "progress") {
+  if (entry.kind === "agent_activity") {
     return (
       <>
         <Text color={agentColor(entry.agentId)} bold>{agentLabel(entry.agentId)}</Text>
@@ -708,11 +769,11 @@ function PromptInput({ value, appHeight, widths, cwd }: {
   );
 }
 
-type ActivityEntry = ProgressActivityEntry | LogActivityEntry;
+type ActivityEntry = AgentActivityEntry | LogActivityEntry;
 
-interface ProgressActivityEntry {
+interface AgentActivityEntry {
   id: string;
-  kind: "progress";
+  kind: "agent_activity";
   createdAt: string;
   agentId?: string;
   status: string;
@@ -740,9 +801,9 @@ export interface ActivityDisplayRow {
 }
 
 function buildCoordinatorActivity(state: TuiState): ActivityEntry[] {
-  const progress = state.progress
-    .filter((event) => !event.agentId || event.agentId === "coordinator")
-    .map(toProgressActivity);
+  const activities = state.activities
+    .filter((activity) => activity.agentId === "coordinator")
+    .map(toAgentActivityEntry);
   const logs = state.logs
     .filter((log) => !log.agentId || log.agentId === "coordinator")
     .map((log): LogActivityEntry => ({
@@ -751,30 +812,30 @@ function buildCoordinatorActivity(state: TuiState): ActivityEntry[] {
       createdAt: log.createdAt,
       log,
     }));
-  return sortActivity([...progress, ...logs]);
+  return sortActivity([...activities, ...logs]);
 }
 
 function buildWorkerActivity(state: TuiState, taskId: string): ActivityEntry[] {
-  const progress = state.progress
-    .filter((event) => event.taskId === taskId && event.agentId !== "coordinator")
-    .map(toProgressActivity);
-  return sortActivity(progress);
+  const activities = state.activities
+    .filter((activity) => activity.taskId === taskId && activity.agentId !== "coordinator")
+    .map(toAgentActivityEntry);
+  return sortActivity(activities);
 }
 
 function sortActivity(activity: ActivityEntry[]): ActivityEntry[] {
   return activity.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
-function toProgressActivity(event: RuntimeProgressEvent): ProgressActivityEntry {
+function toAgentActivityEntry(activity: AgentActivity): AgentActivityEntry {
   return {
-    id: `progress:${event.agentId ?? "runtime"}:${event.taskId ?? "no-task"}:${event.itemId}`,
-    kind: "progress",
-    createdAt: event.updatedAt,
-    agentId: event.agentId,
-    status: event.status,
-    type: event.type,
-    label: event.label,
-    detail: event.detail,
+    id: `activity:${activity.agentId}:${activity.taskId ?? "no-task"}:${activity.itemId}`,
+    kind: "agent_activity",
+    createdAt: activity.updatedAt,
+    agentId: activity.agentId,
+    status: activity.status,
+    type: activity.type,
+    label: activity.label,
+    detail: activity.detail,
   };
 }
 
@@ -798,8 +859,8 @@ function buildActivityRows(
   width: number,
 ): ActivityDisplayRow[] {
   return activity.flatMap((entry, entryIndex) => {
-    const prefixWidth = entry.kind === "progress"
-      ? progressPrefixWidth(entry)
+    const prefixWidth = entry.kind === "agent_activity"
+      ? agentActivityPrefixWidth(entry)
       : logPrefixWidth(entry);
     const stackPrefix = width < prefixWidth + MIN_INLINE_ACTIVITY_BODY_WIDTH;
     const bodyWidth = Math.max(1, stackPrefix ? width : width - prefixWidth);
@@ -850,7 +911,7 @@ function activityContentRows(
   bodyWidth: number,
 ): Array<{ text: string; spans?: TerminalMarkdownSpan[] }> {
   if (shouldRenderMarkdown(entry)) {
-    const markdown = entry.kind === "progress"
+    const markdown = entry.kind === "agent_activity"
       ? `${entry.label}${entry.detail ? `  ${entry.detail}` : ""}`
       : entry.log.text;
     return buildTerminalMarkdownLines(markdown, bodyWidth).map((line) => ({
@@ -869,12 +930,12 @@ function activityContentRows(
 }
 
 function shouldRenderMarkdown(entry: ActivityEntry): boolean {
-  return entry.kind === "progress"
+  return entry.kind === "agent_activity"
     ? entry.type === "reasoning"
     : entry.log.kind === "agent";
 }
 
-function progressPrefixWidth(entry: ProgressActivityEntry): number {
+function agentActivityPrefixWidth(entry: AgentActivityEntry): number {
   return terminalDisplayWidth(agentLabel(entry.agentId)) + 3;
 }
 
@@ -925,16 +986,16 @@ function agentColor(agentId: string | undefined): "cyan" | "green" | "gray" {
 }
 
 function statusColor(status: string | undefined): "green" | "yellow" | "red" | "gray" {
-  if (status === "complete" || status === "completed" || status === "passed") return "green";
+  if (status === "done" || status === "complete" || status === "completed" || status === "passed") return "green";
   if (status === "failed" || status === "blocked" || status === "stopped") return "red";
-  if (status === "running" || status === "inProgress" || status === "waiting_for_human_input") return "yellow";
+  if (status === "running" || status === "inProgress") return "yellow";
   return "gray";
 }
 
 function statusMarker(status: string | undefined): string {
-  if (status === "complete" || status === "completed" || status === "passed") return "+";
+  if (status === "done" || status === "complete" || status === "completed" || status === "passed") return "+";
   if (status === "failed" || status === "blocked" || status === "stopped") return "!";
-  if (status === "running" || status === "inProgress" || status === "waiting_for_human_input") return ">";
+  if (status === "running" || status === "inProgress") return ">";
   return "o";
 }
 
@@ -955,6 +1016,5 @@ function logLabel(entry: TuiLogEntry): string {
 
 function isActiveStatus(status: string | undefined): boolean {
   return status === "queued"
-    || status === "running"
-    || status === "waiting_for_human_input";
+    || status === "running";
 }

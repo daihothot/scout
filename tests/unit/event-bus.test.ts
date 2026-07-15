@@ -73,7 +73,7 @@ test("event bus subscribes to an event catalog group", () => {
   });
   bus.publish(AgentEvents.task.assigned, { taskId: "task-1" });
   bus.publish(AgentEvents.task.messageQueued, { taskId: "task-1" });
-  bus.publish(AgentEvents.interrupt.raised, { interruptKind: "human_input" });
+  bus.publish(AgentEvents.interrupt.raised, { interruptKind: "approval" });
 
   assert.deepEqual(received, [
     "agent.task.assigned",
@@ -132,7 +132,7 @@ test("event bus subscribeOnce removes handler after first delivery", () => {
   bus.subscribeOnce(AgentEvents.interrupt.raised, () => {
     count += 1;
   });
-  bus.publish(AgentEvents.interrupt.raised, { interruptKind: "human_input" });
+  bus.publish(AgentEvents.interrupt.raised, { interruptKind: "approval" });
   bus.publish(AgentEvents.interrupt.raised, { interruptKind: "exception" });
 
   assert.equal(count, 1);

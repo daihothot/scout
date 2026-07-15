@@ -2,7 +2,7 @@ import type { ScoutAgentRole } from "../agent/thread/types.js";
 import type { AgentDynamicToolSpec } from "../agent/tools/types.js";
 import type {
   DynamicToolCallInput,
-  DynamicToolCallResult,
+  DynamicToolCallResponse,
 } from "../agent-server/types.js";
 
 export interface ScoutDomainDynamicToolCall {
@@ -20,7 +20,7 @@ export interface ScoutDomain {
   dynamicToolsForRole(role: ScoutAgentRole): AgentDynamicToolSpec[];
   handleDynamicToolCall?(
     call: ScoutDomainDynamicToolCall,
-  ): Promise<DynamicToolCallResult | undefined> | DynamicToolCallResult | undefined;
+  ): Promise<DynamicToolCallResponse | undefined> | DynamicToolCallResponse | undefined;
   start?(): Promise<void>;
   stop?(): Promise<void>;
 }

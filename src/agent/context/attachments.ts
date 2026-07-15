@@ -1,7 +1,3 @@
-import type { Logger } from "../../core/logging/index.js";
-
-export type AttachmentLogger = Pick<Logger, "error">;
-
 export interface AgentTaggedAttachmentBlock {
   tag: string;
   body: string;
@@ -9,7 +5,7 @@ export interface AgentTaggedAttachmentBlock {
 }
 
 export const attachments = {
-  compose(logger: AttachmentLogger | undefined, ...blocks: string[]): string {
+  compose(...blocks: string[]): string {
     const validBlocks: string[] = [];
     blocks.forEach((block, index) => {
       const trimmed = block.trim();
@@ -18,15 +14,9 @@ export const attachments = {
         validBlocks.push(trimmed);
         return;
       }
-      logger?.error({
-        module: "agent.context",
-        event: "invalid_attachment_block",
-        data: {
-          index,
-          reason: "Attachment block must be one or more complete tag blocks.",
-          preview: previewAttachmentBlock(trimmed),
-        },
-      });
+      throw new Error(
+        `Invalid attachment block at index ${index}: ${previewAttachmentBlock(trimmed)}`,
+      );
     });
     return validBlocks.join("\n\n");
   },

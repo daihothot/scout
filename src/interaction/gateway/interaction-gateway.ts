@@ -1,7 +1,3 @@
-import type {
-  AgentTaskEvent,
-  AgentTaskEventPayloadVariant,
-} from "../../agent/task/task-events.js";
 import {
   type EventBus,
   type ScoutEvent,
@@ -13,8 +9,8 @@ import type {
   AgentMessageSend,
   RuntimeDisclosureEvent,
   RuntimeInteractionPort,
-  RuntimeProgressEvent,
-} from "../port.js";
+} from "../protocol/port.js";
+import type { AgentActivity } from "../../agent/activity/activity-event.js";
 import type {
   CoordinatorMessageProducedPayload,
 } from "../../agent/runner/coordinator/coordinator-runner-events.js";
@@ -51,13 +47,13 @@ export class InteractionGateway {
         SystemEvents.interaction.disclosureRequested,
         (event) => this.handleDisclosureRequest(event),
       ),
-      this.eventBus.subscribe<RuntimeProgressEvent>(
-        SystemEvents.interaction.progressRequested,
-        (event) => this.handleProgressRequest(event),
+      this.eventBus.subscribe<AgentActivity>(
+        AgentEvents.activity.observed,
+        (event) => this.handleAgentActivity(event),
       ),
-      this.eventBus.subscribe<AgentTaskEventPayloadVariant>(
+      this.eventBus.subscribe(
         AgentEvents.task,
-        (event) => this.handleTaskEvent(event as AgentTaskEvent),
+        (event) => this.handleTaskEvent(event),
       ),
       this.eventBus.subscribe<CoordinatorMessageProducedPayload>(
         AgentEvents.coordinator.messageProduced,
@@ -117,33 +113,25 @@ export class InteractionGateway {
     }
   }
 
-  private async handleProgressRequest(event: ScoutEvent<RuntimeProgressEvent>): Promise<void> {
+  private async handleAgentActivity(event: ScoutEvent<AgentActivity>): Promise<void> {
     try {
-      await this.interactionPort.publishProgress(event.payload);
+      await this.interactionPort.publishAgentActivity(event.payload);
     } catch (error) {
-      this.warnInteractionError("progress_request_failed", error, {
+      this.warnInteractionError("agent_activity_publish_failed", error, {
         eventId: event.id,
-        source: event.payload.source,
+        agentId: event.payload.agentId,
         itemId: event.payload.itemId,
       });
     }
   }
 
-  private async handleTaskEvent(event: AgentTaskEvent): Promise<void> {
+  private async handleTaskEvent(event: ScoutEvent): Promise<void> {
     try {
       await this.interactionPort.publishTaskEvent(event);
     } catch (error) {
       this.warnInteractionError("task_event_publish_failed", error, {
         eventId: event.id,
         eventKey: event.key.routeKey,
-      });
-    }
-    if (!shouldNotifyTaskEvent(event)) return;
-    try {
-      await this.interactionPort.notify(event);
-    } catch (error) {
-      this.warnInteractionError("notification_request_failed", error, {
-        eventId: event.id,
       });
     }
   }
@@ -185,14 +173,9 @@ export class InteractionGateway {
     });
   }
 
-  private handleExitRequested(): void {
-    this.eventBus.publish(SystemEvents.interaction.exitRequested, {
+  private async handleExitRequested(): Promise<void> {
+    await this.eventBus.publishAndWait(SystemEvents.interaction.exitRequested, {
       requestedAt: new Date().toISOString(),
     } satisfies InteractionExitRequestedPayload);
   }
-}
-
-function shouldNotifyTaskEvent(event: AgentTaskEvent): boolean {
-  return AgentEvents.task.terminal.is(event)
-    || AgentEvents.task.humanInputRequested.is(event);
 }

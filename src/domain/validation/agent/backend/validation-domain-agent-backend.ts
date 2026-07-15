@@ -1,4 +1,4 @@
-import type { DynamicToolCallResult } from "../../../../agent-server/types.js";
+import type { DynamicToolCallResponse } from "../../../../agent-server/types.js";
 import type { ScoutDomainDynamicToolCall } from "../../../types.js";
 import { buildValidationStateSnapshot } from "../../model/index.js";
 import {
@@ -14,7 +14,7 @@ export class ValidationDomainAgentBackend {
     this.runId = input.runId;
   }
 
-  handleDynamicToolCall(call: ScoutDomainDynamicToolCall): DynamicToolCallResult | undefined {
+  handleDynamicToolCall(call: ScoutDomainDynamicToolCall): DynamicToolCallResponse | undefined {
     if (
       call.input.namespace !== VALIDATION_DOMAIN_TOOL_NAMESPACE
       || call.input.tool !== GET_VALIDATION_STATE_SNAPSHOT_TOOL

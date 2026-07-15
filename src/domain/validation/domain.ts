@@ -6,7 +6,7 @@ import type {
 } from "../types.js";
 import { ValidationDomainAgentBackend } from "./agent/backend/validation-domain-agent-backend.js";
 import { buildValidationDomainToolsForRole } from "./tools/validation-domain-tools.js";
-import type { DynamicToolCallResult } from "../../agent-server/types.js";
+import type { DynamicToolCallResponse } from "../../agent-server/types.js";
 
 export interface ValidationDomainOptions {
   runId: string;
@@ -33,7 +33,7 @@ export class ValidationDomain implements ScoutDomain {
     void this.runId;
   }
 
-  handleDynamicToolCall(call: ScoutDomainDynamicToolCall): DynamicToolCallResult | undefined {
+  handleDynamicToolCall(call: ScoutDomainDynamicToolCall): DynamicToolCallResponse | undefined {
     return this.backend.handleDynamicToolCall(call);
   }
 }

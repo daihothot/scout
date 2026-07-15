@@ -19,6 +19,7 @@ import {
   type CodexReasoningEffort,
   type CodexReasoningSummary,
 } from "./model-config.js";
+import type { DynamicToolCallResponse } from "../types.js";
 
 export interface JsonRpcResponse {
   id: number;
@@ -56,11 +57,11 @@ interface TurnWaiter {
   statusMessages: Set<string>;
   timeout?: NodeJS.Timeout;
   onStatusMessage?: (message: string) => void;
-  resolve: (value: TurnResult) => void;
+  resolve: (value: TurnOutput) => void;
   reject: (error: Error) => void;
 }
 
-export interface TurnStartResult {
+export interface TurnStartResponse {
   turnId: string;
   response: unknown;
 }
@@ -90,7 +91,7 @@ export interface ThreadStartOptions {
   dynamicTools?: DynamicToolSpec[];
 }
 
-export interface ThreadStartResult {
+export interface ThreadStartResponse {
   threadId: string;
   response: unknown;
 }
@@ -108,7 +109,7 @@ export interface TurnStartOptions {
   onStatusMessage?: (message: string) => void;
 }
 
-export interface TurnResult {
+export interface TurnOutput {
   turnId?: string;
   finalResponse: string;
   response: unknown;
@@ -137,17 +138,9 @@ export interface DynamicToolCallInput {
   arguments: unknown;
 }
 
-export interface DynamicToolCallResult {
-  success: boolean;
-  contentItems: Array<{
-    type: "inputText";
-    text: string;
-  }>;
-}
-
 export type DynamicToolCallHandler = (
   input: DynamicToolCallInput,
-) => Promise<DynamicToolCallResult> | DynamicToolCallResult;
+) => Promise<DynamicToolCallResponse> | DynamicToolCallResponse;
 
 export type AppServerNotificationHandler = (
   notification: JsonRpcNotification,
@@ -240,7 +233,7 @@ export class CodexAppServerClient {
     this.notify("initialized");
   }
 
-  async startThread(options: ThreadStartOptions): Promise<ThreadStartResult> {
+  async startThread(options: ThreadStartOptions): Promise<ThreadStartResponse> {
     const response = await this.request("thread/start", cleanUndefined({
       model: options.model,
       modelProvider: options.modelProvider,
@@ -264,13 +257,13 @@ export class CodexAppServerClient {
     };
   }
 
-  async runTurn(options: TurnStartOptions): Promise<TurnResult> {
+  async runTurn(options: TurnStartOptions): Promise<TurnOutput> {
     const completion = this.awaitTurnCompletion({
       threadId: options.threadId,
       timeoutMs: options.timeoutMs,
       onStatusMessage: options.onStatusMessage,
     });
-    let start: TurnStartResult;
+    let start: TurnStartResponse;
     try {
       start = await this.startTurn(options);
     } catch (error) {
@@ -290,7 +283,7 @@ export class CodexAppServerClient {
     };
   }
 
-  async startTurn(options: TurnStartOptions): Promise<TurnStartResult> {
+  async startTurn(options: TurnStartOptions): Promise<TurnStartResponse> {
     const response = await this.request("turn/start", cleanUndefined({
       threadId: options.threadId,
       input: [{ type: "text", text: options.prompt, text_elements: [] }],
@@ -337,11 +330,11 @@ export class CodexAppServerClient {
     threadId: string;
     timeoutMs?: number;
     onStatusMessage?: (message: string) => void;
-  }): Promise<TurnResult> {
+  }): Promise<TurnOutput> {
     if (this.turnWaiters.has(input.threadId)) {
       throw new Error(`A turn is already in flight for thread ${input.threadId}.`);
     }
-    return new Promise<TurnResult>((resolve, reject) => {
+    return new Promise<TurnOutput>((resolve, reject) => {
       const timeout = input.timeoutMs
         ? setTimeout(() => {
           this.cancelTurnWait(
@@ -387,8 +380,13 @@ export class CodexAppServerClient {
     }
   }
 
-  setDynamicToolCallHandler(handler: DynamicToolCallHandler): void {
+  setDynamicToolCallHandler(handler: DynamicToolCallHandler): () => void {
     this.onDynamicToolCall = handler;
+    return () => {
+      if (this.onDynamicToolCall === handler) {
+        this.onDynamicToolCall = undefined;
+      }
+    };
   }
 
   onMessage(handler: AppServerMessageHandler): () => void {

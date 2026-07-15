@@ -1,35 +1,13 @@
 import type { ScoutAgent } from "./scout-agent.js";
 
-export interface AgentRegistryLogger {
-  info(input: unknown): void;
-}
-
-export interface AgentRegistryOptions {
-  logger?: AgentRegistryLogger;
-}
-
 export class AgentRegistry {
-  private readonly logger?: AgentRegistryLogger;
   private readonly agents = new Map<string, ScoutAgent>();
   private readonly threadIdToAgentId = new Map<string, string>();
-
-  constructor(options: AgentRegistryOptions = {}) {
-    this.logger = options.logger;
-  }
 
   registerAgent(agent: ScoutAgent): ScoutAgent {
     const existing = this.agents.get(agent.agentId);
     if (existing) return existing;
     this.agents.set(agent.agentId, agent);
-    this.logger?.info({
-      module: "agent.registry",
-      event: "agent_registered",
-      agentId: agent.agentId,
-      data: {
-        role: agent.role,
-        phases: agent.phases,
-      },
-    });
     return agent;
   }
 

@@ -3,7 +3,6 @@ import { dirname, join } from "node:path";
 import { ensureDir } from "../fs.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
-export type LogTarget = "runtime" | "agent" | "both";
 
 export interface LogEvent {
   timestamp: string;
@@ -18,9 +17,7 @@ export interface LogEvent {
 
 export type LogRedactor = (event: LogEvent) => LogEvent;
 export type LogSummarizer = (event: LogEvent) => LogEvent;
-export type LogInput = Omit<LogEvent, "timestamp" | "level" | "runId"> & {
-  target?: LogTarget;
-};
+export type LogInput = Omit<LogEvent, "timestamp" | "level" | "runId">;
 
 export interface LoggerOptions {
   runId: string;
@@ -34,20 +31,15 @@ const LOG_LINE_WIDTH = 120;
 
 export class Logger {
   private readonly runId: string;
-  private readonly globalLogPath: string;
-  private readonly agentLogPaths = new Map<string, string>();
+  private readonly logPath: string;
   private readonly redactor: LogRedactor;
   private readonly summarizer: LogSummarizer;
 
   constructor(options: LoggerOptions) {
     this.runId = options.runId;
-    this.globalLogPath = join(options.logsRoot, options.fileName ?? "runtime.log");
+    this.logPath = join(options.logsRoot, options.fileName ?? "runtime.log");
     this.redactor = options.redactor ?? defaultLogRedactor;
     this.summarizer = options.summarizer ?? defaultLogSummarizer;
-  }
-
-  registerAgentLogRoot(agentId: string, logsRoot: string, fileName = "runtime.log"): void {
-    this.agentLogPaths.set(agentId, join(logsRoot, fileName));
   }
 
   debug(input: LogInput): void {
@@ -67,25 +59,15 @@ export class Logger {
   }
 
   private write(level: LogLevel, input: LogInput): void {
-    const { target: requestedTarget, ...eventInput } = input;
     const event = {
       timestamp: new Date().toISOString(),
       level,
       runId: this.runId,
-      ...eventInput,
+      ...input,
     };
     const processed = this.redactor(this.summarizer(event));
     const serialized = formatLogEvent(processed);
-    const target = requestedTarget ?? defaultLogTarget(level, input.agentId);
-    const agentLogPath = input.agentId ? this.agentLogPaths.get(input.agentId) : undefined;
-    if (target === "runtime" || target === "both" || (target === "agent" && !agentLogPath)) {
-      this.append(this.globalLogPath, serialized);
-    }
-    if ((target === "agent" || target === "both")
-      && agentLogPath
-      && agentLogPath !== this.globalLogPath) {
-      this.append(agentLogPath, serialized);
-    }
+    this.append(this.logPath, serialized);
   }
 
   private append(logPath: string, serialized: string): void {
@@ -232,11 +214,6 @@ function isScalar(value: unknown): boolean {
 
 function indent(level: number): string {
   return "  ".repeat(level);
-}
-
-function defaultLogTarget(level: LogLevel, agentId: string | undefined): LogTarget {
-  if (!agentId) return "runtime";
-  return level === "warn" || level === "error" ? "both" : "agent";
 }
 
 function defaultLogRedactor(event: LogEvent): LogEvent {

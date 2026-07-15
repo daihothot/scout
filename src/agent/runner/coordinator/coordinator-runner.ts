@@ -15,8 +15,10 @@ import type {
   AgentInterruptEventPayload,
 } from "../../orchestration/orchestrator-events.js";
 import type {
-  AgentTaskEventPayload,
+  AgentTaskNotAssignedEventPayload,
 } from "../../task/task-events.js";
+import type { AgentTaskState } from "../../task/types.js";
+import type { SendAgentMessageInput } from "../../task/types.js";
 import type { UserMessageSubmittedPayload } from "../../../interaction/gateway/interaction-events.js";
 import { AgentRunner } from "../types.js";
 import { attachments } from "../../context/attachments.js";
@@ -58,8 +60,8 @@ export class CoordinatorRunner extends AgentRunner {
     this.inbox.subscribe<UserMessageSubmittedPayload>(SystemEvents.interaction.userMessageSubmitted);
     this.inbox.subscribe<AgentOrchestrationDispatchRequestedPayload>(AgentEvents.orchestration.dispatchRequested);
     this.inbox.subscribe<AgentInterruptEventPayload>(AgentEvents.interrupt);
-    this.inbox.subscribe<AgentTaskEventPayload>(AgentEvents.task.assigned);
-    this.inbox.subscribe<AgentTaskEventPayload>(AgentEvents.task.outcomeAccepted);
+    this.inbox.subscribe<AgentTaskState>(AgentEvents.task.assigned);
+    this.inbox.subscribe<AgentTaskNotAssignedEventPayload>(AgentEvents.task.notAssigned);
   }
 
   get agentId(): string {
@@ -71,6 +73,17 @@ export class CoordinatorRunner extends AgentRunner {
     this.stopReason = reason;
     this.inbox.stop();
     this.loop.stop();
+  }
+
+  queueMessage(input: SendAgentMessageInput): void {
+    if (this.stopped) {
+      throw new Error(`Coordinator runner ${this.agentId} is stopped.${this.stopReason ? ` Reason: ${this.stopReason}` : ""}`);
+    }
+    if (input.taskId) {
+      throw new Error(`Coordinator runner ${this.agentId} does not own task ${input.taskId}.`);
+    }
+    this.queueMessages([attachments.compose(input.message)]);
+    this.loop.schedule();
   }
 
   private takeCoordinatorTick(): string[] | undefined {
@@ -104,25 +117,20 @@ export class CoordinatorRunner extends AgentRunner {
       }
 
       if (AgentEvents.task.assigned.is(event)) {
-        const payload = event.payload as AgentTaskEventPayload;
-        this.queueMessages([coordinator.observation({
-          type: "task_assigned",
-          agentId: payload.task.agentId,
-          taskId: payload.task.taskId,
+        const task = event.payload as AgentTaskState;
+        this.queueMessages([coordinator.taskAssigned({
+          agentId: task.agentId,
+          taskId: task.taskId,
         })]);
         continue;
       }
 
-      if (AgentEvents.task.outcomeAccepted.is(event)) {
-        const payload = event.payload as AgentTaskEventPayload;
-        const data = typeof payload.data === "object" && payload.data !== null
-          ? payload.data as { outcome?: unknown }
-          : undefined;
-        if (typeof data?.outcome === "object" && data.outcome !== null) {
-          const outcome = data.outcome as NonNullable<AgentTaskEventPayload["task"]["outcome"]>;
-          this.queueMessages([coordinator.observation(outcome)]);
-        }
+      if (AgentEvents.task.notAssigned.is(event)) {
+        const payload = event.payload as AgentTaskNotAssignedEventPayload;
+        this.queueMessages([coordinator.taskNotAssigned(payload)]);
+        continue;
       }
+
     }
     this.loop.schedule();
   }
@@ -132,7 +140,7 @@ export class CoordinatorRunner extends AgentRunner {
       throw new Error(`Coordinator runner ${this.agentId} is stopped.${this.stopReason ? ` Reason: ${this.stopReason}` : ""}`);
     }
     const outcome = await this.host.runTurn({
-      prompt: attachments.compose(undefined, ...messages),
+      prompt: attachments.compose(...messages),
       sandbox: "workspaceWrite",
       outputContract: "coordinator_main_loop",
     });

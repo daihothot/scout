@@ -11,12 +11,8 @@ import type {
   RuntimeDisclosureEvent,
   RuntimeInteractionPort,
   RuntimeInteractionUnsubscribe,
-  RuntimeProgressEvent,
-} from "../../src/interaction/port.js";
-import type {
-  AgentTaskEvent,
-  AgentTaskEventPayload,
-} from "../../src/agent/task/task-events.js";
+} from "../../src/interaction/protocol/port.js";
+import type { AgentActivity } from "../../src/agent/activity/activity-event.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
@@ -27,6 +23,7 @@ import type {
 import { AgentTaskStatuses } from "../../src/agent/task/types.js";
 import { TuiInteractionAdapter } from "../../src/interaction/tui/tui-interaction-adapter.js";
 import { TuiStore } from "../../src/interaction/tui/tui-store.js";
+import type { BootSnapshot } from "../../src/run/boot/boot-stage.js";
 
 test("interaction gateway publishes exit request from interaction port", async () => {
   const bus = new InMemoryEventBus();
@@ -51,7 +48,27 @@ test("interaction gateway publishes exit request from interaction port", async (
   assert.equal(typeof observed[0]?.payload.requestedAt, "string");
 });
 
-test("interaction gateway separates receiving agent message from sending human message", async () => {
+test("interaction gateway waits for exit subscribers to finish", async () => {
+  const bus = new InMemoryEventBus();
+  const port = new TestInteractionPort();
+  const gateway = new InteractionGateway({
+    eventBus: bus,
+    interactionPort: port,
+  });
+  let terminated = false;
+  bus.subscribe(SystemEvents.interaction.exitRequested, async () => {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    terminated = true;
+  });
+
+  gateway.start();
+  await port.requestExit();
+  gateway.stop();
+
+  assert.equal(terminated, true);
+});
+
+test("interaction gateway separates Coordinator output from user input", async () => {
   const bus = new InMemoryEventBus();
   const port = new TestInteractionPort();
   const gateway = new InteractionGateway({
@@ -67,36 +84,22 @@ test("interaction gateway separates receiving agent message from sending human m
   );
 
   gateway.start();
-  bus.publish(AgentEvents.task.humanInputRequested, {
-    task: {
-      type: "local_agent",
-      taskId: "task-1",
-      taskSequence: 1,
-      agentId: "researcher",
-      role: "researcher",
-      description: "need input",
-      initialPrompt: "initial",
-      status: AgentTaskStatuses.WaitingForHumanInput,
-      isBackgrounded: false,
-      createdAt: "2026-07-04T00:00:00.000Z",
-      updatedAt: "2026-07-04T00:00:00.000Z",
-    },
-    request: {
-      requestId: "request-1",
-      agentId: "researcher",
-      taskId: "task-1",
-      kind: "prompt_required",
-      question: "Need input?",
-      createdAt: "2026-07-04T00:00:00.000Z",
-      status: "pending",
-    },
+  bus.publish(AgentEvents.coordinator.messageProduced, {
+    messageId: "coordinator-message-1",
+    agentId: "coordinator",
+    threadId: "thread-coordinator",
+    turnId: "turn-coordinator-1",
+    text: "Need input?",
+    createdAt: "2026-07-04T00:00:00.000Z",
   });
   await flushMicrotasks();
 
-  assert.equal(port.receivedMessages.length, 0);
-  assert.equal(port.taskEvents.length, 1);
-  assert.equal(port.notifications.length, 1);
-  assert.equal(port.notifications[0]?.payload.task.taskId, "task-1");
+  assert.deepEqual(port.receivedMessages, [{
+    id: "coordinator-message-1",
+    text: "Need input?",
+    data: undefined,
+  }]);
+  assert.equal(port.taskEvents.length, 0);
   assert.equal(observed.length, 0);
 
   await port.sendMessage({
@@ -111,7 +114,7 @@ test("interaction gateway separates receiving agent message from sending human m
   gateway.stop();
 });
 
-test("interaction gateway projects every task event while limiting notifications", async () => {
+test("interaction gateway publishes every task event once", async () => {
   const bus = new InMemoryEventBus();
   const port = new TestInteractionPort();
   const gateway = new InteractionGateway({
@@ -120,19 +123,24 @@ test("interaction gateway projects every task event while limiting notifications
   });
 
   gateway.start();
-  await bus.publishAndWait(AgentEvents.task.assigned, {
-    task: taskState({ status: AgentTaskStatuses.Queued }),
-  } satisfies AgentTaskEventPayload);
-  await bus.publishAndWait(AgentEvents.task.planUpdated, {
-    task: taskState({ plan: taskPlan("inProgress") }),
-  } satisfies AgentTaskEventPayload);
-  await bus.publishAndWait(AgentEvents.task.terminal, {
-    task: taskState({
-      status: AgentTaskStatuses.Complete,
-      updatedAt: "2026-07-10T00:00:03.000Z",
-      plan: taskPlan("completed"),
-    }),
-  } satisfies AgentTaskEventPayload);
+  await bus.publishAndWait(
+    AgentEvents.task.assigned,
+    taskState({ status: AgentTaskStatuses.Queued }),
+  );
+  await bus.publishAndWait(
+    AgentEvents.task.planUpdated,
+    taskState({ plan: taskPlan("inProgress") }),
+  );
+  await bus.publishAndWait(AgentEvents.task.done, taskState({
+    status: AgentTaskStatuses.Done,
+    updatedAt: "2026-07-10T00:00:03.000Z",
+    plan: taskPlan("completed"),
+  }));
+  await bus.publishAndWait(AgentEvents.task.archived, taskState({
+    status: AgentTaskStatuses.Done,
+    updatedAt: "2026-07-10T00:00:04.000Z",
+    plan: taskPlan("completed"),
+  }));
   gateway.stop();
 
   assert.deepEqual(
@@ -140,16 +148,13 @@ test("interaction gateway projects every task event while limiting notifications
     [
       AgentEvents.task.assigned.routeKey,
       AgentEvents.task.planUpdated.routeKey,
-      AgentEvents.task.terminal.routeKey,
+      AgentEvents.task.done.routeKey,
+      AgentEvents.task.archived.routeKey,
     ],
-  );
-  assert.deepEqual(
-    port.notifications.map((event) => event.key.routeKey),
-    [AgentEvents.task.terminal.routeKey],
   );
 });
 
-test("interaction gateway projects assigned task plan and Worker progress into TuiStore", async () => {
+test("interaction gateway projects assigned task plan and Worker activity into TuiStore", async () => {
   const bus = new InMemoryEventBus();
   const store = new TuiStore({
     cwd: "/repo/scout",
@@ -163,66 +168,74 @@ test("interaction gateway projects assigned task plan and Worker progress into T
   });
 
   gateway.start();
-  await bus.publishAndWait(AgentEvents.task.assigned, {
-    task: taskState({ status: AgentTaskStatuses.Queued }),
-  } satisfies AgentTaskEventPayload);
-  await bus.publishAndWait(AgentEvents.task.planUpdated, {
-    task: taskState({ plan: taskPlan("inProgress") }),
-  } satisfies AgentTaskEventPayload);
-  await bus.publishAndWait(SystemEvents.interaction.progressRequested, {
-    source: "agent.app_server.item",
+  await bus.publishAndWait(
+    AgentEvents.task.assigned,
+    taskState({ status: AgentTaskStatuses.Queued }),
+  );
+  await bus.publishAndWait(
+    AgentEvents.task.planUpdated,
+    taskState({ plan: taskPlan("inProgress") }),
+  );
+  await bus.publishAndWait(AgentEvents.activity.observed, {
+    seq: 1,
     agentId: "researcher",
+    role: "researcher",
     taskId: "researcher-task-0001",
+    threadId: "thread-researcher",
     itemId: "worker-item-1",
     type: "reasoning",
     status: "completed",
     label: "Reasoning",
     detail: "Locate the current Behavior source.",
     updatedAt: "2026-07-10T00:00:02.000Z",
-  } satisfies RuntimeProgressEvent);
+  } satisfies AgentActivity);
 
   assert.deepEqual(store.snapshot().tasks[0]?.planSteps, [{
     step: "Locate BDD and Behavior source",
     status: "inProgress",
   }]);
-  assert.equal(store.snapshot().progress[0]?.taskId, "researcher-task-0001");
+  assert.equal(store.snapshot().activities[0]?.taskId, "researcher-task-0001");
 
-  await bus.publishAndWait(AgentEvents.task.terminal, {
-    task: taskState({
-      status: AgentTaskStatuses.Complete,
-      updatedAt: "2026-07-10T00:00:03.000Z",
-      plan: taskPlan("completed"),
-    }),
-  } satisfies AgentTaskEventPayload);
-  gateway.stop();
+  await bus.publishAndWait(AgentEvents.task.done, taskState({
+    status: AgentTaskStatuses.Done,
+    updatedAt: "2026-07-10T00:00:03.000Z",
+    plan: taskPlan("completed"),
+  }));
 
   assert.equal(store.snapshot().tasks.length, 1);
-  assert.equal(store.snapshot().tasks[0]?.status, AgentTaskStatuses.Complete);
+  assert.equal(store.snapshot().tasks[0]?.status, AgentTaskStatuses.Done);
   assert.equal(store.snapshot().tasks[0]?.planSteps[0]?.status, "completed");
+
+  await bus.publishAndWait(AgentEvents.task.archived, taskState({
+    status: AgentTaskStatuses.Done,
+    updatedAt: "2026-07-10T00:00:04.000Z",
+    plan: taskPlan("completed"),
+  }));
+  gateway.stop();
+
+  assert.equal(store.snapshot().tasks.length, 0);
 });
 
 class TestInteractionPort implements RuntimeInteractionPort {
   private exitHandler?: () => void | Promise<void>;
   private sendHandler?: (message: AgentMessageSend) => void | Promise<void>;
   readonly receivedMessages: AgentMessageReply[] = [];
-  readonly taskEvents: AgentTaskEvent[] = [];
-  readonly notifications: AgentTaskEvent[] = [];
+  readonly taskEvents: ScoutEvent[] = [];
+
+  async publishBootSnapshot(_snapshot: BootSnapshot): Promise<void> {
+    return undefined;
+  }
 
   async disclose(_event: RuntimeDisclosureEvent): Promise<void> {
     return undefined;
   }
 
-  async publishProgress(_event: RuntimeProgressEvent): Promise<void> {
+  async publishAgentActivity(_activity: AgentActivity): Promise<void> {
     return undefined;
   }
 
-  async publishTaskEvent(event: AgentTaskEvent): Promise<void> {
+  async publishTaskEvent(event: ScoutEvent): Promise<void> {
     this.taskEvents.push(event);
-  }
-
-  async notify(_event: AgentTaskEvent): Promise<void> {
-    this.notifications.push(_event);
-    return undefined;
   }
 
   async receiveAgentMessage(_message: AgentMessageReply): Promise<void> {

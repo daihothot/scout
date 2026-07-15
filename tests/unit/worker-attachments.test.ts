@@ -45,6 +45,15 @@ test("agent turn attachments build payload text", () => {
     "</wait-for-human-request>",
   ].join("\n"));
 
+  const taskOutcome = agent.turn.task_outcome("## Outcome\n\n- Artifact: result.md");
+  assert.equal(taskOutcome, [
+    "<task-outcome>",
+    "## Outcome",
+    "",
+    "- Artifact: result.md",
+    "</task-outcome>",
+  ].join("\n"));
+
   const humanResponse = agent.turn.human_response("选择 A");
   assert.equal(humanResponse, [
     "<human-response>",
@@ -53,18 +62,9 @@ test("agent turn attachments build payload text", () => {
   ].join("\n"));
 });
 
-test("attachments compose valid tag blocks and logs invalid blocks", () => {
-  const errors: unknown[] = [];
-  const logger = {
-    error(input: unknown): void {
-      errors.push(input);
-    },
-  };
-
+test("attachments compose valid tag blocks and reject invalid blocks", () => {
   assert.equal(attachments.compose(
-    logger,
     attachments.addTagBlock("message", "A"),
-    "<broken>",
     attachments.addTagBlock("human-response", "B"),
   ), [
     "<message>",
@@ -75,7 +75,10 @@ test("attachments compose valid tag blocks and logs invalid blocks", () => {
     "B",
     "</human-response>",
   ].join("\n"));
-  assert.equal(errors.length, 1);
+  assert.throws(
+    () => attachments.compose(attachments.addTagBlock("message", "A"), "<broken>"),
+    /Invalid attachment block at index 1/,
+  );
 });
 
 test("attachments manage tag blocks", () => {

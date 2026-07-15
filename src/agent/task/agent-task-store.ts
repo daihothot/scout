@@ -7,7 +7,7 @@ import {
 export const ActiveAgentTaskStatuses = [
   AgentTaskStatuses.Queued,
   AgentTaskStatuses.Running,
-  AgentTaskStatuses.WaitingForHumanInput,
+  AgentTaskStatuses.Done,
 ] as const satisfies AgentTaskStatus[];
 
 export class AgentTaskStore {
@@ -44,6 +44,20 @@ export class AgentTaskStore {
     return cloneAgentTaskState(next);
   }
 
+  removeTask(taskId: string): AgentTaskState {
+    const task = this.tasks.get(taskId);
+    if (!task) throw new Error(`Unknown agent task: ${taskId}`);
+    this.tasks.delete(taskId);
+    const remainingTaskIds = (this.taskIdsByAgent.get(task.agentId) ?? [])
+      .filter((currentTaskId) => currentTaskId !== taskId);
+    if (remainingTaskIds.length > 0) {
+      this.taskIdsByAgent.set(task.agentId, remainingTaskIds);
+    } else {
+      this.taskIdsByAgent.delete(task.agentId);
+    }
+    return cloneAgentTaskState(task);
+  }
+
   listTasks(input: { agentId?: string } = {}): AgentTaskState[] {
     if (!input.agentId) {
       return [...this.tasks.values()].map(cloneAgentTaskState);
@@ -67,10 +81,6 @@ export class AgentTaskStore {
   hasOpenTasks(): boolean {
     return [...this.tasks.values()].some((task) => isActiveAgentTaskStatus(task.status));
   }
-
-  hasWaitingHumanInputTasks(): boolean {
-    return [...this.tasks.values()].some((task) => task.status === AgentTaskStatuses.WaitingForHumanInput);
-  }
 }
 
 export function isActiveAgentTaskStatus(status: AgentTaskStatus): boolean {
@@ -87,15 +97,11 @@ export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
     planRecords: task.planRecords?.map((plan) => cloneJson(plan)),
     steps: task.steps?.map((step) => ({
       ...step,
-      humanInputRequest: step.humanInputRequest ? {
-        ...step.humanInputRequest,
-        options: step.humanInputRequest.options ? [...step.humanInputRequest.options] : undefined,
-      } : undefined,
+      humanInputRequest: step.humanInputRequest ? { ...step.humanInputRequest } : undefined,
       humanInputResponse: step.humanInputResponse ? { ...step.humanInputResponse } : undefined,
       toolCalls: step.toolCalls.map((toolCall) => ({ ...toolCall })),
       protocolWarnings: step.protocolWarnings ? [...step.protocolWarnings] : undefined,
     })),
-    outcome: task.outcome ? { ...task.outcome } : undefined,
   };
 }
 

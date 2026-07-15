@@ -103,7 +103,7 @@ test("AppServerEventStore handles local server request resolution and clears pen
       threadId: "thread-1",
       turnId: "turn-1",
       callId: "call-1",
-      tool: "RequestHumanInput",
+      tool: "SendMessage",
     },
   };
 

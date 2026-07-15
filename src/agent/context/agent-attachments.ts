@@ -5,6 +5,7 @@ import {
 export const AgentContextTags = {
   UseUpdateTools: "use-update-tools",
   Message: "message",
+  TaskOutcome: "task-outcome",
   WaitForHumanRequest: "wait-for-human-request",
   HumanResponse: "human-response",
 } as const;
@@ -23,6 +24,9 @@ export const agent = {
     },
     wait_for_human_request(request: string): string {
       return attachments.addTagBlock(AgentContextTags.WaitForHumanRequest, request);
+    },
+    task_outcome(outcome: string): string {
+      return attachments.addTagBlock(AgentContextTags.TaskOutcome, outcome);
     },
     human_response(response: string): string {
       return attachments.addTagBlock(AgentContextTags.HumanResponse, response);

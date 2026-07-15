@@ -1,18 +1,39 @@
 import type { ScoutAgentRole } from "../agent/thread/types.js";
-import type { AssetCommit } from "../asset-store/types.js";
+import type { AgentServerPreflightReport } from "../agent-server/types.js";
+import type {
+  AssetCommit,
+  CodexMount,
+} from "../asset-store/types.js";
 import type { AgentThreadSnapshot } from "../agent/thread/types.js";
 import type { RuntimeInteractionPort } from "../interaction/index.js";
-import type {
-  PreparedRunAgent,
-  RunRootAccess,
-} from "./run-env-preparation.js";
 
 export interface ScoutRunOptions {
   cwd: string;
   interactionPort?: RuntimeInteractionPort;
 }
 
-export interface ScoutRunResult {
+export interface RunRootAccess {
+  mountRoots: string[];
+  trustedRoots: string[];
+  writableRoots: string[];
+}
+
+export interface RunAgentEnvironment {
+  role: ScoutAgentRole;
+  mount: CodexMount;
+  preflight: AgentServerPreflightReport;
+  preflightPath: string;
+  assetCommit: AssetCommit;
+  assetCommitPath: string;
+}
+
+export interface RunEnvironment {
+  agents: Record<ScoutAgentRole, RunAgentEnvironment>;
+  rootAccess: RunRootAccess;
+  contextBundle: RunContextBundle;
+}
+
+export interface ScoutRunSummary {
   status: "passed" | "failed";
   runId: string;
   coordinatorMountRoot: string;
@@ -27,8 +48,6 @@ export interface ScoutRunResult {
     preflightPath: string;
   }>;
 }
-
-export type ScoutRunPreparedAgents = Record<ScoutAgentRole, PreparedRunAgent>;
 
 export interface RunContextBundle {
   contextBundleId: string;

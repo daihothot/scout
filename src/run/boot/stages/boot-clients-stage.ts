@@ -1,108 +1,137 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
   createCodexAppServerClient,
   type CodexAppServerClientBundle,
   type CreateCodexAppServerClientOptions,
-} from "../agent-server/codex/app-server-factory.js";
-import { CodexAssetLayout } from "../asset-store/asset-layout.js";
+} from "../../../agent-server/codex/app-server-factory.js";
 import {
-  type McpServersFile,
-} from "../asset-store/types.js";
-import { readJsonFile } from "../core/fs.js";
-import {
-  ScoutAgentRoles,
-  type ScoutAgentRole,
-} from "../agent/thread/types.js";
+  resolveDefaultAgentModel,
+  readAgentProfilesForRepo,
+  resolveAgentProfile,
+} from "../../../asset-store/agent-profiles.js";
+import { CodexAssetLayout } from "../../../asset-store/asset-layout.js";
 import {
   buildMountMacroValues,
   resolveMountMacros,
-} from "../asset-store/mount-macros.js";
+} from "../../../asset-store/mount-macros.js";
+import type { McpServersFile } from "../../../asset-store/types.js";
 import {
-  readAgentProfilesForRepo,
-  resolveAgentProfile,
-  resolveDefaultAgentModel,
-} from "../asset-store/agent-profiles.js";
-import type { CodexModelConfig } from "../agent-server/codex/model-config.js";
+  ScoutAgentRoles,
+  type ScoutAgentRole,
+} from "../../../agent/thread/types.js";
+import type { CodexModelConfig } from "../../../agent-server/codex/model-config.js";
+import { readJsonFile } from "../../../core/fs.js";
+import { currentRunScope } from "../../run-scope.js";
+import type { BootStage } from "../boot-stage.js";
 
-export const RunClientAgentRoles = [
-  ScoutAgentRoles.Coordinator,
-  ScoutAgentRoles.Researcher,
-  ScoutAgentRoles.Verifier,
-  ScoutAgentRoles.Validator,
-] as const;
-
-export interface RunClientRootPlan {
+export interface BootClientRootPlan {
   mountRoots: string[];
   trustedRoots: string[];
   writableRoots: string[];
   defaultWritableRoots: string[];
 }
 
-export interface PreparedRunClients {
-  appServerClient: CodexAppServerClientBundle;
-  rootPlan: RunClientRootPlan;
-}
-
-export interface PrepareRunClientsOptions {
-  repoRoot: string;
-  runId: string;
+export interface BootClientsStageOptions {
   agentRoles?: readonly ScoutAgentRole[];
   createAppServerClient?: (options: CreateCodexAppServerClientOptions & {
-    rootPlan: RunClientRootPlan;
+    rootPlan: BootClientRootPlan;
   }) => CodexAppServerClientBundle;
 }
 
-export async function prepareRunClients(options: PrepareRunClientsOptions): Promise<PreparedRunClients> {
-  const rootPlan = buildRunClientRootPlan(options);
-  const defaultModel = resolveDefaultAgentModel(readAgentProfilesForRepo(options.repoRoot));
-  const runRoot = join(resolve(options.repoRoot), "run", options.runId);
-  const logsRoot = join(runRoot, "logs");
-  const isolatedHome = join(runRoot, "codex-home");
-  const isolatedCodexHome = join(isolatedHome, ".codex");
-  mkdirSync(isolatedCodexHome, { recursive: true });
-  const configToml = buildRunClientConfig({
-    mountRoots: rootPlan.mountRoots,
-    trustedRoots: rootPlan.trustedRoots,
-    model: defaultModel,
-  });
-  const clientOptions = {
-    isolatedHome,
-    isolatedCodexHome,
-    configToml,
-    providerName: defaultModel.provider,
-    logPrefix: `scout ${options.runId} app-server`,
-    stderrLogPath: join(logsRoot, "app-server.stderr.log"),
-    transportLogPath: process.env.SCOUT_APP_SERVER_TRACE === "1"
-      ? join(logsRoot, "app-server.ndjson")
-      : undefined,
-    defaultWritableRoots: rootPlan.defaultWritableRoots,
-    mountRoots: rootPlan.mountRoots,
-    trustedRoots: rootPlan.trustedRoots,
-    rootPlan,
-  };
-  const appServerClient = options.createAppServerClient
-    ? options.createAppServerClient(clientOptions)
-    : createCodexAppServerClient(clientOptions);
-  await appServerClient.client.startSession();
-  return {
-    appServerClient,
-    rootPlan,
-  };
+export class BootClientsStage implements BootStage {
+  readonly id = "clients";
+  private readonly options: BootClientsStageOptions;
+  private clientBundle?: CodexAppServerClientBundle;
+  private clientRootPlan?: BootClientRootPlan;
+  private stopped = false;
+
+  constructor(options: BootClientsStageOptions = {}) {
+    this.options = options;
+  }
+
+  get appServerClient(): CodexAppServerClientBundle {
+    if (!this.clientBundle) throw new Error("Boot clients stage has not completed.");
+    return this.clientBundle;
+  }
+
+  get rootPlan(): BootClientRootPlan {
+    if (!this.clientRootPlan) throw new Error("Boot clients stage has not completed.");
+    return this.clientRootPlan;
+  }
+
+  async start(): Promise<void> {
+    const scope = currentRunScope();
+    const rootPlan = buildClientRootPlan({
+      repoRoot: scope.repoRoot,
+      runId: scope.runId,
+      agentRoles: this.options.agentRoles,
+    });
+    const defaultModel = resolveDefaultAgentModel(readAgentProfilesForRepo(scope.repoRoot));
+    const runRoot = join(resolve(scope.repoRoot), "run", scope.runId);
+    const logsRoot = join(runRoot, "logs");
+    const isolatedHome = join(runRoot, "codex-home");
+    const isolatedCodexHome = join(isolatedHome, ".codex");
+    mkdirSync(isolatedCodexHome, { recursive: true });
+    const configToml = buildClientConfig({
+      mountRoots: rootPlan.mountRoots,
+      trustedRoots: rootPlan.trustedRoots,
+      model: defaultModel,
+    });
+    const clientOptions = {
+      isolatedHome,
+      isolatedCodexHome,
+      configToml,
+      providerName: defaultModel.provider,
+      logPrefix: `scout ${scope.runId} app-server`,
+      stderrLogPath: join(logsRoot, "app-server.log"),
+      transportLogPath: process.env.SCOUT_APP_SERVER_TRACE === "1"
+        ? join(logsRoot, "app-server.ndjson")
+        : undefined,
+      defaultWritableRoots: rootPlan.defaultWritableRoots,
+      mountRoots: rootPlan.mountRoots,
+      trustedRoots: rootPlan.trustedRoots,
+      rootPlan,
+    };
+    const clientBundle = this.options.createAppServerClient
+      ? this.options.createAppServerClient(clientOptions)
+      : createCodexAppServerClient(clientOptions);
+    try {
+      await clientBundle.client.startSession();
+      scope.setAppServer(clientBundle.client);
+    } catch (error) {
+      clientBundle.client.close();
+      throw error;
+    }
+    this.clientRootPlan = rootPlan;
+    this.clientBundle = clientBundle;
+  }
+
+  async stop(): Promise<void> {
+    if (this.stopped) return;
+    this.stopped = true;
+    const client = this.clientBundle?.client;
+    if (!client) return;
+    try {
+      client.close();
+    } finally {
+      currentRunScope().clearAppServer(client);
+    }
+  }
 }
 
-export function buildRunClientRootPlan(options: {
+function buildClientRootPlan(options: {
   repoRoot: string;
   runId: string;
   agentRoles?: readonly ScoutAgentRole[];
-}): RunClientRootPlan {
+}): BootClientRootPlan {
   const repoRoot = resolve(options.repoRoot);
   const runRoot = join(repoRoot, "run", options.runId);
   const assetsRoot = join(repoRoot, "assets", "codex");
   const profiles = readAgentProfilesForRepo(repoRoot);
   const mcpServers = readJsonFile<McpServersFile>(join(assetsRoot, CodexAssetLayout.mcpServers));
-  const agentRoles = options.agentRoles ?? RunClientAgentRoles;
+  const agentRoles = options.agentRoles ?? Object.values(ScoutAgentRoles);
   const mountRoots: string[] = [];
   const trustedRoots: string[] = [];
   const writableRoots: string[] = [];
@@ -158,7 +187,7 @@ export function buildRunClientRootPlan(options: {
   };
 }
 
-export function buildRunClientConfig(input: {
+function buildClientConfig(input: {
   mountRoots: string[];
   trustedRoots: string[];
   model: CodexModelConfig;
@@ -259,5 +288,5 @@ function uniqueResolved(roots: string[]): string[] {
 }
 
 function escapeToml(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }

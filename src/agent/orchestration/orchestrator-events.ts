@@ -18,7 +18,6 @@ AgentEvents.add(orchestratorEventCatalog);
 export type OrchestratorEventCatalog = typeof orchestratorEventCatalog;
 
 export type AgentInterruptKind =
-  | "human_input"
   | "tool_call"
   | "approval"
   | "exception"

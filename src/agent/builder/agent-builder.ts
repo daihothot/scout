@@ -1,5 +1,5 @@
 import type { AssetCommit, CodexMount } from "../../asset-store/index.js";
-import type { ScoutDomain } from "../../domain/index.js";
+import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import { CoordinatorAgent } from "../roles/coordinator-agent.js";
 import { ResearcherAgent } from "../roles/researcher-agent.js";
 import { ValidatorAgent } from "../roles/validator-agent.js";
@@ -8,19 +8,9 @@ import type {
   ScoutAgent,
   ScoutAgentOptions,
 } from "../core/scout-agent.js";
-import type { AgentRegistry } from "../core/agent-registry.js";
 import { buildAgentDynamicTools } from "../tools/tool-profiles.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 import { ScoutAgentRoles } from "../thread/types.js";
-import type { AgentTaskStore } from "../task/agent-task-store.js";
-
-export interface AgentBuilderRuntime {
-  repoRoot: ScoutAgentOptions["repoRoot"];
-  appServer: ScoutAgentOptions["appServer"];
-  contextBundle: ScoutAgentOptions["contextBundle"];
-  logger: ScoutAgentOptions["logger"];
-  eventBus: ScoutAgentOptions["eventBus"];
-}
 
 export type PreparedAgentInputs = Partial<Record<ScoutAgentRole, {
     agentMount: CodexMount;
@@ -28,18 +18,16 @@ export type PreparedAgentInputs = Partial<Record<ScoutAgentRole, {
 }>>;
 
 export interface AgentBuilderOptions {
-  domain: ScoutDomain;
-  registry: AgentRegistry;
-  taskStore: AgentTaskStore;
-  runtime: AgentBuilderRuntime;
   preparedAgents: PreparedAgentInputs;
 }
 
 export class AgentBuilder {
   private readonly options: AgentBuilderOptions;
+  private readonly scope: RunScope;
 
   constructor(options: AgentBuilderOptions) {
     this.options = options;
+    this.scope = currentRunScope();
   }
 
   buildCoordinator(): CoordinatorAgent {
@@ -64,7 +52,7 @@ export class AgentBuilder {
       ...buildAgentDynamicTools({
         orchestrationTools: role === ScoutAgentRoles.Coordinator,
       }),
-      ...this.options.domain.dynamicToolsForRole(role),
+      ...this.scope.domain.dynamicToolsForRole(role),
     ];
   }
 
@@ -75,15 +63,8 @@ export class AgentBuilder {
     }
     return {
       agentId: role,
-      repoRoot: this.options.runtime.repoRoot,
-      appServer: this.options.runtime.appServer,
-      contextBundle: this.options.runtime.contextBundle,
       agentMount: preparedAgent.agentMount,
       assetCommit: preparedAgent.assetCommit,
-      logger: this.options.runtime.logger,
-      taskStore: this.options.taskStore,
-      eventBus: this.options.runtime.eventBus,
-      registry: this.options.registry,
     };
   }
 
@@ -97,6 +78,6 @@ export class AgentBuilder {
   }
 
   private registerAgent(agent: ScoutAgent): ScoutAgent {
-    return this.options.registry.registerAgent(agent);
+    return this.scope.agentRegistry.registerAgent(agent);
   }
 }

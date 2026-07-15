@@ -29,7 +29,7 @@ summary: 规范 Validation Coordinator 的输入判断、任务路由、人工�
 - 判断用户输入是否具备可派发的 BDD 定位形态。
 - 根据当前 Validation 状态把任务路由给 Researcher、Verifier 或 Validator。
 - 将多轮已确认用户意图综合为稳定 task prompt。
-- 处理 Worker 的 BDD 定位补充请求和 terminal outcome。
+- 处理 Worker 的 BDD 定位补充请求和正式 handoff attachment。
 - 基于正式 artifact、evidence refs 和 gate 结果形成领域 synthesis。
 
 不使用本技能处理：
@@ -61,17 +61,18 @@ summary: 规范 Validation Coordinator 的输入判断、任务路由、人工�
 - BDD ID 通常是稳定的小写 kebab-case 场景标识。
 - 缺少足以定位 BDD 的关键内容时，不得启动泛泛调查。
 
-### I-002: Worker Result
+### I-002: Worker Handoff
 ---
 
 描述：
 
-- Worker terminal outcome、正式 artifact refs、evidence refs、状态、限制和缺口。
+- Worker 通过正式消息入口交回的完整 handoff attachment，以及其中引用的 artifact refs、evidence refs、状态、限制和缺口。
 
 注意事项：
 
-- progress 或普通自然语言回复不能替代 terminal outcome。
+- progress 或普通自然语言回复不能替代正式 handoff attachment。
 - 不由 Coordinator 补写 Worker 的完成依据或缺口判断。
+- task 进入 `done` 只表示 Worker 已交回当前一轮工作，不表示 Validation 已完成或 task 应立即归档。
 
 ### I-003: BDD Clarification
 ---
@@ -89,7 +90,7 @@ summary: 规范 Validation Coordinator 的输入判断、任务路由、人工�
 
 - Phase 1：判断输入形态并综合稳定目标。
 - Phase 2：根据当前状态指派或继续正确的 Worker。
-- Phase 3：处理结果、补充请求和最终领域 synthesis。
+- Phase 3：处理 handoff、补充请求、task 归档和最终领域 synthesis。
 
 ## Coordinator Output Layout
 
@@ -100,6 +101,7 @@ summary: 规范 Validation Coordinator 的输入判断、任务路由、人工�
 - Task synthesis：已确认目标、约束、输入 refs、未确认内容和期望返回内容。
 - BDD clarification request：最小必要问题及当前无法派发的原因。
 - Worker follow-up：原问题、匹配回复、task id 和继续目标。
+- Task archive decision：当前 Worker 是否仍需继续工作，以及归档所依据的正式 handoff 和当前状态。
 - Validation synthesis：当前状态、正式 artifact refs、evidence refs、gate、限制和下一步。
 
 ### Artifact Relationship Rules
@@ -158,20 +160,22 @@ Partial：
 
 - 已有部分 Worker 结果但不满足下一角色输入时，整理为状态说明，不伪造后续 task。
 
-## Phase 3: Handle Outcome and Synthesize
+## Phase 3: Handle Handoff and Synthesize
 ---
 
-本阶段处理 Worker 问题和 terminal outcome，并向用户输出可追溯 synthesis。
+本阶段处理 Worker 问题和正式 handoff attachment，并向用户输出可追溯 synthesis。
 
 注意事项：
 
 - Worker 仅请求 BDD 定位补充时，才向用户提出对应问题。
-- terminal outcome 必须按角色、artifact refs、evidence refs、限制和缺口整理。
+- 正式 handoff 必须按角色、artifact refs、evidence refs、限制和缺口整理。
+- 当前 Worker 仍需修正或补充时，必须向同一 task 发送综合后的 follow-up；确认不再需要当前 Worker 工作时才归档。
+- task 归档只释放当前 Worker task，不表示 Validation state 已接受该结果或全部工作已经完成。
 - 最终 synthesis 必须说明状态如何由输入推进，不得把入口指引描述为完整 Validation 已完成。
 
 Exit：
 
-- 当前结果已路由到下一角色、已请求必要 BDD 输入，或已形成基于正式 gate 的最终 synthesis。
+- 当前 Worker 已收到 follow-up，或其 task 已在不再需要继续工作后归档，或已请求必要 BDD 输入，或已形成基于正式 gate 的最终 synthesis。
 
 Blocked：
 
@@ -190,14 +194,14 @@ Partial：
 ## Evidence Rules (Enforcement)
 
 - ER-001：task assigned、progress、工具调用和普通 summary 只属于 Activity State。
-- ER-002：Research、Verification 和 Validation 结论必须分别引用其正式产物或 outcome。
+- ER-002：Research、Verification 和 Validation 结论必须分别引用其正式产物或 handoff。
 - ER-003：用户人工补充必须与原问题和当前 task 对齐后才能成为领域输入。
 
 ## Failure Rules (Enforcement)
 
 - FR-001：任务指派失败、Worker 不可用或 Domain action 被拒绝时，记录失败动作和当前状态。
 - FR-002：结果缺少必要 refs 时不得补造；必须保留缺口并停止依赖该结果的推进。
-- FR-003：Worker outcome 与 Domain state 冲突时，以确定性 Domain state 为准并披露冲突。
+- FR-003：Worker handoff 与 Domain state 冲突时，以确定性 Domain state 为准并披露冲突。
 
 ## Blocking Rules (Enforcement)
 
@@ -228,8 +232,9 @@ Partial：
 流程：
 
 1. 将 BDD ID、用户目标和已确认约束综合为 Researcher task。
-2. 接收 Researcher terminal outcome 和 Research artifact refs。
-3. 根据 Domain state 路由下一角色，不把 Research 完成描述为全部验证完成。
+2. 接收 Researcher 正式 handoff attachment 和 Research artifact refs。
+3. 若 Researcher 仍需补充则继续同一 task；否则归档该 task，再根据 Domain state 路由下一角色。
+4. 不把 Research handoff、`done` 或 task 归档描述为全部验证完成。
 
 输出：
 

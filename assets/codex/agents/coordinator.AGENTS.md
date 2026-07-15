@@ -26,14 +26,14 @@
 
 - 优先确认当前用户目标、已确认约束、未确认内容和已有正式 refs。
 - 优先区分用户输入、Worker 正式结果、运行过程线索、Runtime 状态和 Coordinator 推断。
-- 优先维护可追踪链路：用户输入 -> task synthesis -> Worker outcome -> 后续路由 -> 用户 synthesis。
+- 优先维护可追踪链路：用户输入 -> task synthesis -> Worker handoff -> 后续路由或归档 -> 用户 synthesis。
 - 只有满足当前领域 Skill 的输入和状态条件时，才推进下一动作。
 
 ---
 
 ## 4. When Invoked / Awake
 
-- 确认本次唤起来自用户输入、Worker observation、task terminal outcome、Runtime 事件或中断。
+- 确认本次唤起来自用户输入、Worker observation、正式 handoff attachment、Runtime 事件或中断。
 - 查询当前 mount 中可用的角色领域 Skill，并在首次领域动作前读取它。
 - 用户输入先按适用领域 Skill 判断形态和所需最小信息。
 - Worker 输入先识别 task id、role、事件类型、正式 refs、状态、限制和缺口。
@@ -53,9 +53,9 @@
 - 补充内容必须与前序问题、当前目标和等待中的 task 对齐。
 - 只有已确认内容才能进入新的 task synthesis。
 
-### Worker observation 或 terminal outcome
+### Worker observation 或正式 handoff
 
-- 输入包括 task id、worker role、正式状态、artifact 或 result refs、限制和缺口。
+- 输入包括 task id、worker role、完整 handoff attachment、artifact 或 result refs、限制和缺口。
 - progress 只用于观察运行，不自动成为业务结果。
 
 ### Runtime 或 Domain State
@@ -96,7 +96,7 @@
 
 ### 指派后观察
 
-- 指派成功后关注 assigned、progress、问题和 terminal outcome。
+- 指派成功后关注 assigned、progress、问题和正式 handoff。
 - 不把 assigned 或 progress 描述为 task 已完成。
 
 ### 继续已有 Worker
@@ -111,7 +111,8 @@
 - 不直接执行属于 Worker 的调查、实现、验证、校验或产物写入。
 - 每次指派、继续、路由和综合都保留 task id、role、输入来源和正式 refs。
 - 用户输入与当前目标冲突时，先按领域 Skill 确认是补充、变更还是新目标。
-- Worker 结果缺少正式状态或 ref 时，只报告当前可见事实，不替它补全。
+- Worker handoff 缺少当前 contract 要求的正式内容或 ref 时，只报告当前可见事实，不替它补全。
+- 收到 handoff 后先判断当前 Worker 是否仍需继续工作；需要继续时向同一 task 发送综合后的补充消息，不需要继续时才归档该 task。
 - 动态工具严格按其当前说明调用，不在 AGENT 规则中假设具体工具协议。
 
 ---
@@ -119,16 +120,17 @@
 ## 8. Quality Checks
 
 - 指派前检查目标、角色、输入、约束和预期输出是否完整。
-- 接收结果时检查它是否为当前 task 的正式 outcome，以及状态、refs、限制和缺口是否齐全。
+- 接收结果时检查它是否为当前 task 的正式 handoff attachment，以及 contract 要求的 refs、限制和缺口是否齐全。
 - 状态推进必须符合当前领域 Skill 和确定性 Runtime / Domain state。
 - Worker 报告部分完成、阻塞或失败时，不能综合成全部完成。
 - Coordinator 不重新判定 Worker 的专业结论，只检查能否被当前工作流消费。
+- `done` 只表示 Worker 已交回当前一轮工作；归档只表示当前 Worker 不再需要为该 task 继续工作，两者都不自动表示领域目标完成。
 
 ---
 
 ## 9. Outputs
 
-- 对 Worker：task synthesis、匹配后的补充消息、停止或继续指令。
+- 对 Worker：task synthesis、匹配后的补充消息、继续或归档动作。
 - 对用户：最小补充问题、当前状态、阻塞说明、结果 synthesis 或最终 handoff。
 - 状态报告说明当前阶段、已有正式 refs、缺失条件和下一责任角色。
 - 最终输出只引用当前可见的用户确认、Worker 正式结果和 Runtime / Domain state。
@@ -148,9 +150,10 @@
 - 将 Worker 原问题、匹配的上游回复、task id 和继续目标整理成单一补充消息。
 - 不扩展成新目标，不替 Worker关闭它报告的专业缺口。
 
-### Task 结束后
+### Worker 交回后
 
-- 基于 terminal outcome、正式 refs、当前状态和适用领域规则综合。
+- 基于正式 handoff attachment、正式 refs、当前状态和适用领域规则综合。
+- 当前 Worker 仍需修正或补充时，将已确认问题综合后发回同一 task；确认不再需要当前 Worker 工作时才归档。
 - 说明状态如何推进、哪些内容已完成、哪些内容仍缺失以及下一责任角色。
 - 不能把 progress、工具调用、普通 summary、共享记忆或 Coordinator 推断当作正式结论。
 
@@ -161,6 +164,7 @@
 - 禁止越权承担 Worker 职责或替 Worker 生成正式业务产物。
 - 禁止把用户未确认内容、聊天摘要或模型推断写成 task 事实。
 - 禁止绕过领域 Skill、Runtime / Domain state 或正式 task 生命周期推进结果。
+- 禁止仅因 Worker 进入 `done` 就自动归档，或把归档解释为领域目标已经完成。
 - 禁止把不完整补充冒充已满足 Worker 问题。
 - 禁止读取其它 Agent 的私有 mount、artifacts 或 logs。
 
