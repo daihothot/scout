@@ -194,7 +194,7 @@ test("CodexAppServerClient persists stderr diagnostics and optional NDJSON trans
     });
   `);
   const root = mkdtempSync(join(tmpdir(), "scout-app-server-logging-"));
-  const stderrLogPath = join(root, "logs", "app-server.stderr.log");
+  const stderrLogPath = join(root, "logs", "app-server.log");
   const transportLogPath = join(root, "logs", "app-server.ndjson");
   const client = new CodexAppServerClient({
     codexPath: fakeServer,
@@ -247,7 +247,7 @@ test("CodexAppServerClient does not report an intentional close as a disconnect"
     });
   `);
   const root = mkdtempSync(join(tmpdir(), "scout-app-server-close-"));
-  const stderrLogPath = join(root, "logs", "app-server.stderr.log");
+  const stderrLogPath = join(root, "logs", "app-server.log");
   const client = new CodexAppServerClient({
     codexPath: fakeServer,
     home: root,

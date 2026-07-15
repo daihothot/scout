@@ -1,17 +1,8 @@
-import {
-  type EventBus,
-  type ScoutEvent,
-} from "../../core/events/index.js";
-import { AgentEvents } from "../events/index.js";
+import type { EventBus } from "../../core/events/index.js";
 import { AgentInbox } from "../core/agent-inbox.js";
-import type {
-  AgentHumanInputRequestedEventPayload,
-  AgentHumanInputRespondedEventPayload,
-  AgentTaskEvent,
-  AgentTaskEventPayloadVariant,
-} from "../task/task-events.js";
-import type { AgentInterruptEventPayload } from "./orchestrator-events.js";
+import { AgentEvents } from "../events/index.js";
 import { coordinator } from "../runner/coordinator/coordinator-attachments.js";
+import type { AgentOrchestrationDispatchRequestedPayload } from "./orchestrator-events.js";
 
 export interface AgentOrchestratorOptions {
   eventBus: EventBus;
@@ -24,28 +15,49 @@ export interface AgentOrchestratorSnapshot {
 }
 
 export class AgentOrchestrator {
-  private readonly eventBus: EventBus;
   private readonly inbox: AgentInbox;
   private started = false;
   private stopped = false;
 
   constructor(options: AgentOrchestratorOptions) {
-    this.eventBus = options.eventBus;
     this.inbox = new AgentInbox({
-      eventBus: this.eventBus,
+      eventBus: options.eventBus,
       isStopped: () => this.stopped,
-      onEvents: (events) => this.handleInboxEvents(events),
-      onError: (error) => this.handleLoopError(error),
+      onEvents: async (events) => {
+        for (const event of events) {
+          if (!AgentEvents.task.is(event)) {
+            throw new Error(`AgentOrchestrator received unsupported event: ${event.key.routeKey}`);
+          }
+        }
+      },
+      onError: (error) => {
+        const dispatch = {
+          dispatchId: `orchestrator-error-${Date.now()}`,
+          reason: "agent_error" as const,
+          message: "Agent orchestrator failed while handling agent events.",
+          createdAt: new Date().toISOString(),
+          data: {
+            error: error instanceof Error ? error.stack ?? error.message : String(error),
+          },
+        };
+        options.eventBus.publish(AgentEvents.orchestration.dispatchRequested, {
+          ...dispatch,
+          attachment: coordinator.observation({
+            type: "dispatch",
+            ...dispatch,
+          }),
+        } satisfies AgentOrchestrationDispatchRequestedPayload);
+      },
     });
   }
 
   start(): void {
-    if (this.started) return;
     if (this.stopped) {
       throw new Error("Cannot restart a stopped AgentOrchestrator.");
     }
+    if (this.started) return;
     this.started = true;
-    this.inbox.subscribe<AgentTaskEventPayloadVariant>(AgentEvents.task);
+    this.inbox.subscribe(AgentEvents.task);
   }
 
   stop(): void {
@@ -61,90 +73,4 @@ export class AgentOrchestrator {
       pendingEventCount: this.inbox.size,
     };
   }
-
-  private async handleInboxEvents(events: ScoutEvent[]): Promise<void> {
-    for (const event of events) {
-      this.handleSystemObservation(event);
-    }
-  }
-
-  private handleSystemObservation(event: ScoutEvent): void {
-    if (!isAgentTaskEvent(event)) {
-      return;
-    }
-
-    if (AgentEvents.task.humanInputRequested.is(event)) {
-      this.handleHumanInputRequested(event as ScoutEvent<AgentHumanInputRequestedEventPayload>);
-      return;
-    }
-    if (AgentEvents.task.humanInputResponded.is(event)) {
-      this.handleHumanInputResponded(event as ScoutEvent<AgentHumanInputRespondedEventPayload>);
-    }
-  }
-
-  private handleHumanInputRequested(
-    event: ScoutEvent<AgentHumanInputRequestedEventPayload>,
-  ): void {
-    const payload = event.payload;
-    const interrupt = {
-      eventKey: AgentEvents.interrupt.raised.routeKey,
-      occurredAt: event.occurredAt,
-      interruptKind: "human_input",
-      taskId: payload.task.taskId,
-      agentId: payload.task.agentId,
-      turnId: payload.request.turnId,
-      requestId: payload.request.requestId,
-    } as const;
-    this.eventBus.publish(AgentEvents.interrupt.raised, {
-      ...interrupt,
-      attachment: coordinator.observation({
-        type: "interrupt",
-        ...interrupt,
-      }),
-    } satisfies AgentInterruptEventPayload);
-  }
-
-  private handleHumanInputResponded(
-    event: ScoutEvent<AgentHumanInputRespondedEventPayload>,
-  ): void {
-    const payload = event.payload;
-    const interrupt = {
-      eventKey: AgentEvents.interrupt.resolved.routeKey,
-      occurredAt: event.occurredAt,
-      interruptKind: "human_input",
-      taskId: payload.task.taskId,
-      agentId: payload.task.agentId,
-      requestId: payload.response.requestId,
-    } as const;
-    this.eventBus.publish(AgentEvents.interrupt.resolved, {
-      ...interrupt,
-      attachment: coordinator.observation({
-        type: "interrupt",
-        ...interrupt,
-      }),
-    } satisfies AgentInterruptEventPayload);
-  }
-
-  private handleLoopError(error: unknown): void {
-    const dispatch = {
-      dispatchId: `orchestrator-error-${Date.now()}`,
-      reason: "agent_error" as const,
-      message: "Agent orchestrator failed while handling agent events.",
-      createdAt: new Date().toISOString(),
-      data: {
-        error: error instanceof Error ? error.stack ?? error.message : String(error),
-      },
-    };
-    this.eventBus.publish(AgentEvents.orchestration.dispatchRequested, {
-      ...dispatch,
-      attachment: coordinator.observation({
-        type: "dispatch",
-        ...dispatch,
-      }),
-    });
-  }
-}
-
-function isAgentTaskEvent(event: ScoutEvent): event is AgentTaskEvent {
-  return AgentEvents.task.is(event);
 }

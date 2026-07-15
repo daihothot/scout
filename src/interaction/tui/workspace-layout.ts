@@ -117,9 +117,7 @@ export function selectCurrentTask(tasks: TuiTaskSummary[]): TuiTaskSummary | und
 }
 
 export function isTerminalTaskStatus(status: string | undefined): boolean {
-  return status === "complete"
-    || status === "blocked"
-    || status === "failed"
+  return status === "failed"
     || status === "stopped";
 }
 

@@ -1,30 +1,25 @@
-import type { ScoutEvent } from "../../core/events/index.js";
 import { event } from "../../core/events/index.js";
 import { AgentEvents } from "../events/catalog.js";
-import type {
-  AgentTaskState,
-  AgentTaskStep,
-  AgentHumanInputRequest,
-  AgentHumanInputResponse,
-} from "./types.js";
+import type { AgentTaskState } from "./types.js";
+import type { ScoutAgentRole } from "../thread/types.js";
 
 const taskEventCatalog = {
   task: {
-    assigned: event(),
-    messageQueued: event(),
-    stopped: event(),
-    outcomeAccepted: event(),
-    humanInputRequested: event(),
-    humanInputResponded: event(),
-    threadAttached: event(),
-    pendingMessagesDrained: event(),
-    stepStarted: event(),
-    stepCompleted: event(),
-    stepOutput: event(),
-    failed: event(),
-    goalUpdated: event(),
-    planUpdated: event(),
-    terminal: event(),
+    assigned: event<AgentTaskState>(),
+    notAssigned: event<AgentTaskNotAssignedEventPayload>(),
+    messageQueued: event<AgentTaskState>(),
+    done: event<AgentTaskState>(),
+    archived: event<AgentTaskState>(),
+    stopped: event<AgentTaskState>(),
+    threadAttached: event<AgentTaskState>(),
+    pendingMessagesDrained: event<AgentTaskState>(),
+    stepStarted: event<AgentTaskState>(),
+    stepCompleted: event<AgentTaskState>(),
+    stepOutput: event<AgentTaskState>(),
+    failed: event<AgentTaskState>(),
+    goalUpdated: event<AgentTaskState>(),
+    planUpdated: event<AgentTaskState>(),
+    terminal: event<AgentTaskState>(),
   },
 } as const;
 
@@ -32,36 +27,10 @@ AgentEvents.add(taskEventCatalog);
 
 export type AgentTaskEventCatalog = typeof taskEventCatalog;
 
-export interface AgentTaskEventPayload {
-  runId?: string;
-  task: AgentTaskState;
-  data?: unknown;
+export interface AgentTaskNotAssignedEventPayload {
+  agentId: string;
+  role: ScoutAgentRole;
+  activeTaskId: string;
+  requestedDescription: string;
+  reason: string;
 }
-
-export interface AgentTaskStepEventPayload extends AgentTaskEventPayload {
-  prompt?: string;
-  step?: AgentTaskStep;
-  output?: string;
-}
-
-export interface AgentTaskTerminalEventPayload extends AgentTaskEventPayload {
-  result?: string;
-  error?: string;
-}
-
-export interface AgentHumanInputRequestedEventPayload extends AgentTaskEventPayload {
-  request: AgentHumanInputRequest;
-}
-
-export interface AgentHumanInputRespondedEventPayload extends AgentTaskEventPayload {
-  response: AgentHumanInputResponse;
-}
-
-export type AgentTaskEventPayloadVariant =
-  | AgentTaskEventPayload
-  | AgentHumanInputRequestedEventPayload
-  | AgentHumanInputRespondedEventPayload
-  | AgentTaskStepEventPayload
-  | AgentTaskTerminalEventPayload;
-
-export type AgentTaskEvent = ScoutEvent<AgentTaskEventPayloadVariant>;

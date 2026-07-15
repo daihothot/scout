@@ -197,7 +197,7 @@ Partial：
 
 - FR-001：专项 Skill、模板、命令或 artifact 写入失败时，保留 failed command、影响范围和 limitation。
 - FR-002：BDD 无法唯一定位时不得继续形成唯一 verification point。
-- FR-003：handoff 失败时不得用普通自然语言冒充 task terminal outcome。
+- FR-003：handoff 失败时不得用普通自然语言冒充正式 handoff attachment。
 
 ## Blocking Rules (Enforcement)
 

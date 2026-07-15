@@ -5,15 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Logger } from "../../src/core/logging/index.js";
 
-test("Logger routes agent info to the agent log and warnings to both logs", () => {
+test("Logger writes to its configured file and redacts structured data", () => {
   const root = mkdtempSync(join(tmpdir(), "scout-logger-test-"));
   const runtimeLogPath = join(root, "logs", "runtime.log");
-  const agentLogPath = join(root, "agents", "agent-1", "logs", "runtime.log");
   const logger = new Logger({
     runId: "run-1",
     logsRoot: join(root, "logs"),
   });
-  logger.registerAgentLogRoot("agent-1", join(root, "agents", "agent-1", "logs"));
 
   logger.info({
     module: "test",
@@ -27,15 +25,15 @@ test("Logger routes agent info to the agent log and warnings to both logs", () =
     },
   });
 
-  assert.equal(existsSync(runtimeLogPath), false);
-  let agentEvents = readEvents(agentLogPath);
-  assert.equal(agentEvents.length, 1);
-  assert.match(agentEvents[0] ?? "", /^\d{4}-\d{2}-\d{2}T.+Z INFO module=test event=agent_info run=run-1 agent=agent-1\ndata:/);
-  assert.equal(agentEvents[0]?.includes("should-not-appear"), false);
-  assert.equal(agentEvents[0]?.includes("hidden"), false);
-  assert.match(agentEvents[0] ?? "", /\[redacted\]/);
-  assert.match(agentEvents[0] ?? "", /\.\.\.\[truncated:4100\]/);
-  assert.match(agentEvents[0] ?? "", /\[truncated_items:5\]/);
+  assert.equal(existsSync(runtimeLogPath), true);
+  let events = readEvents(runtimeLogPath);
+  assert.equal(events.length, 1);
+  assert.match(events[0] ?? "", /^\d{4}-\d{2}-\d{2}T.+Z INFO module=test event=agent_info run=run-1 agent=agent-1\ndata:/);
+  assert.equal(events[0]?.includes("should-not-appear"), false);
+  assert.equal(events[0]?.includes("hidden"), false);
+  assert.match(events[0] ?? "", /\[redacted\]/);
+  assert.match(events[0] ?? "", /\.\.\.\[truncated:4100\]/);
+  assert.match(events[0] ?? "", /\[truncated_items:5\]/);
 
   logger.warn({
     module: "test",
@@ -47,10 +45,8 @@ test("Logger routes agent info to the agent log and warnings to both logs", () =
     event: "runtime_info",
   });
 
-  const runtimeEvents = readEvents(runtimeLogPath);
-  agentEvents = readEvents(agentLogPath);
-  assert.deepEqual(runtimeEvents.map(readEventName), ["agent_warning", "runtime_info"]);
-  assert.deepEqual(agentEvents.map(readEventName), ["agent_info", "agent_warning"]);
+  events = readEvents(runtimeLogPath);
+  assert.deepEqual(events.map(readEventName), ["agent_info", "agent_warning", "runtime_info"]);
 });
 
 test("Logger pretty-prints structured data below the event header", () => {
@@ -137,31 +133,35 @@ test("Logger physically wraps long preview strings", () => {
   assert.equal(wrappedPreview.map((line) => line.slice(6)).join(""), preview);
 });
 
-test("Logger keeps high-volume agent activity out of the runtime log", () => {
+test("separate Logger instances keep activity and runtime files isolated", () => {
   const root = mkdtempSync(join(tmpdir(), "scout-logger-volume-test-"));
   const runtimeLogPath = join(root, "logs", "runtime.log");
-  const agentLogPath = join(root, "agents", "agent-1", "logs", "runtime.log");
-  const logger = new Logger({
+  const activityLogPath = join(root, "agents", "agent-1", "logs", "activity.log");
+  const activityLogger = new Logger({
+    runId: "run-volume",
+    logsRoot: join(root, "agents", "agent-1", "logs"),
+    fileName: "activity.log",
+  });
+  const runtimeLogger = new Logger({
     runId: "run-volume",
     logsRoot: join(root, "logs"),
   });
-  logger.registerAgentLogRoot("agent-1", join(root, "agents", "agent-1", "logs"));
 
   for (let index = 0; index < 1000; index += 1) {
-    logger.info({
+    activityLogger.info({
       module: "agent.item",
       event: "item_completed",
       agentId: "agent-1",
       data: { index },
     });
   }
-  logger.info({
+  runtimeLogger.info({
     module: "run.lifecycle",
     event: "run_ready",
   });
 
   assert.equal(readEvents(runtimeLogPath).length, 1);
-  assert.equal(readEvents(agentLogPath).length, 1000);
+  assert.equal(readEvents(activityLogPath).length, 1000);
 });
 
 function readEvents(path: string): string[] {

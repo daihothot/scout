@@ -5,11 +5,15 @@ import {
 } from "../core/scout-agent.js";
 import { CoordinatorRunner } from "../runner/coordinator/coordinator-runner.js";
 import { readRoleAgentInstructions } from "./instructions.js";
+import { Result } from "../../core/result.js";
+import type { SendAgentMessageInput } from "../task/types.js";
+import { currentRunScope } from "../../run/run-scope.js";
 
 export class CoordinatorAgent extends ScoutAgent {
   declare readonly runner: CoordinatorRunner;
 
   constructor(options: ScoutAgentOptions) {
+    const scope = currentRunScope();
     super({
       ...options,
       spec: {
@@ -18,7 +22,7 @@ export class CoordinatorAgent extends ScoutAgent {
         cwd: options.agentMount.mountRoot,
         approvalPolicy: "never",
         sandbox: "workspace-write",
-        contextBundleId: options.contextBundle.contextBundleId,
+        contextBundleId: scope.contextBundle.contextBundleId,
         model: { ...options.agentMount.agentProfile.model },
         config: {
           web_search: "disabled",
@@ -28,7 +32,10 @@ export class CoordinatorAgent extends ScoutAgent {
             apps: false,
           },
         },
-        developerInstructions: readRoleAgentInstructions(options, ScoutAgentRoles.Coordinator),
+        developerInstructions: [
+          readRoleAgentInstructions(options, ScoutAgentRoles.Coordinator),
+          "当前处于测试阶段。只推进 Research，以及由 Validator 对 Research 相关产出物执行校验；不得指派 Verifier、进入运行验证或把本轮结果描述为完整 Validation 已完成。",
+        ].join("\n\n"),
         dynamicTools: options.dynamicTools,
       },
     });
@@ -43,7 +50,15 @@ export class CoordinatorAgent extends ScoutAgent {
           return coordinator.threadId;
         },
       },
-      eventBus: options.eventBus,
+      eventBus: scope.eventBus,
     });
+  }
+
+  sendMessage(input: SendAgentMessageInput): Result<void, string> {
+    if (input.taskId) {
+      return Result.err(`Coordinator agent ${this.agentId} does not own task ${input.taskId}.`);
+    }
+    this.runner.queueMessage(input);
+    return Result.ok(undefined);
   }
 }

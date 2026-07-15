@@ -1,5 +1,5 @@
 import { attachments } from "../../context/attachments.js";
-import type { AgentTaskOutcome } from "../../task/types.js";
+import type { ScoutAgentRole } from "../../thread/types.js";
 
 export const CoordinatorContextTags = {
   User: "coordinator-user",
@@ -12,6 +12,19 @@ export interface CoordinatorUserAttachmentInput {
   submittedAt: string;
   source?: string;
   data?: unknown;
+}
+
+export interface CoordinatorTaskAssignedAttachmentInput {
+  agentId: string;
+  taskId: string;
+}
+
+export interface CoordinatorTaskNotAssignedAttachmentInput {
+  agentId: string;
+  role: ScoutAgentRole;
+  activeTaskId: string;
+  requestedDescription: string;
+  reason: string;
 }
 
 export type CoordinatorObservationAttachmentInput =
@@ -32,13 +45,7 @@ export type CoordinatorObservationAttachmentInput =
     agentId?: string;
     turnId?: string;
     requestId?: string;
-  }
-  | {
-    type: "task_assigned";
-    agentId: string;
-    taskId: string;
-  }
-  | AgentTaskOutcome;
+  };
 
 export const coordinator = {
   user(input: CoordinatorUserAttachmentInput): string {
@@ -46,5 +53,24 @@ export const coordinator = {
   },
   observation(input: CoordinatorObservationAttachmentInput): string {
     return attachments.addTagBlock(CoordinatorContextTags.Observation, JSON.stringify(input, null, 2));
+  },
+  taskAssigned(input: CoordinatorTaskAssignedAttachmentInput): string {
+    return attachments.addTagBlock(CoordinatorContextTags.Observation, [
+      "### Task Assigned",
+      "",
+      `- Agent ID: ${input.agentId}`,
+      `- Task ID: ${input.taskId}`,
+    ].join("\n"));
+  },
+  taskNotAssigned(input: CoordinatorTaskNotAssignedAttachmentInput): string {
+    return attachments.addTagBlock(CoordinatorContextTags.Observation, [
+      "### Task Not Assigned",
+      "",
+      `- Agent ID: ${input.agentId}`,
+      `- Role: ${input.role}`,
+      `- Active Task ID: ${input.activeTaskId}`,
+      `- Requested Task: ${input.requestedDescription}`,
+      `- Reason: ${input.reason}`,
+    ].join("\n"));
   },
 } as const;

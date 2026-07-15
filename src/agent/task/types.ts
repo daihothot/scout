@@ -8,9 +8,7 @@ import type { AgentThreadSnapshot } from "../thread/types.js";
 export const AgentTaskStatuses = {
   Queued: "queued",
   Running: "running",
-  WaitingForHumanInput: "waiting_for_human_input",
-  Complete: "complete",
-  Blocked: "blocked",
+  Done: "done",
   Failed: "failed",
   Stopped: "stopped",
 } as const;
@@ -18,16 +16,9 @@ export type AgentTaskStatus = typeof AgentTaskStatuses[keyof typeof AgentTaskSta
 export const AgentTaskStepStatuses = {
   Running: "running",
   Completed: "completed",
-  WaitingForHumanInput: "waiting_for_human_input",
   Failed: "failed",
 } as const;
 export type AgentTaskStepStatus = typeof AgentTaskStepStatuses[keyof typeof AgentTaskStepStatuses];
-export const AgentTaskOutcomeStatuses = {
-  Complete: "complete",
-  Blocked: "blocked",
-  Failed: "failed",
-} as const;
-export type AgentTaskOutcomeStatus = typeof AgentTaskOutcomeStatuses[keyof typeof AgentTaskOutcomeStatuses];
 export interface AgentTaskUsage {
   totalTokens?: number;
   toolUses?: number;
@@ -35,30 +26,11 @@ export interface AgentTaskUsage {
 }
 
 export interface AgentHumanInputRequest {
-  requestId: string;
-  agentId: string;
-  taskId: string;
-  turnId?: string;
-  kind: "prompt_required" | "confirmation_required";
-  question: string;
-  context?: string;
-  options?: string[];
-  createdAt: string;
-  status: "pending" | "answered" | "cancelled";
+  body: string;
 }
 
 export interface AgentHumanInputResponse {
-  requestId: string;
-  agentId: string;
-  taskId: string;
-  response: string;
-  createdAt: string;
-}
-
-export interface AgentTaskOutcome {
-  taskId: string;
-  status: AgentTaskOutcomeStatus;
-  summary: string;
+  body: string;
 }
 
 export interface AgentTaskStep {
@@ -108,7 +80,6 @@ export interface AgentTaskState {
   plan?: AppServerPlanState;
   planRecords?: AppServerPlanState[];
   steps?: AgentTaskStep[];
-  outcome?: AgentTaskOutcome;
 }
 
 export interface AssignAgentTaskInput {
@@ -121,6 +92,6 @@ export interface AssignAgentTaskInput {
 }
 
 export interface SendAgentMessageInput {
-  target: string;
+  taskId?: string;
   message: string;
 }

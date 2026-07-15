@@ -4,16 +4,16 @@ import { promisify } from "node:util";
 import type { CodexMount } from "../../asset-store/types.js";
 import { buildMountShellEnvironment } from "../../asset-store/mount-macros.js";
 import type { CodexAppServerClient } from "./app-server-client.js";
-import type { AgentServerPreflightResult } from "../types.js";
+import type { AgentServerPreflightReport } from "../types.js";
 
 const execFileAsync = promisify(execFile);
 
 export async function preflightCodexAppServerMount(input: {
   mount: CodexMount;
   appServer: CodexAppServerClient;
-}): Promise<AgentServerPreflightResult> {
+}): Promise<AgentServerPreflightReport> {
   const { mount, appServer } = input;
-  const result: AgentServerPreflightResult = {
+  const result: AgentServerPreflightReport = {
     status: "failed",
   };
 
@@ -77,7 +77,7 @@ export async function preflightCodexAppServerMount(input: {
   return result;
 }
 
-async function smokeShellTools(mount: CodexMount): Promise<AgentServerPreflightResult["shellSmoke"]> {
+async function smokeShellTools(mount: CodexMount): Promise<AgentServerPreflightReport["shellSmoke"]> {
   const mountRoot = mount.mountRoot;
   const path = `${mountRoot}/bin:${process.env.PATH ?? ""}`;
   const tools = mount.shellTools.filter((tool) => tool.required);
@@ -111,7 +111,7 @@ async function smokeShellTools(mount: CodexMount): Promise<AgentServerPreflightR
   ));
 }
 
-function preflightPassed(result: AgentServerPreflightResult): boolean {
+function preflightPassed(result: AgentServerPreflightReport): boolean {
   if (result.shellSmoke?.some((item) => item.status !== "passed")) return false;
   if (result.pluginGate && result.pluginGate.status !== "passed") return false;
   return true;
@@ -126,8 +126,8 @@ function buildPluginGate(input: {
   pluginNames: string[];
   marketplacePath: string;
   installedResponse: unknown;
-  before?: AgentServerPreflightResult["pluginGate"];
-}): NonNullable<AgentServerPreflightResult["pluginGate"]> {
+  before?: AgentServerPreflightReport["pluginGate"];
+}): NonNullable<AgentServerPreflightReport["pluginGate"]> {
   const plugins = input.pluginNames.map((pluginName) => {
     const plugin = findPluginSummary(input.installedResponse, pluginName);
     const before = input.before?.plugins.find((item) => item.pluginName === pluginName);

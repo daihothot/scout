@@ -4,7 +4,6 @@ import { SystemEvents } from "../../system/events/catalog.js";
 const interactionEventCatalog = {
   interaction: {
     disclosureRequested: event(),
-    progressRequested: event(),
     userMessageSubmitted: event(),
     exitRequested: event(),
   },

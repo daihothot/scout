@@ -28,5 +28,5 @@
 
 - 正式输出必须遵守当前角色、领域 Skill、方法 Skill 和 task 指定的 artifact 或 handoff contract。
 - 输出必须区分已确认事实、来源、推断、限制、需人工确认项和阻塞项。
-- 共享记忆、工具活动、progress 或普通 summary 不能冒充正式 artifact、人工确认、task terminal outcome 或业务事实。
-- 只有当前 task 完成、需要上游输入或确实阻塞时才能停止，并通过角色规定的正式入口 handoff。
+- 共享记忆、工具活动、progress 或普通 summary 不能冒充正式 artifact、人工确认、Worker handoff attachment 或业务事实。
+- Agent 只能通过角色规定的正式入口交回结果或请求输入；交回结果本身不表示 task 已归档。

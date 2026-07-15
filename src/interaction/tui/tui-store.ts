@@ -1,11 +1,13 @@
-import type { AgentTaskEvent } from "../../agent/task/task-events.js";
 import { AgentEvents } from "../../agent/events/index.js";
+import type { AgentTaskState } from "../../agent/task/types.js";
+import type { AgentActivity } from "../../agent/activity/activity-event.js";
+import type { ScoutEvent } from "../../core/events/index.js";
+import type { BootSnapshot } from "../../run/boot/boot-stage.js";
 import type {
   AgentMessageReply,
   AgentMessageSend,
   RuntimeDisclosureEvent,
-  RuntimeProgressEvent,
-} from "../port.js";
+} from "../protocol/port.js";
 
 export type TuiLogKind = "disclosure" | "agent" | "input";
 
@@ -47,9 +49,10 @@ export interface TuiRuntimeInfo {
 
 export interface TuiState {
   runtime: TuiRuntimeInfo;
+  boot?: BootSnapshot;
   logs: TuiLogEntry[];
   tasks: TuiTaskSummary[];
-  progress: RuntimeProgressEvent[];
+  activities: AgentActivity[];
 }
 
 export interface TuiStoreOptions {
@@ -68,8 +71,9 @@ export class TuiStore {
   private readonly exitListeners = new Set<TuiExitListener>();
   private readonly agentMessageListeners = new Set<TuiAgentMessageListener>();
   private readonly taskMap = new Map<string, TuiTaskSummary>();
-  private readonly progressMap = new Map<string, RuntimeProgressEvent>();
+  private readonly activityMap = new Map<string, AgentActivity>();
   private readonly logs: TuiLogEntry[] = [];
+  private boot?: BootSnapshot;
   private runtime: TuiRuntimeInfo;
   private sequence = 0;
 
@@ -86,9 +90,10 @@ export class TuiStore {
   snapshot(): TuiState {
     return {
       runtime: { ...this.runtime },
+      boot: this.boot ? cloneBootSnapshot(this.boot) : undefined,
       logs: [...this.logs],
       tasks: [...this.taskMap.values()],
-      progress: [...this.progressMap.values()],
+      activities: [...this.activityMap.values()],
     };
   }
 
@@ -100,6 +105,16 @@ export class TuiStore {
       ...this.runtime,
       runId: input.runId ?? this.runtime.runId,
       status: input.status,
+    };
+    this.emit();
+  }
+
+  setBootSnapshot(snapshot: BootSnapshot): void {
+    this.boot = cloneBootSnapshot(snapshot);
+    this.runtime = {
+      ...this.runtime,
+      runId: snapshot.runId,
+      status: tuiStatusForBoot(snapshot),
     };
     this.emit();
   }
@@ -141,15 +156,20 @@ export class TuiStore {
     });
   }
 
-  addProgress(event: RuntimeProgressEvent): void {
-    if (event.type === "dynamicToolCall") return;
-    this.progressMap.set(progressKey(event), event);
+  addAgentActivity(activity: AgentActivity): void {
+    if (activity.type === "dynamicToolCall") return;
+    this.activityMap.set(activityKey(activity), activity);
     this.emit();
   }
 
-  addTaskEvent(event: AgentTaskEvent): void {
-    const task = "task" in event.payload ? event.payload.task : undefined;
-    if (!task?.taskId) return;
+  addTaskEvent(event: ScoutEvent): void {
+    if (AgentEvents.task.notAssigned.is(event)) return;
+    const task = event.payload as AgentTaskState;
+    if (AgentEvents.task.archived.is(event)) {
+      this.taskMap.delete(task.taskId);
+      this.emit();
+      return;
+    }
     if (!this.taskMap.has(task.taskId) && !AgentEvents.task.assigned.is(event)) return;
     this.taskMap.set(task.taskId, {
       taskId: task.taskId,
@@ -180,6 +200,7 @@ export class TuiStore {
   }
 
   submitInput(text: string): void {
+    if (this.runtime.status !== "ready") return;
     const message = text.trim();
     if (message.length === 0) {
       this.appendLog({
@@ -222,6 +243,20 @@ export class TuiStore {
   }
 }
 
-function progressKey(event: RuntimeProgressEvent): string {
-  return `${event.agentId ?? "runtime"}:${event.taskId ?? "no-task"}:${event.itemId}`;
+function activityKey(activity: AgentActivity): string {
+  return `${activity.agentId}:${activity.taskId ?? "no-task"}:${activity.itemId}`;
+}
+
+function tuiStatusForBoot(snapshot: BootSnapshot): TuiRunStatus {
+  if (snapshot.status === "ready") return "ready";
+  if (snapshot.status === "failed") return "failed";
+  if (snapshot.status === "terminating" || snapshot.status === "terminated") return "stopping";
+  return "preparing";
+}
+
+function cloneBootSnapshot(snapshot: BootSnapshot): BootSnapshot {
+  return {
+    ...snapshot,
+    stages: snapshot.stages.map((stage) => ({ ...stage })),
+  };
 }

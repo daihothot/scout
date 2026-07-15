@@ -1,6 +1,7 @@
 export type {
-  AgentServerPreflightResult,
-  ThreadPreflightResult,
+  AgentServerPreflightReport,
+  DynamicToolCallResponse,
+  ThreadPreflightReport,
 } from "./types.js";
 export * from "./codex/app-server-client.js";
 export * from "./codex/app-server-factory.js";

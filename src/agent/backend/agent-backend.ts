@@ -1,43 +1,71 @@
-import type { AppServerTimelineEntry } from "../../agent-server/codex/app-server-event-store.js";
+import type {
+  AppServerTimelineEntry,
+} from "../../agent-server/codex/app-server-event-store.js";
+import { AgentActivityBackend } from "./agent-activity-backend.js";
 import { AgentTaskBackend } from "./agent-task-backend.js";
 import { AgentToolBackend } from "./agent-tool-backend.js";
 import type { AgentBackendOptions } from "./types.js";
-import type { AgentTaskState } from "../task/types.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
+import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 
 export type {
   AgentBackendOptions,
 } from "./types.js";
 
 export class AgentBackend {
-  readonly registry: AgentBackendOptions["registry"];
+  readonly registry: RunScope["agentRegistry"];
+  readonly activity: AgentActivityBackend;
   readonly task: AgentTaskBackend;
   readonly tool: AgentToolBackend;
-  readonly domain: AgentBackendOptions["domain"];
+  readonly domain: RunScope["domain"];
   private readonly runId: string;
   private readonly options: AgentBackendOptions;
+  private readonly scope: RunScope;
+  private unsubscribeDynamicTools?: () => void;
+  private unsubscribeTimeline?: () => void;
 
   constructor(options: AgentBackendOptions) {
-    this.runId = options.runId;
+    const scope = currentRunScope();
+    this.runId = scope.runId;
     this.options = options;
-    this.domain = options.domain;
-    this.registry = options.registry;
-    this.task = new AgentTaskBackend({
-      registry: this.registry,
-      taskStore: options.taskStore,
-      eventBus: options.eventBus,
-      logger: options.logger,
-    });
+    this.scope = scope;
+    this.domain = scope.domain;
+    this.registry = scope.agentRegistry;
+    this.activity = new AgentActivityBackend();
+    this.task = new AgentTaskBackend();
     this.tool = new AgentToolBackend({
-      registry: this.registry,
-      taskStore: options.taskStore,
       taskBackend: this.task,
-      agentProvider: options.agentProvider,
-      domain: options.domain,
-      logger: options.logger,
+      agentProvider: this.options.agentProvider,
     });
-    options.appServer.setDynamicToolCallHandler((input) => this.tool.handleDynamicToolCall(input));
-    options.appServer.onTimeline((entry) => this.handleAppServerTimelineEntry(entry));
+  }
+
+  start(): void {
+    if (this.unsubscribeDynamicTools || this.unsubscribeTimeline) return;
+    const unsubscribeDynamicTools = this.scope.appServer.setDynamicToolCallHandler((input) =>
+      this.tool.handleDynamicToolCall(input)
+    );
+    try {
+      const unsubscribeTimeline = this.scope.appServer.onTimeline((entry) =>
+        this.handleAppServerTimelineEntry(entry)
+      );
+      this.unsubscribeDynamicTools = unsubscribeDynamicTools;
+      this.unsubscribeTimeline = unsubscribeTimeline;
+    } catch (error) {
+      unsubscribeDynamicTools();
+      throw error;
+    }
+  }
+
+  stop(): void {
+    const unsubscribeTimeline = this.unsubscribeTimeline;
+    const unsubscribeDynamicTools = this.unsubscribeDynamicTools;
+    this.unsubscribeTimeline = undefined;
+    this.unsubscribeDynamicTools = undefined;
+    try {
+      unsubscribeTimeline?.();
+    } finally {
+      unsubscribeDynamicTools?.();
+    }
   }
 
   private handleAppServerTimelineEntry(entry: AppServerTimelineEntry): void {
@@ -59,7 +87,12 @@ export class AgentBackend {
   ): void {
     this.logAppServerHealthEvent(entry, agent);
     this.task.handleAppServerTimelineEntry(agent, entry, (timelineEntry) =>
-      this.options.appServer.resolveTimelineEntry(timelineEntry)
+      this.scope.appServer.resolveTimelineEntry(timelineEntry)
+    );
+    this.activity.handleAppServerTimelineEntry(
+      agent,
+      entry,
+      () => this.scope.appServer.resolveTimelineEntry(entry),
     );
   }
 
@@ -69,9 +102,10 @@ export class AgentBackend {
 
   private logAppServerHealthEvent(entry: AppServerTimelineEntry, agent?: ScoutAgent): void {
     if (entry.kind !== "disconnect") return;
-    const activeTask = agent ? this.findActiveTask(agent) : undefined;
-    this.options.logger.warn({
-      target: "runtime",
+    const activeTask = agent
+      ? this.scope.taskStore.findActiveTaskForAgent(agent.agentId)
+      : undefined;
+    this.scope.logger.warn({
       module: "runtime.app_server",
       event: "disconnected",
       agentId: agent?.agentId,
@@ -86,7 +120,4 @@ export class AgentBackend {
     });
   }
 
-  private findActiveTask(agent: ScoutAgent): AgentTaskState | undefined {
-    return this.options.taskStore.findActiveTaskForAgent(agent.agentId);
-  }
 }

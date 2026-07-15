@@ -1,17 +1,19 @@
 import type { AgentDynamicToolSpec, AgentJsonValue } from "./types.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 import { ScoutAgentRoles } from "../thread/types.js";
+import type { AgentTaskStepToolCall } from "../task/types.js";
+import { attachments } from "../context/attachments.js";
 
 export const AGENT_ASSIGN_TASK_TOOL_NAMESPACE = "scout_agent_assigntask";
 export const AGENT_SEND_MESSAGE_TOOL_NAMESPACE = "scout_agent_sendmessage";
-export const AGENT_HUMAN_INPUT_TOOL_NAMESPACE = "scout_agent_humaninput";
 export const AGENT_SUBMIT_TASK_TOOL_NAMESPACE = "scout_agent_submittask";
+export const AGENT_ARCHIVE_TASK_TOOL_NAMESPACE = "scout_agent_archivetask";
 
 export const AGENT_TOOL_NAMESPACES = new Set<string>([
   AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-  AGENT_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+  AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
 ]);
 
 export interface AssignTaskToolCall {
@@ -25,41 +27,34 @@ export interface AssignTaskToolCall {
 export interface SendMessageToolCall {
   tool: "SendMessage";
   to: string;
-  type?: "message" | "human_response";
   message: string;
-}
-
-export interface RequestHumanInputToolCall {
-  tool: "RequestHumanInput";
-  task_id?: string;
-  kind?: "prompt_required" | "confirmation_required";
-  question: string;
-  context?: string;
-  options?: string[];
 }
 
 export interface SubmitTaskToolCall {
   tool: "SubmitTask";
-  task_id?: string;
-  status: "complete" | "blocked" | "failed";
-  summary: string;
+  outcome: string;
+}
+
+export interface ArchiveTaskToolCall {
+  tool: "ArchiveTask";
+  task_id: string;
 }
 
 export type AgentDynamicToolCall =
   | AssignTaskToolCall
   | SendMessageToolCall
-  | RequestHumanInputToolCall
-  | SubmitTaskToolCall;
+  | SubmitTaskToolCall
+  | ArchiveTaskToolCall;
 
 export function buildAssignTaskDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
     name: "AssignTask",
-    description: "创建或复用一个 Scout researcher、verifier 或 validator worker agent，并分配一个新任务。",
+    description: "向当前 Run 中已有的 Scout researcher、verifier 或 validator worker agent 分配一个新任务。",
     inputSchema: objectSchema({
       agent_id: {
         type: "string",
-        description: "可选。已有 agent id；为空时创建新的 Scout agent。",
+        description: "可选。目标 agent id；为空时按 subagent_type 定位当前 Run 中已有的 agent。",
       },
       description: {
         type: "string",
@@ -68,11 +63,11 @@ export function buildAssignTaskDynamicTool(): AgentDynamicToolSpec {
       subagent_type: {
         type: "string",
         enum: [ScoutAgentRoles.Researcher, ScoutAgentRoles.Verifier, ScoutAgentRoles.Validator],
-        description: "需要启动的 Scout agent 角色。",
+        description: "目标 Scout worker agent 的角色。",
       },
       prompt: {
         type: "string",
-        description: "传给被启动 agent 的完整中文指令。",
+        description: "传给目标 agent 的完整中文指令。",
       },
     }, ["description", "subagent_type", "prompt"]),
   };
@@ -82,7 +77,7 @@ export function buildSendMessageDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
     name: "SendMessage",
-    description: "给已有 Scout agent 任务追加一条后续消息。",
+    description: "向已有 Scout agent 或其当前任务发送 attachment message；Runtime 按 attachment 语义处理对应的接收与状态变化。",
     inputSchema: objectSchema({
       to: {
         type: "string",
@@ -90,46 +85,9 @@ export function buildSendMessageDynamicTool(): AgentDynamicToolSpec {
       },
       message: {
         type: "string",
-        description: "注入到该 agent 下一轮循环的中文消息。",
-      },
-      type: {
-        type: "string",
-        enum: ["message", "human_response"],
-        description: "消息类型。默认 message；当这是回复 worker 的 RequestHumanInput 时必须显式使用 human_response。",
+        description: "投递给目标 agent 的完整普通 attachment tag block；body 格式遵守对应 attachment 规范。",
       },
     }, ["to", "message"]),
-  };
-}
-
-export function buildRequestHumanInputDynamicTool(): AgentDynamicToolSpec {
-  return {
-    namespace: AGENT_HUMAN_INPUT_TOOL_NAMESPACE,
-    name: "RequestHumanInput",
-    description: "仅供 worker task 在执行中请求人工补充信息或确认，并中断当前 task turn。Coordinator 不使用此工具；Coordinator 需要询问用户时应直接输出文本。",
-    inputSchema: objectSchema({
-      task_id: {
-        type: "string",
-        description: "可选。当前 worker task id；省略时 runtime 会使用当前 worker 的 active task。",
-      },
-      kind: {
-        type: "string",
-        enum: ["prompt_required", "confirmation_required"],
-        description: "输入请求类型。",
-      },
-      question: {
-        type: "string",
-        description: "必须向人工提出的明确中文问题。",
-      },
-      context: {
-        type: "string",
-        description: "可选。提问背景或需要人工理解的上下文。",
-      },
-      options: {
-        type: "array",
-        items: { type: "string" },
-        description: "可选。互斥选项列表。",
-      },
-    }, ["question"]),
   };
 }
 
@@ -137,39 +95,123 @@ export function buildSubmitTaskDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
     name: "SubmitTask",
-    description: "仅供 worker 提交当前 task 的正式终态结果。Coordinator 不可见也不使用此工具。",
+    description: "仅供 Worker 正式交回当前一轮工作；Runtime 将 Markdown outcome 投递给 Coordinator，并把当前 task 置为 done。",
+    inputSchema: objectSchema({
+      outcome: {
+        type: "string",
+        description: "符合当前 handoff contract 的完整 Markdown outcome 正文。",
+      },
+    }, ["outcome"]),
+  };
+}
+
+export function buildArchiveTaskDynamicTool(): AgentDynamicToolSpec {
+  return {
+    namespace: AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
+    name: "ArchiveTask",
+    description: "仅供 Coordinator 归档指定 Worker task；归档会释放该 Worker 的当前 runner，但保留 agent thread。",
     inputSchema: objectSchema({
       task_id: {
         type: "string",
-        description: "可选。当前 worker task id；省略时 runtime 会使用当前 worker 的 active task。",
+        description: "需要归档的准确 task id。",
       },
-      status: {
-        type: "string",
-        enum: ["complete", "blocked", "failed"],
-        description: "当前 task 的终态。stopped 由 Coordinator/runtime 控制，worker 不提交 stopped。",
-      },
-      summary: {
-        type: "string",
-        description: "当前 task 的中文结论、阻塞原因或失败原因。",
-      },
-    }, ["status", "summary"]),
+    }, ["task_id"]),
   };
 }
 
 export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDynamicToolCall {
-  const object = readPlainObject(args);
-  return { ...object, tool } as unknown as AgentDynamicToolCall;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readPlainObject(value: unknown): Record<string, unknown> {
-  if (!isPlainObject(value)) {
-    throw new Error("Coordinator tool arguments must be an object.");
+  if (typeof args !== "object" || args === null || Array.isArray(args)) {
+    throw new Error(`${tool} arguments must be an object.`);
   }
-  return value;
+  const input = args as Record<string, unknown>;
+
+  switch (tool) {
+    case "AssignTask": {
+      const agentId = input.agent_id;
+      if (agentId !== undefined && (typeof agentId !== "string" || agentId.trim().length === 0)) {
+        throw new Error("AssignTask agent_id must be a non-empty string when provided.");
+      }
+      const description = input.description;
+      if (typeof description !== "string" || description.trim().length === 0) {
+        throw new Error("AssignTask description must be a non-empty string.");
+      }
+      const subagentType = input.subagent_type;
+      if (
+        subagentType !== ScoutAgentRoles.Researcher
+        && subagentType !== ScoutAgentRoles.Verifier
+        && subagentType !== ScoutAgentRoles.Validator
+      ) {
+        throw new Error("AssignTask subagent_type must be researcher, verifier, or validator.");
+      }
+      const prompt = input.prompt;
+      if (typeof prompt !== "string" || prompt.trim().length === 0) {
+        throw new Error("AssignTask prompt must be a non-empty string.");
+      }
+      return {
+        tool: "AssignTask",
+        ...(agentId === undefined ? {} : { agent_id: agentId.trim() }),
+        description: description.trim(),
+        subagent_type: subagentType,
+        prompt: prompt.trim(),
+      };
+    }
+    case "SendMessage": {
+      const target = input.to;
+      if (typeof target !== "string" || target.trim().length === 0) {
+        throw new Error("SendMessage to must be a non-empty string.");
+      }
+      const message = input.message;
+      if (typeof message !== "string" || message.trim().length === 0) {
+        throw new Error("SendMessage message must be a non-empty string.");
+      }
+      return {
+        tool: "SendMessage",
+        to: target.trim(),
+        message: message.trim(),
+      };
+    }
+    case "SubmitTask": {
+      const outcome = input.outcome;
+      if (typeof outcome !== "string" || outcome.trim().length === 0) {
+        throw new Error("SubmitTask outcome must be a non-empty string.");
+      }
+      return {
+        tool: "SubmitTask",
+        outcome: outcome.trim(),
+      };
+    }
+    case "ArchiveTask": {
+      const taskId = input.task_id;
+      if (typeof taskId !== "string" || taskId.trim().length === 0) {
+        throw new Error("ArchiveTask task_id must be a non-empty string.");
+      }
+      return {
+        tool: "ArchiveTask",
+        task_id: taskId.trim(),
+      };
+    }
+    default:
+      throw new Error(`Unsupported agent tool: ${tool}`);
+  }
+}
+
+export function readSendMessageAttachment(
+  toolCalls: readonly AgentTaskStepToolCall[] | undefined,
+  tag: string,
+): { body: string } | undefined {
+  return (toolCalls ?? []).flatMap((toolCall) => {
+    if (
+      toolCall.namespace !== AGENT_SEND_MESSAGE_TOOL_NAMESPACE
+      || toolCall.tool !== "SendMessage"
+      || toolCall.success !== true
+    ) {
+      return [];
+    }
+    const call = parseAgentDynamicToolCall(toolCall.tool, toolCall.arguments);
+    if (call.tool !== "SendMessage") return [];
+    return attachments.readTagBlock(call.message, tag)
+      .map(({ body }) => ({ body }));
+  })[0];
 }
 
 function objectSchema(

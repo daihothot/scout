@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildBootProgressPresentation,
   buildCoordinatorActivityRows,
   buildWorkerActivityRows,
   resolveTuiWidths,
@@ -10,6 +11,7 @@ import {
 } from "../../src/interaction/tui/terminal-markdown.js";
 import { terminalDisplayWidth } from "../../src/interaction/tui/terminal-text.js";
 import type { TuiState } from "../../src/interaction/tui/tui-store.js";
+import type { BootSnapshot } from "../../src/run/boot/boot-stage.js";
 
 test("terminal markdown renders headings as separate styled blocks", () => {
   const lines = buildTerminalMarkdownLines(
@@ -68,7 +70,7 @@ test("activity rows include one explicit spacer between entries", () => {
       status: "ready",
     },
     tasks: [],
-    progress: [],
+    activities: [],
     logs: [
       {
         id: "log-1",
@@ -120,7 +122,43 @@ test("TUI widths derive every horizontal region from terminal columns", () => {
   });
 });
 
-test("activity progress reflows without exceeding the current width", () => {
+test("Boot progress scales its fill and caps its width", () => {
+  const snapshot: BootSnapshot = {
+    runId: "run-boot",
+    status: "starting",
+    completedStages: 4,
+    totalStages: 9,
+    stages: [
+      { id: "interaction", status: "completed" },
+      { id: "clients", status: "completed" },
+      { id: "environment", status: "completed" },
+      { id: "run_scope", status: "completed" },
+      { id: "domain", status: "running" },
+      { id: "agent_telemetry", status: "running" },
+      { id: "agents", status: "pending" },
+      { id: "agent_backend", status: "pending" },
+      { id: "orchestrator", status: "pending" },
+    ],
+  };
+
+  for (const width of [20, 40, 80]) {
+    const presentation = buildBootProgressPresentation(snapshot, width);
+    const expectedWidth = Math.min(width, 42);
+    assert.equal(
+      terminalDisplayWidth(`${presentation.filled}${presentation.remaining}`),
+      expectedWidth,
+    );
+    assert.equal(presentation.width, expectedWidth);
+    assert.equal(
+      terminalDisplayWidth(presentation.filled),
+      Math.round((4 / 9) * expectedWidth),
+    );
+  }
+  const presentation = buildBootProgressPresentation(snapshot, 80);
+  assert.equal(presentation.width, 42);
+});
+
+test("agent activity reflows without exceeding the current width", () => {
   const detail = JSON.stringify({
     taskId: "validator-task-0001",
     prompt: "核验 verification-report.md 的证据链，并保留当前版本代码证据。".repeat(4),
@@ -135,10 +173,12 @@ test("activity progress reflows without exceeding the current width", () => {
     },
     tasks: [],
     logs: [],
-    progress: [{
-      source: "agent.app_server.item",
+    activities: [{
+      seq: 1,
       agentId: "validator",
+      role: "validator",
       taskId: "validator-task-0001",
+      threadId: "thread-validator",
       itemId: "item-1",
       type: "functionCall",
       status: "completed",
@@ -173,10 +213,10 @@ test("Coordinator and current Worker task activity stay in separate projections"
     },
     tasks: [],
     logs: [],
-    progress: [
-      progress("coordinator", undefined, "coord-1", "Coordinator reasoning"),
-      progress("researcher", "researcher-task-0001", "worker-1", "Current task reasoning"),
-      progress("researcher", "researcher-task-0002", "worker-2", "Next task reasoning"),
+    activities: [
+      activity("coordinator", undefined, "coord-1", "Coordinator reasoning"),
+      activity("researcher", "researcher-task-0001", "worker-1", "Current task reasoning"),
+      activity("researcher", "researcher-task-0002", "worker-2", "Next task reasoning"),
     ],
   };
 
@@ -194,16 +234,18 @@ function lineText(line: { spans: Array<{ text: string }> }): string {
   return line.spans.map((span) => span.text).join("");
 }
 
-function progress(
-  agentId: string,
+function activity(
+  agentId: "coordinator" | "researcher",
   taskId: string | undefined,
   itemId: string,
   detail: string,
-): TuiState["progress"][number] {
+): TuiState["activities"][number] {
   return {
-    source: "agent.app_server.item",
+    seq: 1,
     agentId,
+    role: agentId,
     taskId,
+    threadId: `thread-${agentId}`,
     itemId,
     type: "reasoning",
     status: "completed",

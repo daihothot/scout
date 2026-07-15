@@ -1,4 +1,6 @@
-import type { AgentTaskEvent } from "../agent/task/task-events.js";
+import type { AgentActivity } from "../../agent/activity/activity-event.js";
+import type { ScoutEvent } from "../../core/events/index.js";
+import type { BootSnapshot } from "../../run/boot/boot-stage.js";
 
 export type RuntimeDisclosureLevel = "debug" | "info" | "warn" | "error";
 
@@ -6,22 +8,6 @@ export interface RuntimeDisclosureEvent {
   level: RuntimeDisclosureLevel;
   source: string;
   message: string;
-  data?: unknown;
-}
-
-export interface RuntimeProgressEvent {
-  source: string;
-  seq?: number;
-  agentId?: string;
-  taskId?: string;
-  threadId?: string;
-  turnId?: string;
-  itemId: string;
-  type: string;
-  status: string;
-  label: string;
-  detail?: string;
-  updatedAt: string;
   data?: unknown;
 }
 
@@ -40,29 +26,29 @@ export interface AgentMessageReply {
 export type RuntimeInteractionUnsubscribe = () => void;
 
 export interface RuntimeInteractionPort {
+  publishBootSnapshot(snapshot: BootSnapshot): Promise<void>;
   disclose(event: RuntimeDisclosureEvent): Promise<void>;
-  publishProgress(event: RuntimeProgressEvent): Promise<void>;
-  publishTaskEvent(event: AgentTaskEvent): Promise<void>;
-  notify(event: AgentTaskEvent): Promise<void>;
+  publishAgentActivity(activity: AgentActivity): Promise<void>;
+  publishTaskEvent(event: ScoutEvent): Promise<void>;
   receiveAgentMessage(message: AgentMessageReply): Promise<void>;
   sendAgentMessage?(handler: (message: AgentMessageSend) => void | Promise<void>): RuntimeInteractionUnsubscribe;
   onExitRequested?(handler: () => void | Promise<void>): RuntimeInteractionUnsubscribe;
 }
 
 export class NoopRuntimeInteractionPort implements RuntimeInteractionPort {
+  async publishBootSnapshot(): Promise<void> {
+    // no-op
+  }
+
   async disclose(): Promise<void> {
     // no-op
   }
 
-  async publishProgress(): Promise<void> {
+  async publishAgentActivity(): Promise<void> {
     // no-op
   }
 
   async publishTaskEvent(): Promise<void> {
-    // no-op
-  }
-
-  async notify(): Promise<void> {
     // no-op
   }
 

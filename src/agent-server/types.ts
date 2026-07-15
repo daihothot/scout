@@ -1,4 +1,4 @@
-export interface AgentServerPreflightResult {
+export interface AgentServerPreflightReport {
   status: "passed" | "failed";
   configLayers?: unknown[];
   skillsList?: unknown;
@@ -28,7 +28,7 @@ export interface AgentServerPreflightResult {
   error?: string;
 }
 
-export interface ThreadPreflightResult {
+export interface ThreadPreflightReport {
   status: "passed" | "failed";
   threadId: string;
   mcpServerStatus?: unknown;
@@ -51,7 +51,7 @@ export interface DynamicToolCallInput {
   arguments: unknown;
 }
 
-export interface DynamicToolCallResult {
+export interface DynamicToolCallResponse {
   success: boolean;
   contentItems: Array<{
     type: "inputText";
@@ -61,4 +61,4 @@ export interface DynamicToolCallResult {
 
 export type DynamicToolCallHandler = (
   input: DynamicToolCallInput,
-) => Promise<DynamicToolCallResult> | DynamicToolCallResult;
+) => Promise<DynamicToolCallResponse> | DynamicToolCallResponse;
