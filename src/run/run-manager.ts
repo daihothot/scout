@@ -41,7 +41,7 @@ export class RunManager {
     });
     const runStartedAt = Date.now();
     const eventBus = new InMemoryEventBus();
-    const domain = new ValidationDomain({ runId });
+    const domain = new ValidationDomain();
     runtimeLogger.info({
       module: "run.lifecycle",
       event: "run_started",

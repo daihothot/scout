@@ -8,7 +8,7 @@ const { aggregateValidators } = require("./validators/index.cjs");
 const { validateEvidence } = require("./validators/evidence.cjs");
 const { validatePack } = require("./validators/pack.cjs");
 
-const MARKER = "SCOUT_RESEARCH_VALIDATE_OK";
+const MARKER = "SCOUT_RESEARCH_ARTIFACT_CHECK_OK";
 
 function main(argv) {
   if (argv.length === 1 && argv[0] === "--smoke") {
@@ -118,10 +118,10 @@ function outputFields(fields) {
 function usage() {
   process.stderr.write([
     "Usage:",
-    "  scout-research-validate evidence <evidence-file>",
-    "  scout-research-validate aggregate <kind> <aggregate-file>",
-    "  scout-research-validate pack <research-pack-dir>",
-    "  scout-research-validate --smoke",
+    "  scout-research-artifact-check evidence <evidence-file>",
+    "  scout-research-artifact-check aggregate <kind> <aggregate-file>",
+    "  scout-research-artifact-check pack <research-pack-dir>",
+    "  scout-research-artifact-check --smoke",
     "",
     `Aggregate kinds: ${Object.keys(AGGREGATES).join(", ")}`,
     "",

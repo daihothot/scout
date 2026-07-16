@@ -6,12 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const repoRoot = process.cwd();
-const validatorPath = join(repoRoot, "assets", "codex", "tools", "scout-research-validate", "cli.cjs");
+const checkerPath = join(repoRoot, "assets", "codex", "tools", "scout-research-artifact-check", "cli.cjs");
 
-test("scout-research-validate accepts a replayable ready Research pack", () => {
+test("scout-research-artifact-check accepts a replayable ready Research pack", () => {
   const packRoot = createReadyResearchPack();
 
-  const output = execFileSync(process.execPath, [validatorPath, "pack", packRoot], {
+  const output = execFileSync(process.execPath, [checkerPath, "pack", packRoot], {
     cwd: repoRoot,
     encoding: "utf8",
   });
@@ -21,7 +21,7 @@ test("scout-research-validate accepts a replayable ready Research pack", () => {
   assert.match(output, /verification_point_count=1/);
 });
 
-test("scout-research-validate rejects contradictory state and non-replayable source evidence", () => {
+test("scout-research-artifact-check rejects contradictory state and non-replayable source evidence", () => {
   const packRoot = createReadyResearchPack();
   replaceInFile(join(packRoot, "index.md"), "completion_state: complete", "completion_state: partial");
   replaceInFile(join(packRoot, "evidence", "E-CODE-001.md"), "gitlink_commit: source-commit", "gitlink_commit: other-commit");
@@ -29,7 +29,7 @@ test("scout-research-validate rejects contradictory state and non-replayable sou
   replaceInFile(join(packRoot, "knowledge-evidence.md"), "| 系统目标 | covered | E-KB-001 | none |", "| 系统目标 | unknown | E-KB-001 | none |");
   replaceInFile(join(packRoot, "verification-manual.md"), "- E-KB-001", "- E-KB-999");
 
-  const result = spawnSync(process.execPath, [validatorPath, "pack", packRoot], {
+  const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
     cwd: repoRoot,
     encoding: "utf8",
   });
@@ -42,11 +42,11 @@ test("scout-research-validate rejects contradictory state and non-replayable sou
   assert.match(result.stderr, /UNREGISTERED_MANUAL_REF/);
 });
 
-test("scout-research-validate checks one evidence artifact independently", () => {
+test("scout-research-artifact-check checks one evidence artifact independently", () => {
   const packRoot = createReadyResearchPack();
   const evidencePath = join(packRoot, "evidence", "E-CODE-001.md");
 
-  const output = execFileSync(process.execPath, [validatorPath, "evidence", evidencePath], {
+  const output = execFileSync(process.execPath, [checkerPath, "evidence", evidencePath], {
     cwd: repoRoot,
     encoding: "utf8",
   });
@@ -56,12 +56,12 @@ test("scout-research-validate checks one evidence artifact independently", () =>
   assert.match(output, /evidence_status=source_verified/);
 });
 
-test("scout-research-validate checks one aggregate artifact independently", () => {
+test("scout-research-artifact-check checks one aggregate artifact independently", () => {
   const packRoot = createReadyResearchPack();
   const aggregatePath = join(packRoot, "knowledge-evidence.md");
 
   const output = execFileSync(process.execPath, [
-    validatorPath,
+    checkerPath,
     "aggregate",
     "knowledge-evidence",
     aggregatePath,

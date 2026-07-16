@@ -15,7 +15,7 @@ import type { AgentTaskNotAssignedEventPayload } from "../../src/agent/task/task
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 
-test("TaskEventRecorder writes each task state stream to its task log", async () => {
+test("TaskEventRecorder writes incremental task events without repeating task history", async () => {
   const root = mkdtempSync(join(tmpdir(), "scout-task-recorder-"));
   const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
@@ -29,6 +29,59 @@ test("TaskEventRecorder writes each task state stream to its task log", async ()
 
   const task = taskState();
   await eventBus.publishAndWait(AgentEvents.task.assigned, task);
+  await eventBus.publishAndWait(AgentEvents.task.stepStarted, {
+    ...task,
+    status: "running",
+    steps: [
+      {
+        stepId: "researcher-task-0001-step-0001",
+        taskId: task.taskId,
+        turnId: "turn-1",
+        status: "completed",
+        prompt: "Old prompt that must not be repeated",
+        finalResponse: "Old response that must not be repeated",
+        toolCalls: [],
+        startedAt: "2026-07-14T00:00:01.000Z",
+        finishedAt: "2026-07-14T00:00:02.000Z",
+      },
+      {
+        stepId: "researcher-task-0001-step-0002",
+        taskId: task.taskId,
+        status: "running",
+        prompt: "Inspect current evidence",
+        toolCalls: [],
+        startedAt: "2026-07-14T00:00:03.000Z",
+      },
+    ],
+  } satisfies AgentTaskState);
+  await eventBus.publishAndWait(AgentEvents.task.stepCompleted, {
+    ...task,
+    status: "running",
+    steps: [
+      {
+        stepId: "researcher-task-0001-step-0001",
+        taskId: task.taskId,
+        turnId: "turn-1",
+        status: "completed",
+        prompt: "Old prompt that must not be repeated",
+        finalResponse: "Old response that must not be repeated",
+        toolCalls: [],
+        startedAt: "2026-07-14T00:00:01.000Z",
+        finishedAt: "2026-07-14T00:00:02.000Z",
+      },
+      {
+        stepId: "researcher-task-0001-step-0002",
+        taskId: task.taskId,
+        turnId: "turn-2",
+        status: "completed",
+        prompt: "Inspect current evidence",
+        finalResponse: "Current response",
+        toolCalls: [],
+        startedAt: "2026-07-14T00:00:03.000Z",
+        finishedAt: "2026-07-14T00:00:04.000Z",
+      },
+    ],
+  } satisfies AgentTaskState);
   await eventBus.publishAndWait(AgentEvents.task.planUpdated, {
     ...task,
     status: "running",
@@ -49,9 +102,16 @@ test("TaskEventRecorder writes each task state stream to its task log", async ()
   const taskLogPath = join(logsRoot, `${task.taskId}.log`);
   const text = readFileSync(taskLogPath, "utf8");
   assert.match(text, /event=agent\.task\.assigned/);
+  assert.match(text, /event=agent\.task\.step_started/);
+  assert.match(text, /event=agent\.task\.step_completed/);
   assert.match(text, /event=agent\.task\.plan_updated/);
   assert.match(text, /event=agent\.task\.not_assigned/);
   assert.match(text, /initialPrompt: "Research current BDD evidence"/);
+  assert.match(text, /prompt: "Inspect current evidence"/);
+  assert.match(text, /finalResponse: "Current response"/);
+  assert.doesNotMatch(text, /Old prompt that must not be repeated/);
+  assert.doesNotMatch(text, /Old response that must not be repeated/);
+  assert.equal(text.match(/initialPrompt:/g)?.length, 1);
   assert.match(text, /requestedDescription: "Research another BDD"/);
   assert.equal(existsSync(join(root, "logs", "runtime.log")), false);
   assert.equal(existsSync(join(logsRoot, "activity.log")), false);

@@ -5,14 +5,7 @@ import {
   AgentContextTags,
   agent,
 } from "../../context/agent-attachments.js";
-import {
-  worker,
-  type WorkerTaskTickInput,
-} from "./worker-attachments.js";
-import {
-  AgenticLoop,
-  type AgenticTickContinuation,
-} from "../../core/agentic-loop.js";
+import { AgenticLoop } from "../../core/agentic-loop.js";
 import {
   AgentTaskStore,
   cloneAgentTaskState as cloneTaskState,
@@ -31,7 +24,7 @@ import type {
   ScoutAgentTurnInput,
   ScoutAgentTurnOutcome,
 } from "../../core/scout-agent.js";
-import type { AgentThreadSnapshot, AgentThreadSpec } from "../../thread/types.js";
+import type { AgentThreadSpec } from "../../thread/types.js";
 import { readSendMessageAttachment } from "../../tools/agent-tools.js";
 import { AgentRunner } from "../types.js";
 
@@ -44,12 +37,7 @@ export interface WorkerRunnerHost {
   readonly agentId: string;
   readonly role: AgentThreadSpec["role"];
   readonly spec: AgentThreadSpec;
-  readonly threadSnapshot?: AgentThreadSnapshot;
   runTurn(input: ScoutAgentTurnInput): Promise<ScoutAgentTurnOutcome>;
-  setGoal(input: {
-    objective: string;
-    tokenBudget?: number;
-  }): Promise<AgentTaskState["goal"] | undefined>;
 }
 
 export interface WorkerRunnerOptions {
@@ -79,8 +67,8 @@ export class WorkerRunner extends AgentRunner {
     this.taskSequence = options.taskSequence;
     this.loop = new AgenticLoop<AgentTaskState>({
       agentId: this.host.agentId,
-      takeTick: () => this.takeTaskTick(),
-      runTick: (task) => this.runTaskTick(task),
+      takeTick: () => this.takeTaskTurn(),
+      runTick: (task) => this.runTaskTurn(task),
       isStopped: () => this.stopped,
       onError: (error) => this.failActiveTask(error),
     });
@@ -115,12 +103,11 @@ export class WorkerRunner extends AgentRunner {
       isBackgrounded: input.isBackgrounded ?? true,
       createdAt: now,
       updatedAt: now,
-      thread: this.host.threadSnapshot,
     };
     const stored = this.store.addTask(task);
     this.activeTask = stored;
     this.eventBus.publish(AgentEvents.task.assigned, stored);
-    this.loop.schedule();
+    queueMicrotask(() => this.loop.schedule());
     return stored;
   }
 
@@ -235,7 +222,7 @@ export class WorkerRunner extends AgentRunner {
     };
   }
 
-  private takeTaskTick(): AgentTaskState | undefined {
+  private takeTaskTurn(): AgentTaskState | undefined {
     const task = this.activeTask;
     if (!task) return undefined;
     return task.status === AgentTaskStatuses.Queued
@@ -244,7 +231,7 @@ export class WorkerRunner extends AgentRunner {
       : undefined;
   }
 
-  private async runTaskTick(activeTask: AgentTaskState): Promise<void | AgenticTickContinuation<AgentTaskState>> {
+  private async runTaskTurn(activeTask: AgentTaskState): Promise<void> {
     const taskId = activeTask.taskId;
     this.ensureOwnedTask(taskId);
     let task = this.getTask(taskId);
@@ -257,26 +244,15 @@ export class WorkerRunner extends AgentRunner {
     }
     const hadStarted = Boolean(task.startedAt);
     const initialPrompt = hadStarted ? undefined : task.initialPrompt;
-    const thread = this.host.threadSnapshot;
-    if (!thread) {
-      throw new Error(`Worker runner ${this.host.agentId} has no prepared thread.`);
-    }
     if (!hadStarted) {
       if (!initialPrompt) {
         throw new Error(`Task ${taskId} has no initial prompt.`);
       }
-      const goal = await this.host.setGoal({ objective: initialPrompt });
       task = this.updateTask(taskId, (current) => ({
         ...current,
-        thread,
-        goal,
         startedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }));
-      this.eventBus.publish(AgentEvents.task.threadAttached, task);
-      if (goal) {
-        this.eventBus.publish(AgentEvents.task.goalUpdated, task);
-      }
       task = this.getTask(taskId);
       if (isTerminalTaskStatus(task.status)) {
         this.activeTask = task;
@@ -294,12 +270,9 @@ export class WorkerRunner extends AgentRunner {
       this.activeTask = task;
       return;
     }
-    const promptSections = this.buildTaskTurnSections({
-      task,
-      initialPrompt,
-    });
     const prompt = attachments.compose(
-      ...promptSections,
+      agent.turn.use_update_tools(),
+      ...(initialPrompt === undefined ? [] : [initialPrompt]),
       ...pendingMessages,
     );
 
@@ -335,7 +308,6 @@ export class WorkerRunner extends AgentRunner {
           : AgentTaskStepStatuses.Completed,
       }));
       this.activeTask = done;
-      this.eventBus.publish(AgentEvents.task.stepOutput, done);
       this.eventBus.publish(AgentEvents.task.stepCompleted, done);
       return;
     }
@@ -352,18 +324,6 @@ export class WorkerRunner extends AgentRunner {
     }
 
     if (outcome.turn.status === "completed") {
-      if (this.countPendingMessages(taskId) > 0) {
-        const stillRunning = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
-          task: current,
-          outcome,
-          durationMs,
-          status: AgentTaskStepStatuses.Completed,
-        }));
-        this.activeTask = stillRunning;
-        this.eventBus.publish(AgentEvents.task.stepOutput, stillRunning);
-        this.eventBus.publish(AgentEvents.task.stepCompleted, stillRunning);
-        return;
-      }
       const stillRunning = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
         task: current,
         outcome,
@@ -371,10 +331,8 @@ export class WorkerRunner extends AgentRunner {
         status: AgentTaskStepStatuses.Completed,
       }));
       this.activeTask = stillRunning;
-      this.eventBus.publish(AgentEvents.task.stepOutput, stillRunning);
       this.eventBus.publish(AgentEvents.task.stepCompleted, stillRunning);
-      if (latestTaskStep(stillRunning)?.humanInputRequest) return;
-      return { continueAfterMs: 0, continueWith: stillRunning };
+      return;
     }
 
     const failed = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
@@ -446,7 +404,6 @@ export class WorkerRunner extends AgentRunner {
       task: {
         ...input.task,
         status: input.status === AgentTaskStepStatuses.Completed ? input.task.status : input.status,
-        result: input.outcome.finalResponse ?? input.task.result,
       },
       update: (step) => ({
         ...step,
@@ -537,20 +494,6 @@ export class WorkerRunner extends AgentRunner {
     }
   }
 
-  private buildTaskTurnSections(input: {
-    task: AgentTaskState;
-    initialPrompt?: string;
-  }): string[] {
-    const updateToolInstruction = agent.turn.use_update_tools();
-    if (input.initialPrompt !== undefined) {
-      if (!input.initialPrompt) throw new Error(`Task ${input.task.taskId} has no initial prompt.`);
-      return [updateToolInstruction, input.initialPrompt];
-    }
-    return [
-      updateToolInstruction,
-      worker.turn.task_tick(toWorkerTaskTickInput(input.task)),
-    ];
-  }
 }
 
 export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
@@ -560,17 +503,4 @@ export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
 export function isTerminalTaskStatus(status: AgentTaskState["status"]): boolean {
   return status === AgentTaskStatuses.Failed
     || status === AgentTaskStatuses.Stopped;
-}
-
-function latestTaskStep(task: AgentTaskState): AgentTaskStep | undefined {
-  return task.steps?.[task.steps.length - 1];
-}
-
-function toWorkerTaskTickInput(task: AgentTaskState): WorkerTaskTickInput {
-  return {
-    taskId: task.taskId,
-    status: task.status,
-    description: task.description,
-    latestStepId: latestTaskStep(task)?.stepId,
-  };
 }

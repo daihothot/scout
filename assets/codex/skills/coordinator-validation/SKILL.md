@@ -1,13 +1,13 @@
 ---
 assetKind: scout.skill
 name: coordinator-validation
-description: Scout Coordinator 在 Validation Domain 中接收 BDD 验证目标、判断输入形态、路由 Researcher、Verifier、Validator、处理 BDD 定位补充并综合领域结果时使用。
+description: Scout Coordinator 在当前 Validation Domain 中接收 BDD 目标、组织 Researcher 与 Validator 的 Research Pack Gate 往返、处理 BDD 定位补充并综合 Research gate 状态时使用。
 id: skills.validation.coordinator
-version: 0.1.0
+version: 0.2.0
 phase: [coordinate]
 tags: [scout, validation, bdd, coordination, workflow]
 devices: [any]
-summary: 规范 Validation Coordinator 的输入判断、任务路由、人工补充和结果综合。
+summary: 规范 Researcher 与 Validator 的 Research Pack Gate 调度循环。
 ---
 
 # Coordinator Validation
@@ -27,24 +27,24 @@ summary: 规范 Validation Coordinator 的输入判断、任务路由、人工�
 使用本技能处理：
 
 - 判断用户输入是否具备可派发的 BDD 定位形态。
-- 根据当前 Validation 状态把任务路由给 Researcher、Verifier 或 Validator。
+- 在 Researcher 与 Validator 之间维护同一 Research pack 的生产、检查和修正循环。
 - 将多轮已确认用户意图综合为稳定 task prompt。
 - 处理 Worker 的 BDD 定位补充请求和正式 handoff attachment。
-- 基于正式 artifact、evidence refs 和 gate 结果形成领域 synthesis。
+- 基于正式 Research artifact、pack digest 和 Gate 报告形成阶段 synthesis。
 
 不使用本技能处理：
 
 - 代替 Researcher 定位 BDD 或形成 Research artifact。
-- 代替 Verifier 收集验证信号或形成 Verification Report。
 - 代替 Validator 执行 artifact gate。
+- 把 Research Pack Gate 描述为完整 Validation 或 BDD 已验证。
 - 修改代码、配置、知识库或 Worker artifact。
 
 ## Validation Coordination Model
 
-- Validation Domain 的确定性状态、allowed actions 和 transition 以当前 Domain tool 或 Runtime state 为准。
+- 当前流程状态来自 task 生命周期、Worker 正式 handoff、Research pack ref、pack digest 和 Validator Gate，不依赖已废弃的 schema 状态投影。
 - Coordinator 只判断输入形态是否足以派发；BDD 是否真实存在、是否唯一匹配由 Researcher 确认。
 - Worker progress、工具活动、普通 summary 和共享记忆不是 Validation 结论。
-- 只有 Worker 正式结果、artifact refs、evidence refs、Domain state 和 Validator gate 可以推进最终 synthesis。
+- 只有 Worker 正式 handoff、artifact refs、pack digest 和 Validator Gate 可以推进当前 Research gate synthesis。
 - Coordinator 只在缺少定位或收敛 BDD 所需人工输入时向用户追问；其它 Worker 缺口作为领域状态或后续 task 输入处理。
 
 ## Inputs
@@ -71,6 +71,7 @@ summary: 规范 Validation Coordinator 的输入判断、任务路由、人工�
 注意事项：
 
 - progress 或普通自然语言回复不能替代正式 handoff attachment。
+- handoff attachment 只负责传递状态和 refs，本身不是 Research pack；blocked / partial 文本摘要不能替代 pack 目录。
 - 不由 Coordinator 补写 Worker 的完成依据或缺口判断。
 - task 进入 `done` 只表示 Worker 已交回当前一轮工作，不表示 Validation 已完成或 task 应立即归档。
 
@@ -86,11 +87,25 @@ summary: 规范 Validation Coordinator 的输入判断、任务路由、人工�
 - 必须匹配原问题、task id 和当前目标后再转交 Worker。
 - 未确认或与当前目标无关的内容不能写成 task 事实。
 
+### I-004: Research Pack Gate
+---
+
+描述：
+
+- Validator 正式 handoff 中的 `research-pack-gate.md` ref、pack digest、Gate、问题 ids 和未检查范围。
+
+注意事项：
+
+- Gate 输入必须指向 Researcher artifact root 下唯一且可读的 Research pack 目录。
+- handoff 文本、task 日志、progress、单个未归属文件或 Coordinator 摘要都不是 Research pack ref。
+- Gate 只适用于报告声明的 pack digest；Researcher 修改 pack 后必须重新检查。
+- Coordinator 不读取报告正文补做检查，也不把问题摘要改写成自己的专业判断。
+
 ## Validation Coordination Workflow
 
 - Phase 1：判断输入形态并综合稳定目标。
-- Phase 2：根据当前状态指派或继续正确的 Worker。
-- Phase 3：处理 handoff、补充请求、task 归档和最终领域 synthesis。
+- Phase 2：依次指派或继续 Researcher 与 Validator。
+- Phase 3：根据 Research Pack Gate 回到原 task、归档或形成阶段 synthesis。
 
 ## Coordinator Output Layout
 
@@ -102,15 +117,15 @@ summary: 规范 Validation Coordinator 的输入判断、任务路由、人工�
 - BDD clarification request：最小必要问题及当前无法派发的原因。
 - Worker follow-up：原问题、匹配回复、task id 和继续目标。
 - Task archive decision：当前 Worker 是否仍需继续工作，以及归档所依据的正式 handoff 和当前状态。
-- Validation synthesis：当前状态、正式 artifact refs、evidence refs、gate、限制和下一步。
+- Research gate synthesis：Research pack ref、pack digest、Gate、问题 refs、限制和当前阶段结论。
 
 ### Artifact Relationship Rules
 
 - 摘要产物：Coordinator synthesis 只汇总上游和 Worker 已确认内容，不复制业务 artifact 正文。
 - 明细产物：由对应 Worker 和专项 Skill 所有。
 - Registry / index：Coordinator 不创建 evidence registry，也不重新编号 evidence。
-- Claim owner：Research claim、observed claim 和 gate claim 分别由对应 Worker 正式产物所有。
-- 下游引用规则：task prompt 和 synthesis 只引用 artifact ref、evidence ref、task id 和 Domain state。
+- Claim owner：Research claim 由 Researcher artifact 所有，Gate claim 由 Validator Gate 报告所有。
+- 下游引用规则：task prompt 和 synthesis 只引用 artifact ref、evidence ref、task id、pack digest 和 Gate。
 - Ref 字段策略：引用已有 ref；不得用聊天摘要制造新的 artifact ref 或 evidence ref。
 
 ## Phase 1: Qualify and Synthesize Input
@@ -139,22 +154,33 @@ Partial：
 ## Phase 2: Route Validation Work
 ---
 
-本阶段根据当前状态和正式输入选择 Worker。
+本阶段根据正式 handoff 和 task 生命周期依次选择 Researcher 或 Validator。
 
 注意事项：
 
 - Researcher 接收 BDD 定位与 Research 输入收敛任务。
-- Verifier 只在已有可信 Research handoff 或已确认验证输入时接收证据采集任务。
-- Validator 只在已有正式 artifact 或 report 时接收 gate 任务。
-- 代码实现、修复、重构、产品方案或无 BDD 目标的能力探查不得派发给这些 Worker。
+- Validator 只在 Researcher 已提交正式 handoff，且 handoff 明确引用唯一、可读的 Research pack 目录后接收 Research Pack Gate task。
+- Researcher handoff 缺少唯一可读 pack ref 时，保留原 Researcher task；不得把 handoff 文本包装成 Validator 输入，也不得创建 Validator task。
+- Researcher task 进入 `done` 后保持未归档，直到 Validator 对对应 pack digest 给出 `accepted`。
+- Validator 已有未归档 task 时，通过同一 task 继续复查，不创建新的 Validator task。
+- 代码实现、重构、产品方案或无 BDD 目标的能力探查不得作为本工作流中的 Research Pack Gate 任务派发。
+
+派发顺序：
+
+1. 没有 Researcher 正式 handoff：保留 Researcher task，等待其继续工作或正式交回。
+2. 有 handoff 但没有唯一可读 Research pack 目录 ref：保留 Researcher task，停止向 Validator 派发。
+3. 有唯一可读 Research pack 目录 ref：保留 Researcher task，创建或继续 Validator task 检查该 pack。
+4. Gate 为 `needs_fix` 或 `insufficient_evidence`：保留两个 task，把 Gate 问题发回原 Researcher task。
+5. Gate 为 `blocked`：保留两个 task，不归档、不改派其它角色。
+6. Gate 为 `accepted` 且 digest 对应最新 pack：才允许归档 Researcher 和 Validator task。
 
 Exit：
 
-- 正确 Worker 已接收包含完整 synthesis 的 task，或当前状态无需派发。
+- Researcher 或 Validator 已接收包含完整 refs 和预期 handoff 的 task，或当前 Gate 已决定下一动作。
 
 Blocked：
 
-- 当前 Domain state、必要输入或目标 Worker 不允许该动作时停止派发。
+- 必要输入缺失、目标 Worker 已绑定其它未归档 task 或 task 指派失败时停止派发。
 
 Partial：
 
@@ -163,51 +189,57 @@ Partial：
 ## Phase 3: Handle Handoff and Synthesize
 ---
 
-本阶段处理 Worker 问题和正式 handoff attachment，并向用户输出可追溯 synthesis。
+本阶段处理 Researcher handoff、Validator Gate 和两者之间的修正往返。
 
 注意事项：
 
 - Worker 仅请求 BDD 定位补充时，才向用户提出对应问题。
 - 正式 handoff 必须按角色、artifact refs、evidence refs、限制和缺口整理。
-- 当前 Worker 仍需修正或补充时，必须向同一 task 发送综合后的 follow-up；确认不再需要当前 Worker 工作时才归档。
-- task 归档只释放当前 Worker task，不表示 Validation state 已接受该结果或全部工作已经完成。
-- 最终 synthesis 必须说明状态如何由输入推进，不得把入口指引描述为完整 Validation 已完成。
+- Researcher handoff 为 complete、partial 或 blocked，只要提供唯一可读 pack ref，就指派 Validator 检查实际内容；不得由 Coordinator 预判 Gate。
+- Researcher handoff 无唯一可读 pack ref 时，不存在可执行的 Research Pack Gate；保持 Researcher task 未归档，并报告缺少的正式输入。
+- Validator 返回 `needs_fix` 或 `insufficient_evidence` 时，把 Gate ref、pack digest、问题 ids 和最小解除条件综合后发回原 Researcher task。
+- Researcher 再次提交后，把新 pack ref 和新 handoff 发送给原 Validator task 复查；不得沿用旧 digest 的 Gate。
+- Validator 返回 `blocked` 时保留两个 task，不向用户追问非 BDD 定位问题，并报告当前阻塞和可恢复入口。
+- Validator 返回 `accepted` 时，确认 Gate digest 对应最新 Research pack，然后归档 Researcher task 和 Validator task。
+- accepted 只表示 Research pack 已通过当前 Gate；不得描述为运行验证或完整 Validation 已完成。
 
 Exit：
 
-- 当前 Worker 已收到 follow-up，或其 task 已在不再需要继续工作后归档，或已请求必要 BDD 输入，或已形成基于正式 gate 的最终 synthesis。
+- Researcher 已收到 Gate follow-up、Validator 已收到复查输入、两个 task 已在 accepted 后归档，或已形成 blocked 阶段 synthesis。
 
 Blocked：
 
-- Worker 结果缺少正式引用且无法支持状态推进时，报告当前缺口。
+- Worker 结果缺少正式 pack 或 Gate ref、Gate digest 与最新 pack 不一致，或消息无法投递到原 task 时报告当前缺口。
 
 Partial：
 
-- 只有部分 artifact 或 evidence 时，明确停留状态和下一责任角色。
+- Research pack 为 partial 时仍交给 Validator 检查；根据其 Gate 明确下一责任角色，不由 Coordinator提升状态。
 
 ## Workflow Exit Rules (Enforcement)
 
-- XR-001：不得跳过当前 Domain state 要求的 Worker 或 gate。
+- XR-001：不得从 Researcher handoff 跳过 Validator Research Pack Gate。
 - XR-002：任何 Worker 报告 partial、blocked 或 evidence 不足时，不得综合成全部完成。
-- XR-003：最终完成 synthesis 必须引用正式 artifact、evidence refs 和适用 gate。
+- XR-003：Researcher task 在 Gate accepted 前不得归档；修正和复查必须继续使用各自原 task。
+- XR-004：当前阶段完成 synthesis 必须引用最新 Research pack ref、对应 digest 和 accepted Gate 报告。
+- XR-005：只有最新 Research pack 的 Gate 为 `accepted` 时才能归档 Researcher 与 Validator task；缺 pack、`needs_fix`、`insufficient_evidence`、`blocked` 或 digest 不匹配均必须保留 task。
 
 ## Evidence Rules (Enforcement)
 
 - ER-001：task assigned、progress、工具调用和普通 summary 只属于 Activity State。
-- ER-002：Research、Verification 和 Validation 结论必须分别引用其正式产物或 handoff。
+- ER-002：Research claim 和 Gate claim 必须分别引用 Research pack 与 Validator Gate 报告。
 - ER-003：用户人工补充必须与原问题和当前 task 对齐后才能成为领域输入。
 
 ## Failure Rules (Enforcement)
 
-- FR-001：任务指派失败、Worker 不可用或 Domain action 被拒绝时，记录失败动作和当前状态。
+- FR-001：任务指派失败、Worker 不可用或消息无法投递到原 task 时，记录失败动作和当前状态。
 - FR-002：结果缺少必要 refs 时不得补造；必须保留缺口并停止依赖该结果的推进。
-- FR-003：Worker handoff 与 Domain state 冲突时，以确定性 Domain state 为准并披露冲突。
+- FR-003：Gate digest 与最新 Research pack 不一致时不得推进；必须请求原 Validator task 复查新内容。
 
 ## Blocking Rules (Enforcement)
 
 - BR-001：缺少 BDD 定位输入时必须停止在输入阶段。
-- BR-002：缺少下一角色所需正式产物时不得派发该角色。
-- BR-003：Domain state 不允许目标动作时不得绕过状态边界。
+- BR-002：缺少下一角色所需正式产物时不得派发该角色；对 Validator 而言，正式产物必须是唯一可读的 Research pack 目录 ref，而不是 handoff 文本。
+- BR-003：Researcher 或 Validator 已绑定不匹配的未归档 task 时不得覆盖其 runner。
 
 ## Retry Rules (Enforcement)
 
@@ -220,6 +252,8 @@ Partial：
 - PR-001：禁止代替 Worker 执行业务工作或补写产物。
 - PR-002：禁止把未确认内容、progress 或模型推断写成领域事实。
 - PR-003：禁止在缺少 BDD 定位输入时启动泛泛调查。
+- PR-004：禁止把 accepted Research Gate 描述为 BDD 已验证或完整 Validation 已完成。
+- PR-005：禁止使用 blocked handoff、聊天摘要、task 日志或 Coordinator synthesis 代替 Research pack 指派 Validator。
 
 ## Example
 
@@ -233,10 +267,11 @@ Partial：
 
 1. 将 BDD ID、用户目标和已确认约束综合为 Researcher task。
 2. 接收 Researcher 正式 handoff attachment 和 Research artifact refs。
-3. 若 Researcher 仍需补充则继续同一 task；否则归档该 task，再根据 Domain state 路由下一角色。
-4. 不把 Research handoff、`done` 或 task 归档描述为全部验证完成。
+3. 保留 Researcher task，指派 Validator 对唯一 Research pack 形成 Research Pack Gate。
+4. Gate 为 `needs_fix` 时把报告问题发回原 Researcher task；Researcher 修正后由原 Validator task 复查。
+5. Gate 为 `accepted` 且 digest 对应最新 pack 时归档两个 task，并明确当前只完成 Research Gate。
 
 输出：
 
-- Researcher task synthesis 或后续状态 synthesis。
-- 当前 task id、artifact refs、evidence refs、限制和下一责任角色。
+- Researcher / Validator task synthesis 或 Research gate 阶段 synthesis。
+- 两个 task id、Research pack ref、Gate ref、pack digest、问题 refs、限制和下一责任角色。

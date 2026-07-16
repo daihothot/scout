@@ -4,7 +4,11 @@ import { AgentTaskBackend } from "../../src/agent/backend/agent-task-backend.js"
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import { WorkerRunner } from "../../src/agent/runner/worker/worker-runner.js";
 import { AgentTaskStore } from "../../src/agent/task/agent-task-store.js";
-import { ScoutAgentRoles, ScoutAgentPhases } from "../../src/agent/thread/types.js";
+import {
+  ScoutAgentRoles,
+  ScoutAgentPhases,
+  type AgentThreadSpec,
+} from "../../src/agent/thread/types.js";
 import type {
   AgentTaskStepToolCall,
   AgentTaskState,
@@ -14,11 +18,9 @@ import {
   AgentTaskStatuses,
   AgentTaskStepStatuses,
 } from "../../src/agent/task/types.js";
-import { attachments } from "../../src/agent/context/index.js";
 import {
   agent,
 } from "../../src/agent/context/agent-attachments.js";
-import { WorkerContextTags } from "../../src/agent/runner/worker/worker-attachments.js";
 import { InMemoryEventBus, type ScoutEvent } from "../../src/core/events/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type {
@@ -27,11 +29,9 @@ import type {
   ScoutAgent,
 } from "../../src/agent/core/scout-agent.js";
 import type { WorkerAgent } from "../../src/agent/roles/worker-agent.js";
-import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
 import type {
   AppServerPlanState,
   AppServerResolvedTimelineEntry,
-  AppServerThreadGoalState,
   AppServerTimelineEntry,
 } from "../../src/agent-server/codex/app-server-event-store.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
@@ -41,7 +41,7 @@ import {
 } from "../../src/run/run-scope.js";
 import { AGENT_SEND_MESSAGE_TOOL_NAMESPACE } from "../../src/agent/tools/agent-tools.js";
 
-test("WorkerRunner keeps ticking until a human-input request yields the loop", async () => {
+test("WorkerRunner runs the initial turn once and keeps the result on its completed step", async () => {
   let turnCount = 0;
   const harness = createHarness({
     taskInput: {
@@ -52,38 +52,20 @@ test("WorkerRunner keeps ticking until a human-input request yields the loop", a
     },
     runTurn: async () => {
       turnCount += 1;
-      return completedTurn(
-        `worker response ${turnCount}`,
-        `turn-${turnCount}`,
-        turnCount === 2
-          ? [{
-            namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-            tool: "SendMessage",
-            arguments: {
-              to: ScoutAgentRoles.Coordinator,
-              message: agent.turn.wait_for_human_request("Need human input."),
-            },
-            success: true,
-          }]
-          : [],
-      );
+      return completedTurn(`worker response ${turnCount}`, `turn-${turnCount}`);
     },
   });
 
-  await waitFor(async () => {
-    await harness.runtime.runTasksToIdle();
-    return turnCount >= 2;
-  });
+  await harness.runtime.runTasksToIdle();
+  await harness.runtime.runTasksToIdle();
 
   const task = harness.runtime.getTaskSnapshot("task-1");
-  assert.equal(turnCount, 2);
+  assert.equal(turnCount, 1);
   assert.equal(task?.status, AgentTaskStatuses.Running);
-  assert.equal(task?.result, "worker response 2");
-  assert.equal(task?.steps?.length, 2);
+  assert.equal(Object.hasOwn(task ?? {}, "result"), false);
+  assert.equal(task?.steps?.length, 1);
   assert.equal(task?.steps?.[0]?.status, AgentTaskStepStatuses.Completed);
   assert.equal(task?.steps?.[0]?.finalResponse, "worker response 1");
-  assert.equal(task?.steps?.[1]?.status, AgentTaskStepStatuses.Completed);
-  assert.deepEqual(task?.steps?.[1]?.humanInputRequest, { body: "Need human input." });
   assert.equal(harness.terminalTasks.length, 0);
   assert.ok(harness.events.some((event) =>
     AgentEvents.task.stepCompleted.is(event)
@@ -91,7 +73,7 @@ test("WorkerRunner keeps ticking until a human-input request yields the loop", a
   ));
 });
 
-test("WorkerRunner ticks a running task even when no message is queued", async () => {
+test("WorkerRunner starts another turn only after a message is queued", async () => {
   const turnPrompts: string[] = [];
   const harness = createHarness({
     taskInput: {
@@ -102,28 +84,19 @@ test("WorkerRunner ticks a running task even when no message is queued", async (
     },
     runTurn: async (turn) => {
       turnPrompts.push(turn.prompt);
-      return completedTurn(
-        `turn-${turnPrompts.length}`,
-        `turn-${turnPrompts.length}`,
-        turnPrompts.length === 2
-          ? [{
-            namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-            tool: "SendMessage",
-            arguments: {
-              to: ScoutAgentRoles.Coordinator,
-              message: agent.turn.wait_for_human_request("Need human input."),
-            },
-            success: true,
-          }]
-          : [],
-      );
+      return completedTurn(`turn-${turnPrompts.length}`, `turn-${turnPrompts.length}`);
     },
   });
 
-  await waitFor(async () => {
-    await harness.runtime.runTasksToIdle();
-    return turnPrompts.length >= 2;
+  await harness.runtime.runTasksToIdle();
+  await harness.runtime.runTasksToIdle();
+  assert.equal(turnPrompts.length, 1);
+
+  harness.runtime.queueMessage({
+    taskId: "task-1",
+    message: agent.turn.message("Continue with the new evidence."),
   });
+  await harness.runtime.runTasksToIdle();
 
   const task = harness.runtime.getTaskSnapshot("task-1");
   assert.equal(task?.status, AgentTaskStatuses.Running);
@@ -131,22 +104,11 @@ test("WorkerRunner ticks a running task even when no message is queued", async (
   assert.match(turnPrompts[0] ?? "", /use-update-tools/);
   assert.match(turnPrompts[0] ?? "", /Initial task prompt/);
   assert.match(turnPrompts[1] ?? "", /use-update-tools/);
-  const tickPromptBody = attachments.readTagBlock(
-    turnPrompts[1] ?? "",
-    WorkerContextTags.TaskTick,
-  )[0]?.body;
-  const tickPrompt = JSON.parse(tickPromptBody ?? "{}") as {
-    type?: string;
-    task?: { taskId?: string; latestStepId?: string };
-  };
-  assert.equal(tickPrompt.type, "task_tick");
-  assert.equal(tickPrompt.task?.taskId, "task-1");
-  assert.equal(tickPrompt.task?.latestStepId, "task-1-step-0001");
+  assert.match(turnPrompts[1] ?? "", /Continue with the new evidence\./);
   assert.ok(harness.events.some((event) =>
     AgentEvents.task.stepCompleted.is(event)
     && (event.payload as AgentTaskState).status === AgentTaskStatuses.Running
   ));
-  assert.deepEqual(task?.steps?.[1]?.humanInputRequest, { body: "Need human input." });
 });
 
 test("WorkerRunner records a wait-request SendMessage without changing task status", async () => {
@@ -160,41 +122,24 @@ test("WorkerRunner records a wait-request SendMessage without changing task stat
     },
     runTurn: async () => {
       turnCount += 1;
-      if (turnCount === 2) {
-        return completedTurn("waiting", "turn-2", [{
-          namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-          tool: "SendMessage",
-          arguments: {
-            to: ScoutAgentRoles.Coordinator,
-            message: agent.turn.wait_for_human_request("Need human input."),
-          },
-          success: true,
-        }]);
-      }
-      return {
-        ...completedTurn("ordinary message sent", "turn-1"),
-        toolCalls: [{
-          namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-          tool: "SendMessage",
-          arguments: {
-            to: ScoutAgentRoles.Coordinator,
-            message: agent.turn.task_outcome("This must not submit the task."),
-          },
-          success: true,
-        }],
-      };
+      return completedTurn("waiting", "turn-1", [{
+        namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
+        tool: "SendMessage",
+        arguments: {
+          to: ScoutAgentRoles.Coordinator,
+          message: agent.turn.wait_for_human_request("Need human input."),
+        },
+        success: true,
+      }]);
     },
   });
 
-  await waitFor(async () => {
-    await harness.runtime.runTasksToIdle();
-    return turnCount >= 2;
-  });
+  await harness.runtime.runTasksToIdle();
 
   const task = harness.runtime.getTaskSnapshot("task-1");
-  assert.equal(turnCount, 2);
+  assert.equal(turnCount, 1);
   assert.equal(task?.status, AgentTaskStatuses.Running);
-  assert.deepEqual(task?.steps?.[1]?.humanInputRequest, { body: "Need human input." });
+  assert.deepEqual(task?.steps?.[0]?.humanInputRequest, { body: "Need human input." });
   assert.equal(harness.events.some((event) => AgentEvents.task.done.is(event)), false);
 });
 
@@ -466,7 +411,7 @@ test("WorkerRunner records a delayed human response on the step that consumes it
   ));
 });
 
-test("AgentTaskBackend reduces app-server plan and goal timeline entries into task state", (t) => {
+test("AgentTaskBackend reduces app-server plan timeline entries into task state", (t) => {
   const eventBus = new InMemoryEventBus();
   const runId = "run-task-backend-test";
   const scope = new RunScope({
@@ -495,7 +440,6 @@ test("AgentTaskBackend reduces app-server plan and goal timeline entries into ta
   const backend = new AgentTaskBackend();
   const firstPlan = planState("turn-1", "first", "inProgress");
   const secondPlan = planState("turn-2", "second", "completed");
-  const goal = goalState("Verify checkout flow", "active");
 
   backend.handleAppServerTimelineEntry(
     agent,
@@ -507,19 +451,11 @@ test("AgentTaskBackend reduces app-server plan and goal timeline entries into ta
     planTimelineEntry(2, "turn-2"),
     () => resolvedPlanEntry(secondPlan),
   );
-  backend.handleAppServerTimelineEntry(
-    agent,
-    goalTimelineEntry(3),
-    () => resolvedGoalEntry(goal),
-  );
-
   const task = store.getTask("task-1");
   assert.equal(task?.plan?.turnId, "turn-2");
   assert.equal(task?.plan?.explanation, "second");
   assert.deepEqual(task?.planRecords?.map((plan) => plan.turnId), ["turn-1", "turn-2"]);
   assert.deepEqual(task?.planRecords?.map((plan) => plan.steps[0]?.status), ["inProgress", "completed"]);
-  assert.equal(task?.goal?.objective, "Verify checkout flow");
-  assert.equal(task?.goal?.status, "active");
 });
 
 function createHarness(input: {
@@ -538,11 +474,9 @@ function createHarness(input: {
     AgentEvents.task.messageQueued,
     AgentEvents.task.done,
     AgentEvents.task.archived,
-    AgentEvents.task.threadAttached,
     AgentEvents.task.pendingMessagesDrained,
     AgentEvents.task.stepStarted,
     AgentEvents.task.stepCompleted,
-    AgentEvents.task.stepOutput,
     AgentEvents.task.terminal,
   ]) {
     eventBus.subscribe(key, (event) => {
@@ -552,24 +486,18 @@ function createHarness(input: {
       }
     });
   }
-  const thread: AgentThreadSnapshot = {
-    threadId: "thread-1",
-    spec: {
-      role: ScoutAgentRoles.Verifier,
-      phases: [ScoutAgentPhases.Verify],
-      cwd: "/repo",
-      approvalPolicy: "never",
-      sandbox: "workspace-write",
-      contextBundleId: "context-1",
-      model: {
-        id: "gpt-5.5",
-        provider: "GuruOpenAI",
-        reasoningEffort: "high",
-        reasoningSummary: "concise",
-      },
-    },
-    response: {
-      thread: { id: "thread-1" },
+  const spec: AgentThreadSpec = {
+    role: ScoutAgentRoles.Verifier,
+    phases: [ScoutAgentPhases.Verify],
+    cwd: "/repo",
+    approvalPolicy: "never",
+    sandbox: "workspace-write",
+    contextBundleId: "context-1",
+    model: {
+      id: "gpt-5.5",
+      provider: "GuruOpenAI",
+      reasoningEffort: "high",
+      reasoningSummary: "concise",
     },
   };
   let runtime: WorkerRunner;
@@ -581,14 +509,10 @@ function createHarness(input: {
       host: {
         agentId: "verifier",
         role: ScoutAgentRoles.Verifier,
-        spec: thread.spec,
-        get threadSnapshot() {
-          return thread;
-        },
+        spec,
         runTurn: (turn) => input.runTurn
           ? input.runTurn(turn, runtime)
           : Promise.resolve(completedTurn("")),
-        setGoal: async () => undefined,
       },
     });
   return {
@@ -647,19 +571,6 @@ function planState(turnId: string, explanation: string, status: string): AppServ
   };
 }
 
-function goalState(objective: string, status: string): AppServerThreadGoalState {
-  return {
-    threadId: "thread-1",
-    objective,
-    status,
-    raw: {
-      threadId: "thread-1",
-      objective,
-      status,
-    },
-  };
-}
-
 function planTimelineEntry(seq: number, turnId: string): AppServerTimelineEntry {
   return {
     seq,
@@ -668,16 +579,6 @@ function planTimelineEntry(seq: number, turnId: string): AppServerTimelineEntry 
     kind: "plan_updated",
     threadId: "thread-1",
     turnId,
-  };
-}
-
-function goalTimelineEntry(seq: number): AppServerTimelineEntry {
-  return {
-    seq,
-    receivedAt: new Date().toISOString(),
-    stream: "state",
-    kind: "goal_updated",
-    threadId: "thread-1",
   };
 }
 
@@ -697,13 +598,6 @@ function resolvedPlanEntry(plan: AppServerPlanState): AppServerResolvedTimelineE
   return {
     entry: planTimelineEntry(0, plan.turnId ?? "turn"),
     plan,
-  };
-}
-
-function resolvedGoalEntry(goal: AppServerThreadGoalState): AppServerResolvedTimelineEntry {
-  return {
-    entry: goalTimelineEntry(0),
-    goal,
   };
 }
 
@@ -783,13 +677,4 @@ function completedTurn(
     finalResponse,
     toolCalls,
   };
-}
-
-async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 1000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-  assert.equal(await predicate(), true);
 }

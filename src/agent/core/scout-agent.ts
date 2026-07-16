@@ -238,11 +238,10 @@ export abstract class ScoutAgent {
   }
 
   private defaultWritableRoots(): string[] {
-    return [
-      this.spec.cwd,
-      this.agentMount.artifactRoot,
+    return [...new Set([
       ...this.agentMount.writableRoots,
-    ];
+      this.agentMount.artifactRoot,
+    ])];
   }
 
   private nextInvocationId(threadId: string): string {

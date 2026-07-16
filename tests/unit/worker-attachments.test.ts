@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { attachments } from "../../src/agent/context/index.js";
 import { AgentContextTags, agent } from "../../src/agent/context/agent-attachments.js";
-import { WorkerContextTags, worker } from "../../src/agent/runner/worker/worker-attachments.js";
 
 test("agent turn attachments build payload text", () => {
   assert.equal(agent.turn.use_update_tools(), [
@@ -12,24 +11,6 @@ test("agent turn attachments build payload text", () => {
     "Do not describe plan changes only in text when update_plan can represent them.",
     "</use-update-tools>",
   ].join("\n"));
-
-  const taskTick = attachments.readTagBlock(worker.turn.task_tick({
-    taskId: "task-1",
-    status: "running",
-    description: "处理任务",
-    latestStepId: "step-1",
-  }), WorkerContextTags.TaskTick)[0]?.body;
-
-  assert.deepEqual(JSON.parse(taskTick ?? "{}"), {
-    type: "task_tick",
-    task: {
-      taskId: "task-1",
-      status: "running",
-      description: "处理任务",
-      latestStepId: "step-1",
-    },
-    instruction: "continue_current_task",
-  });
 
   const message = agent.turn.message("继续处理当前 task");
   assert.equal(message, [

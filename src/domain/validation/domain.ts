@@ -5,32 +5,15 @@ import type {
   ScoutDomainDynamicToolCall,
 } from "../types.js";
 import { ValidationDomainAgentBackend } from "./agent/backend/validation-domain-agent-backend.js";
-import { buildValidationDomainToolsForRole } from "./tools/validation-domain-tools.js";
 import type { DynamicToolCallResponse } from "../../agent-server/types.js";
-
-export interface ValidationDomainOptions {
-  runId: string;
-}
 
 export class ValidationDomain implements ScoutDomain {
   readonly domainId = "validation";
   readonly name = "Scout Validation Domain";
-  readonly backend: ValidationDomainAgentBackend;
-  private readonly runId: string;
+  readonly backend = new ValidationDomainAgentBackend();
 
-  constructor(options: ValidationDomainOptions) {
-    this.runId = options.runId;
-    this.backend = new ValidationDomainAgentBackend({
-      runId: options.runId,
-    });
-  }
-
-  dynamicToolsForRole(role: ScoutAgentRole): AgentDynamicToolSpec[] {
-    return buildValidationDomainToolsForRole(role);
-  }
-
-  async start(): Promise<void> {
-    void this.runId;
+  dynamicToolsForRole(_role: ScoutAgentRole): AgentDynamicToolSpec[] {
+    return [];
   }
 
   handleDynamicToolCall(call: ScoutDomainDynamicToolCall): DynamicToolCallResponse | undefined {

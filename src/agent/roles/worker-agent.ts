@@ -105,11 +105,7 @@ export abstract class WorkerAgent extends ScoutAgent {
         get spec() {
           return worker.spec;
         },
-        get threadSnapshot() {
-          return worker.threadSnapshot;
-        },
         runTurn: (turnInput) => worker.runTurn(turnInput),
-        setGoal: (goalInput) => worker.setGoal(goalInput),
       },
     });
   }

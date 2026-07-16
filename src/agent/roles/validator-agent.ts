@@ -14,7 +14,7 @@ export class ValidatorAgent extends WorkerAgent {
         phases: [ScoutAgentPhases.Validate],
         cwd: options.agentMount.mountRoot,
         approvalPolicy: "never",
-        sandbox: "read-only",
+        sandbox: "workspace-write",
         contextBundleId: scope.contextBundle.contextBundleId,
         model: { ...options.agentMount.agentProfile.model },
         config: {

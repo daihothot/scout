@@ -10,9 +10,7 @@
     "tui": "npm run build && node dist/src/run/run-tui.js",
     "test": "npm run build && node --test \"dist/tests/unit/**/*.test.js\"",
     "test:integration": "npm run build && SCOUT_RUN_CODEX_APP_SERVER_INTEGRATION=1 node --test \"dist/tests/integration/**/*.test.js\"",
-    "schema:generate:domain-validation": "tsc -p tsconfig.json && node dist/schemas/domain/validation/generate-domain-validation.js",
-    "schema:generate": "npm run schema:generate:domain-validation",
-    "check": "npm run schema:generate && npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
