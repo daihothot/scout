@@ -11,7 +11,7 @@ dependencies:
   skills:
     required: [jarvis-codebase]
   shellTools:
-    required: [scoutAssets, scoutResearchValidate, jarvis, codegraph, git]
+    required: [scoutAssets, scoutResearchArtifactCheck, jarvis, codegraph, git]
     optional: [rg, sed, find, cat]
 summary: 基于 Guru knowledge 和当前版本代码证据形成 evidence pack 与 verification manual，不使用 synaptic。
 ---
@@ -151,7 +151,7 @@ Capability Specifications 的 11 个固定段落：
 
 描述：
 
-- 当前 mount 可见本技能、`jarvis-codebase`、`scout-assets`、`scout-research-validate`、`jarvis`、`codegraph` 和 `git`。
+- 当前 mount 可见本技能、`jarvis-codebase`、`scout-assets`、`scout-research-artifact-check`、`jarvis`、`codegraph` 和 `git`。
 
 注意事项：
 
@@ -259,7 +259,7 @@ templates/verification-manual.md
 - 进入某类条件 evidence 的收集或写入前，必须读取 `template-index.md` 中对应的条件模板。
 - Phase 4 必须读取 `jarvis-codebase/templates/template-index.md`、`codegraph-evidence.md` 和 `source-code-evidence.md`。
 - 不得凭记忆缩减模板章节、字段或状态规则；不适用字段使用 `none`、`irrelevant` 或 limitation 明确表达。
-- `scout-research-validate` 只检查弱 Markdown 的结构、状态、provenance 和引用闭环，不判断业务事实是否正确。
+- `scout-research-artifact-check` 只检查弱 Markdown 的结构、状态、provenance 和引用闭环，不判断业务事实是否正确。
 
 文件职责：
 
@@ -313,7 +313,7 @@ Exit：
 
 Blocked：
 
-- 缺少 `jarvis-codebase`、`scoutAssets`、`scoutResearchValidate`、`jarvis`、`codegraph`、`git` 或 artifact target 不可写时停止。
+- 缺少 `jarvis-codebase`、`scoutAssets`、`scoutResearchArtifactCheck`、`jarvis`、`codegraph`、`git` 或 artifact target 不可写时停止。
 
 Partial：
 
@@ -470,7 +470,7 @@ templates/verification-manual.md
 
 Exit：
 
-- 每个 verification point 都有用户画像字段、Given / When / Then、supporting evidence ids 和 signals to collect；所有 refs 已通过 `scout-research-validate` 检查。
+- 每个 verification point 都有用户画像字段、Given / When / Then、supporting evidence ids 和 signals to collect；所有 refs 已通过 `scout-research-artifact-check` 检查。
 - 已准备 task handoff 使用的 Verification Manual 摘要，包括 manual ref、verification points、用户画像、supporting evidence ids、signals to collect 和需人工确认项。
 
 Blocked：
@@ -480,7 +480,7 @@ Blocked：
 Partial：
 
 - 用户画像不确定时可以生成 manual 草稿，但必须把缺口写入 `User Persona To Confirm` 和 `index.md`。
-- 完整 pack 写入后执行 `scout-research-validate pack <research-pack-dir>`；校验失败时保持 `draft + partial` 或 `blocked + blocked`，记录失败项，不得提交完成态 handoff。
+- 完整 pack 写入后执行 `scout-research-artifact-check pack <research-pack-dir>`；检查失败时保持 `draft + partial` 或 `blocked + blocked`，记录失败项，不得提交完成态 handoff。
 
 ## Workflow Exit Rules (Enforcement)
 
@@ -490,7 +490,7 @@ Partial：
 - XR-004：Knowledge evidence、code evidence、registry 和 manual 必须遵守 `### Artifact Relationship Rules` 中的 claim owner 和 ref field policy。
 - XR-005：最终 Research 输出必须包含闭环 evidence ids、source / locator、limitations、failed_commands、retry_log 和需人工确认项。
 - XR-006：verification manual 只能引用 evidence id，不得重新定义 claim、复制证据正文或制定 runtime 执行策略。
-- XR-007：完整 Research pack 必须通过 `scout-research-validate` 后才能标记为 `ready + complete` 并提交 `Research Handoff State: complete`。
+- XR-007：完整 Research pack 必须通过 `scout-research-artifact-check` 后才能标记为 `ready + complete` 并提交 `Research Handoff State: complete`。
 - XR-008：Research pack 为 `draft + partial` 或 `blocked + blocked` 时，handoff 必须使用对应的 `partial` 或 `blocked`，不得宣称全部 Research 已完成。
 - XR-009：task handoff 必须包含 Verification Manual 摘要；manual 尚未形成时必须说明停留阶段和原因，不能用 artifact 列表替代摘要。
 
@@ -517,11 +517,11 @@ Partial：
 - FR-003：`jarvis-codebase` 失败、CodeGraph 不可用、源码 symbol 无法定位或代码证据模板无法填充时，不得生成 implementation claim。
 - FR-004：Evidence Registry 中出现孤立 evidence id、重复 id、缺 locator 或 supports 无法闭环时，不得生成完成状态的 verification manual。
 - FR-005：artifact 写入失败、模板缺失或模板字段无法填充时，必须记录阻塞项并向上游报告。
-- FR-006：`scout-research-validate` 发现状态组合、模板章节、provenance、evidence id 或 registry/manual 引用不闭环时，不得提交完成态 handoff。
+- FR-006：`scout-research-artifact-check` 发现状态组合、模板章节、provenance、evidence id 或 registry/manual 引用不闭环时，不得提交完成态 handoff。
 
 ## Blocking Rules (Enforcement)
 
-- BR-001：缺少 `jarvis-codebase`、`scoutAssets`、`scoutResearchValidate`、`jarvis`、`codegraph` 或 `git` required capability 时必须停止。
+- BR-001：缺少 `jarvis-codebase`、`scoutAssets`、`scoutResearchArtifactCheck`、`jarvis`、`codegraph` 或 `git` required capability 时必须停止。
 - BR-002：无法唯一定位 BDD fact 时必须停止在 Phase 2，不得进入 Phase 3-6。
 - BR-003：目标产品不是 GuruSdk 且上游没有明确产品边界时必须停止。
 - BR-004：产品版本、branch 或 commit 缺失且当前任务需要 current version code evidence 时必须记录需人工确认项，不得主动选择 `latest`。
@@ -560,7 +560,7 @@ Partial：
 2. 收集 Guru knowledge evidence 和当前版本 code evidence。
 3. 写入 evidence registry。
 4. 使用 `templates/verification-manual.md` 生成 verification manual。
-5. 执行 `scout-research-validate pack <research-pack-dir>` 检查状态、模板、provenance 和 evidence refs。
+5. 执行 `scout-research-artifact-check pack <research-pack-dir>` 检查状态、模板、provenance 和 evidence refs。
 
 输出：
 

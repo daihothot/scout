@@ -1,9 +1,5 @@
-import type {
-  AppServerPlanState,
-  AppServerThreadGoalState,
-} from "../../agent-server/codex/app-server-event-store.js";
+import type { AppServerPlanState } from "../../agent-server/codex/app-server-event-store.js";
 import type { ScoutAgentRole } from "../thread/types.js";
-import type { AgentThreadSnapshot } from "../thread/types.js";
 
 export const AgentTaskStatuses = {
   Queued: "queued",
@@ -72,11 +68,8 @@ export interface AgentTaskState {
   updatedAt: string;
   startedAt?: string;
   finishedAt?: string;
-  thread?: AgentThreadSnapshot;
-  result?: string;
   error?: string;
   usage?: AgentTaskUsage;
-  goal?: AppServerThreadGoalState;
   plan?: AppServerPlanState;
   planRecords?: AppServerPlanState[];
   steps?: AgentTaskStep[];

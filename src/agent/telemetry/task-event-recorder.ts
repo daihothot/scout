@@ -44,18 +44,113 @@ export class TaskEventRecorder {
   private record(event: ScoutEvent): void {
     if (AgentEvents.task.notAssigned.is(event)) {
       const rejection = event.payload as AgentTaskNotAssignedEventPayload;
-      this.write(event, rejection.agentId, rejection.activeTaskId, rejection);
+      this.write(event, rejection.agentId, rejection.activeTaskId, { ...rejection });
       return;
     }
     const task = event.payload as AgentTaskState;
-    this.write(event, task.agentId, task.taskId, task);
+    if (AgentEvents.task.assigned.is(event)) {
+      this.write(event, task.agentId, task.taskId, {
+        taskSequence: task.taskSequence,
+        role: task.role,
+        description: task.description,
+        initialPrompt: task.initialPrompt,
+        status: task.status,
+        isBackgrounded: task.isBackgrounded,
+        createdAt: task.createdAt,
+      });
+      return;
+    }
+    if (AgentEvents.task.messageQueued.is(event)) {
+      this.write(event, task.agentId, task.taskId, {
+        status: task.status,
+        updatedAt: task.updatedAt,
+      });
+      return;
+    }
+    if (AgentEvents.task.done.is(event)) {
+      this.write(event, task.agentId, task.taskId, {
+        status: task.status,
+        updatedAt: task.updatedAt,
+      });
+      return;
+    }
+    if (AgentEvents.task.archived.is(event)) {
+      this.write(event, task.agentId, task.taskId, {
+        status: task.status,
+        archivedAt: event.occurredAt,
+      });
+      return;
+    }
+    if (AgentEvents.task.stopped.is(event)) {
+      this.write(event, task.agentId, task.taskId, {
+        status: task.status,
+        error: task.error,
+        finishedAt: task.finishedAt,
+        updatedAt: task.updatedAt,
+      });
+      return;
+    }
+    if (AgentEvents.task.pendingMessagesDrained.is(event)) {
+      this.write(event, task.agentId, task.taskId, {
+        status: task.status,
+        updatedAt: task.updatedAt,
+      });
+      return;
+    }
+    if (AgentEvents.task.stepStarted.is(event)) {
+      const step = task.steps?.at(-1);
+      this.write(event, task.agentId, task.taskId, {
+        stepId: step?.stepId,
+        status: step?.status,
+        prompt: step?.prompt,
+        startedAt: step?.startedAt,
+        humanInputResponse: step?.humanInputResponse,
+      });
+      return;
+    }
+    if (AgentEvents.task.stepCompleted.is(event)) {
+      const step = task.steps?.at(-1);
+      this.write(event, task.agentId, task.taskId, {
+        stepId: step?.stepId,
+        turnId: step?.turnId,
+        status: step?.status,
+        finalResponse: step?.finalResponse,
+        toolCalls: step?.toolCalls,
+        humanInputRequest: step?.humanInputRequest,
+        finishedAt: step?.finishedAt,
+        durationMs: step?.durationMs,
+        protocolWarnings: step?.protocolWarnings,
+        error: step?.error,
+      });
+      return;
+    }
+    if (AgentEvents.task.failed.is(event)) {
+      this.write(event, task.agentId, task.taskId, {
+        status: task.status,
+        error: task.error,
+        finishedAt: task.finishedAt,
+        updatedAt: task.updatedAt,
+      });
+      return;
+    }
+    if (AgentEvents.task.planUpdated.is(event)) {
+      this.write(event, task.agentId, task.taskId, task.plan ?? {});
+      return;
+    }
+    if (AgentEvents.task.terminal.is(event)) {
+      this.write(event, task.agentId, task.taskId, {
+        status: task.status,
+        error: task.error,
+        finishedAt: task.finishedAt,
+      });
+    }
   }
 
   private write(
     event: ScoutEvent,
     agentId: string,
     taskId: string,
-    data: AgentTaskState | AgentTaskNotAssignedEventPayload,
+    data: object,
   ): void {
     this.loggerFor(agentId, taskId).info({
       module: "agent.task",

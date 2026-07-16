@@ -91,8 +91,6 @@ export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
   return {
     ...task,
     usage: task.usage ? { ...task.usage } : undefined,
-    thread: task.thread ? { ...task.thread } : undefined,
-    goal: task.goal ? cloneJson(task.goal) : undefined,
     plan: task.plan ? cloneJson(task.plan) : undefined,
     planRecords: task.planRecords?.map((plan) => cloneJson(plan)),
     steps: task.steps?.map((step) => ({

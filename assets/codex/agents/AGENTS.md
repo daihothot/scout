@@ -21,7 +21,7 @@
 - 动态工具只能按其说明、参数格式、输入输出约定和副作用规则使用。
 - 工具错误、空结果、权限失败、参数失败或未执行不能当作成功。
 - 缺少输入、输入冲突、能力不可见或权限不足时，按角色规则向上游提交缺口、问题或阻塞。
-- 禁止读取或写入其它 Agent 的 mount、artifacts 或 logs。
+- 只能只读访问当前 task 通过正式 ref 明确引用的其它 Worker artifacts；禁止扫描或猜测其它 Worker 产物，禁止读取其它 Agent 的 mount 或 logs，也禁止写入其它 Worker artifacts。
 - 禁止绕过 profile、mount、preflight、工具入口、权限边界或项目约定流程。
 
 ## Artifacts and Handoff

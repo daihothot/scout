@@ -12,6 +12,7 @@ import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import { AgentTaskStore } from "../../src/agent/task/agent-task-store.js";
 import { CoordinatorAgent } from "../../src/agent/roles/coordinator-agent.js";
 import { ResearcherAgent } from "../../src/agent/roles/researcher-agent.js";
+import { ValidatorAgent } from "../../src/agent/roles/validator-agent.js";
 import type { ScoutAgentOptions } from "../../src/agent/core/scout-agent.js";
 import {
   AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
@@ -31,11 +32,6 @@ import type {
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import type { AssetCommit, CodexMount } from "../../src/asset-store/index.js";
 import type { ScoutDomain } from "../../src/domain/index.js";
-import { ValidationDomain } from "../../src/domain/index.js";
-import {
-  GET_VALIDATION_STATE_SNAPSHOT_TOOL,
-  VALIDATION_DOMAIN_TOOL_NAMESPACE,
-} from "../../src/domain/validation/tools/index.js";
 import {
   buildRunContextBundle,
   type RunEnvironment,
@@ -95,6 +91,11 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
     reasoningEffort: "high",
     reasoningSummary: "concise",
   });
+  assert.deepEqual(agent.spec.config?.features, {
+    shell_tool: true,
+    multi_agent: false,
+    apps: false,
+  });
   assert.equal(fixture.registry.listAgents()[0], agent);
   assert.ok(tools.some((tool) => tool.namespace === AGENT_ASSIGN_TASK_TOOL_NAMESPACE && tool.name === "AssignTask"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SEND_MESSAGE_TOOL_NAMESPACE && tool.name === "SendMessage"));
@@ -135,6 +136,60 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   assert.equal(tools.some((tool) => tool.name === "AssignTask"), false);
   assert.equal(tools.some((tool) => tool.name === "ArchiveTask"), false);
   assert.ok(tools.some((tool) => tool.namespace === "domain-worker" && tool.name === "DomainProbe"));
+});
+
+test("Validator turns use workspace-write with only the profile write roots", async () => {
+  const appServer = createFakeAppServer();
+  const fixture = createAgentFixture("builder-validator-write-roots", { appServer });
+  const validatorMount = createMount(fixture.root, ScoutAgentRoles.Validator);
+  const validatorCommit = createAssetCommit(validatorMount);
+  const validator = new AgentBuilder({
+    preparedAgents: {
+      ...fixture.preparedAgents,
+      [ScoutAgentRoles.Validator]: {
+        agentMount: validatorMount,
+        assetCommit: validatorCommit,
+      },
+    },
+  }).buildWorker(ScoutAgentRoles.Validator);
+
+  assert.ok(validator instanceof ValidatorAgent);
+  assert.equal(validator.spec.sandbox, "workspace-write");
+  await validator.start();
+  await validator.runTurn({ prompt: "Write the Research Pack Gate." });
+
+  assert.deepEqual(appServer.turnInputs[0]?.writableRoots, [validatorMount.artifactRoot]);
+  assert.equal(appServer.turnInputs[0]?.writableRoots?.includes(validatorMount.mountRoot), false);
+});
+
+test("Worker turns preserve profile write-root order for sandbox application", async () => {
+  const appServer = createFakeAppServer();
+  const fixture = createAgentFixture("builder-worker-write-root-order", { appServer });
+  const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  const codebaseRoot = join(fixture.root, "managed-codebase");
+  researcherMount.writableRoots = [
+    researcherMount.mountRoot,
+    researcherMount.artifactRoot,
+    codebaseRoot,
+  ];
+  const researcher = new AgentBuilder({
+    preparedAgents: {
+      ...fixture.preparedAgents,
+      [ScoutAgentRoles.Researcher]: {
+        agentMount: researcherMount,
+        assetCommit: createAssetCommit(researcherMount),
+      },
+    },
+  }).buildWorker(ScoutAgentRoles.Researcher);
+
+  await researcher.start();
+  await researcher.runTurn({ prompt: "Inspect the Research inputs." });
+
+  assert.deepEqual(appServer.turnInputs[0]?.writableRoots, [
+    researcherMount.mountRoot,
+    researcherMount.artifactRoot,
+    codebaseRoot,
+  ]);
 });
 
 test("WorkerAgent keeps its bound runner and reports a rejected task assignment", async () => {
@@ -292,51 +347,6 @@ test("ScoutAgent returns no goal when setting a goal fails", async () => {
 
   assert.equal(goal, undefined);
   coordinator.runner.stop();
-});
-
-test("AgentToolBackend routes non-agent dynamic tools to the registered domain", async () => {
-  const appServer = createFakeAppServer();
-  const domain = new ValidationDomain({
-    runId: "run-domain-route",
-  });
-  const fixture = createAgentFixture("domain-route", { appServer, domain });
-  const registry = fixture.registry;
-  new AgentBackend({
-    agentProvider: {
-      resolveWorker(input): WorkerAgent {
-        return registry.resolveAgent(input.role) as WorkerAgent;
-      },
-    },
-  }).start();
-  const builder = new AgentBuilder({
-    preparedAgents: fixture.preparedAgents,
-  });
-  const coordinator = builder.buildCoordinator();
-  registry.bindThread(coordinator.agentId, "thread-coordinator");
-
-  assert.ok(appServer.handler);
-  const result = await appServer.handler({
-    threadId: "thread-coordinator",
-    turnId: "turn-1",
-    callId: "call-1",
-    namespace: VALIDATION_DOMAIN_TOOL_NAMESPACE,
-    tool: GET_VALIDATION_STATE_SNAPSHOT_TOOL,
-    arguments: {},
-  });
-
-  assert.equal(result.success, true);
-  const payload = JSON.parse(result.contentItems[0]?.text ?? "{}") as {
-    domainId?: string;
-    snapshot?: {
-      artifact_type?: string;
-      current_state?: string;
-      allowed_actions?: string[];
-    };
-  };
-  assert.equal(payload.domainId, "validation");
-  assert.equal(payload.snapshot?.artifact_type, "ValidationStateSnapshot");
-  assert.equal(payload.snapshot?.current_state, "missing_bdd");
-  assert.deepEqual(payload.snapshot?.allowed_actions, ["request_bdd", "request_user_input"]);
 });
 
 test("AgentBackend does not publish app-server agent message deltas as activity", () => {
@@ -1174,6 +1184,7 @@ function createFakeAppServer(options: {
     model?: string;
     reasoningEffort?: string;
     reasoningSummary?: string;
+    writableRoots?: string[];
   }>;
   threadInputs: Array<{
     model?: string;
@@ -1189,6 +1200,7 @@ function createFakeAppServer(options: {
       model?: string;
       reasoningEffort?: string;
       reasoningSummary?: string;
+      writableRoots?: string[];
     }>,
     threadInputs: [] as Array<{
       model?: string;
@@ -1255,6 +1267,7 @@ function createFakeAppServer(options: {
       model?: string;
       reasoningEffort?: string;
       reasoningSummary?: string;
+      writableRoots?: string[];
     }) => {
       appServer.turnInputs.push(turnInput);
       const toolCalls = await options.onRunTurn?.(turnInput);
@@ -1282,6 +1295,7 @@ function createFakeAppServer(options: {
       model?: string;
       reasoningEffort?: string;
       reasoningSummary?: string;
+      writableRoots?: string[];
     }>;
     threadInputs: Array<{
       model?: string;

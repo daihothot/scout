@@ -43,18 +43,32 @@
       "marker": "SCOUT_JSON_WRITE_OK"
     },
     {
-      "id": "scoutResearchValidate",
-      "name": "scout-research-validate",
+      "id": "scoutResearchArtifactCheck",
+      "name": "scout-research-artifact-check",
       "command": "node",
       "args": [
-        "assets/codex/tools/scout-research-validate/cli.cjs"
+        "assets/codex/tools/scout-research-artifact-check/cli.cjs"
       ],
-      "exposeAs": "scout-research-validate",
+      "exposeAs": "scout-research-artifact-check",
       "required": true,
       "smokeArgs": [
         "--smoke"
       ],
-      "marker": "SCOUT_RESEARCH_VALIDATE_OK"
+      "marker": "SCOUT_RESEARCH_ARTIFACT_CHECK_OK"
+    },
+    {
+      "id": "scoutArtifactDigest",
+      "name": "scout-artifact-digest",
+      "command": "node",
+      "args": [
+        "assets/codex/tools/scout-artifact-digest.cjs"
+      ],
+      "exposeAs": "scout-artifact-digest",
+      "required": true,
+      "smokeArgs": [
+        "--smoke"
+      ],
+      "marker": "SCOUT_ARTIFACT_DIGEST_OK"
     },
     {
       "id": "jarvis",

@@ -90,6 +90,22 @@ test("AssetStore exposes scout-memory for all agent mounts", () => {
   }
 });
 
+test("AssetStore exposes mounted Skill readers to the coordinator", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-coordinator-readers-");
+  const mount = new AssetStore().materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-shell-tool-coordinator-readers-test",
+    agentId: "coordinator",
+  });
+  const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
+
+  for (const tool of ["cat", "sed"]) {
+    assert.ok(mount.shellTools.some((candidate) => candidate.id === tool));
+    assert.ok(manifest.shellTools.some((candidate) => candidate.exposeAs === tool));
+    assert.equal(existsSync(join(mount.mountRoot, "bin", tool)), true);
+  }
+});
+
 test("AssetStore statically binds the Validation Domain skill for every role", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-validation-skills-");
   const expectedSkills = {
@@ -120,24 +136,46 @@ test("AssetStore statically binds the Validation Domain skill for every role", (
   }
 });
 
-test("AssetStore exposes Research validation and git tools to the researcher", () => {
+test("AssetStore exposes Research artifact checking and git tools to the researcher", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-research-tools-");
   const mount = new AssetStore().materializeMount({
     repoRoot: fixtureRoot,
     runId: "run-shell-tool-researcher-validation-test",
     agentId: "researcher",
   });
-  const validator = mount.shellTools.find((tool) => tool.id === "scoutResearchValidate");
+  const checker = mount.shellTools.find((tool) => tool.id === "scoutResearchArtifactCheck");
   const git = mount.shellTools.find((tool) => tool.id === "git");
-  const wrapperPath = join(mount.mountRoot, "bin", "scout-research-validate");
+  const wrapperPath = join(mount.mountRoot, "bin", "scout-research-artifact-check");
 
-  assert.ok(validator);
+  assert.ok(checker);
   assert.ok(git);
   assert.equal(existsSync(wrapperPath), true);
   assert.match(execFileSync(wrapperPath, ["--smoke"], {
     cwd: mount.mountRoot,
     encoding: "utf8",
-  }), /SCOUT_RESEARCH_VALIDATE_OK/);
+  }), /SCOUT_RESEARCH_ARTIFACT_CHECK_OK/);
+});
+
+test("AssetStore gives the validator producer contracts and a neutral digest tool", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-validator-tools-");
+  const mount = new AssetStore().materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-shell-tool-validator-gate-test",
+    agentId: "validator",
+  });
+  const digest = mount.shellTools.find((tool) => tool.id === "scoutArtifactDigest");
+  const wrapperPath = join(mount.mountRoot, "bin", "scout-artifact-digest");
+
+  assert.ok(mount.skills.includes("validator-validation"));
+  assert.ok(mount.skills.includes("guru-knowledge-research"));
+  assert.ok(mount.skills.includes("jarvis-codebase"));
+  assert.equal(mount.shellTools.some((tool) => tool.id === "scoutResearchArtifactCheck"), false);
+  assert.ok(digest);
+  assert.equal(existsSync(wrapperPath), true);
+  assert.match(execFileSync(wrapperPath, ["--smoke"], {
+    cwd: mount.mountRoot,
+    encoding: "utf8",
+  }), /SCOUT_ARTIFACT_DIGEST_OK/);
 });
 
 test("AssetStore resolves asset-local shell tool commands against the repo root", () => {

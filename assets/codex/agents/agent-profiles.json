@@ -16,7 +16,9 @@
       ],
       "shellTools": [
         "scoutAssets",
-        "scoutMemory"
+        "scoutMemory",
+        "cat",
+        "sed"
       ],
       "mcpServers": [],
       "plugins": [],
@@ -41,7 +43,7 @@
         "scoutAssets",
         "scoutMemory",
         "scoutJsonWrite",
-        "scoutResearchValidate",
+        "scoutResearchArtifactCheck",
         "jarvis",
         "codegraph",
         "rg",
@@ -114,12 +116,15 @@
       "config": "config/base.config.toml",
       "skills": [
         "validator-validation",
+        "guru-knowledge-research",
+        "jarvis-codebase",
         "scout-boundary-inspector"
       ],
       "shellTools": [
         "scoutAssets",
         "scoutMemory",
         "scoutJsonWrite",
+        "scoutArtifactDigest",
         "rg",
         "cat",
         "sed",
@@ -137,13 +142,12 @@
       "plugins": [],
       "trustedRoots": [
         "${SCOUT_MOUNT_ROOT}",
-        "${SCOUT_REPO_ROOT}",
-        "~/.guru/knowledge"
+        "${SCOUT_RUN_ROOT}",
+        "~/.guru/knowledge",
+        "~/.guru/codebase"
       ],
       "writableRoots": [
-        "${SCOUT_MOUNT_ROOT}",
-        "${SCOUT_ARTIFACT_ROOT}",
-        "~/.guru/codebase"
+        "${SCOUT_ARTIFACT_ROOT}"
       ]
     }
   }

@@ -123,6 +123,24 @@ test("AssetStore exposes effective permission roots", () => {
   assert.ok(store.writableRootsForMount(mount).includes(join(homedir(), ".guru", "codebase")));
 });
 
+test("AssetStore limits the validator to its own artifact write root", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-validator-permissions-");
+  const runId = "run-validator-permission-test";
+  const mount = new AssetStore().materializeMount({
+    repoRoot: fixtureRoot,
+    runId,
+    agentId: "validator",
+  });
+
+  assert.deepEqual(mount.trustedRoots.sort(), [
+    mount.mountRoot,
+    join(fixtureRoot, "run", runId),
+    join(homedir(), ".guru", "knowledge"),
+    join(homedir(), ".guru", "codebase"),
+  ].sort());
+  assert.deepEqual(mount.writableRoots, [mount.artifactRoot]);
+});
+
 test("AssetStore resolves local profile roots relative to the repo root", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-permissions-");
   updateAgentProfile(fixtureRoot, "coordinator", {

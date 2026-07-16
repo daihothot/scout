@@ -27,7 +27,7 @@ export class CoordinatorAgent extends ScoutAgent {
         config: {
           web_search: "disabled",
           features: {
-            shell_tool: false,
+            shell_tool: true,
             multi_agent: false,
             apps: false,
           },

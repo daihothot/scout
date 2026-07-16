@@ -3,7 +3,6 @@ import type {
   AppServerPlanState,
   AppServerResolvedTimelineEntry,
   AppServerTimelineEntry,
-  AppServerThreadGoalState,
 } from "../../agent-server/codex/app-server-event-store.js";
 import {
   AgentTaskStore,
@@ -74,17 +73,7 @@ export class AgentTaskBackend {
         }
         return;
       }
-      case "state": {
-        if (entry.kind === "goal_updated") {
-          if (!activeTask) return;
-          const resolved = resolver(entry);
-          if (resolved.goal) {
-            this.applyGoalUpdate(activeTask, resolved.goal);
-          }
-          return;
-        }
-        return;
-      }
+      case "state":
       case "item":
       case "lifecycle":
       case "request":
@@ -109,20 +98,6 @@ export class AgentTaskBackend {
       agent,
       taskId: active.taskId,
     };
-  }
-
-  private applyGoalUpdate(
-    task: AgentTaskState,
-    goal: AppServerThreadGoalState,
-  ): AgentTaskState {
-    const updated: AgentTaskState = {
-      ...task,
-      goal,
-      updatedAt: new Date().toISOString(),
-    };
-    const stored = this.taskStore.updateTask(updated.taskId, () => updated);
-    this.eventBus.publish(AgentEvents.task.goalUpdated, cloneAgentTaskState(stored));
-    return stored;
   }
 
   private applyPlanUpdate(
