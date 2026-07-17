@@ -1,5 +1,5 @@
 const { existsSync, readdirSync, statSync } = require("node:fs");
-const { join } = require("node:path");
+const { basename, join, resolve } = require("node:path");
 const { AGGREGATES } = require("../shared/constants.cjs");
 const { addIssue } = require("../shared/diagnostics.cjs");
 const { readMarkdown, scalar } = require("../shared/markdown.cjs");
@@ -15,6 +15,28 @@ function validatePack(packRoot) {
   if (!existsSync(packRoot) || !statSync(packRoot).isDirectory()) {
     addIssue(issues, "PACK_NOT_FOUND", packRoot, "Research pack directory does not exist.");
     return result(issues, 0, 0, 0);
+  }
+
+  if (/-v\d+$/i.test(basename(resolve(packRoot)))) {
+    addIssue(
+      issues,
+      "VERSIONED_PACK_DIRECTORY_FORBIDDEN",
+      packRoot,
+      "Research pack directory must not use a -vN revision suffix.",
+    );
+  }
+  const allowedEntries = new Set([
+    ...Object.values(AGGREGATES).map(({ file }) => file),
+    "evidence",
+  ]);
+  for (const entry of readdirSync(packRoot, { withFileTypes: true })) {
+    if (allowedEntries.has(entry.name)) continue;
+    addIssue(
+      issues,
+      "UNDECLARED_PACK_ENTRY",
+      entry.name,
+      "Research pack root may contain only declared aggregate files and the evidence directory.",
+    );
   }
 
   for (const [kind, config] of Object.entries(AGGREGATES)) {

@@ -32,7 +32,7 @@ export class BootAgentsStage implements BootStage {
       .filter((entry): entry is PromiseRejectedResult => entry.status === "rejected")
       .map((entry) => entry.reason);
     if (errors.length === 0) return;
-    this.stopRunners("agent_startup_failed");
+    this.stopAgents("agent_startup_failed");
     if (errors.length === 1) throw errors[0];
     throw new AggregateError(errors, `${errors.length} Scout agents failed to start.`);
   }
@@ -40,14 +40,14 @@ export class BootAgentsStage implements BootStage {
   async stop(reason: string): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
-    this.stopRunners(reason);
+    this.stopAgents(reason);
   }
 
-  private stopRunners(reason: string): void {
+  private stopAgents(reason: string): void {
     const errors: unknown[] = [];
     for (const agent of currentRunScope().agentRegistry.listAgents()) {
       try {
-        agent.runner?.stop(reason);
+        agent.stop(reason);
       } catch (error) {
         errors.push(error);
       }

@@ -48,6 +48,15 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 - Guru knowledge 属于研究来源；当前版本 implementation claim 必须遵守专项 Skill 的代码证据规则。
 - `guru-knowledge-research` 是当前 Validation Research 的方法和产物所有者，本技能只负责进入条件和领域 handoff。
 - Research handoff 的 complete、partial 或 blocked 必须与实际专项产物状态一致。
+- 同一 run/BDD 只维护一个 `<bdd-id>-research-pack/`；Gate 修正原地写入该 pack，并以新 digest 再次 handoff。
+
+## Human Confirmation Gate
+
+- 先完成不依赖人工输入的研究，并收集形成精确问题所需的候选、来源和当前版本事实。
+- 只有未确认内容会阻止唯一 BDD 收敛、目标版本 evidence 成立、必要用户画像确认、范围收敛或完整 Research handoff 时，才进入本 Gate。
+- 不影响当前 Research 推进或 handoff 完整性的未知项只记录为 artifact limitation，不发起人工请求。
+- 进入本 Gate 时，把相关缺口合并为一次最小问题，并按 Worker 通用 `Human Input` 规则请求 Coordinator；本技能不重复定义通信协议。
+- 人工确认未返回前保留已有 Research artifact 和当前阶段，不进入 Research handoff 提交阶段。
 
 ## Inputs
 
@@ -73,7 +82,6 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 注意事项：
 
 - 多个候选、无候选或场景语义不完整时，不得自行选择。
-- 需要人工补充时通过正式 handoff 交回 Coordinator。
 
 ### I-003: Product and Version Boundary
 ---
@@ -100,7 +108,7 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 输出要求：
 
 - 正式 artifact 及字段结构由 `guru-knowledge-research` 定义。
-- Research handoff 必须包含 task id、handoff state、artifact refs、evidence refs、限制、需人工确认项和继续入口。
+- Research handoff 必须包含 task id、handoff state、唯一 pack ref、当前 pack digest、artifact refs、evidence refs、限制、需人工确认项和继续入口。
 - `complete` 只表示当前 Research 交付完整，不表示 BDD 已通过验证。
 
 ### Artifact Relationship Rules
@@ -111,6 +119,7 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 - Claim owner：BDD、knowledge 和 implementation claim 的所有权遵守专项 Skill。
 - 下游引用规则：Verifier 只消费正式 handoff 中提供的 artifact refs、evidence refs 和 verification manual ref。
 - Ref 字段策略：本技能只传递已有 ref，不产生第二套 artifact_ref 或 evidence id。
+- 修正关系：Validator Gate 只适用于其记录的 digest；Researcher 在同一 pack ref 内修正后提交新 digest，不创建 revision pack 或 Gate follow-up artifact。
 
 ## Phase 1: Confirm Research Boundary
 ---
@@ -145,6 +154,7 @@ Partial：
 - 必须读取当前 mount 中实际 Skill 内容，不凭记忆执行。
 - 不复制或弱化专项 Skill 的 evidence、provenance、状态和验证手册规则。
 - 工具活动只有整理进正式 artifact 后才能成为 Research handoff 的引用对象。
+- 收到 Gate 问题时只修改原 `<bdd-id>-research-pack/`，不得创建 `-vN` 目录或 pack 副本。
 
 Exit：
 
@@ -168,6 +178,7 @@ Partial：
 - handoff 必须包含 Verification Manual 摘要或明确说明尚未形成及停留阶段。
 - 不得用 artifact 文件列表替代状态、关键验证点和限制摘要。
 - complete、partial、blocked 必须来自实际产物，不由自然语言自评。
+- 每次 handoff 前重新计算同一 pack ref 的 digest；不得继续引用修正前 digest。
 
 Exit：
 
@@ -179,13 +190,14 @@ Blocked：
 
 Partial：
 
-- 已形成部分产物时提交 partial，并明确剩余工作、缺失条件和继续入口。
+- 满足 `Human Confirmation Gate` 后，已形成部分产物时可以提交 partial，并明确剩余工作、缺失条件和继续入口。
 
 ## Workflow Exit Rules (Enforcement)
 
 - XR-001：不得跳过专项研究 Skill 定义的前置 Phase、模板或验证工具。
 - XR-002：专项产物为 partial 或 blocked 时，领域 handoff 必须使用对应状态。
 - XR-003：Research complete 必须包含可供下游消费的正式 artifact refs 和 Verification Manual 摘要。
+- XR-004：Gate 修正后的 handoff 必须保持原 pack ref，并携带修正后 digest 和已处理问题 refs。
 
 ## Evidence Rules (Enforcement)
 
@@ -202,7 +214,7 @@ Partial：
 ## Blocking Rules (Enforcement)
 
 - BR-001：缺少 `guru-knowledge-research` 或其 required capability 时必须停止依赖阶段。
-- BR-002：BDD 无法唯一定位时必须向 Coordinator 交回最小补充问题。
+- BR-002：BDD 无法唯一定位时必须停止，并按 `Human Confirmation Gate` 判断是否需要上游确认。
 - BR-003：正式产物不可写或无法提交时不得报告完成。
 
 ## Retry Rules (Enforcement)
@@ -216,6 +228,7 @@ Partial：
 - PR-001：禁止把 Research 结果描述为 BDD 已验证或 gate 已通过。
 - PR-002：禁止复制专项 Skill 的模板和业务规则形成第二套产物。
 - PR-003：禁止直接面向用户请求输入或自行扩大研究范围。
+- PR-004：禁止用 `-vN`、副本目录或 `gate-followup.md` 保存 Research 修订历史。
 
 ## Example
 

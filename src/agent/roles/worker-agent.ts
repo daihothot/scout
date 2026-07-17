@@ -9,8 +9,9 @@ import type { AgentTaskNotAssignedEventPayload } from "../task/task-events.js";
 import { Result } from "../../core/result.js";
 import { AgentEvents } from "../events/index.js";
 import { ScoutAgent, type ScoutAgentOptions } from "../core/scout-agent.js";
-import type { AgentThreadSpec } from "../thread/types.js";
+import { ScoutAgentRoles, type AgentThreadSpec } from "../thread/types.js";
 import { WorkerRunner } from "../runner/worker/worker-runner.js";
+import { agent } from "../context/agent-attachments.js";
 
 export abstract class WorkerAgent extends ScoutAgent {
   declare runner: WorkerRunner | undefined;
@@ -60,7 +61,7 @@ export abstract class WorkerAgent extends ScoutAgent {
     return Result.ok(undefined);
   }
 
-  submitTask(): Result<AgentTaskState, string> {
+  submitTask(outcome: string): Result<AgentTaskState, string> {
     const runner = this.runner;
     const task = runner?.snapshot().activeTask;
     if (!runner || !task) {
@@ -69,7 +70,11 @@ export abstract class WorkerAgent extends ScoutAgent {
     if (task.status !== AgentTaskStatuses.Running) {
       return Result.err(`Worker task ${task.taskId} cannot be submitted from status ${task.status}.`);
     }
-    return Result.ok(runner.submitTask());
+    try {
+      return Result.ok(runner.submitTask(outcome));
+    } catch (error) {
+      return Result.err(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async archiveTask(taskId: string): Promise<AgentTaskState> {
@@ -106,6 +111,18 @@ export abstract class WorkerAgent extends ScoutAgent {
           return worker.spec;
         },
         runTurn: (turnInput) => worker.runTurn(turnInput),
+        deliverTaskOutcome: (outcome) => {
+          const coordinator = worker.registry.listAgents().find((candidate) =>
+            candidate.role === ScoutAgentRoles.Coordinator
+          );
+          if (!coordinator) {
+            throw new Error(`Worker agent ${worker.agentId} cannot find the Coordinator agent.`);
+          }
+          const delivered = coordinator.sendMessage({
+            message: agent.turn.task_outcome(outcome),
+          });
+          if (!delivered.ok) throw new Error(delivered.error);
+        },
       },
     });
   }

@@ -132,7 +132,9 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
   });
 
   safeSymlink(join(assetsRoot, CodexAssetLayout.agentsMd), join(mountRoot, "AGENTS.md"));
-  const workerAgentPath = materializeWorkerAgent(assetsRoot, mountRoot);
+  const workerAgentPath = agentId === "coordinator"
+    ? undefined
+    : materializeWorkerAgent(assetsRoot, mountRoot);
   const roleAgentPaths = materializeRoleAgent(assetsRoot, mountRoot, agentId);
 
   const configText = generateCodexConfig({
@@ -343,7 +345,9 @@ function computeResourceHash(input: {
     `shell:${sha256File(join(input.assetsRoot, CodexAssetLayout.shellTools))}`,
     ...computeShellToolResourceHashParts(input.assetsRoot, input.shellTools),
     ...hashVendorDirectories(input.assetsRoot),
-    `workerAgent:${CodexAssetLayout.workerAgent}:${sha256File(join(input.assetsRoot, CodexAssetLayout.workerAgent))}`,
+    ...(input.agentId === "coordinator"
+      ? []
+      : [`workerAgent:${CodexAssetLayout.workerAgent}:${sha256File(join(input.assetsRoot, CodexAssetLayout.workerAgent))}`]),
     `roleAgent:${input.agentId}:${roleAgentPath(input.agentId)}:${sha256File(join(input.assetsRoot, roleAgentPath(input.agentId)))}`,
     ...input.skillPaths.map((skill) => `skill:${skill}:${sha256File(join(input.assetsRoot, skill))}`),
     ...input.pluginPaths.map((plugin) => `plugin:${plugin}:${hashDirectory(join(input.assetsRoot, plugin))}`),
@@ -457,7 +461,7 @@ function buildMountManifest(input: {
   shellWrappers: Array<{ id: string; wrapperPath: string }>;
   skillNames: string[];
   pluginNames: string[];
-  workerAgentPath: string;
+  workerAgentPath?: string;
   roleAgentPaths: Record<string, string>;
 }): MountManifest {
   const linkedFiles = [
@@ -466,11 +470,13 @@ function buildMountManifest(input: {
       sourcePath: assetSourcePath(CodexAssetLayout.agentsMd),
       hash: sha256File(join(input.assetsRoot, CodexAssetLayout.agentsMd)),
     },
-    {
-      path: input.workerAgentPath,
-      sourcePath: assetSourcePath(CodexAssetLayout.workerAgent),
-      hash: sha256File(join(input.mountRoot, input.workerAgentPath)),
-    },
+    ...(input.workerAgentPath
+      ? [{
+          path: input.workerAgentPath,
+          sourcePath: assetSourcePath(CodexAssetLayout.workerAgent),
+          hash: sha256File(join(input.mountRoot, input.workerAgentPath)),
+        }]
+      : []),
     ...Object.entries(input.roleAgentPaths).map(([role, path]) => ({
       path,
       sourcePath: assetSourcePath(roleAgentPath(role)),
@@ -519,12 +525,14 @@ function buildMountManifest(input: {
         sourcePath: assetSourcePath(CodexAssetLayout.agentsMd),
         hash: sha256File(join(input.assetsRoot, CodexAssetLayout.agentsMd)),
       },
-      {
-        id: "codex.agents.worker",
-        type: "worker_agents_md",
-        sourcePath: assetSourcePath(CodexAssetLayout.workerAgent),
-        hash: sha256File(join(input.assetsRoot, CodexAssetLayout.workerAgent)),
-      },
+      ...(input.workerAgentPath
+        ? [{
+            id: "codex.agents.worker",
+            type: "worker_agents_md",
+            sourcePath: assetSourcePath(CodexAssetLayout.workerAgent),
+            hash: sha256File(join(input.assetsRoot, CodexAssetLayout.workerAgent)),
+          }]
+        : []),
       {
         id: `codex.agents.profile.${input.agentId}`,
         type: "agent_profile",
@@ -591,7 +599,7 @@ function buildMountManifest(input: {
     })),
     skills: input.skillNames,
     plugins: input.pluginNames,
-    workerAgent: input.workerAgentPath,
+    ...(input.workerAgentPath ? { workerAgent: input.workerAgentPath } : {}),
     roleAgents: input.roleAgentPaths,
   };
 }

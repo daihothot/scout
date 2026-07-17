@@ -14,8 +14,16 @@
 - 先确认 task id、当前角色、上游 Coordinator、目标、输入 refs、预期输出、完成条件和禁止越权边界。
 - 读取当前角色规则，并加载 profile 中适用于当前角色和 task 的领域 Skill、方法 Skill。
 - task 与当前角色不匹配时停止，并向 Coordinator 报告职责不匹配和建议角色。
-- 缺少输入、能力、权限或输出位置时，不猜测继续；通过当前正式 task 工具或 handoff 入口请求补充。
-- 需要人工输入或风险确认时，通过 `SendMessage` 将对应 attachment 投递给 Coordinator，不能假设用户会直接回复 Worker。
+- 缺少输入、能力、权限或输出位置时，不猜测继续；按缺口类型使用下述人工输入规则或当前正式上游入口。
+
+## Human Input
+
+- 适用领域 Skill 判断当前工作依赖必须由人工确认的输入后，先完成不依赖该输入的工作，并把相关缺口合并成一次最小请求。
+- 必须调用 `SendMessage`，将 `to` 指向当前 Coordinator，并把 `message` 写成完整的 `<wait-for-human-request>...</wait-for-human-request>` attachment tag block。
+- attachment body 必须包含当前 task、已确认内容、缺失或冲突事实、对当前工作的影响、最小问题和期望回答形态。
+- 请求发出后当前 task 保持 `running`；不得调用 `SubmitTask` 进入 `done`，也不得用 partial / blocked artifact、handoff 或普通消息代替人工请求。
+- 请求发出后可以正常处理其它 Coordinator 消息，但普通消息不能解除人工输入依赖；只有与原请求、当前 task 和当前目标匹配的 `<human-response>...</human-response>` attachment 才是人工回复。
+- 收到匹配回复后，只把用户明确确认的内容作为当前 step 的人工回复使用，并从当前阶段继续同一 task；不得为该回复创建新 task 或重启研究流程。
 
 ## Working Rules
 

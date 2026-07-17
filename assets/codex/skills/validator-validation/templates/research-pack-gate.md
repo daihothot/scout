@@ -4,6 +4,11 @@ artifact_version: 1
 status: draft
 completion_state: partial
 gate: blocked
+gate_id:
+created_at:
+validator_task_id:
+checked_pack_ref:
+checked_pack_digest:
 ---
 
 # Validator Handoff: Research Pack Gate
@@ -12,6 +17,8 @@ gate: blocked
 
 - 当前角色：Validator
 - 校验目标：
+- Gate ID：
+- Created at：
 - Validator task：
 - 上游角色：Researcher
 - 上游 Research task：

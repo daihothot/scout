@@ -13,7 +13,11 @@ import type {
   SendAgentMessageInput,
 } from "../task/types.js";
 import type { AgentThreadSnapshot, AgentThreadSpec } from "../thread/types.js";
-import { runThreadPreflight } from "../thread/thread-preflight.js";
+import {
+  runThreadPreflight,
+  type ScoutAgentThreadPreflightSnapshot,
+} from "../thread/thread-preflight.js";
+import { AgentEvents } from "../events/index.js";
 
 export interface ScoutAgentTurnInput {
   prompt: string;
@@ -71,6 +75,7 @@ export abstract class ScoutAgent {
   protected readonly registry: RunScope["agentRegistry"];
   runner?: AgentRunner;
   private thread?: AgentThreadSnapshot;
+  private threadPreflight?: ScoutAgentThreadPreflightSnapshot;
   private threadPreflightPromise?: Promise<void>;
   private invocationSequence = 0;
 
@@ -105,6 +110,10 @@ export abstract class ScoutAgent {
     return this.thread?.threadId;
   }
 
+  get threadPreflightSnapshot(): ScoutAgentThreadPreflightSnapshot | undefined {
+    return this.threadPreflight;
+  }
+
   get mount(): CodexMount {
     return this.agentMount;
   }
@@ -112,7 +121,10 @@ export abstract class ScoutAgent {
   abstract sendMessage(input: SendAgentMessageInput): Result<void, string>;
 
   async start(): Promise<AgentThreadSnapshot> {
-    if (this.thread) return this.thread;
+    if (this.thread?.status === "active") return this.thread;
+    if (this.thread) {
+      throw new Error(`Agent ${this.agentId} thread is closed.`);
+    }
     const started = await this.appServer.startThread({
       model: this.spec.model.id,
       modelProvider: this.spec.model.provider,
@@ -126,19 +138,42 @@ export abstract class ScoutAgent {
       dynamicTools: this.spec.dynamicTools,
     });
     this.thread = {
+      agentId: this.agentId,
+      role: this.spec.role,
+      phases: [...this.spec.phases],
+      contextBundleId: this.spec.contextBundleId,
       threadId: started.threadId,
-      spec: this.spec,
-      response: started.response,
+      createdAt: new Date().toISOString(),
+      status: "active",
+      startInput: started.startInput,
+      startResponse: started.response,
     };
     this.registry.bindThread(this.agentId, this.thread.threadId);
+    this.eventBus.publish(AgentEvents.thread.started, structuredClone(this.thread));
     await this.checkThread(this.thread);
     return this.thread;
   }
 
+  stop(reason: string): void {
+    try {
+      this.runner?.stop(reason);
+    } finally {
+      if (this.thread?.status === "active") {
+        this.thread = {
+          ...this.thread,
+          status: "closed",
+          closedAt: new Date().toISOString(),
+          closeReason: reason,
+        };
+        this.eventBus.publish(AgentEvents.thread.closed, structuredClone(this.thread));
+      }
+    }
+  }
+
   async runTurn(input: ScoutAgentTurnInput): Promise<ScoutAgentTurnOutcome> {
     const thread = this.thread;
-    if (!thread) {
-      throw new Error(`Agent ${this.agentId} thread is not started.`);
+    if (!thread || thread.status !== "active") {
+      throw new Error(`Agent ${this.agentId} thread is not active.`);
     }
     const invocationId = this.nextInvocationId(thread.threadId);
     const startedAt = new Date().toISOString();
@@ -147,9 +182,9 @@ export abstract class ScoutAgent {
       const result = await this.appServer.runTurn({
         threadId: thread.threadId,
         prompt: input.prompt,
-        model: thread.spec.model.id,
-        reasoningEffort: thread.spec.model.reasoningEffort,
-        reasoningSummary: thread.spec.model.reasoningSummary,
+        model: this.spec.model.id,
+        reasoningEffort: this.spec.model.reasoningEffort,
+        reasoningSummary: this.spec.model.reasoningSummary,
         timeoutMs: input.timeoutMs,
         sandbox: input.sandbox,
         writableRoots: input.writableRoots ?? this.defaultWritableRoots(),
@@ -158,7 +193,7 @@ export abstract class ScoutAgent {
       const turn: ScoutAgentTurnRecord = {
         invocationId,
         agentId: this.agentId,
-        role: thread.spec.role,
+        role: this.spec.role,
         threadId: thread.threadId,
         turnId: result.turnId,
         startedAt,
@@ -177,7 +212,7 @@ export abstract class ScoutAgent {
       const turn: ScoutAgentTurnRecord = {
         invocationId,
         agentId: this.agentId,
-        role: thread.spec.role,
+        role: this.spec.role,
         threadId: thread.threadId,
         startedAt,
         finishedAt: new Date().toISOString(),
@@ -226,12 +261,7 @@ export abstract class ScoutAgent {
       appServer: this.appServer,
     })
       .then((threadPreflight) => {
-        if (this.thread?.threadId === thread.threadId) {
-          this.thread = {
-            ...this.thread,
-            threadPreflight,
-          };
-        }
+        if (this.thread?.threadId === thread.threadId) this.threadPreflight = threadPreflight;
       })
       .catch(() => undefined);
     return this.threadPreflightPromise;

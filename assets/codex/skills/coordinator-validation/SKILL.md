@@ -29,7 +29,7 @@ summary: 规范 Researcher 与 Validator 的 Research Pack Gate 调度循环。
 - 判断用户输入是否具备可派发的 BDD 定位形态。
 - 在 Researcher 与 Validator 之间维护同一 Research pack 的生产、检查和修正循环。
 - 将多轮已确认用户意图综合为稳定 task prompt。
-- 处理 Worker 的 BDD 定位补充请求和正式 handoff attachment。
+- 处理 Validation 目标的 BDD 定位补充和正式 handoff attachment。
 - 基于正式 Research artifact、pack digest 和 Gate 报告形成阶段 synthesis。
 
 不使用本技能处理：
@@ -45,7 +45,6 @@ summary: 规范 Researcher 与 Validator 的 Research Pack Gate 调度循环。
 - Coordinator 只判断输入形态是否足以派发；BDD 是否真实存在、是否唯一匹配由 Researcher 确认。
 - Worker progress、工具活动、普通 summary 和共享记忆不是 Validation 结论。
 - 只有 Worker 正式 handoff、artifact refs、pack digest 和 Validator Gate 可以推进当前 Research gate synthesis。
-- Coordinator 只在缺少定位或收敛 BDD 所需人工输入时向用户追问；其它 Worker 缺口作为领域状态或后续 task 输入处理。
 
 ## Inputs
 
@@ -80,11 +79,11 @@ summary: 规范 Researcher 与 Validator 的 Research Pack Gate 调度循环。
 
 描述：
 
-- 用户针对当前 task 中 BDD 定位问题提供的补充信息。
+- 用户针对当前 Validation 目标中 BDD 定位问题提供的补充信息。
 
 注意事项：
 
-- 必须匹配原问题、task id 和当前目标后再转交 Worker。
+- 必须匹配当前目标和前序 BDD 定位问题后再写入 task synthesis。
 - 未确认或与当前目标无关的内容不能写成 task 事实。
 
 ### I-004: Research Pack Gate
@@ -92,13 +91,14 @@ summary: 规范 Researcher 与 Validator 的 Research Pack Gate 调度循环。
 
 描述：
 
-- Validator 正式 handoff 中的 `research-pack-gate.md` ref、pack digest、Gate、问题 ids 和未检查范围。
+- Validator 正式 handoff 明确引用的 `research-pack-gate-NNNN.md` ref、pack digest、Gate、问题 ids 和未检查范围。
 
 注意事项：
 
 - Gate 输入必须指向 Researcher artifact root 下唯一且可读的 Research pack 目录。
 - handoff 文本、task 日志、progress、单个未归属文件或 Coordinator 摘要都不是 Research pack ref。
 - Gate 只适用于报告声明的 pack digest；Researcher 修改 pack 后必须重新检查。
+- Coordinator 只消费 Validator handoff 明确引用的 Gate ref，不扫描文件名或按序号猜测当前 Gate。
 - Coordinator 不读取报告正文补做检查，也不把问题摘要改写成自己的专业判断。
 
 ## Validation Coordination Workflow
@@ -193,13 +193,12 @@ Partial：
 
 注意事项：
 
-- Worker 仅请求 BDD 定位补充时，才向用户提出对应问题。
 - 正式 handoff 必须按角色、artifact refs、evidence refs、限制和缺口整理。
 - Researcher handoff 为 complete、partial 或 blocked，只要提供唯一可读 pack ref，就指派 Validator 检查实际内容；不得由 Coordinator 预判 Gate。
 - Researcher handoff 无唯一可读 pack ref 时，不存在可执行的 Research Pack Gate；保持 Researcher task 未归档，并报告缺少的正式输入。
 - Validator 返回 `needs_fix` 或 `insufficient_evidence` 时，把 Gate ref、pack digest、问题 ids 和最小解除条件综合后发回原 Researcher task。
-- Researcher 再次提交后，把新 pack ref 和新 handoff 发送给原 Validator task 复查；不得沿用旧 digest 的 Gate。
-- Validator 返回 `blocked` 时保留两个 task，不向用户追问非 BDD 定位问题，并报告当前阻塞和可恢复入口。
+- Researcher 再次提交后，把同一 pack ref、新 digest 和新 handoff 发送给原 Validator task 复查；不得沿用旧 digest 的 Gate。
+- Validator 返回 `blocked` 时保留两个 task，并报告当前阻塞和可恢复入口。
 - Validator 返回 `accepted` 时，确认 Gate digest 对应最新 Research pack，然后归档 Researcher task 和 Validator task。
 - accepted 只表示 Research pack 已通过当前 Gate；不得描述为运行验证或完整 Validation 已完成。
 
@@ -222,12 +221,14 @@ Partial：
 - XR-003：Researcher task 在 Gate accepted 前不得归档；修正和复查必须继续使用各自原 task。
 - XR-004：当前阶段完成 synthesis 必须引用最新 Research pack ref、对应 digest 和 accepted Gate 报告。
 - XR-005：只有最新 Research pack 的 Gate 为 `accepted` 时才能归档 Researcher 与 Validator task；缺 pack、`needs_fix`、`insufficient_evidence`、`blocked` 或 digest 不匹配均必须保留 task。
+- XR-006：每次 Validator 检查必须使用其 handoff 明确引用的独立 Gate 记录；不得覆盖、复用旧 Gate 或自行猜测最高序号文件。
 
 ## Evidence Rules (Enforcement)
 
 - ER-001：task assigned、progress、工具调用和普通 summary 只属于 Activity State。
 - ER-002：Research claim 和 Gate claim 必须分别引用 Research pack 与 Validator Gate 报告。
 - ER-003：用户人工补充必须与原问题和当前 task 对齐后才能成为领域输入。
+- ER-004：每个 Gate ref 只证明其 `checked_pack_digest`；同一 pack ref 内容改变后必须由新 Gate ref 记录复查结果。
 
 ## Failure Rules (Enforcement)
 

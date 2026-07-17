@@ -75,10 +75,66 @@ test("BootAgentsStage starts all role threads in parallel on the installed RunSc
     scope.agentRegistry.resolveAgent(ScoutAgentRoles.Verifier),
   );
   assert.equal(
-    scope.agentRegistry.resolveAgent(ScoutAgentRoles.Coordinator).threadSnapshot?.threadPreflight?.result.status,
+    scope.agentRegistry.resolveAgent(ScoutAgentRoles.Coordinator).threadPreflightSnapshot?.result.status,
     "passed",
   );
   assert.deepEqual(scope.taskStore.listTasks(), []);
+
+  await stage.stop("test_shutdown");
+  for (const agent of scope.agentRegistry.listAgents()) {
+    assert.equal(agent.threadSnapshot?.status, "closed");
+    assert.equal(agent.threadSnapshot?.closeReason, "test_shutdown");
+  }
+});
+
+test("BootAgentsStage closes started threads when another Agent fails to start", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-boot-agents-failure-"));
+  mkdirSync(join(root, "assets"), { recursive: true });
+  cpSync(join(repoRoot, "assets", "codex"), join(root, "assets", "codex"), {
+    recursive: true,
+  });
+  const runId = "boot-agents-failure-test";
+  const appServer = createAppServer((cwd) => {
+    const role = Object.values(ScoutAgentRoles).find((candidate) =>
+      cwd.includes(`${candidate}/mount`)
+    ) ?? "unknown";
+    if (role === ScoutAgentRoles.Validator) throw new Error("validator thread failed");
+    return `thread-${role}`;
+  });
+  const scope = new RunScope({
+    runId,
+    repoRoot: root,
+    logger: createNoopLogger(),
+    eventBus: new InMemoryEventBus(),
+    interactionPort: new NoopRuntimeInteractionPort(),
+    domain: createStaticDomain(),
+    terminate: async () => undefined,
+  });
+  scope.setAppServer(appServer);
+  const releaseScope = installRunScope(scope);
+  const environment = new BootEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  });
+  const stage = new BootAgentsStage();
+  t.after(async () => {
+    await stage.stop("test_cleanup");
+    scope.clearAppServer(appServer);
+    releaseScope();
+  });
+
+  await environment.start();
+  await assert.rejects(stage.start(), /validator thread failed/);
+
+  const startedAgents = scope.agentRegistry.listAgents().filter((agent) => agent.threadSnapshot);
+  assert.equal(startedAgents.length, 3);
+  for (const agent of startedAgents) {
+    assert.equal(agent.threadSnapshot?.status, "closed");
+    assert.equal(agent.threadSnapshot?.closeReason, "agent_startup_failed");
+  }
+  assert.equal(
+    scope.agentRegistry.resolveAgent(ScoutAgentRoles.Validator).threadSnapshot,
+    undefined,
+  );
 });
 
 function createAppServer(onStartThread: (cwd: string) => string): CodexAppServerClient {
@@ -87,6 +143,12 @@ function createAppServer(onStartThread: (cwd: string) => string): CodexAppServer
       const threadId = onStartThread(options.cwd);
       return {
         threadId,
+        startInput: {
+          cwd: options.cwd,
+          approvalPolicy: "never",
+          sandbox: "workspace-write",
+          ephemeral: true,
+        },
         response: { thread: { id: threadId } },
       };
     },

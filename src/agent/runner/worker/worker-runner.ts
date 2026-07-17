@@ -38,6 +38,7 @@ export interface WorkerRunnerHost {
   readonly role: AgentThreadSpec["role"];
   readonly spec: AgentThreadSpec;
   runTurn(input: ScoutAgentTurnInput): Promise<ScoutAgentTurnOutcome>;
+  deliverTaskOutcome(outcome: string): void;
 }
 
 export interface WorkerRunnerOptions {
@@ -56,6 +57,10 @@ export class WorkerRunner extends AgentRunner {
   private readonly taskSequence: number;
   private readonly loop: AgenticLoop<AgentTaskState>;
   private pendingMessages: string[] = [];
+  private pendingSubmission?: {
+    stepId: string;
+    outcome: string;
+  };
   private activeTask?: AgentTaskState;
   private stopped = false;
 
@@ -131,25 +136,31 @@ export class WorkerRunner extends AgentRunner {
     this.loop.schedule();
   }
 
-  submitTask(): AgentTaskState {
+  submitTask(outcome: string): AgentTaskState {
     const task = this.activeTask;
     if (!task || task.status !== AgentTaskStatuses.Running) {
       throw new Error(`Worker runner ${this.host.agentId} cannot submit without a running task.`);
     }
-    const done = this.updateTask(task.taskId, (current) => ({
-      ...current,
-      status: AgentTaskStatuses.Done,
-      updatedAt: new Date().toISOString(),
-    }));
-    this.activeTask = done;
-    this.eventBus.publish(AgentEvents.task.done, done);
-    return cloneTaskState(done);
+    const steps = task.steps ?? [];
+    const currentStep = steps[steps.length - 1];
+    if (!currentStep || currentStep.status !== AgentTaskStepStatuses.Running) {
+      throw new Error(`Worker task ${task.taskId} has no running step to submit.`);
+    }
+    if (this.pendingSubmission) {
+      throw new Error(`Worker task step ${this.pendingSubmission.stepId} has already submitted an outcome.`);
+    }
+    this.pendingSubmission = {
+      stepId: currentStep.stepId,
+      outcome,
+    };
+    return cloneTaskState(task);
   }
 
   stopTask(taskId: string, reason = "任务已被 Coordinator 停止。"): AgentTaskState {
     const task = this.getTask(taskId);
     if (isTerminalTaskStatus(task.status)) return cloneTaskState(task);
     this.pendingMessages = [];
+    this.pendingSubmission = undefined;
     const stopped = this.updateTask(taskId, (current) => ({
       ...current,
       status: AgentTaskStatuses.Stopped,
@@ -187,6 +198,7 @@ export class WorkerRunner extends AgentRunner {
     this.loop.stop();
     await this.loop.runToIdle();
     this.pendingMessages = [];
+    this.pendingSubmission = undefined;
     const archived = this.store.removeTask(taskId);
     this.activeTask = undefined;
     this.eventBus.publish(AgentEvents.task.archived, archived);
@@ -295,23 +307,12 @@ export class WorkerRunner extends AgentRunner {
     const durationMs = Date.now() - startedAt;
     const latest = this.getTask(taskId);
     if (latest.status === AgentTaskStatuses.Stopped) {
+      this.pendingSubmission = undefined;
       this.activeTask = latest;
       return;
     }
-    if (latest.status === AgentTaskStatuses.Done) {
-      const done = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
-        task: current,
-        outcome,
-        durationMs,
-        status: outcome.turn.status === "failed"
-          ? AgentTaskStepStatuses.Failed
-          : AgentTaskStepStatuses.Completed,
-      }));
-      this.activeTask = done;
-      this.eventBus.publish(AgentEvents.task.stepCompleted, done);
-      return;
-    }
     if (isTerminalTaskStatus(latest.status)) {
+      this.pendingSubmission = undefined;
       const updated = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
         task: current,
         outcome,
@@ -332,9 +333,28 @@ export class WorkerRunner extends AgentRunner {
       }));
       this.activeTask = stillRunning;
       this.eventBus.publish(AgentEvents.task.stepCompleted, stillRunning);
+      const submission = this.pendingSubmission;
+      this.pendingSubmission = undefined;
+      if (submission) {
+        const completedStep = stillRunning.steps?.[stillRunning.steps.length - 1];
+        if (submission.stepId !== completedStep?.stepId) {
+          throw new Error(
+            `Worker task ${taskId} submitted outcome for ${submission.stepId}, not ${completedStep?.stepId ?? "<none>"}.`,
+          );
+        }
+        this.host.deliverTaskOutcome(submission.outcome);
+        const done = this.updateTask(taskId, (current) => ({
+          ...current,
+          status: AgentTaskStatuses.Done,
+          updatedAt: new Date().toISOString(),
+        }));
+        this.activeTask = done;
+        this.eventBus.publish(AgentEvents.task.done, done);
+      }
       return;
     }
 
+    this.pendingSubmission = undefined;
     const failed = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
       task: {
         ...current,
@@ -352,6 +372,7 @@ export class WorkerRunner extends AgentRunner {
   }
 
   private failActiveTask(error: unknown): void {
+    this.pendingSubmission = undefined;
     if (!this.activeTask) {
       return;
     }
