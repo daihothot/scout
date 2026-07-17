@@ -95,7 +95,7 @@ export function buildSubmitTaskDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
     name: "SubmitTask",
-    description: "仅供 Worker 正式交回当前一轮工作；Runtime 将 Markdown outcome 投递给 Coordinator，并把当前 task 置为 done。",
+    description: "仅供 Worker 正式交回当前一轮工作；Runtime 在当前 step 完成后将 Markdown outcome 投递给 Coordinator，投递成功后把当前 task 置为 done。",
     inputSchema: objectSchema({
       outcome: {
         type: "string",

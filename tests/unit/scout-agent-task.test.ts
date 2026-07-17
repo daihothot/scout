@@ -156,7 +156,7 @@ test("WorkerRunner enters done from SubmitTask and resumes the same task from a 
     runTurn: async (turn, runtime) => {
       turnCount += 1;
       turnPrompts.push(turn.prompt);
-      runtime.submitTask();
+      runtime.submitTask(`## Outcome ${turnCount}`);
       return completedTurn(`worker response ${turnCount}`, `turn-${turnCount}`);
     },
   });
@@ -165,6 +165,8 @@ test("WorkerRunner enters done from SubmitTask and resumes the same task from a 
   assert.equal(harness.runtime.getTaskSnapshot("task-1")?.status, AgentTaskStatuses.Done);
   assert.equal(harness.terminalTasks.length, 0);
   assert.ok(harness.events.some((event) => AgentEvents.task.done.is(event)));
+  assert.deepEqual(harness.deliveredOutcomes, ["## Outcome 1"]);
+  assert.deepEqual(harness.submissionOrder.slice(-3), ["step_completed", "outcome_delivered", "task_done"]);
 
   harness.runtime.queueMessage({
     taskId: "task-1",
@@ -293,7 +295,7 @@ test("WorkerRunner serves an ordinary message after a request step yields", asyn
           success: true,
         }]);
       }
-      runtime.submitTask();
+      runtime.submitTask("## Outcome\n\ncontinued");
       return completedTurn("continued", "turn-2");
     },
   });
@@ -375,7 +377,7 @@ test("WorkerRunner records a delayed human response on the step that consumes it
           success: true,
         }]);
       }
-      runtime.submitTask();
+      runtime.submitTask("## Outcome\n\nresumed");
       return completedTurn("resumed", `turn-${turnCount}`);
     },
   });
@@ -409,6 +411,75 @@ test("WorkerRunner records a delayed human response on the step that consumes it
     && (event.payload as AgentTaskState).status === AgentTaskStatuses.Running
     && (event.payload as AgentTaskState).steps?.length === 3
   ));
+});
+
+test("WorkerRunner rejects a second SubmitTask in the same step", async () => {
+  const harness = createHarness({
+    taskInput: {
+      taskId: "task-1",
+      description: "Submit once",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Submit one outcome"),
+    },
+    runTurn: async (_turn, runtime) => {
+      runtime.submitTask("first outcome");
+      assert.throws(() => runtime.submitTask("second outcome"), /already submitted an outcome/);
+      return completedTurn("submitted", "turn-1");
+    },
+  });
+
+  await harness.runtime.runTasksToIdle();
+
+  assert.equal(harness.runtime.getTaskSnapshot("task-1")?.status, AgentTaskStatuses.Done);
+  assert.deepEqual(harness.deliveredOutcomes, ["first outcome"]);
+});
+
+test("WorkerRunner discards a submitted outcome when the turn fails", async () => {
+  const harness = createHarness({
+    taskInput: {
+      taskId: "task-1",
+      description: "Fail after submit",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Submit then fail"),
+    },
+    runTurn: async (_turn, runtime) => {
+      runtime.submitTask("must not be delivered");
+      return failedTurn("turn failed");
+    },
+  });
+
+  await harness.runtime.runTasksToIdle();
+
+  assert.equal(harness.runtime.getTaskSnapshot("task-1")?.status, AgentTaskStatuses.Failed);
+  assert.deepEqual(harness.deliveredOutcomes, []);
+  assert.equal(harness.events.some((event) => AgentEvents.task.done.is(event)), false);
+});
+
+test("WorkerRunner does not enter done when task outcome delivery fails", async () => {
+  const harness = createHarness({
+    taskInput: {
+      taskId: "task-1",
+      description: "Deliver outcome",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Submit an outcome"),
+    },
+    runTurn: async (_turn, runtime) => {
+      runtime.submitTask("undeliverable outcome");
+      return completedTurn("submitted", "turn-1");
+    },
+    deliverTaskOutcome: () => {
+      throw new Error("Coordinator queue unavailable");
+    },
+  });
+
+  await harness.runtime.runTasksToIdle();
+
+  const task = harness.runtime.getTaskSnapshot("task-1");
+  assert.equal(task?.status, AgentTaskStatuses.Failed);
+  assert.equal(task?.steps?.[0]?.status, AgentTaskStepStatuses.Completed);
+  assert.match(task?.error ?? "", /Coordinator queue unavailable/);
+  assert.deepEqual(harness.deliveredOutcomes, []);
+  assert.equal(harness.events.some((event) => AgentEvents.task.done.is(event)), false);
 });
 
 test("AgentTaskBackend reduces app-server plan timeline entries into task state", (t) => {
@@ -461,14 +532,19 @@ test("AgentTaskBackend reduces app-server plan timeline entries into task state"
 function createHarness(input: {
   taskInput?: AssignAgentTaskInput;
   runTurn?: (turn: ScoutAgentTurnInput, runtime: WorkerRunner) => Promise<ScoutAgentTurnOutcome>;
+  deliverTaskOutcome?: (outcome: string, runtime: WorkerRunner) => void;
 } = {}): {
   runtime: WorkerRunner;
   events: ScoutEvent[];
   terminalTasks: AgentTaskState[];
+  deliveredOutcomes: string[];
+  submissionOrder: string[];
 } {
   const eventBus = new InMemoryEventBus();
   const events: ScoutEvent[] = [];
   const terminalTasks: AgentTaskState[] = [];
+  const deliveredOutcomes: string[] = [];
+  const submissionOrder: string[] = [];
   for (const key of [
     AgentEvents.task.assigned,
     AgentEvents.task.messageQueued,
@@ -481,6 +557,8 @@ function createHarness(input: {
   ]) {
     eventBus.subscribe(key, (event) => {
       events.push(event);
+      if (AgentEvents.task.stepCompleted.is(event)) submissionOrder.push("step_completed");
+      if (AgentEvents.task.done.is(event)) submissionOrder.push("task_done");
       if (AgentEvents.task.terminal.is(event)) {
         terminalTasks.push(event.payload as AgentTaskState);
       }
@@ -513,12 +591,19 @@ function createHarness(input: {
         runTurn: (turn) => input.runTurn
           ? input.runTurn(turn, runtime)
           : Promise.resolve(completedTurn("")),
+        deliverTaskOutcome: (outcome) => {
+          input.deliverTaskOutcome?.(outcome, runtime);
+          deliveredOutcomes.push(outcome);
+          submissionOrder.push("outcome_delivered");
+        },
       },
     });
   return {
     runtime,
     events,
     terminalTasks,
+    deliveredOutcomes,
+    submissionOrder,
   };
 }
 
@@ -676,5 +761,21 @@ function completedTurn(
     },
     finalResponse,
     toolCalls,
+  };
+}
+
+function failedTurn(error: string): ScoutAgentTurnOutcome {
+  return {
+    turn: {
+      invocationId: "invocation-1",
+      agentId: "verifier",
+      role: ScoutAgentRoles.Verifier,
+      threadId: "thread-1",
+      turnId: "turn-1",
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      status: "failed",
+      error,
+    },
   };
 }

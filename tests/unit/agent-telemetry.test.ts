@@ -9,8 +9,10 @@ import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import {
   AgentActivityRecorder,
+  AgentThreadRecorder,
   TaskEventRecorder,
 } from "../../src/agent/telemetry/index.js";
+import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
 import type { AgentTaskNotAssignedEventPayload } from "../../src/agent/task/task-events.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
@@ -165,6 +167,71 @@ test("AgentActivityRecorder writes stable activity to the role activity log", as
   assert.doesNotMatch(text, /ArchiveTask/);
   assert.equal(existsSync(join(root, "logs", "runtime.log")), false);
   assert.equal(existsSync(join(logsRoot, "researcher-task-0001.log")), false);
+});
+
+test("AgentThreadRecorder writes complete startup facts and incremental close facts", async () => {
+  const root = mkdtempSync(join(tmpdir(), "scout-thread-recorder-"));
+  const logsRoot = join(root, "agents", "researcher", "logs");
+  const eventBus = new InMemoryEventBus();
+  const registry = registryWithAgent("researcher", logsRoot);
+  const recorder = new AgentThreadRecorder({
+    runId: "run-thread-recorder",
+    eventBus,
+    registry,
+  });
+  const developerInstructions = `${"complete-instruction ".repeat(300)}END_OF_FULL_INSTRUCTIONS`;
+  const started: AgentThreadSnapshot = {
+    agentId: "researcher",
+    role: "researcher",
+    phases: ["research"],
+    contextBundleId: "cb-thread-recorder",
+    threadId: "thread-researcher",
+    createdAt: "2026-07-17T00:00:00.000Z",
+    status: "active",
+    startInput: {
+      cwd: "/run/agents/researcher/mount",
+      model: "gpt-5.5",
+      modelProvider: "GuruOpenAI",
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      ephemeral: true,
+      developerInstructions,
+      dynamicTools: [{
+        namespace: "agent.submit-task",
+        name: "SubmitTask",
+        description: "Submit the current task.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            outcome: { type: "string" },
+          },
+          required: ["outcome"],
+        },
+      }],
+    },
+    startResponse: { thread: { id: "thread-researcher" } },
+  };
+  recorder.start();
+
+  await eventBus.publishAndWait(AgentEvents.thread.started, started);
+  await eventBus.publishAndWait(AgentEvents.thread.closed, {
+    ...started,
+    status: "closed",
+    closedAt: "2026-07-17T01:00:00.000Z",
+    closeReason: "run_exit",
+  });
+  recorder.stop();
+
+  const threadLogPath = join(logsRoot, "thread.log");
+  const text = readFileSync(threadLogPath, "utf8");
+  assert.equal(readEventCount(text), 2);
+  assert.match(text, /event=agent\.thread\.started/);
+  assert.match(text, /event=agent\.thread\.closed/);
+  assert.match(text, /END_OF_FULL_INSTRUCTIONS/);
+  assert.match(text, /name: "SubmitTask"/);
+  assert.match(text, /closeReason: "run_exit"/);
+  assert.equal(text.match(/developerInstructions:/g)?.length, 1);
+  assert.doesNotMatch(text, /threadPreflight/);
 });
 
 function registryWithAgent(agentId: string, logsRoot: string): AgentRegistry {

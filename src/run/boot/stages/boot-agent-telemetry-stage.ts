@@ -1,5 +1,6 @@
 import {
   AgentActivityRecorder,
+  AgentThreadRecorder,
   TaskEventRecorder,
 } from "../../../agent/telemetry/index.js";
 import { currentRunScope } from "../../run-scope.js";
@@ -9,6 +10,7 @@ export class BootAgentTelemetryStage implements BootStage {
   readonly id = "agent_telemetry";
   private taskRecorder?: TaskEventRecorder;
   private activityRecorder?: AgentActivityRecorder;
+  private threadRecorder?: AgentThreadRecorder;
 
   async start(): Promise<void> {
     const scope = currentRunScope();
@@ -22,13 +24,25 @@ export class BootAgentTelemetryStage implements BootStage {
       eventBus: scope.eventBus,
       registry: scope.agentRegistry,
     });
-    taskRecorder.start();
+    const threadRecorder = new AgentThreadRecorder({
+      runId: scope.runId,
+      eventBus: scope.eventBus,
+      registry: scope.agentRegistry,
+    });
+    threadRecorder.start();
     try {
-      activityRecorder.start();
+      taskRecorder.start();
+      try {
+        activityRecorder.start();
+      } catch (error) {
+        taskRecorder.stop();
+        throw error;
+      }
     } catch (error) {
-      taskRecorder.stop();
+      threadRecorder.stop();
       throw error;
     }
+    this.threadRecorder = threadRecorder;
     this.taskRecorder = taskRecorder;
     this.activityRecorder = activityRecorder;
   }
@@ -47,6 +61,12 @@ export class BootAgentTelemetryStage implements BootStage {
       errors.push(error);
     }
     this.taskRecorder = undefined;
+    try {
+      this.threadRecorder?.stop();
+    } catch (error) {
+      errors.push(error);
+    }
+    this.threadRecorder = undefined;
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) {
       throw new AggregateError(errors, "Agent telemetry recorders failed to stop.");

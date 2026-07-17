@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -123,7 +123,7 @@ test("AssetStore exposes effective permission roots", () => {
   assert.ok(store.writableRootsForMount(mount).includes(join(homedir(), ".guru", "codebase")));
 });
 
-test("AssetStore limits the validator to its own artifact write root", () => {
+test("AssetStore gives the validator artifact and managed codebase write roots", () => {
   const fixtureRoot = createCodexAssetFixture("scout-validator-permissions-");
   const runId = "run-validator-permission-test";
   const mount = new AssetStore().materializeMount({
@@ -138,7 +138,10 @@ test("AssetStore limits the validator to its own artifact write root", () => {
     join(homedir(), ".guru", "knowledge"),
     join(homedir(), ".guru", "codebase"),
   ].sort());
-  assert.deepEqual(mount.writableRoots, [mount.artifactRoot]);
+  assert.deepEqual(mount.writableRoots, [
+    mount.artifactRoot,
+    join(homedir(), ".guru", "codebase"),
+  ]);
 });
 
 test("AssetStore resolves local profile roots relative to the repo root", () => {
@@ -171,6 +174,93 @@ test("AssetStore treats omitted profile shellTools as an empty shell tool set", 
   });
 
   assert.deepEqual(mount.shellTools, []);
+});
+
+test("AssetStore only exposes worker instructions to worker mounts", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-agent-instructions-");
+  const store = new AssetStore();
+  const coordinator = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-coordinator-instructions-test",
+    agentId: "coordinator",
+  });
+  const coordinatorManifest = JSON.parse(
+    readFileSync(coordinator.manifestPath, "utf8"),
+  ) as {
+    assets: Array<{ id: string }>;
+    linkedFiles: Array<{ path: string }>;
+    workerAgent?: string;
+  };
+
+  assert.equal(existsSync(join(coordinator.mountRoot, "agents", "worker.AGENTS.md")), false);
+  assert.equal(coordinatorManifest.workerAgent, undefined);
+  assert.equal(
+    coordinatorManifest.assets.some((asset) => asset.id === "codex.agents.worker"),
+    false,
+  );
+  assert.equal(
+    coordinatorManifest.linkedFiles.some((file) => file.path === "agents/worker.AGENTS.md"),
+    false,
+  );
+
+  for (const agentId of ["researcher", "verifier", "validator"]) {
+    const worker = store.materializeMount({
+      repoRoot: fixtureRoot,
+      runId: `run-${agentId}-instructions-test`,
+      agentId,
+    });
+    const workerManifest = JSON.parse(readFileSync(worker.manifestPath, "utf8")) as {
+      assets: Array<{ id: string }>;
+      linkedFiles: Array<{ path: string }>;
+      workerAgent?: string;
+    };
+
+    assert.equal(existsSync(join(worker.mountRoot, "agents", "worker.AGENTS.md")), true);
+    assert.equal(workerManifest.workerAgent, "agents/worker.AGENTS.md");
+    assert.equal(
+      workerManifest.assets.some((asset) => asset.id === "codex.agents.worker"),
+      true,
+    );
+    assert.equal(
+      workerManifest.linkedFiles.some((file) => file.path === "agents/worker.AGENTS.md"),
+      true,
+    );
+  }
+});
+
+test("Coordinator resource hash does not depend on worker instructions", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-agent-instructions-hash-");
+  const store = new AssetStore();
+  const coordinatorBefore = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-coordinator-hash-before-test",
+    agentId: "coordinator",
+  });
+  const researcherBefore = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-researcher-hash-before-test",
+    agentId: "researcher",
+  });
+
+  writeFileSync(
+    join(fixtureRoot, "assets", "codex", "agents", "worker.AGENTS.md"),
+    "updated worker instructions\n",
+    "utf8",
+  );
+
+  const coordinatorAfter = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-coordinator-hash-after-test",
+    agentId: "coordinator",
+  });
+  const researcherAfter = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-researcher-hash-after-test",
+    agentId: "researcher",
+  });
+
+  assert.equal(coordinatorAfter.resourceHash, coordinatorBefore.resourceHash);
+  assert.notEqual(researcherAfter.resourceHash, researcherBefore.resourceHash);
 });
 
 function createCodexAssetFixture(prefix: string): string {

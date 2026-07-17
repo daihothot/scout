@@ -2,8 +2,8 @@ import type {
   AgentDynamicToolSpec,
   AgentJsonValue,
 } from "../tools/types.js";
+import type { ThreadStartRequest } from "../../agent-server/codex/app-server-client.js";
 import type { CodexModelConfig } from "../../agent-server/codex/model-config.js";
-import type { ScoutAgentThreadPreflightSnapshot } from "./thread-preflight.js";
 
 export const ScoutAgentRoles = {
   Coordinator: "coordinator",
@@ -37,9 +37,26 @@ export interface AgentThreadSpec {
   dynamicTools?: AgentDynamicToolSpec[];
 }
 
-export interface AgentThreadSnapshot {
+interface AgentThreadSnapshotBase {
+  agentId: string;
+  role: ScoutAgentRole;
+  phases: ScoutAgentPhase[];
+  contextBundleId: string;
   threadId: string;
-  spec: AgentThreadSpec;
-  response: unknown;
-  threadPreflight?: ScoutAgentThreadPreflightSnapshot;
+  createdAt: string;
+  startInput: ThreadStartRequest;
+  startResponse: unknown;
 }
+
+export type AgentThreadSnapshot = AgentThreadSnapshotBase & (
+  | {
+      status: "active";
+      closedAt?: never;
+      closeReason?: never;
+    }
+  | {
+      status: "closed";
+      closedAt: string;
+      closeReason: string;
+    }
+);

@@ -53,7 +53,8 @@ summary: 独立检查 Research pack，并形成绑定内容摘要的 Research Pa
 - `jarvis-codebase` 定义 CodeGraph 与 source-code evidence 的 provenance、symbol 和 locator 规则；Validator 将其作为代码证据 contract 读取。
 - Validator 只读取 Researcher 正式 artifact，所有检查报告只写入 Validator 自己的 artifact root。
 - 每次 Gate 绑定一个 `sha256` pack digest；Research pack 内容改变后，旧 Gate 不再适用于新内容。
-- 复查覆盖当前 `research-pack-gate.md`，不创建 revision、历史副本或第二套状态存储。
+- 每次检查创建一份新的 `research-pack-gate-NNNN.md`；正式 handoff 后该 Gate 记录不可修改。
+- 复查必须创建下一份 Gate 记录；旧 Gate 只证明其绑定 digest 当时的检查结果。
 
 Gate 枚举：
 
@@ -117,11 +118,15 @@ blocked > insufficient_evidence > needs_fix > accepted
 
 ## Research Pack Gate Output Layout
 
-每次检查只生成一个报告：
+每次检查生成一份新的报告：
 
 ```text
-${SCOUT_ARTIFACT_ROOT}/research-pack-gate.md
+${SCOUT_ARTIFACT_ROOT}/research-pack-gate-0001.md
+${SCOUT_ARTIFACT_ROOT}/research-pack-gate-0002.md
+${SCOUT_ARTIFACT_ROOT}/research-pack-gate-0003.md
 ```
+
+文件序号只用于创建新记录：列出 artifact root 第一层符合 `research-pack-gate-[0-9]{4}.md` 的文件，取最大序号加一；没有记录时从 `0001` 开始。Coordinator 不得用序号推断当前 Gate。
 
 使用模板：
 
@@ -129,8 +134,10 @@ ${SCOUT_ARTIFACT_ROOT}/research-pack-gate.md
 templates/research-pack-gate.md
 ```
 
-报告必须包含：
+每份报告必须包含：
 
+- `gate_id`、`created_at` 和 `validator_task_id`。
+- `checked_pack_ref` 和 `checked_pack_digest`。
 - Validator task、Researcher task、上游声明状态和唯一 Research pack ref。
 - pack digest、digest algorithm、适用 contract refs。
 - 已检查 refs、未检查范围和限制。
@@ -146,12 +153,13 @@ templates/research-pack-gate.md
 
 ### Artifact Relationship Rules
 
-- 摘要产物：`research-pack-gate.md` 是本次检查的唯一 Gate 报告，不复制 Research evidence 正文。
+- 摘要产物：每个 `research-pack-gate-NNNN.md` 是对应检查的唯一 Gate 报告，不复制 Research evidence 正文。
 - 明细产物：本技能不创建独立 check 文件；具体问题全部记录在同一报告的 `V-*` 条目中。
 - Registry / index：Validator 只检查 Researcher 的 registry 和 index，不创建第二套 registry 或 evidence id。
 - Claim owner：Research pack 保持 BDD、knowledge 和 implementation claim 所有权；Gate 报告只拥有检查范围与 Gate claim。
 - 下游引用规则：Coordinator 引用 Gate 报告 ref、pack digest、Gate 和问题 id；不得把 Gate 摘要当作 Research evidence。
 - Ref 字段策略：Research pack ref、每个已检查 artifact ref 和问题影响 ref 必填；不存在的目标必须按缺失 ref 明确记录。
+- 历史关系：旧 Gate 不覆盖、不修改、不自动适用于新 digest；复查结果只能写入新的 Gate 文件。
 
 ## Phase 1: Resolve Pack and Contracts
 ---
@@ -250,7 +258,7 @@ Partial：
 ## Phase 4: Write and Submit Gate
 ---
 
-本阶段确认目标内容稳定，形成唯一 Gate 报告并通过正式 task handoff 提交。
+本阶段确认目标内容稳定，形成一份新的不可变 Gate 报告并通过正式 task handoff 提交。
 
 使用命令：
 
@@ -269,12 +277,13 @@ templates/research-pack-gate.md
 - 写报告前重新计算 digest；与 Phase 1 不一致时丢弃当前 Gate 判断，对新内容重新检查一次。
 - 第二次检查期间 digest 再次变化时输出 blocked，禁止对移动目标给出 Gate。
 - 根据优先级选择唯一 Gate，不把问题严重性直接映射为 blocked。
-- 复查时覆盖当前报告，并更新 pack digest、检查范围、Gate 和问题列表。
+- 按下一可用序号创建新 Gate；不得打开旧 Gate 原地更新 pack digest、检查范围、Gate 或问题列表。
+- Gate 写入并正式 handoff 后不可修改；后续任何复查都创建下一序号文件。
 - 正式 handoff 必须包含 Gate 报告 ref、pack digest、Gate、问题 ids 和未检查范围。
 
 Exit：
 
-- `research-pack-gate.md` 已写入 Validator artifact root，且正式 handoff 与报告一致。
+- 新 `research-pack-gate-NNNN.md` 已写入 Validator artifact root，且正式 handoff 明确引用该报告并与其内容一致。
 
 Blocked：
 
@@ -290,7 +299,8 @@ Partial：
 - XR-002：不得运行 Researcher 生产 workflow、Research artifact checker 或修改被检查 pack。
 - XR-003：`accepted` 必须满足全部适用检查、引用闭环、当前版本代码证据和未检查范围为空。
 - XR-004：Researcher 修正 pack 后必须按新 digest 完整复查；旧 Gate 不自动延续。
-- XR-005：每次检查只维护一个当前 Research Pack Gate 报告，不建立 revision 或平行状态文件。
+- XR-005：每次检查只产生一份新的 Gate 记录；已正式 handoff 的记录禁止修改，复查必须创建下一份记录。
+- XR-006：正式 handoff 必须明确引用本次 Gate ref；不得要求 Coordinator 扫描目录推断最新记录。
 
 ## Evidence Rules (Enforcement)
 
@@ -319,7 +329,7 @@ Partial：
 - RR-001：只对瞬时、只读失败进行一次有限重试，并记录 retry log。
 - RR-002：pack digest 首次变化时允许对新 digest 重新检查一次；再次变化后停止。
 - RR-003：不得通过修改 pack、contract、repo、版本或检查范围制造重试成功。
-- RR-004：Researcher 提交修正后属于新的内容检查，不沿用旧问题关闭状态。
+- RR-004：Researcher 提交修正后属于新的内容检查，不沿用旧问题关闭状态，并写入新的 Gate 记录。
 
 ## Prohibited Rules (Enforcement)
 
@@ -342,9 +352,9 @@ Researcher task researcher-task-0001 提交一个 Research pack，handoff state 
 1. 定位唯一 pack，读取 producer contracts，并计算初始 digest。
 2. 检查 pack 结构、独立 evidence、聚合关系、registry 和下游手册引用。
 3. 核对 BDD、knowledge 与当前版本 source symbol 证据。
-4. 重新确认 digest，写入 `research-pack-gate.md` 并提交正式 handoff。
+4. 重新确认 digest，写入下一份 `research-pack-gate-NNNN.md` 并提交明确引用该文件的正式 handoff。
 
 输出：
 
-- Validator 私有 artifact 中的一份 Research Pack Gate 报告。
+- Validator 私有 artifact 中的一份新增、不可变 Research Pack Gate 报告。
 - `accepted | needs_fix | insufficient_evidence | blocked` Gate、pack digest、问题 ids 和未检查范围。

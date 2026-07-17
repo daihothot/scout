@@ -156,7 +156,7 @@ test("AssetStore exposes Research artifact checking and git tools to the researc
   }), /SCOUT_RESEARCH_ARTIFACT_CHECK_OK/);
 });
 
-test("AssetStore gives the validator producer contracts and a neutral digest tool", () => {
+test("AssetStore gives the validator producer contracts, code inspection tools, and a neutral digest tool", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-validator-tools-");
   const mount = new AssetStore().materializeMount({
     repoRoot: fixtureRoot,
@@ -170,6 +170,9 @@ test("AssetStore gives the validator producer contracts and a neutral digest too
   assert.ok(mount.skills.includes("guru-knowledge-research"));
   assert.ok(mount.skills.includes("jarvis-codebase"));
   assert.equal(mount.shellTools.some((tool) => tool.id === "scoutResearchArtifactCheck"), false);
+  assert.ok(mount.shellTools.some((tool) => tool.id === "jarvis"));
+  assert.ok(mount.shellTools.some((tool) => tool.id === "codegraph"));
+  assert.ok(mount.shellTools.some((tool) => tool.id === "git"));
   assert.ok(digest);
   assert.equal(existsSync(wrapperPath), true);
   assert.match(execFileSync(wrapperPath, ["--smoke"], {

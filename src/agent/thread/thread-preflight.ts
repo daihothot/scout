@@ -5,7 +5,7 @@ import type { AgentThreadSnapshot } from "./types.js";
 
 export interface ScoutAgentThreadPreflightSnapshot {
   agentId: string;
-  role: AgentThreadSnapshot["spec"]["role"];
+  role: AgentThreadSnapshot["role"];
   threadId: string;
   checkedAt: string;
   result: ThreadPreflightReport;
@@ -19,7 +19,7 @@ export async function runThreadPreflight(input: {
 }): Promise<ScoutAgentThreadPreflightSnapshot> {
   return {
     agentId: input.agentId,
-    role: input.thread.spec.role,
+    role: input.thread.role,
     threadId: input.thread.threadId,
     checkedAt: new Date().toISOString(),
     result: await checkThread(input),

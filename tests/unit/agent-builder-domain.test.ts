@@ -20,7 +20,10 @@ import {
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
   AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
 } from "../../src/agent/tools/agent-tools.js";
-import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
+import {
+  ScoutAgentRoles,
+  type AgentThreadSnapshot,
+} from "../../src/agent/thread/types.js";
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
@@ -29,7 +32,10 @@ import type {
   AppServerResolvedTimelineEntry,
   AppServerTimelineEntry,
 } from "../../src/agent-server/codex/app-server-event-store.js";
-import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
+import type {
+  CodexAppServerClient,
+  ThreadStartOptions,
+} from "../../src/agent-server/codex/app-server-client.js";
 import type { AssetCommit, CodexMount } from "../../src/asset-store/index.js";
 import type { ScoutDomain } from "../../src/domain/index.js";
 import {
@@ -103,6 +109,12 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
   assert.equal(tools.some((tool) => tool.name === "SubmitTask"), false);
   assert.ok(tools.some((tool) => tool.namespace === "domain-a" && tool.name === "DomainProbe"));
   assert.equal(tools.some((tool) => tool.namespace === "domain-b"), false);
+  const instructions = agent.spec.developerInstructions ?? "";
+  assert.match(instructions, /common instructions/);
+  assert.match(instructions, /coordinator instructions/);
+  assert.doesNotMatch(instructions, /worker instructions/);
+  assert.equal(instructions.match(/common instructions/g)?.length, 1);
+  assert.ok(instructions.indexOf("common instructions") < instructions.indexOf("coordinator instructions"));
 });
 
 test("AgentBuilder creates one worker role while preserving domain tool scope", () => {
@@ -136,6 +148,13 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   assert.equal(tools.some((tool) => tool.name === "AssignTask"), false);
   assert.equal(tools.some((tool) => tool.name === "ArchiveTask"), false);
   assert.ok(tools.some((tool) => tool.namespace === "domain-worker" && tool.name === "DomainProbe"));
+  const instructions = agent.spec.developerInstructions ?? "";
+  assert.match(instructions, /common instructions/);
+  assert.match(instructions, /worker instructions/);
+  assert.match(instructions, /researcher instructions/);
+  assert.equal(instructions.match(/common instructions/g)?.length, 1);
+  assert.ok(instructions.indexOf("common instructions") < instructions.indexOf("worker instructions"));
+  assert.ok(instructions.indexOf("worker instructions") < instructions.indexOf("researcher instructions"));
 });
 
 test("Validator turns use workspace-write with only the profile write roots", async () => {
@@ -302,11 +321,21 @@ test("ScoutAgent starts a thread, runs preflight, and binds it to registry", asy
     preparedAgents: fixture.preparedAgents,
   });
   const agent = builder.buildCoordinator();
+  const threadEvents: Array<ScoutEvent<AgentThreadSnapshot>> = [];
+  const unsubscribe = fixture.eventBus.subscribe<AgentThreadSnapshot>(
+    AgentEvents.thread,
+    (event) => {
+      threadEvents.push(event);
+    },
+  );
 
   const thread = await agent.start();
 
   assert.equal(thread.threadId, "thread-test");
-  assert.deepEqual(thread.response, { thread: { id: "thread-test" } });
+  assert.equal(thread.agentId, ScoutAgentRoles.Coordinator);
+  assert.equal(thread.role, ScoutAgentRoles.Coordinator);
+  assert.equal(thread.status, "active");
+  assert.deepEqual(thread.startResponse, { thread: { id: "thread-test" } });
   assert.deepEqual({
     model: appServer.threadInputs[0]?.model,
     modelProvider: appServer.threadInputs[0]?.modelProvider,
@@ -317,8 +346,8 @@ test("ScoutAgent starts a thread, runs preflight, and binds it to registry", asy
     reasoningEffort: "high",
   });
   assert.equal(fixture.registry.resolveAgentByThreadId("thread-test"), agent);
-  await waitFor(() => agent.threadSnapshot?.threadPreflight?.result.status === "passed");
-  assert.equal(agent.threadSnapshot?.threadPreflight?.threadId, "thread-test");
+  await waitFor(() => agent.threadPreflightSnapshot?.result.status === "passed");
+  assert.equal(agent.threadPreflightSnapshot?.threadId, "thread-test");
 
   await agent.runTurn({ prompt: "check model profile" });
   assert.deepEqual({
@@ -332,6 +361,19 @@ test("ScoutAgent starts a thread, runs preflight, and binds it to registry", asy
     reasoningEffort: "high",
     reasoningSummary: "concise",
   });
+
+  agent.stop("test_complete");
+  assert.equal(agent.threadSnapshot?.status, "closed");
+  assert.equal(agent.threadSnapshot?.closeReason, "test_complete");
+  assert.ok(agent.threadSnapshot?.closedAt);
+  assert.deepEqual(threadEvents.map((event) => event.key.routeKey), [
+    AgentEvents.thread.started.routeKey,
+    AgentEvents.thread.closed.routeKey,
+  ]);
+  assert.equal(threadEvents[0]?.payload.startInput.developerInstructions, agent.spec.developerInstructions);
+  assert.equal(threadEvents[1]?.payload.status, "closed");
+  await assert.rejects(agent.start(), /thread is closed/);
+  unsubscribe();
 });
 
 test("ScoutAgent returns no goal when setting a goal fails", async () => {
@@ -987,6 +1029,7 @@ function createMount(root: string, role: string): CodexMount {
   mkdirSync(join(mountRoot, "agents"), { recursive: true });
   mkdirSync(artifactRoot, { recursive: true });
   mkdirSync(logsRoot, { recursive: true });
+  writeFileSync(join(mountRoot, "AGENTS.md"), "common instructions", "utf8");
   for (const agentRole of Object.values(ScoutAgentRoles)) {
     writeFileSync(
       join(mountRoot, "agents", `${agentRole}.AGENTS.md`),
@@ -1231,14 +1274,27 @@ function createFakeAppServer(options: {
     resolveTimelineEntry(entry: AppServerTimelineEntry): AppServerResolvedTimelineEntry {
       return options.resolveTimelineEntry?.(entry) ?? { entry };
     },
-    startThread: async (threadInput: {
-      model?: string;
-      modelProvider?: string;
-      reasoningEffort?: string;
-    }) => {
+    startThread: async (threadInput: ThreadStartOptions) => {
       appServer.threadInputs.push(threadInput);
       return {
         threadId: "thread-test",
+        startInput: {
+          cwd: threadInput.cwd,
+          model: threadInput.model,
+          modelProvider: threadInput.modelProvider,
+          approvalPolicy: threadInput.approvalPolicy ?? "never",
+          sandbox: threadInput.sandbox ?? "workspace-write",
+          ephemeral: threadInput.ephemeral ?? true,
+          config: threadInput.reasoningEffort === undefined
+            ? threadInput.config
+            : {
+                ...(threadInput.config ?? {}),
+                model_reasoning_effort: threadInput.reasoningEffort,
+              },
+          baseInstructions: threadInput.baseInstructions,
+          developerInstructions: threadInput.developerInstructions,
+          dynamicTools: threadInput.dynamicTools,
+        },
         response: {
           thread: { id: "thread-test" },
         },

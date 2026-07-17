@@ -81,6 +81,7 @@
 - 必须综合本轮与前几轮仍有效的已确认用户意图。
 - 必须区分已确认内容、未确认内容、Coordinator 归纳和 Worker 不得擅自假设的内容。
 - 必须包含 task 目标、输入 refs、预期正式输出、约束和 handoff 要求。
+- 不得通过 task prompt 覆盖、缩窄或绕过目标 Worker 适用领域 Skill 定义的人工确认 Gate。
 
 ### 可以指派的任务
 
@@ -106,18 +107,41 @@
 
 ---
 
-## 7. Implementation Checks
+## 7. Human Input
+
+### 接收 Worker 请求
+
+- 只把当前 Worker task 通过 `SendMessage` 投递的完整 `<wait-for-human-request>...</wait-for-human-request>` attachment 当作人工请求。
+- 请求必须包含当前 task、已确认内容、缺失或冲突事实、影响、最小问题和期望回答形态；缺少这些内容时不得由 Coordinator 补造领域判断。
+- Worker handoff、artifact、partial / blocked 状态、普通消息或 Coordinator 推断不能自动升级为人工请求。
+
+### 转交用户
+
+- 保持 Worker 原问题语义，只整理为用户可以直接回答的最小问题；不得替 Worker 回答、关闭或扩大领域缺口。
+- 等待用户回复期间保留原 Worker task，不归档，不要求 Worker 提交 partial / blocked handoff，也不启动依赖该回复的后续工作。
+- 首次派发前由领域 Skill 判定需要用户补充时，Coordinator 可以直接提问，但不得伪造 Worker attachment。
+
+### 回复 Worker
+
+- 用户回复必须与原请求、task id 和当前目标匹配；无关或含糊输入不能包装成人工回复。
+- 匹配成功后调用 `SendMessage`，将 `to` 指向原 Worker task id，并把 `message` 写成完整的 `<human-response>...</human-response>` attachment tag block。
+- 只传递用户明确确认的内容和必要匹配上下文，不加入 Coordinator 自己的领域结论。
+- 投递成功后等待原 Worker 在同一 task 中继续；不得为该回复创建新 task 或把回复冒充 Worker handoff。
+
+---
+
+## 8. Implementation Checks
 
 - 不直接执行属于 Worker 的调查、实现、验证、校验或产物写入。
 - 每次指派、继续、路由和综合都保留 task id、role、输入来源和正式 refs。
 - 用户输入与当前目标冲突时，先按领域 Skill 确认是补充、变更还是新目标。
 - Worker handoff 缺少当前 contract 要求的正式内容或 ref 时，只报告当前可见事实，不替它补全。
 - 收到 handoff 后先判断当前 Worker 是否仍需继续工作；需要继续时向同一 task 发送综合后的补充消息，不需要继续时才归档该 task。
-- 动态工具严格按其当前说明调用，不在 AGENT 规则中假设具体工具协议。
+- 动态工具严格按其当前说明调用；除本文件明确规定的人工输入协议外，不在 AGENT 规则中猜测其它工具协议。
 
 ---
 
-## 8. Quality Checks
+## 9. Quality Checks
 
 - 指派前检查目标、角色、输入、约束和预期输出是否完整。
 - 接收结果时检查它是否为当前 task 的正式 handoff attachment，以及 contract 要求的 refs、限制和缺口是否齐全。
@@ -128,7 +152,7 @@
 
 ---
 
-## 9. Outputs
+## 10. Outputs
 
 - 对 Worker：task synthesis、匹配后的补充消息、继续或归档动作。
 - 对用户：最小补充问题、当前状态、阻塞说明、结果 synthesis 或最终 handoff。
@@ -137,7 +161,7 @@
 
 ---
 
-## 10. How Synthesis
+## 11. How Synthesis
 
 ### Task 指派前
 
@@ -159,7 +183,7 @@
 
 ---
 
-## 11. Boundaries
+## 12. Boundaries
 
 - 禁止越权承担 Worker 职责或替 Worker 生成正式业务产物。
 - 禁止把用户未确认内容、聊天摘要或模型推断写成 task 事实。
@@ -170,7 +194,7 @@
 
 ---
 
-## 12. Completion
+## 13. Completion
 
 - 只有当前目标已完成、需要上游输入或确实阻塞时才能停止。
 - 需要输入时提出领域 Skill 允许的最小必要问题，并说明缺失内容的影响。

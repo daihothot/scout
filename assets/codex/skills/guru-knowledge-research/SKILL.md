@@ -188,11 +188,16 @@ Capability Specifications 的 11 个固定段落：
 
 描述：
 
-- 上游指定的 artifact 位置，或当前 role / task 的 artifact layout。
+- 当前 Researcher 私有 artifact root 下的唯一 Research pack 目录：
+
+```text
+${SCOUT_ARTIFACT_ROOT}/<bdd-id>-research-pack/
+```
 
 注意事项：
 
-- 没有指定更具体位置时，按当前 role 产物目录写入；本技能不创建新的 canonical 目录约定。
+- `<bdd-id>` 必须使用 Phase 2 唯一收敛的 BDD id；同一 run 的同一 BDD 始终复用这一目录。
+- 收到 Gate 修正意见后原地更新该目录并重新计算 digest，不创建 `-v2`、`-v3` 等版本目录或 pack 副本。
 - 需要写入前必须确认目标位置可写。
 
 ## Research Workflow
@@ -208,25 +213,24 @@ Capability Specifications 的 11 个固定段落：
 
 ## Research Output Layout
 
-产物位置由上游、当前 role layout 或当前 task artifact layout 决定。
-
-推荐 research artifact 形态：
+Research pack 固定写入：
 
 ```text
-index.md
-bdd-fact.md
-knowledge-evidence.md
-code-evidence.md
-evidence-registry.md
-verification-manual.md
-evidence/
-  E-BDD-001.md
-  E-KB-001.md
-  E-AVAIL-001.md
-  E-API-001.md
-  E-PLATFORM-001.md
-  E-CG-001.md
-  E-CODE-001.md
+${SCOUT_ARTIFACT_ROOT}/<bdd-id>-research-pack/
+  index.md
+  bdd-fact.md
+  knowledge-evidence.md
+  code-evidence.md
+  evidence-registry.md
+  verification-manual.md
+  evidence/
+    E-BDD-001.md
+    E-KB-001.md
+    E-AVAIL-001.md
+    E-API-001.md
+    E-PLATFORM-001.md
+    E-CG-001.md
+    E-CODE-001.md
 ```
 
 模板目录索引：
@@ -273,6 +277,8 @@ templates/verification-manual.md
 
 ### Artifact Relationship Rules
 
+- `${SCOUT_ARTIFACT_ROOT}/<bdd-id>-research-pack/` 是当前 run/BDD 的唯一 Research pack；修正只改变其中内容和 digest，不改变 pack ref。
+- pack 顶层只允许六个聚合文件和 `evidence/`；Gate follow-up、修订说明或临时文件不得写入 pack 顶层。
 - `bdd-fact.md` 是主 BDD fact 文档，不是 `E-BDD-*` evidence block。
 - 所有 research evidence 都必须是独立 evidence artifact 文件；`E-BDD-*`、`E-KB-*`、`E-AVAIL-*`、`E-API-*`、`E-PLATFORM-*`、`E-CG-*`、`E-CODE-*` 都不能只存在于聚合文件中。
 - `E-BDD-*` 必须从 `bdd-fact.md` 派生，使用 `templates/bdd-evidence.md` 形成独立 evidence artifact；`knowledge-evidence.md` 只登记摘要行和 `artifact_ref`，并同步登记到 `evidence-registry.md`。
@@ -493,6 +499,7 @@ Partial：
 - XR-007：完整 Research pack 必须通过 `scout-research-artifact-check` 后才能标记为 `ready + complete` 并提交 `Research Handoff State: complete`。
 - XR-008：Research pack 为 `draft + partial` 或 `blocked + blocked` 时，handoff 必须使用对应的 `partial` 或 `blocked`，不得宣称全部 Research 已完成。
 - XR-009：task handoff 必须包含 Verification Manual 摘要；manual 尚未形成时必须说明停留阶段和原因，不能用 artifact 列表替代摘要。
+- XR-010：同一 run/BDD 的首次提交和 Gate 修正必须使用同一个 `<bdd-id>-research-pack/` ref；每次提交都必须携带当前内容的新 digest。
 
 ## Evidence Rules (Enforcement)
 
@@ -545,6 +552,7 @@ Partial：
 - PR-005：禁止把 `rg` 作为 Guru managed codebase 的首选源码语义检索方式。
 - PR-006：禁止把本机绝对路径写入 canonical knowledge 或对外事实；Research artifact provenance 例外必须标明为本次 run 的本地来源。
 - PR-007：禁止把 Research 产物写成 pass / fail 结论或 runtime 执行策略。
+- PR-008：禁止创建带 `-vN` 后缀的 Research pack、复制 pack 形成隐式版本管理，或在 pack 顶层创建 `gate-followup.md` 等 contract 外文件。
 
 ## Example
 

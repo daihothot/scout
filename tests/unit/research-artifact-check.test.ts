@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -19,6 +19,34 @@ test("scout-research-artifact-check accepts a replayable ready Research pack", (
   assert.match(output, /research_pack_valid=true/);
   assert.match(output, /evidence_count=4/);
   assert.match(output, /verification_point_count=1/);
+});
+
+test("scout-research-artifact-check rejects a versioned Research pack directory", () => {
+  const packRoot = createReadyResearchPack();
+  const versionedPackRoot = `${packRoot}-v2`;
+  renameSync(packRoot, versionedPackRoot);
+
+  const result = spawnSync(process.execPath, [checkerPath, "pack", versionedPackRoot], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /VERSIONED_PACK_DIRECTORY_FORBIDDEN/);
+});
+
+test("scout-research-artifact-check rejects undeclared Research pack root files", () => {
+  const packRoot = createReadyResearchPack();
+  write(packRoot, "gate-followup.md", "# Gate Follow-up\n");
+
+  const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /UNDECLARED_PACK_ENTRY/);
+  assert.match(result.stderr, /gate-followup\.md/);
 });
 
 test("scout-research-artifact-check rejects contradictory state and non-replayable source evidence", () => {

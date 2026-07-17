@@ -15,7 +15,7 @@ import {
 } from "../tools/agent-tools.js";
 import type { AgentTaskBackend } from "./agent-task-backend.js";
 import type { AgentProvider } from "./types.js";
-import { AgentTaskStatuses, type AgentTaskState } from "../task/types.js";
+import type { AgentTaskState } from "../task/types.js";
 import { WorkerAgent } from "../roles/worker-agent.js";
 import { agent } from "../context/agent-attachments.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
@@ -157,27 +157,10 @@ export class AgentToolBackend {
     if (!(caller instanceof WorkerAgent)) {
       throw new Error("SubmitTask is only available to Worker agents.");
     }
-    const task = caller.runner?.snapshot().activeTask;
-    if (!task) {
-      throw new Error(`Worker agent ${caller.agentId} has no active task to submit.`);
-    }
-    if (task.status !== AgentTaskStatuses.Running) {
-      throw new Error(`Worker task ${task.taskId} cannot be submitted from status ${task.status}.`);
-    }
-    const coordinator = this.registry.listAgents().find((candidate) =>
-      candidate.role === ScoutAgentRoles.Coordinator
-    );
-    if (!coordinator) {
-      throw new Error(`Worker agent ${caller.agentId} cannot find the Coordinator agent.`);
-    }
-    const delivered = coordinator.sendMessage({
-      message: agent.turn.task_outcome(call.outcome),
-    });
-    if (!delivered.ok) throw new Error(delivered.error);
-    const submitted = caller.submitTask();
+    const submitted = caller.submitTask(call.outcome);
     if (!submitted.ok) throw new Error(submitted.error);
     return {
-      status: "done",
+      status: "accepted",
       taskId: submitted.value.taskId,
       agentId: submitted.value.agentId,
       role: submitted.value.role,

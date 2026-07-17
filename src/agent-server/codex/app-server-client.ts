@@ -91,8 +91,22 @@ export interface ThreadStartOptions {
   dynamicTools?: DynamicToolSpec[];
 }
 
+export interface ThreadStartRequest {
+  cwd: string;
+  model?: string;
+  modelProvider?: string;
+  approvalPolicy: "never" | "on-request" | "on-failure" | "untrusted";
+  sandbox: "read-only" | "workspace-write" | "danger-full-access";
+  ephemeral: boolean;
+  config?: Record<string, unknown>;
+  baseInstructions?: string;
+  developerInstructions?: string;
+  dynamicTools?: DynamicToolSpec[];
+}
+
 export interface ThreadStartResponse {
   threadId: string;
+  startInput: ThreadStartRequest;
   response: unknown;
 }
 
@@ -234,7 +248,7 @@ export class CodexAppServerClient {
   }
 
   async startThread(options: ThreadStartOptions): Promise<ThreadStartResponse> {
-    const response = await this.request("thread/start", cleanUndefined({
+    const startInput: ThreadStartRequest = cleanUndefined({
       model: options.model,
       modelProvider: options.modelProvider,
       cwd: options.cwd,
@@ -250,9 +264,11 @@ export class CodexAppServerClient {
       baseInstructions: options.baseInstructions,
       developerInstructions: options.developerInstructions,
       dynamicTools: options.dynamicTools,
-    }));
+    });
+    const response = await this.request("thread/start", startInput);
     return {
       threadId: readNestedString(response, ["thread", "id"]),
+      startInput,
       response,
     };
   }

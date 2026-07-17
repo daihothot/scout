@@ -158,6 +158,6 @@ export interface MountManifest {
   mcpServers: MaterializedMcpServer[];
   skills: string[];
   plugins: string[];
-  workerAgent: string;
+  workerAgent?: string;
   roleAgents: Record<string, string>;
 }

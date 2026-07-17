@@ -68,6 +68,7 @@ test("CodexAppServerClient sends explicit model and reasoning configuration", as
     assert.deepEqual(threadResponse.params.config, {
       model_reasoning_effort: model.reasoningEffort,
     });
+    assert.deepEqual(thread.startInput, threadResponse.params);
     assert.equal(turnResponse.params.model, model.id);
     assert.equal(turnResponse.params.effort, model.reasoningEffort);
     assert.equal(turnResponse.params.summary, model.reasoningSummary);

@@ -125,7 +125,10 @@
         "scoutMemory",
         "scoutJsonWrite",
         "scoutArtifactDigest",
+        "jarvis",
+        "codegraph",
         "rg",
+        "git",
         "cat",
         "sed",
         "find",
@@ -147,7 +150,8 @@
         "~/.guru/codebase"
       ],
       "writableRoots": [
-        "${SCOUT_ARTIFACT_ROOT}"
+        "${SCOUT_ARTIFACT_ROOT}",
+        "~/.guru/codebase"
       ]
     }
   }
