@@ -73,7 +73,7 @@
     {
       "id": "jarvis",
       "name": "jarvis",
-      "command": "/Users/chengdai/.guru/guru-jarvis/scripts/jarvis",
+      "command": "~/.guru/guru-jarvis/scripts/jarvis",
       "exposeAs": "jarvis",
       "required": true,
       "smokeArgs": [
@@ -85,7 +85,7 @@
     {
       "id": "codegraph",
       "name": "codegraph",
-      "command": "/Users/chengdai/.npm-global/bin/codegraph",
+      "command": "~/.npm-global/bin/codegraph",
       "exposeAs": "codegraph",
       "required": true,
       "smokeArgs": [

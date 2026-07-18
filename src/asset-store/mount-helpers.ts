@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, readFileSync } from "node:fs";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { basename, delimiter, isAbsolute, join, resolve } from "node:path";
 import { writeJsonFile, writeTextFile } from "../core/fs.js";
 import type {
   MaterializedMcpServer,
@@ -237,15 +238,36 @@ function resolveCommand(command: string, assetsRoot: string): string {
 }
 
 function resolveShellToolCommand(tool: ShellToolContract, assetsRoot: string): string | undefined {
-  const command = tool.command;
-  if (command === "node") return process.execPath;
-  if (command.startsWith("assets/")) {
-    const assetPath = join(resolve(assetsRoot, "..", ".."), command);
+  const rawCommand = tool.command;
+  if (rawCommand === "node") return process.execPath;
+  if (rawCommand.startsWith("assets/")) {
+    const assetPath = join(resolve(assetsRoot, "..", ".."), rawCommand);
     return existsSync(assetPath) ? assetPath : undefined;
   }
+
+  const command = expandHomePath(rawCommand);
   if (existsSync(command)) return command;
-  if (command.includes("/") || isAbsolute(command)) return undefined;
-  return resolveExecutableFromPath(command);
+
+  const executableName = basename(command);
+  if (
+    executableName.length > 0
+    && executableName !== command
+    && !executableName.includes("/")
+  ) {
+    const fromPath = resolveExecutableFromPath(executableName);
+    if (fromPath) return fromPath;
+  }
+
+  if (!command.includes("/") && !isAbsolute(command)) {
+    return resolveExecutableFromPath(command);
+  }
+  return undefined;
+}
+
+function expandHomePath(command: string): string {
+  if (command === "~") return homedir();
+  if (command.startsWith("~/")) return join(homedir(), command.slice(2));
+  return command;
 }
 
 function resolveAssetArg(arg: string, assetsRoot: string): string {

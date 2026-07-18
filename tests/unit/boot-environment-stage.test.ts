@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
@@ -13,8 +13,7 @@ import {
   installRunScope,
   RunScope,
 } from "../../src/run/run-scope.js";
-
-const repoRoot = process.cwd();
+import { createCodexAssetFixture } from "../helpers/codex-asset-fixture.js";
 
 test("BootEnvironmentStage materializes, preflights, and commits every agent mount", async (t) => {
   const fixtureRoot = createFixture("scout-boot-environment-");
@@ -81,12 +80,7 @@ test("BootEnvironmentStage preserves failed preflight artifacts and rejects star
 });
 
 function createFixture(prefix: string): string {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
-  mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
-    recursive: true,
-  });
-  return fixtureRoot;
+  return createCodexAssetFixture(prefix);
 }
 
 function installEnvironmentScope(repoRoot: string, runId: string): {

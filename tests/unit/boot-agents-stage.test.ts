@@ -1,8 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   BootAgentsStage,
   BootEnvironmentStage,
@@ -17,15 +14,10 @@ import type { ScoutDomain } from "../../src/domain/index.js";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
-
-const repoRoot = process.cwd();
+import { createCodexAssetFixture } from "../helpers/codex-asset-fixture.js";
 
 test("BootAgentsStage starts all role threads in parallel on the installed RunScope", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "scout-boot-agents-"));
-  mkdirSync(join(root, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(root, "assets", "codex"), {
-    recursive: true,
-  });
+  const root = createCodexAssetFixture("scout-boot-agents-");
   const runId = "boot-agents-test";
   const startedThreads: string[] = [];
   const appServer = createAppServer((cwd) => {
@@ -88,11 +80,7 @@ test("BootAgentsStage starts all role threads in parallel on the installed RunSc
 });
 
 test("BootAgentsStage closes started threads when another Agent fails to start", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "scout-boot-agents-failure-"));
-  mkdirSync(join(root, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(root, "assets", "codex"), {
-    recursive: true,
-  });
+  const root = createCodexAssetFixture("scout-boot-agents-failure-");
   const runId = "boot-agents-failure-test";
   const appServer = createAppServer((cwd) => {
     const role = Object.values(ScoutAgentRoles).find((candidate) =>

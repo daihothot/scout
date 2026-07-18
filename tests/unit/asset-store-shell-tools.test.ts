@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AssetStore,
@@ -11,8 +11,7 @@ import {
   type MountManifest,
   type ShellToolsFile,
 } from "../../src/asset-store/index.js";
-
-const repoRoot = process.cwd();
+import { createCodexAssetFixture } from "../helpers/codex-asset-fixture.js";
 
 test("AssetStore reports unresolved shell tools as issues and excludes them from mount outputs", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-shell-tools-");
@@ -173,12 +172,97 @@ test("AssetStore gives the validator producer contracts, code inspection tools, 
   assert.ok(mount.shellTools.some((tool) => tool.id === "jarvis"));
   assert.ok(mount.shellTools.some((tool) => tool.id === "codegraph"));
   assert.ok(mount.shellTools.some((tool) => tool.id === "git"));
+  assert.deepEqual(mount.issues, []);
   assert.ok(digest);
   assert.equal(existsSync(wrapperPath), true);
   assert.match(execFileSync(wrapperPath, ["--smoke"], {
     cwd: mount.mountRoot,
     encoding: "utf8",
   }), /SCOUT_ARTIFACT_DIGEST_OK/);
+});
+
+test("AssetStore expands home-relative shell tool commands", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-home-shell-tool-", {
+    stubExternalShellTools: false,
+  });
+  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const homeBin = join(homedir(), ".scout-test-bin");
+  const toolPath = join(homeBin, "home-shell-tool");
+  mkdirSync(homeBin, { recursive: true });
+  writeExecutable(toolPath, "HOME_SHELL_TOOL_OK");
+  writeShellTools(assetsRoot, {
+    tools: [
+      {
+        id: "homeShellTool",
+        name: "home-shell-tool",
+        command: "~/.scout-test-bin/home-shell-tool",
+        exposeAs: "home-shell-tool",
+        required: true,
+      },
+    ],
+  });
+  updateCoordinatorShellTools(assetsRoot, ["homeShellTool"]);
+
+  try {
+    const mount = new AssetStore().materializeMount({
+      repoRoot: fixtureRoot,
+      runId: "run-home-shell-tool-test",
+      agentId: "coordinator",
+    });
+    assert.ok(mount.shellTools.some((tool) => tool.id === "homeShellTool"));
+    assert.deepEqual(mount.issues, []);
+    assert.match(execFileSync(join(mount.mountRoot, "bin", "home-shell-tool"), [], {
+      cwd: mount.mountRoot,
+      encoding: "utf8",
+    }), /HOME_SHELL_TOOL_OK/);
+  } finally {
+    try {
+      writeFileSync(toolPath, "", "utf8");
+    } catch {
+      // ignore cleanup write failures
+    }
+  }
+});
+
+test("AssetStore falls back to PATH when a configured shell tool path is missing", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-path-fallback-", {
+    stubExternalShellTools: false,
+  });
+  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const pathBin = join(fixtureRoot, "path-bin");
+  const toolPath = join(pathBin, "path-fallback-tool");
+  mkdirSync(pathBin, { recursive: true });
+  writeExecutable(toolPath, "PATH_FALLBACK_TOOL_OK");
+  writeShellTools(assetsRoot, {
+    tools: [
+      {
+        id: "pathFallbackTool",
+        name: "path-fallback-tool",
+        command: "/definitely/missing/path-fallback-tool",
+        exposeAs: "path-fallback-tool",
+        required: true,
+      },
+    ],
+  });
+  updateCoordinatorShellTools(assetsRoot, ["pathFallbackTool"]);
+  const previousPath = process.env.PATH;
+  process.env.PATH = `${pathBin}${previousPath ? `:${previousPath}` : ""}`;
+
+  try {
+    const mount = new AssetStore().materializeMount({
+      repoRoot: fixtureRoot,
+      runId: "run-path-fallback-shell-tool-test",
+      agentId: "coordinator",
+    });
+    assert.ok(mount.shellTools.some((tool) => tool.id === "pathFallbackTool"));
+    assert.deepEqual(mount.issues, []);
+    assert.match(execFileSync(join(mount.mountRoot, "bin", "path-fallback-tool"), [], {
+      cwd: mount.mountRoot,
+      encoding: "utf8",
+    }), /PATH_FALLBACK_TOOL_OK/);
+  } finally {
+    process.env.PATH = previousPath;
+  }
 });
 
 test("AssetStore resolves asset-local shell tool commands against the repo root", () => {
@@ -256,7 +340,7 @@ test("scout-memory reports run-level codex memory files without reading sqlite c
   writeFileSync(join(codexHome, "state_5.sqlite-wal"), "state-wal-placeholder", "utf8");
   writeFileSync(join(codexHome, "ignored.txt"), "not memory", "utf8");
 
-  const scriptPath = join(repoRoot, "assets", "codex", "tools", "scout-memory.cjs");
+  const scriptPath = join(fixtureRoot, "assets", "codex", "tools", "scout-memory.cjs");
   const smoke = execFileSync(process.execPath, [scriptPath, "--smoke"], {
     cwd: mount.mountRoot,
     encoding: "utf8",
@@ -286,15 +370,6 @@ test("scout-memory reports run-level codex memory files without reading sqlite c
   ]);
   assert.ok(list.files.every((file) => file.readable));
 });
-
-function createCodexAssetFixture(prefix: string): string {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
-  mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
-    recursive: true,
-  });
-  return fixtureRoot;
-}
 
 function writeShellTools(assetsRoot: string, shellTools: ShellToolsFile): void {
   writeFileSync(join(assetsRoot, "tools", "shell-tools.json"), JSON.stringify(shellTools, null, 2) + "\n", "utf8");
