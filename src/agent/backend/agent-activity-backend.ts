@@ -3,7 +3,10 @@ import type {
   AppServerTimelineEntry,
 } from "../../agent-server/codex/app-server-event-store.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
-import type { AgentActivity } from "../activity/activity-event.js";
+import type {
+  AgentActivity,
+  AgentTurnActivity,
+} from "../activity/activity-event.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { AgentEvents } from "../events/index.js";
 
@@ -19,7 +22,27 @@ export class AgentActivityBackend {
     entry: AppServerTimelineEntry,
     resolve: () => AppServerResolvedTimelineEntry,
   ): void {
-    if (entry.stream !== "item" || !entry.threadId) return;
+    if (!entry.threadId) return;
+    if (
+      entry.stream === "lifecycle"
+      && (entry.kind === "turn_started" || entry.kind === "turn_completed")
+      && entry.turnId
+    ) {
+      const activeTask = this.scope.taskStore.findActiveTaskForAgent(agent.agentId);
+      const turn = entry.kind === "turn_completed" ? resolve().turn : undefined;
+      this.scope.eventBus.publish(AgentEvents.activity.turnObserved, {
+        seq: entry.seq,
+        agentId: agent.agentId,
+        role: agent.role,
+        taskId: activeTask?.taskId,
+        threadId: entry.threadId,
+        turnId: entry.turnId,
+        status: entry.kind === "turn_started" ? "inProgress" : turn?.status ?? "completed",
+        updatedAt: entry.receivedAt,
+      } satisfies AgentTurnActivity);
+      return;
+    }
+    if (entry.stream !== "item") return;
     if (
       entry.kind !== "item_started"
       && entry.kind !== "item_completed"

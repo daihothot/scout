@@ -10,7 +10,10 @@ import type {
   RuntimeDisclosureEvent,
   RuntimeInteractionPort,
 } from "../protocol/port.js";
-import type { AgentActivity } from "../../agent/activity/activity-event.js";
+import type {
+  AgentActivity,
+  AgentTurnActivity,
+} from "../../agent/activity/activity-event.js";
 import type {
   CoordinatorMessageProducedPayload,
 } from "../../agent/runner/coordinator/coordinator-runner-events.js";
@@ -50,6 +53,10 @@ export class InteractionGateway {
       this.eventBus.subscribe<AgentActivity>(
         AgentEvents.activity.observed,
         (event) => this.handleAgentActivity(event),
+      ),
+      this.eventBus.subscribe<AgentTurnActivity>(
+        AgentEvents.activity.turnObserved,
+        (event) => this.handleAgentTurnActivity(event),
       ),
       this.eventBus.subscribe(
         AgentEvents.task,
@@ -121,6 +128,18 @@ export class InteractionGateway {
         eventId: event.id,
         agentId: event.payload.agentId,
         itemId: event.payload.itemId,
+      });
+    }
+  }
+
+  private async handleAgentTurnActivity(event: ScoutEvent<AgentTurnActivity>): Promise<void> {
+    try {
+      await this.interactionPort.publishAgentTurnActivity(event.payload);
+    } catch (error) {
+      this.warnInteractionError("agent_turn_activity_publish_failed", error, {
+        eventId: event.id,
+        agentId: event.payload.agentId,
+        turnId: event.payload.turnId,
       });
     }
   }

@@ -1,0 +1,183 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { Box, Text, useInput } from "ink";
+import {
+  mouseWheelDelta,
+  parseSgrMouseEvent,
+} from "../activity-viewport.js";
+import {
+  isActiveTaskStatus,
+  type TuiTaskDrawerItem,
+} from "../selectors/task-summaries.js";
+import {
+  TaskPlanStepRow,
+  TaskSummaryRow,
+} from "../rows/task-summary-row.js";
+import {
+  truncateByDisplayWidth,
+} from "../terminal-text.js";
+
+type TaskDrawerVisualRow =
+  | { kind: "task"; id: string; task: TuiTaskDrawerItem; taskIndex: number }
+  | { kind: "step"; id: string; step: TuiTaskDrawerItem["planSteps"][number] };
+
+export function TasksDrawer({
+  tasks,
+  open,
+  width,
+  height,
+  startY,
+  onClose,
+}: {
+  tasks: TuiTaskDrawerItem[];
+  open: boolean;
+  width: number;
+  height: number;
+  startY: number;
+  onClose: () => void;
+}) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [expandedTaskId, setExpandedTaskId] = useState<string>();
+
+  useEffect(() => {
+    setSelectedIndex((current) => Math.max(0, Math.min(current, tasks.length - 1)));
+    setExpandedTaskId((current) => current && tasks.some((task) => task.taskId === current)
+      ? current
+      : undefined);
+  }, [tasks]);
+
+  const moveSelection = (delta: number) => {
+    setSelectedIndex((current) => Math.max(0, Math.min(tasks.length - 1, current + delta)));
+  };
+
+  useInput((value, key) => {
+    if (!open) return;
+    const mouse = parseSgrMouseEvent(value);
+    if (mouse && mouse.y >= startY && mouse.y < startY + height) {
+      const delta = mouseWheelDelta(mouse, 1);
+      if (delta !== undefined) moveSelection(delta);
+      return;
+    }
+    if (key.escape) {
+      onClose();
+      return;
+    }
+    if (key.upArrow) {
+      moveSelection(-1);
+      return;
+    }
+    if (key.downArrow) {
+      moveSelection(1);
+      return;
+    }
+    if (key.return) {
+      const selected = tasks[selectedIndex];
+      if (!selected) return;
+      setExpandedTaskId((current) => current === selected.taskId ? undefined : selected.taskId);
+    }
+  });
+
+  const visualRows = useMemo(
+    () => buildTaskDrawerRows(tasks, expandedTaskId),
+    [expandedTaskId, tasks],
+  );
+
+  if (!open) {
+    return (
+      <Box width={width} height={height} flexShrink={0} overflow="hidden">
+        <Text wrap="truncate-end">{buildCollapsedTaskSummary(tasks, width)}</Text>
+      </Box>
+    );
+  }
+
+  const bodyRows = Math.max(0, height - 1);
+  const selectedVisualIndex = visualRows.findIndex((row) =>
+    row.kind === "task" && row.taskIndex === selectedIndex
+  );
+  const scrollTop = resolveTaskDrawerScrollTop(
+    visualRows.length,
+    bodyRows,
+    selectedVisualIndex,
+  );
+  const visibleRows = visualRows.slice(scrollTop, scrollTop + bodyRows);
+
+  return (
+    <Box
+      flexDirection="column"
+      width={width}
+      height={height}
+      flexShrink={0}
+      overflow="hidden"
+    >
+      <Box width={width} justifyContent="space-between" flexShrink={0}>
+        <Text color="cyan" bold>Tasks</Text>
+        <Text dimColor>Esc close</Text>
+      </Box>
+      {tasks.length === 0
+        ? <Text dimColor>No assigned tasks.</Text>
+        : visibleRows.map((row) => row.kind === "task"
+          ? (
+            <TaskSummaryRow
+              key={row.id}
+              task={row.task}
+              selected={row.taskIndex === selectedIndex}
+              width={width}
+            />
+          )
+          : <TaskPlanStepRow key={row.id} step={row.step} width={width} />)}
+    </Box>
+  );
+}
+
+export function buildCollapsedTaskSummary(tasks: TuiTaskDrawerItem[], width: number): string {
+  const activeTasks = tasks.filter((task) => isActiveTaskStatus(task.status));
+  const archivedTaskCount = tasks.filter((task) => task.status === "archived").length;
+  const taskDetails = tasks
+    .filter((task) => task.status !== "archived")
+    .map((task) => {
+      const sequence = task.taskId.match(/-task-(\d+)$/)?.[1];
+      const role = task.role === "researcher"
+        ? "RES"
+        : task.role === "verifier"
+          ? "VER"
+          : task.role === "validator"
+            ? "VAL"
+            : (task.role ?? "WORKER").toUpperCase();
+      return `${role}:${sequence ? `t-${sequence}` : task.taskId} ${task.status ?? "unknown"}`;
+    })
+    .join(" · ");
+  const archivedSummary = archivedTaskCount > 0 ? `${archivedTaskCount} archived` : "";
+  const details = [taskDetails, archivedSummary].filter(Boolean).join(" · ");
+  return truncateByDisplayWidth(
+    `▸ Tasks  ${activeTasks.length} active${details ? ` · ${details}` : ""}`,
+    width,
+  );
+}
+
+function buildTaskDrawerRows(
+  tasks: TuiTaskDrawerItem[],
+  expandedTaskId: string | undefined,
+): TaskDrawerVisualRow[] {
+  return tasks.flatMap((task, taskIndex): TaskDrawerVisualRow[] => [
+    { kind: "task", id: `task:${task.taskId}`, task, taskIndex },
+    ...(task.taskId === expandedTaskId
+      ? task.planSteps.map((step, stepIndex) => ({
+        kind: "step" as const,
+        id: `task:${task.taskId}:step:${stepIndex}`,
+        step,
+      }))
+      : []),
+  ]);
+}
+
+function resolveTaskDrawerScrollTop(
+  totalRows: number,
+  viewportRows: number,
+  selectedRow: number,
+): number {
+  if (viewportRows <= 0 || totalRows <= viewportRows) return 0;
+  const anchor = Math.max(0, selectedRow);
+  return Math.min(
+    totalRows - viewportRows,
+    Math.max(0, anchor - Math.floor((viewportRows - 1) / 2)),
+  );
+}

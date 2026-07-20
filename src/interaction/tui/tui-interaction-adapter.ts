@@ -6,7 +6,10 @@ import type {
   RuntimeInteractionPort,
   RuntimeInteractionUnsubscribe,
 } from "../protocol/port.js";
-import type { AgentActivity } from "../../agent/activity/activity-event.js";
+import type {
+  AgentActivity,
+  AgentTurnActivity,
+} from "../../agent/activity/activity-event.js";
 import type { BootSnapshot } from "../../run/boot/boot-stage.js";
 import type { TuiStore } from "./tui-store.js";
 
@@ -23,6 +26,10 @@ export class TuiInteractionAdapter implements RuntimeInteractionPort {
 
   async publishAgentActivity(activity: AgentActivity): Promise<void> {
     this.store.addAgentActivity(activity);
+  }
+
+  async publishAgentTurnActivity(activity: AgentTurnActivity): Promise<void> {
+    this.store.addAgentTurnActivity(activity);
   }
 
   async publishTaskEvent(event: ScoutEvent): Promise<void> {

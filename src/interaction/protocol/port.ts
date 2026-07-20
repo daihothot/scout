@@ -1,4 +1,7 @@
-import type { AgentActivity } from "../../agent/activity/activity-event.js";
+import type {
+  AgentActivity,
+  AgentTurnActivity,
+} from "../../agent/activity/activity-event.js";
 import type { ScoutEvent } from "../../core/events/index.js";
 import type { BootSnapshot } from "../../run/boot/boot-stage.js";
 
@@ -29,6 +32,7 @@ export interface RuntimeInteractionPort {
   publishBootSnapshot(snapshot: BootSnapshot): Promise<void>;
   disclose(event: RuntimeDisclosureEvent): Promise<void>;
   publishAgentActivity(activity: AgentActivity): Promise<void>;
+  publishAgentTurnActivity(activity: AgentTurnActivity): Promise<void>;
   publishTaskEvent(event: ScoutEvent): Promise<void>;
   receiveAgentMessage(message: AgentMessageReply): Promise<void>;
   sendAgentMessage?(handler: (message: AgentMessageSend) => void | Promise<void>): RuntimeInteractionUnsubscribe;
@@ -45,6 +49,10 @@ export class NoopRuntimeInteractionPort implements RuntimeInteractionPort {
   }
 
   async publishAgentActivity(): Promise<void> {
+    // no-op
+  }
+
+  async publishAgentTurnActivity(): Promise<void> {
     // no-op
   }
 

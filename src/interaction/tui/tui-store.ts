@@ -1,6 +1,10 @@
 import { AgentEvents } from "../../agent/events/index.js";
+import type { AgentTaskNotAssignedEventPayload } from "../../agent/task/task-events.js";
 import type { AgentTaskState } from "../../agent/task/types.js";
-import type { AgentActivity } from "../../agent/activity/activity-event.js";
+import type {
+  AgentActivity,
+  AgentTurnActivity,
+} from "../../agent/activity/activity-event.js";
 import type { ScoutEvent } from "../../core/events/index.js";
 import type { BootSnapshot } from "../../run/boot/boot-stage.js";
 import type {
@@ -9,7 +13,7 @@ import type {
   RuntimeDisclosureEvent,
 } from "../protocol/port.js";
 
-export type TuiLogKind = "disclosure" | "agent" | "input";
+export type TuiLogKind = "disclosure" | "agent" | "input" | "system";
 
 export interface TuiLogEntry {
   id: string;
@@ -53,6 +57,7 @@ export interface TuiState {
   logs: TuiLogEntry[];
   tasks: TuiTaskSummary[];
   activities: AgentActivity[];
+  turnActivities: AgentTurnActivity[];
 }
 
 export interface TuiStoreOptions {
@@ -72,6 +77,7 @@ export class TuiStore {
   private readonly agentMessageListeners = new Set<TuiAgentMessageListener>();
   private readonly taskMap = new Map<string, TuiTaskSummary>();
   private readonly activityMap = new Map<string, AgentActivity>();
+  private readonly turnActivityMap = new Map<string, AgentTurnActivity>();
   private readonly logs: TuiLogEntry[] = [];
   private boot?: BootSnapshot;
   private runtime: TuiRuntimeInfo;
@@ -94,6 +100,7 @@ export class TuiStore {
       logs: [...this.logs],
       tasks: [...this.taskMap.values()],
       activities: [...this.activityMap.values()],
+      turnActivities: [...this.turnActivityMap.values()],
     };
   }
 
@@ -162,28 +169,64 @@ export class TuiStore {
     this.emit();
   }
 
+  addAgentTurnActivity(activity: AgentTurnActivity): void {
+    this.turnActivityMap.set(turnActivityKey(activity), activity);
+    this.emit();
+  }
+
   addTaskEvent(event: ScoutEvent): void {
-    if (AgentEvents.task.notAssigned.is(event)) return;
-    const task = event.payload as AgentTaskState;
-    if (AgentEvents.task.archived.is(event)) {
-      this.taskMap.delete(task.taskId);
-      this.emit();
+    if (AgentEvents.task.notAssigned.is(event)) {
+      const rejection = event.payload as AgentTaskNotAssignedEventPayload;
+      this.appendLog({
+        kind: "system",
+        text: `任务未指派：${rejection.requestedDescription}。当前任务：${rejection.activeTaskId}。原因：${rejection.reason}`,
+      });
       return;
     }
-    if (!this.taskMap.has(task.taskId) && !AgentEvents.task.assigned.is(event)) return;
+    const task = event.payload as AgentTaskState;
+    let systemText: string | undefined;
+    const archived = AgentEvents.task.archived.is(event);
+    const existing = this.taskMap.get(task.taskId);
+    if (
+      !existing
+      && !AgentEvents.task.assigned.is(event)
+      && !archived
+    ) return;
     this.taskMap.set(task.taskId, {
       taskId: task.taskId,
       taskSequence: task.taskSequence,
       agentId: task.agentId,
       role: task.role,
-      status: task.status,
+      status: archived ? "archived" : task.status,
       description: task.description,
-      updatedAt: task.updatedAt,
-      planSteps: (task.plan?.steps ?? []).map((step) => ({
-        step: step.step,
-        status: step.status,
-      })),
+      updatedAt: archived ? event.occurredAt : task.updatedAt,
+      planSteps: task.plan
+        ? task.plan.steps.map((step) => ({
+          step: step.step,
+          status: step.status,
+        }))
+        : (existing?.planSteps.map((step) => ({ ...step })) ?? []),
     });
+    if (archived) {
+      systemText = `任务 ${task.taskId} 已归档。`;
+    } else if (AgentEvents.task.assigned.is(event)) {
+      systemText = `任务 ${task.taskId} 已指派给 ${task.role}。`;
+    } else if (AgentEvents.task.done.is(event)) {
+      systemText = `任务 ${task.taskId} 已交回本轮结果，等待 Coordinator 后续处理。`;
+    } else if (AgentEvents.task.failed.is(event)) {
+      systemText = `任务 ${task.taskId} 执行失败。`;
+    } else if (AgentEvents.task.stopped.is(event)) {
+      systemText = `任务 ${task.taskId} 已停止。`;
+    } else if (AgentEvents.task.stepCompleted.is(event)) {
+      const step = task.steps?.at(-1);
+      if (step?.humanInputRequest) {
+        systemText = `任务 ${task.taskId} 已请求人工确认。`;
+      }
+    }
+    if (systemText) {
+      this.appendLog({ kind: "system", text: systemText });
+      return;
+    }
     this.emit();
   }
 
@@ -204,14 +247,14 @@ export class TuiStore {
     const message = text.trim();
     if (message.length === 0) {
       this.appendLog({
-        kind: "input",
-        text: "User input ignored: empty message.",
+        kind: "system",
+        text: "已忽略空消息。",
       });
       return;
     }
     this.appendLog({
       kind: "input",
-      text: `User: ${message}`,
+      text: message,
     });
     const response = {
       id: `user-message-${Date.now()}`,
@@ -245,6 +288,10 @@ export class TuiStore {
 
 function activityKey(activity: AgentActivity): string {
   return `${activity.agentId}:${activity.taskId ?? "no-task"}:${activity.itemId}`;
+}
+
+function turnActivityKey(activity: AgentTurnActivity): string {
+  return `${activity.agentId}:${activity.threadId}:${activity.turnId}`;
 }
 
 function tuiStatusForBoot(snapshot: BootSnapshot): TuiRunStatus {

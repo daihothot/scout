@@ -1,86 +1,132 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  buildTaskStepDisplay,
-  isTerminalTaskStatus,
-  resolveTaskStepWindow,
-  resolveTuiWorkspaceLayout,
-  selectCurrentTask,
-} from "../../src/interaction/tui/workspace-layout.js";
+import { buildCollapsedTaskSummary } from "../../src/interaction/tui/panels/tasks-drawer.js";
+import { buildTaskStepDisplay } from "../../src/interaction/tui/rows/task-summary-row.js";
+import { selectTaskSummaries } from "../../src/interaction/tui/selectors/task-summaries.js";
 import { terminalDisplayWidth } from "../../src/interaction/tui/terminal-text.js";
-import type {
-  TuiTaskPlanStep,
-  TuiTaskSummary,
-} from "../../src/interaction/tui/tui-store.js";
+import {
+  resolveTuiWidths,
+  resolveTuiWorkspaceLayout,
+} from "../../src/interaction/tui/workspace-layout.js";
+import type { TuiTaskPlanStep } from "../../src/interaction/tui/tui-store.js";
+import type { TuiState } from "../../src/interaction/tui/tui-store.js";
 
-test("workspace gives Coordinator the full viewport when no task exists", () => {
+test("workspace keeps Chat full width above the collapsed task and activity rows", () => {
   const layout = resolveTuiWorkspaceLayout({
     availableRows: 12,
-    hasTask: false,
-    workerOpen: false,
-    planStepCount: 0,
-  });
-
-  assert.equal(layout.topMarginRows, 1);
-  assert.equal(layout.coordinatorHeaderOffset, 1);
-  assert.equal(layout.coordinatorBodyOffset, 2);
-  assert.equal(layout.coordinatorViewportRows, 10);
-  assert.equal(layout.taskHeaderOffset, undefined);
-  assert.equal(layout.workerHeaderOffset, undefined);
-});
-
-test("workspace fits Coordinator, five task steps and Worker into twelve rows", () => {
-  const layout = resolveTuiWorkspaceLayout({
-    availableRows: 12,
-    hasTask: true,
-    workerOpen: true,
-    planStepCount: 5,
+    drawerOpen: false,
+    taskCount: 3,
+    desiredActivityRows: 1,
   });
 
   assert.deepEqual(layout, {
     totalRows: 12,
-    topMarginRows: 0,
-    sectionGapRows: 0,
-    coordinatorHeaderOffset: 0,
-    coordinatorBodyOffset: 1,
-    coordinatorViewportRows: 2,
-    taskHeaderOffset: 3,
-    taskStepsOffset: 4,
-    taskStepRows: 5,
-    workerHeaderOffset: 9,
-    workerBodyOffset: 10,
-    workerViewportRows: 2,
+    chatOffset: 0,
+    chatRows: 9,
+    tasksOffset: 9,
+    taskRows: 1,
+    activityGapRows: 1,
+    activityOffset: 11,
+    activityRows: 1,
   });
 });
 
-test("closed Worker activity keeps its task plan and returns remaining rows to Coordinator", () => {
+test("expanded task drawer takes bounded bottom rows without removing Chat", () => {
   const layout = resolveTuiWorkspaceLayout({
     availableRows: 12,
-    hasTask: true,
-    workerOpen: false,
-    planStepCount: 5,
+    drawerOpen: true,
+    taskCount: 3,
+    desiredActivityRows: 1,
   });
 
-  assert.equal(layout.coordinatorViewportRows, 5);
-  assert.equal(layout.taskStepRows, 5);
-  assert.equal(layout.workerViewportRows, 0);
-  assert.equal(layout.workerHeaderOffset, undefined);
+  assert.deepEqual(layout, {
+    totalRows: 12,
+    chatOffset: 0,
+    chatRows: 2,
+    tasksOffset: 2,
+    taskRows: 8,
+    activityGapRows: 1,
+    activityOffset: 11,
+    activityRows: 1,
+  });
 });
 
-test("task step window follows the in-progress step when height is constrained", () => {
-  const steps = Array.from({ length: 8 }, (_, index): TuiTaskPlanStep => ({
-    step: `Step ${index + 1}`,
-    status: index === 5 ? "inProgress" : index < 5 ? "completed" : "pending",
-  }));
+test("short workspaces preserve Chat before optional chrome rows", () => {
+  assert.deepEqual(resolveTuiWorkspaceLayout({
+    availableRows: 2,
+    drawerOpen: true,
+    taskCount: 3,
+    desiredActivityRows: 1,
+  }), {
+    totalRows: 2,
+    chatOffset: 0,
+    chatRows: 1,
+    tasksOffset: 1,
+    taskRows: 1,
+    activityGapRows: 0,
+    activityOffset: 2,
+    activityRows: 0,
+  });
+});
 
-  const window = resolveTaskStepWindow(steps, 4);
-  assert.equal(window.start, 4);
-  assert.deepEqual(window.steps.map((step) => step.step), [
-    "Step 5",
-    "Step 6",
-    "Step 7",
-    "Step 8",
-  ]);
+test("workspace reserves wrapped Activity rows below the task gap", () => {
+  assert.deepEqual(resolveTuiWorkspaceLayout({
+    availableRows: 12,
+    drawerOpen: false,
+    taskCount: 1,
+    desiredActivityRows: 3,
+  }), {
+    totalRows: 12,
+    chatOffset: 0,
+    chatRows: 7,
+    tasksOffset: 7,
+    taskRows: 1,
+    activityGapRows: 1,
+    activityOffset: 9,
+    activityRows: 3,
+  });
+});
+
+test("task drawer keeps archived tasks after current tasks and summarizes their count", () => {
+  const state: TuiState = {
+    runtime: {
+      cwd: "/repo/scout",
+      version: "0.1.0",
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+      status: "ready",
+    },
+    logs: [],
+    activities: [],
+    turnActivities: [],
+    tasks: [
+      {
+        taskId: "researcher-task-0001",
+        taskSequence: 1,
+        role: "researcher",
+        status: "archived",
+        description: "旧研究任务",
+        updatedAt: "2026-07-10T00:00:01.000Z",
+        planSteps: [],
+      },
+      {
+        taskId: "validator-task-0001",
+        taskSequence: 1,
+        role: "validator",
+        status: "running",
+        description: "检查研究结果",
+        updatedAt: "2026-07-10T00:00:02.000Z",
+        planSteps: [],
+      },
+    ],
+  };
+
+  const tasks = selectTaskSummaries(state);
+  assert.deepEqual(tasks.map((task) => task.status), ["running", "archived"]);
+  assert.equal(
+    buildCollapsedTaskSummary(tasks, 120),
+    "▸ Tasks  1 active · VAL:t-0001 running · 1 archived",
+  );
 });
 
 test("task step statuses start in one aligned column", () => {
@@ -89,33 +135,33 @@ test("task step statuses start in one aligned column", () => {
     { step: "Locate BDD", status: "completed" },
     { step: "Write artifact", status: "pending" },
   ];
-  const rows = steps.map((step) => buildTaskStepDisplay(step, 48));
+  const rows = steps.map((step) => buildTaskStepDisplay(step, 46));
 
-  assert.deepEqual(rows.map((row) => row.statusColumnStart), [38, 38, 38]);
-  assert.deepEqual(rows.map((row) => row.marker), ["→", "✓", "✷"]);
+  assert.deepEqual(rows.map((row) => row.statusColumnStart), [36, 36, 36]);
+  assert.deepEqual(rows.map((row) => row.marker), ["→", "✓", "·"]);
   assert.equal(rows[0]?.status, "inProgress");
   assert.ok(rows.every((row) =>
-    terminalDisplayWidth(`${row.marker} ${row.label}${row.labelPadding}${row.status}`) <= 48
+    terminalDisplayWidth(`${row.marker} ${row.label}${row.labelPadding}${row.status}`) <= 46
   ));
 });
 
-test("current task selection follows serial task sequence", () => {
-  const tasks = [taskSummary(1, "done"), taskSummary(3, "running"), taskSummary(2, "done")];
-  assert.equal(selectCurrentTask(tasks)?.taskId, "task-3");
-  assert.equal(isTerminalTaskStatus("done"), false);
-  assert.equal(isTerminalTaskStatus("stopped"), true);
-  assert.equal(isTerminalTaskStatus("running"), false);
+test("TUI widths derive every horizontal region from terminal columns", () => {
+  assert.deepEqual(resolveTuiWidths(20), {
+    terminalWidth: 20,
+    rootPaddingX: 0,
+    contentWidth: 20,
+    inputValueWidth: 14,
+  });
+  assert.deepEqual(resolveTuiWidths(40), {
+    terminalWidth: 40,
+    rootPaddingX: 1,
+    contentWidth: 38,
+    inputValueWidth: 32,
+  });
+  assert.deepEqual(resolveTuiWidths(80), {
+    terminalWidth: 80,
+    rootPaddingX: 2,
+    contentWidth: 76,
+    inputValueWidth: 70,
+  });
 });
-
-function taskSummary(taskSequence: number, status: string): TuiTaskSummary {
-  return {
-    taskId: `task-${taskSequence}`,
-    taskSequence,
-    agentId: "researcher",
-    role: "researcher",
-    status,
-    description: `Task ${taskSequence}`,
-    updatedAt: `2026-07-10T00:00:0${taskSequence}.000Z`,
-    planSteps: [],
-  };
-}

@@ -3,7 +3,10 @@ import test from "node:test";
 import type {
   AgentMessageSend,
 } from "../../src/interaction/protocol/port.js";
-import type { AgentActivity } from "../../src/agent/activity/activity-event.js";
+import type {
+  AgentActivity,
+  AgentTurnActivity,
+} from "../../src/agent/activity/activity-event.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
@@ -139,6 +142,24 @@ test("TuiStore hides dynamic tool calls and retains Worker activity", () => {
   );
 });
 
+test("TuiStore retains the latest lifecycle state for each Agent turn", () => {
+  const store = createStore();
+  const started = turnActivity({ status: "inProgress", seq: 1 });
+  store.addAgentTurnActivity(started);
+  store.addAgentTurnActivity(turnActivity({
+    status: "completed",
+    seq: 4,
+    updatedAt: "2026-07-10T00:00:04.000Z",
+  }));
+
+  assert.deepEqual(store.snapshot().turnActivities, [{
+    ...started,
+    seq: 4,
+    status: "completed",
+    updatedAt: "2026-07-10T00:00:04.000Z",
+  }]);
+});
+
 test("TuiStore ignores task updates until assignment is confirmed", () => {
   const store = createStore();
   const bus = new InMemoryEventBus();
@@ -156,7 +177,7 @@ test("TuiStore ignores task updates until assignment is confirmed", () => {
   assert.deepEqual(store.snapshot().logs, []);
 });
 
-test("TuiStore keeps a done task visible until archive removes it", () => {
+test("TuiStore keeps an archived task with its last projected plan", () => {
   const store = createStore();
   const bus = new InMemoryEventBus();
   const assigned = taskState();
@@ -195,14 +216,60 @@ test("TuiStore keeps a done task visible until archive removes it", () => {
       { step: "Write research artifact", status: "completed" },
     ],
   }]);
-  assert.deepEqual(store.snapshot().logs, []);
+  assert.deepEqual(
+    store.snapshot().logs.map((log) => [log.kind, log.text]),
+    [
+      ["system", "任务 researcher-task-0001 已指派给 researcher。"],
+      ["system", "任务 researcher-task-0001 已交回本轮结果，等待 Coordinator 后续处理。"],
+    ],
+  );
 
-  store.addTaskEvent(bus.publish(AgentEvents.task.archived, taskState({
+  const archivedEvent = bus.publish(AgentEvents.task.archived, taskState({
     status: "done",
     updatedAt: "2026-07-10T00:00:04.000Z",
+  }));
+  store.addTaskEvent(archivedEvent);
+
+  assert.deepEqual(store.snapshot().tasks, [{
+    taskId: "researcher-task-0001",
+    taskSequence: 1,
+    agentId: "researcher",
+    role: "researcher",
+    status: "archived",
+    description: "Research BDD evidence",
+    updatedAt: archivedEvent.occurredAt,
+    planSteps: [
+      { step: "Read role and skills", status: "completed" },
+      { step: "Locate BDD", status: "completed" },
+      { step: "Write research artifact", status: "completed" },
+    ],
+  }]);
+  assert.equal(store.snapshot().logs.at(-1)?.text, "任务 researcher-task-0001 已归档。");
+});
+
+test("TuiStore reports human confirmation without projecting a waiting task status", () => {
+  const store = createStore();
+  const bus = new InMemoryEventBus();
+  store.addTaskEvent(bus.publish(AgentEvents.task.assigned, taskState()));
+  store.addTaskEvent(bus.publish(AgentEvents.task.stepCompleted, taskState({
+    status: "running",
+    steps: [{
+      stepId: "researcher-task-0001-step-0001",
+      taskId: "researcher-task-0001",
+      status: "completed",
+      prompt: "查证当前版本。",
+      toolCalls: [],
+      startedAt: "2026-07-10T00:00:00.000Z",
+      finishedAt: "2026-07-10T00:00:01.000Z",
+      humanInputRequest: { body: "请确认目标版本。" },
+    }],
   })));
 
-  assert.deepEqual(store.snapshot().tasks, []);
+  assert.equal(store.snapshot().tasks[0]?.status, "running");
+  assert.equal(
+    store.snapshot().logs.at(-1)?.text,
+    "任务 researcher-task-0001 已请求人工确认。",
+  );
 });
 
 function createStore(): TuiStore {
@@ -212,6 +279,20 @@ function createStore(): TuiStore {
     model: "gpt-5.5",
     reasoningEffort: "high",
   });
+}
+
+function turnActivity(input: Partial<AgentTurnActivity> = {}): AgentTurnActivity {
+  return {
+    seq: 1,
+    agentId: "researcher",
+    role: "researcher",
+    taskId: "researcher-task-0001",
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    status: "inProgress",
+    updatedAt: "2026-07-10T00:00:01.000Z",
+    ...input,
+  };
 }
 
 function activity(input: {
