@@ -83,10 +83,10 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 - Research pack 不保存独立顶层状态 artifact；`scout-research-artifact-check` 根据五个必需聚合 artifact 的状态派生 Pack 状态。
 - 五个必需聚合 artifact 全部为 `ready + complete` 时，Pack 才是 `ready + complete`；任一为 `blocked + blocked` 时 Pack 为 `blocked + blocked`；其它组合派生为 `draft + partial`。
 - Pack 为 `ready + complete` 时，所有 implementation claim 必须有 `source_verified` 的 `E-CODE-*`。
-- 模板中未注明 `Nice to Have，可不填写` 的事实字段必须取得确切信息；现有输入、证据和工具结果都无法确认时，必须发起人工求证并保持 `draft + partial`。
+- 模板中未注明 `Nice to Have，可不填写` 的事实字段必须取得确切信息；现有输入、证据和工具结果都无法确认时，识别后必须立即发起人工求证、停止后续阶段并保持 `draft + partial`。
 - 明确注明 `Nice to Have，可不填写` 的字段有可靠信息时填写；缺失不阻塞完成，也不单独触发人工求证。
 - 由人工确认闭环的事实必须登记为 `E-HUMAN-*`；knowledge 候选或 Researcher 推断不能替代用户确认。
-- task handoff 必须使用英文标题 `Research Handoff State`，在标题下用中文明确 `complete | partial | blocked` 状态并给出 Verification Manual 摘要；artifact 为部分完成时不得在 handoff 中描述为 Research 已完成。
+- task handoff 必须使用英文标题 `Research Handoff State`，在标题下用中文明确 `complete | partial | blocked` 状态并给出 Verification Manual 摘要；存在待人工确认的必需事实时不得提交 handoff，artifact 为其它原因部分完成时不得在 handoff 中描述为 Research 已完成。
 
 ## Repository Provenance Model
 
@@ -492,7 +492,7 @@ templates/verification-manual.md
 - verification point 只描述需要验证的功能点，不写 pass / fail 标准。
 - `Supporting Evidence` 只引用 evidence id，不粘贴证据正文。
 - `Signals To Collect` 只列建议采集的信号类型，不制定执行策略或成功标准。
-- 模板中仍未闭环且未注明可不填写的事实字段必须放入 `Human Confirmation Needed`，不得形成完成态 manual。
+- 识别到模板中仍未闭环且未注明可不填写的事实字段时，将当前缺口放入 `Human Confirmation Needed`，立即进入人工确认 Gate 并停止后续工作；不得形成完成态 manual 或 task handoff。
 - 每个 verification point 必须通过 `persona_evidence_ref` 引用 registry 中已登记的 `E-PERSONA-*`，不得内嵌用户画像字段。
 - 人工求证完成后，`E-HUMAN-*` 的 `applies_to` 必须定位被确认的模板字段；`E-PERSONA-*` 通过 `Source Evidence` 引用支撑画像事实的人工确认证据，manual 只在该人工确认证据直接支持 verification point 时引用它。
 - Given / When / Then 只能由 BDD fact 和 `E-PERSONA-*` 派生，不得复制 `code-evidence.md` 中的 implementation claim，也不是最终判定标准。
@@ -501,7 +501,7 @@ templates/verification-manual.md
 Exit：
 
 - 每个 verification point 都有 `persona_evidence_ref`、Given / When / Then、supporting evidence ids 和 signals to collect；所有 refs 已通过 `scout-research-artifact-check` 检查。
-- 已准备 task handoff 使用的验证手册摘要，包括 manual ref、verification points、用户画像、supporting evidence ids、signals to collect 和需人工确认项。
+- 已准备 task handoff 使用的验证手册摘要，包括 manual ref、verification points、用户画像、supporting evidence ids、signals to collect，以及已闭环人工确认记录或 `none`。
 
 Blocked：
 
@@ -517,12 +517,12 @@ Partial：
 
 - XR-001：不得跳过会影响 claim、evidence registry 或 verification manual 的前置 Phase。
 - XR-002：任何阻塞项未关闭时，不得把 Research 输出标记为 `ready` 或 `complete`。
-- XR-003：`partial` 状态只能用于交接已定位证据和缺口；不得把 `partial` 产物写成完整 verification manual。
+- XR-003：不存在待人工确认的必需事实时，`partial` 状态才能用于交接已定位证据和其它缺口；不得把 `partial` 产物写成完整 verification manual。
 - XR-004：Knowledge evidence、code evidence、registry 和 manual 必须遵守 `### Artifact Relationship Rules` 中的 claim owner 和 ref field policy。
-- XR-005：最终 Research 输出必须包含闭环 evidence ids、source / locator、limitations、failed_commands、retry_log 和需人工确认项。
+- XR-005：最终 Research 输出必须包含闭环 evidence ids、source / locator、limitations、failed_commands、retry_log，以及已闭环人工确认记录或 `none`。
 - XR-006：verification manual 只能引用 evidence id，不得重新定义 claim、复制证据正文或制定 runtime 执行策略。
 - XR-007：完整 Research pack 必须通过 `scout-research-artifact-check`，并由 checker 派生为 `ready + complete`，才能提交标题为 `Research Handoff State`、内容为中文的 complete handoff。
-- XR-008：checker 将 Research pack 派生为 `draft + partial` 或 `blocked + blocked` 时，handoff 必须使用对应的 `partial` 或 `blocked`，不得宣称全部 Research 已完成。
+- XR-008：checker 将 Research pack 派生为 `draft + partial` 或 `blocked + blocked`，且不存在待人工确认的必需事实时，handoff 必须使用对应的 `partial` 或 `blocked`；存在待人工确认的必需事实时不得提交 handoff。
 - XR-009：task handoff 必须包含 Verification Manual 摘要；manual 尚未形成时必须说明停留阶段和原因，不能用 artifact 列表替代摘要。
 - XR-010：同一 run/BDD 的首次提交和 Gate 修正必须使用同一个 `<bdd-id>-research-pack/` ref；每次提交都必须携带 `scout-artifact-digest` 计算的当前 `scout-directory-sha256-v1` digest 和算法名。
 - XR-011：完成态 verification manual 及其引用的 `E-PERSONA-*` 中所有未注明可不填写的事实字段必须闭环；通过人工求证确认的字段必须有已登记到 registry 的 `E-HUMAN-*`，并由其 `applies_to` 定位该字段。
@@ -608,11 +608,11 @@ Partial：
 - `code-evidence.md`：记录当前版本匿名登录入口、fallback 逻辑和相关 symbol evidence。
 - `evidence-registry.md`：集中列出 `E-BDD-001`、`E-KB-001`、`E-CAP-*`、`E-AVAIL-001`、`E-PLATFORM-001` 和 `E-CODE-*`。
 - `verification-manual.md`：只用 BDD、`E-PERSONA-*`、其它 evidence ids 和待采集信号描述验证点。
-- task handoff：使用英文标题 `Research Handoff State`，在标题下用中文明确 pack 的 `complete | partial | blocked` 状态，并摘要 manual ref、verification points、用户画像、supporting evidence ids、signals to collect 和需人工确认项。
+- task handoff：使用英文标题 `Research Handoff State`，在标题下用中文明确 pack 的 `complete | partial | blocked` 状态，并摘要 manual ref、verification points、用户画像、supporting evidence ids、signals to collect，以及已闭环人工确认记录或 `none`；存在待人工确认的必需事实时不生成 task handoff。
 - `verification-manual.md`：列出 VP-001，通过 `persona_evidence_ref` 引用独立用户画像 evidence，并包含 Given / When / Then、supporting evidence ids 和 signals to collect。
 
 边界示例：
 
 - 多个 Behavior 候选：停在 Phase 2，通过当前 task 发起最小人工求证，不创建空 Research pack，也不生成 `verification-manual.md`。
 - CodeGraph 不可用：按 `jarvis-codebase` 规则记录 `code-evidence.md` 的阻塞项；不得把 `knowledge-evidence.md` 写成 implementation fact。
-- 默认需要求证的事实未确认：先完成不依赖该确认的研究，生成 manual 草稿并请求一次最小人工确认；等待期间不提交 partial/blocked handoff，收到回复后登记 `E-HUMAN-*` 并继续完成同一 pack。
+- 默认需要求证的事实未确认：识别后立即停止当前研究并请求一次最小人工确认，不继续处理后续阶段；等待期间保持当前 task 为 `running`，不提交任何状态的 handoff，收到回复后登记 `E-HUMAN-*` 并从当前阶段继续完成同一 pack。

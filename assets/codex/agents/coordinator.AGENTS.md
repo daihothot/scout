@@ -82,6 +82,7 @@
 - 必须区分已确认内容、未确认内容、Coordinator 归纳和 Worker 不得擅自假设的内容。
 - 必须包含 task 目标、输入 refs、预期正式输出、约束和 handoff 要求。
 - 不得通过 task prompt 覆盖、缩窄或绕过目标 Worker 适用领域 Skill 定义的人工确认 Gate。
+- 不得要求 Worker 把必须由人工确认的问题写进 complete、partial 或 blocked handoff 来替代正式人工请求。
 
 ### 可以指派的任务
 
@@ -114,6 +115,7 @@
 - 只把 Runtime 明确标识为来自当前 Worker task 的人工输入请求当作正式人工请求。
 - 请求缺少当前 task、已确认内容、缺失或冲突事实、影响、最小问题或期望回答形态时，不得由 Coordinator 补造领域判断。
 - Worker handoff、artifact、partial / blocked 状态、普通消息或 Coordinator 推断不能自动升级为人工请求。
+- Worker handoff 声明存在尚未闭环、可能需要人工解决的问题，但没有正式人工请求时，先向同一 Worker task 询问是否适用其 Human Confirmation Gate；不得自行补造问题或直接推进下游工作。
 
 ### 转交用户
 

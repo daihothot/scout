@@ -160,6 +160,7 @@ Partial：
 
 - Researcher 接收 BDD 定位与 Research 输入收敛任务。
 - Validator 只在 Researcher 已提交正式 handoff，且 handoff 明确引用唯一、可读的 Research pack 目录后接收 Research Pack Gate task。
+- Researcher handoff 已明确声明某项必需事实必须由人工确认并给出最小问题时，先处理人工确认，不得创建或继续 Validator task。
 - Researcher handoff 缺少唯一可读 pack ref 时，保留原 Researcher task；不得把 handoff 文本包装成 Validator 输入，也不得创建 Validator task。
 - Researcher task 进入 `done` 后保持未归档，直到 Validator 对对应 pack digest 给出 `accepted`。
 - Validator 已有未归档 task 时，通过同一 task 继续复查，不创建新的 Validator task。
@@ -168,11 +169,13 @@ Partial：
 派发顺序：
 
 1. 没有 Researcher 正式 handoff：保留 Researcher task，等待其继续工作或正式交回。
-2. 有 handoff 但没有唯一可读 Research pack 目录 ref：保留 Researcher task，停止向 Validator 派发。
-3. 有唯一可读 Research pack 目录 ref：保留 Researcher task，创建或继续 Validator task 检查该 pack。
-4. Gate 为 `needs_fix` 或 `insufficient_evidence`：保留两个 task，把 Gate 问题发回原 Researcher task。
-5. Gate 为 `blocked`：保留两个 task，不归档、不改派其它角色。
-6. Gate 为 `accepted` 且 digest 对应最新 pack：才允许归档 Researcher 和 Validator task。
+2. Researcher handoff 已明确声明某项必需事实必须由人工确认并给出最小问题：Coordinator 可以直接向用户询问，并把用户明确答复送回原 Researcher task；不创建新 task，不向 Validator 派发。
+3. handoff 只声明存在问题，但没有明确该问题是否必须由人工确认或没有给出最小问题：先询问原 Researcher task，不自行形成领域问题。
+4. 有 handoff 但没有唯一可读 Research pack 目录 ref：保留 Researcher task，停止向 Validator 派发。
+5. 有唯一可读 Research pack 目录 ref，且不存在待人工确认的必需事实：保留 Researcher task，创建或继续 Validator task 检查该 pack。
+6. Gate 为 `needs_fix` 或 `insufficient_evidence`：保留两个 task，把 Gate 问题发回原 Researcher task。
+7. Gate 为 `blocked`：保留两个 task，不归档、不改派其它角色。
+8. Gate 为 `accepted` 且 digest 对应最新 pack：才允许归档 Researcher 和 Validator task。
 
 Exit：
 
@@ -194,7 +197,9 @@ Partial：
 注意事项：
 
 - 正式 handoff 必须按角色、artifact refs、evidence refs、限制和缺口整理。
-- Researcher handoff 为 complete、partial 或 blocked，只要提供唯一可读 pack ref，就指派 Validator 检查实际内容；不得由 Coordinator 预判 Gate。
+- Researcher handoff 明确声明待人工确认的必需事实并给出最小问题时，Coordinator 可以直接向用户询问并把明确答复送回原 Researcher task；这只是对 Researcher 已声明问题的兜底转发，不得扩写或关闭领域缺口。
+- Researcher handoff 只声明存在问题，但没有明确是否必须人工确认或没有给出最小问题时，先询问原 Researcher task；不得由 Coordinator 预判 Human Confirmation Gate。
+- Researcher handoff 为 complete、partial 或 blocked，提供唯一可读 pack ref 且不存在待人工确认的必需事实时，才指派 Validator 检查实际内容；不得由 Coordinator 预判 Research Pack Gate。
 - Researcher handoff 无唯一可读 pack ref 时，不存在可执行的 Research Pack Gate；保持 Researcher task 未归档，并报告缺少的正式输入。
 - Validator 返回 `needs_fix` 或 `insufficient_evidence` 时，把 Gate ref、pack digest、问题 ids 和最小解除条件综合后发回原 Researcher task。
 - Researcher 再次提交后，把同一 pack ref、新 digest 和新 handoff 发送给原 Validator task 复查；不得沿用旧 digest 的 Gate。
@@ -212,7 +217,7 @@ Blocked：
 
 Partial：
 
-- Research pack 为 partial 时仍交给 Validator 检查；根据其 Gate 明确下一责任角色，不由 Coordinator提升状态。
+- Research pack 为 partial 且不存在待人工确认的必需事实时仍交给 Validator 检查；根据其 Gate 明确下一责任角色，不由 Coordinator 提升状态。
 
 ## Workflow Exit Rules (Enforcement)
 
@@ -222,6 +227,7 @@ Partial：
 - XR-004：当前阶段完成 synthesis 必须引用最新 Research pack ref、对应 digest 和 accepted Gate 报告。
 - XR-005：只有最新 Research pack 的 Gate 为 `accepted` 时才能归档 Researcher 与 Validator task；缺 pack、`needs_fix`、`insufficient_evidence`、`blocked` 或 digest 不匹配均必须保留 task。
 - XR-006：每次 Validator 检查必须使用其 handoff 明确引用的独立 Gate 记录；不得覆盖、复用旧 Gate 或自行猜测最高序号文件。
+- XR-007：Researcher 已明确声明待人工确认的必需事实时，必须先完成该人工确认往返；不得把对应 handoff 直接派给 Validator。
 
 ## Evidence Rules (Enforcement)
 
