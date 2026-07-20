@@ -69,7 +69,7 @@ Scout 现在已经从“跑不起来的设计草稿”进入“基础设施可�
 
 - `thread/start` 只信 `thread.id`，其它 response 原样保存在 snapshot 里，不再把 response 其他字段当成稳定 contract。
 - `runTurn()` 是 `awaitTurnCompletion()` + `startTurn()` 的组合，等待的是当前 thread 的 turn 完成。
-- worker 调用 `RequestHumanInput` 后，模型自然停止即可；当前不主动调用 `turn/interrupt`。
+- worker 调用 `RequestHumanInput` 后当前 turn 自然完成；task 保持 `running`，当前不主动调用 `turn/interrupt`。
 - app-server response / notification 是底层事实源，但 Scout 业务状态不能只存在于 app-server thread history 中。
 
 ### 2.2 AppServerEventStore
@@ -368,8 +368,8 @@ WorkerRunner 任务流程：
 注意：
 
 - WorkerRunner 当前依赖 `continueAfterMs: 0` 连续推进 running task；`takeTaskTick()` 本身不会直接因为 `running` 返回 task。下一阶段如果发现 task 观察事件不足，可优先检查这里。
-- pending message 不等于 human response。只有带 `human-response` tag 的 message 才能用于解除 `waiting_for_human_input`。
-- worker 不负责猜测或补 tag。
+- pending message 不等于 human response。只有 Runtime 通过专用回复入口包装的 `human-response` 才记录为 step 的 `humanInputResponse`。
+- Agent 只传 Dynamic Tool 的纯语义字段，不负责猜测、拼接或补 Runtime tag。
 
 ## 7. Task Model
 
@@ -399,25 +399,24 @@ WorkerRunner 任务流程：
 
 - `queued`
 - `running`
-- `waiting_for_human_input`
-- `complete`
-- `blocked`
+- `done`
 - `failed`
 - `stopped`
 
 已删除/不应恢复：
 
 - `waiting_for_coordinator`
+- `waiting_for_human_input`
 - `humanInputReceived`
 - `RequestHumanInput` 伪造成 terminal outcome
 - parent task
 
 规则：
 
-- `RequestHumanInput` 只能让 task 进入 `waiting_for_human_input`，不能伪造成 outcome。
-- 一个 turn 没有 terminal outcome 不代表失败，可能是 waiting/interrupted。
-- human input request 和 response 都写到当前 step。
-- task outcome 只表达 terminal outcome：complete/blocked/failed。
+- `RequestHumanInput` 不改变 task 状态；当前 task 保持 `running`。
+- request 写入发起调用的已完成 step，response 写入实际消费回复的后续 step。
+- request 和 response 之间允许存在其它普通消息和 step；Runtime 不创建待处理请求对象，也不把 response 解释为 task 状态恢复。
+- `SubmitTask` 只提交当前一轮正式 outcome；成功投递后 task 进入可恢复的 `done`。
 
 ### 7.3 Human Input Flow
 
@@ -427,33 +426,25 @@ WorkerRunner 任务流程：
 
 1. worker turn running。
 2. worker 调用 `RequestHumanInput` dynamic tool。
-3. `AgentToolBackend.handleRequestHumanInputToolCall()` 解析并创建 request。
-4. WorkerRunner `requestHumanInput()`：
-   - task -> `waiting_for_human_input`
-   - latest step -> `waiting_for_human_input`
-   - step.humanInputRequest = request
-   - 发布 `AgentEvents.task.humanInputRequested`
-5. 当前 turn 自然完成。
-6. AgentOrchestrator 观察 task human input requested，发布 `AgentEvents.interrupt.raised`。
-7. CoordinatorRunner 订阅 interrupt，收到 observation attachment，启动 coordinator turn。
-8. Coordinator 向用户提问。
-9. 用户回复进入 InteractionGateway。
-10. Coordinator 继续判断是否够用。
-11. Coordinator 使用 `SendMessage`，且 `type: "human_response"`，发给 worker task。
-12. AgentToolBackend 给 message 加 `human-response` tag。
-13. WorkerRunner pending message handler 识别 `human-response` tag。
-14. `applyHumanInputResponse()` 写入当前 step，发布 `AgentEvents.task.humanInputResponded`。
-15. AgentOrchestrator 观察 responded，发布 `AgentEvents.interrupt.resolved`。
-16. worker task 恢复 running，继续下一个 turn。
+3. AgentToolBackend 校验调用者是 Worker，并确认它拥有 `running` task。
+4. AgentToolBackend 将纯文本 request 包装为内部 `wait-for-human-request`，投递给 Coordinator。
+5. 当前 turn 完成后，WorkerRunner 从成功的 tool call 把 request 写入当前已完成 step 的 `humanInputRequest`；task 仍为 `running`。
+6. Coordinator 收到 Runtime 内部请求信封，向用户提出最小问题。
+7. 用户回复进入 InteractionGateway，Coordinator 判断是否与原请求、task 和目标匹配。
+8. Coordinator 调用 `RespondHumanInput`，传入原 task id 和纯文本 response。
+9. AgentToolBackend 校验调用者是 Coordinator，将 response 包装为内部 `human-response`，投递给目标 Worker task。
+10. WorkerRunner 将消息加入原 task 队列并启动后续 turn。
+11. 后续 step 实际消费该回复时，从 prompt 中记录 `humanInputResponse`，并继续正常工作。
 
 关键原则：
 
 - InteractionGateway 不解 human input。
 - 用户回复不直接喂 worker。
-- Coordinator 是策略层，决定何时 resume worker。
-- `SendMessage.type="human_response"` 必须显式设置。
+- Coordinator 是策略层，负责确认回复与原请求和 task 匹配。
+- `SendMessage` 只承载普通消息，不能携带或伪装 human response。
 - 不是所有 pending message 都是 human response。
-- `human-response` tag 只描述事实，不绑定角色。
+- `wait-for-human-request` 和 `human-response` 只作为 Runtime 内部投递信封，不暴露为 Dynamic Tool 参数。
+- AgentToolBackend 不发布 human input task 事件，也不直接修改 task state。
 
 ## 8. Agent Backend
 
@@ -518,7 +509,9 @@ timeline reduce：
 - `AssignTask`
 - `SendMessage`
 - `RequestHumanInput`
+- `RespondHumanInput`
 - `SubmitTask`
+- `ArchiveTask`
 
 已删除/不应恢复：
 
@@ -531,8 +524,10 @@ timeline reduce：
 
 - `scout_agent_assigntask`
 - `scout_agent_sendmessage`
-- `scout_agent_humaninput`
+- `scout_agent_requesthumaninput`
+- `scout_agent_respondhumaninput`
 - `scout_agent_submittask`
+- `scout_agent_archivetask`
 - domain 当前是 `scout_domain_validation`
 
 注意：
@@ -582,7 +577,9 @@ body
 - AgentToolBackend：
   - `AssignTask.prompt` -> `agent.turn.message(...)`
   - `SendMessage.message` -> `agent.turn.message(...)`
-  - `SendMessage.type=human_response` -> `agent.turn.human_response(...)`
+  - `RequestHumanInput.request` -> `agent.turn.wait_for_human_request(...)`
+  - `RespondHumanInput.response` -> `agent.turn.human_response(...)`
+- WorkerAgent：`SubmitTask.outcome` -> `agent.turn.task_outcome(...)`
 
 中间层不猜、不补、不转换 tag。接收方只识别自己关心的 tag。不带 tag 被忽略是发送方问题。
 
@@ -592,6 +589,7 @@ Agent context tags：
 
 - `use-update-tools`
 - `message`
+- `task-outcome`
 - `wait-for-human-request`
 - `human-response`
 
@@ -600,15 +598,10 @@ Coordinator tags：
 - `coordinator-user`
 - `coordinator-observation`
 
-Worker tag：
-
-- `task-tick`
-
 注意：
 
-- `wait-for-human-request` 当前定义保留，但主要 human input request 状态在 task step 中。
-- `human-response` 只描述事实，不叫 worker/coordinator。
-- AGENTS prompt 不应强制模型自己手写 tag；tag 应由入口层/工具层添加。agent 只需要理解 tag 含义。
+- `wait-for-human-request` 和 `human-response` 的事实记录都在 task step 中，不新增 task 级等待状态。
+- AGENTS 和 Skill 不说明 tag；tag 只由 Runtime 入口或 Dynamic Tool handler 添加。
 
 ## 10. EventBus / EventMailbox
 
@@ -656,10 +649,7 @@ core 只提供定义能力：
 
 只保留一种使用方式，不再导出 `AgentTaskEvents.xxx` 这种并行 catalog。
 
-订阅可以订阅：
-
-- leaf event：`AgentEvents.task.humanInputRequested`
-- group：`AgentEvents.task`
+订阅可以订阅 task leaf event 或完整 `AgentEvents.task` group。
 
 ### 10.3 EventBus
 
@@ -702,18 +692,15 @@ Owner：
 当前 task group：
 
 - `assigned`
+- `notAssigned`
 - `messageQueued`
+- `done`
+- `archived`
 - `stopped`
-- `outcomeAccepted`
-- `humanInputRequested`
-- `humanInputResponded`
-- `threadAttached`
 - `pendingMessagesDrained`
 - `stepStarted`
 - `stepCompleted`
-- `stepOutput`
 - `failed`
-- `goalUpdated`
 - `planUpdated`
 - `terminal`
 
@@ -789,7 +776,6 @@ Orchestrator 是 agent-domain 编排中心，不是 UI，不是 prompt renderer�
 设计原则：
 
 - 一个底层事件可以被多个模块按不同语义消费。
-- `task.humanInputRequested` 对 InteractionGateway 是“可以通知 UI 的 task 状态”，对 Orchestrator 是“agent 调度被中断”。
 - 不要为了“统一”把事实事件包成另一种同义事件。
 
 ## 13. Interaction Layer
@@ -814,7 +800,7 @@ InteractionGateway 是唯一用户 IO 边界。
 - event -> port：
   - `SystemEvents.interaction.disclosureRequested` -> `interactionPort.disclose`
   - `SystemEvents.interaction.progressRequested` -> `interactionPort.publishProgress`
-  - `AgentEvents.task.terminal/humanInputRequested` -> `interactionPort.notify`
+  - `AgentEvents.task` -> `interactionPort.publishTaskEvent`
   - `AgentEvents.coordinator.messageProduced` -> `interactionPort.receiveAgentMessage`
 - exit：
   - port exit -> `SystemEvents.interaction.exitRequested`
@@ -869,29 +855,37 @@ TUI 当前是简单 Ink UI：
 
 ### 14.1 Agent Tools
 
-当前只保留四类 agent tools：
+当前保留六类 agent tools：
 
 1. `AssignTask`
    - namespace：`scout_agent_assigntask`
    - Coordinator 创建/复用 worker 并分配 task。
 2. `SendMessage`
    - namespace：`scout_agent_sendmessage`
-   - 给已有 agent/task 追加消息。
-   - `type` 可为 `message` 或 `human_response`。
+   - 给已有 agent/task 追加普通纯文本消息。
+   - Runtime 负责包装内部 `message` 信封。
 3. `RequestHumanInput`
-   - namespace：`scout_agent_humaninput`
+   - namespace：`scout_agent_requesthumaninput`
    - 仅 worker task 执行中请求人工输入。
-   - Coordinator 不用这个工具；Coordinator 要问用户就直接输出文本。
-4. `SubmitTask`
+   - request 是纯文本；task 保持 `running`。
+4. `RespondHumanInput`
+   - namespace：`scout_agent_respondhumaninput`
+   - 仅 Coordinator 向原 Worker task 投递匹配的人工回复。
+   - response 是纯文本，目标使用准确 task id。
+5. `SubmitTask`
    - namespace：`scout_agent_submittask`
-   - 仅 worker 可见，用于提交 complete/blocked/failed 终态。
+   - 仅 worker 可见，用于提交当前一轮正式 Markdown outcome。
+6. `ArchiveTask`
+   - namespace：`scout_agent_archivetask`
+   - 仅 Coordinator 可见，用于归档 task 并释放 Worker runner。
 
 原则：
 
 - 工具 namespace 只分 agent/domain，不再按 role 细分。
 - 工具 call parser 合并在 `parseAgentDynamicToolCall()`。
 - 工具 handler 放在 `AgentToolBackend` 内部。
-- SendMessage 不放在 AgentTaskBackend。
+- AgentToolBackend 负责校验和投递，不直接修改 task state 或发布 task 事件。
+- `SendMessage` 不放在 AgentTaskBackend。
 - domain tool 通过 domain backend 处理。
 
 ### 14.2 Domain Tools

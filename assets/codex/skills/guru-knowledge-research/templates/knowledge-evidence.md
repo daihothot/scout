@@ -1,6 +1,8 @@
 ---
 artifact_type: KnowledgeEvidencePack
 artifact_version: 1
+evidence_id: E-KB-001
+evidence_type: knowledge_aggregate
 status: draft
 completion_state: partial
 ---
@@ -9,13 +11,13 @@ completion_state: partial
 
 ## Knowledge Evidence State
 
-- status:
-- completion_state:
-- blocking_items:
-- human_confirmation_needed:
-- failed_commands:
-- retry_log:
-- limitations:
+- status: <填写 draft、ready 或 blocked，并与 frontmatter 保持一致>
+- completion_state: <填写 partial、complete 或 blocked，并与 status 组成合法状态>
+- blocking_items: <无阻塞项时填写 none，否则说明阻塞事实>
+- human_confirmation_needed: <无需人工求证时填写 none，否则列出待确认问题>
+- failed_commands: <无失败命令时填写 none，否则记录命令及错误摘要>
+- retry_log: <无重试时填写 none，否则记录重试命令和结果>
+- limitations: <没有已知限制时填写 none，否则说明 knowledge evidence 的适用边界>
 
 状态枚举：
 
@@ -25,100 +27,78 @@ completion_state: partial
 
 ## Knowledge Repository Provenance
 
-- knowledge_repo:
-- knowledge_branch:
-- knowledge_commit:
-- knowledge_worktree_state:
-- knowledge_root:
+- knowledge_repo: <填写当前 knowledge 仓库名称>
+- knowledge_branch: <填写收集证据时的 branch>
+- knowledge_commit: <填写收集证据时的完整 commit>
+- knowledge_worktree_state: <填写 clean 或具体修改状态>
+- knowledge_root: <填写本次 run 使用的 knowledge 根路径>
+
+## Knowledge Aggregate
+
+- evidence_id: E-KB-001
+- claim: <填写 BDD、Capabilities、Specifications、Availability 和 Platform 共同支持的 knowledge aggregate claim>
+- supports: <填写该集合证据支持的 VP-* 引用>
+- limitations: <填写集合证据的适用边界；Nice to Have，可不填写>
 
 ## BDD Evidence
 
 ### E-BDD-001
 
 - template: templates/bdd-evidence.md
-- artifact_ref:
-- source:
-- locator:
-- claim_supported:
-- supports:
-- limitations:
+- artifact_ref: bdd-evidence.md
+- source: <填写 Behavior 来源文件>
+- locator: <填写 Scenario 标题、段落或表格定位>
+- claim_supported: <填写该 Behavior 能够支持的预期行为 claim>
+- supports: <填写该 evidence 支持的 VP-* 引用>
+- limitations: <填写 BDD evidence 的额外限制；Nice to Have，可不填写>
 
-## Canonical Knowledge Evidence
+## Capability Evidence
 
-### E-KB-001
+### E-CAP-001
 
-- template: templates/knowledge-evidence-block.md
-- artifact_ref:
-- source:
-- locator:
-- claim_supported:
-- supports:
-- limitations:
+- template: templates/capability-evidence.md
+- artifact_ref: <填写 E-CAP-* 独立 evidence artifact ref>
+- capability: <填写 Capability 名称>
+- relation_to_bdd: <填写 primary、upstream、downstream 或 supporting>
+- claim_supported: <填写该 Capability evidence 能够支持的 claim>
+- supports: <填写该 Capability evidence 支持的 VP-* 引用>
+- limitations: <填写 Capability evidence 的额外限制；Nice to Have，可不填写>
+
+## Specifications
+
+| capability_evidence_ref | specification_sources | coverage_summary | limitations |
+|---|---|---|---|
+| E-CAP-001 | <填写该 Capability 使用的 Specifications 来源> | <填写 11 个固定规格维度的覆盖摘要> | <填写规格覆盖限制；Nice to Have，可不填写> |
 
 ## Availability Evidence
 
 ### E-AVAIL-001
 
 - template: templates/availability-evidence.md
-- artifact_ref:
-- source:
-- locator:
-- claim_supported:
-- supports:
-- limitations:
-
-## API Evidence
-
-### E-API-001
-
-- template: templates/api-evidence.md
-- artifact_ref:
-- source:
-- locator:
-- claim_supported:
-- supports:
-- limitations:
+- artifact_ref: evidence/E-AVAIL-001.md
+- capability_refs: <填写该 Availability 聚合覆盖的 E-CAP-* 引用>
+- claim_supported: <填写目标版本下相关 Capabilities 的可用性 claim>
+- supports: <填写该 Availability evidence 支持的 VP-* 引用>
+- limitations: <填写 Availability evidence 的额外限制；Nice to Have，可不填写>
 
 ## Platform Evidence
 
 ### E-PLATFORM-001
 
 - template: templates/platform-evidence.md
-- artifact_ref:
-- source:
-- locator:
-- claim_supported:
-- supports:
-- limitations:
+- artifact_ref: evidence/E-PLATFORM-001.md
+- capability_refs: <填写该 Platform 聚合覆盖的 E-CAP-* 引用>
+- claim_supported: <填写目标平台下相关 Capabilities 的共享契约或差异 claim>
+- supports: <填写该 Platform evidence 支持的 VP-* 引用>
+- limitations: <填写 Platform evidence 的额外限制；Nice to Have，可不填写>
 
-## Specification Coverage Matrix
+## Aggregation Notes
 
-| dimension | coverage_state | evidence_refs | gap_or_rationale |
-|---|---|---|---|
-| 系统目标 |  |  |  |
-| 系统边界 |  |  |  |
-| 用户角色 |  |  |  |
-| 核心能力 |  |  |  |
-| 关键流程 |  |  |  |
-| 领域对象 |  |  |  |
-| 状态变化 |  |  |  |
-| 业务规则 |  |  |  |
-| 数据与接口 |  |  |  |
-| 非功能要求 |  |  |  |
-| 验收场景 |  |  |  |
-
-覆盖状态枚举：
-
-- `covered`
-- `not_applicable`
-- `not_found`
-- `needs_confirmation`
-
-## 聚合说明
-
-- 本文件只做摘要聚合。
-- 不在本文件中嵌入完整 evidence blocks。
-- 每个 evidence id 必须引用独立 evidence artifact 的 `artifact_ref`。
+- 本文件是唯一 `E-KB-001` Knowledge 聚合证据。
+- BDD、Capability、Availability 和 Platform evidence 只记录 refs，不嵌入完整 evidence blocks。
+- API Index 或 API 文档只作为 `E-CAP-*` 的 `CAPSRC-*` 和“数据与接口”规格来源，不分配独立 evidence id。
+- 每个 Pack 只允许一份 `E-AVAIL-001` 和一份 `E-PLATFORM-001` 独立 artifact。
+- 每个相关 Capability 必须引用一份独立 `E-CAP-*` artifact。
 - 完整 source text 必须保留在原始 Guru knowledge 文件中。
 - Implementation claims 属于 `code-evidence.md`，不属于本文件。
 - 本文件列出的每个 evidence id 都必须同时出现在 `evidence-registry.md`。

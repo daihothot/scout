@@ -6,9 +6,9 @@ import { AgentContextTags, agent } from "../../src/agent/context/agent-attachmen
 test("agent turn attachments build payload text", () => {
   assert.equal(agent.turn.use_update_tools(), [
     "<use-update-tools>",
-    "Use the built-in update_plan tool to keep the task plan current.",
-    "Call update_plan when you create, change, start, complete, block, skip, or supersede plan steps.",
-    "Do not describe plan changes only in text when update_plan can represent them.",
+    "使用内置 update_plan 工具维护当前任务计划。",
+    "创建、修改、开始、完成、阻塞、跳过或替换计划步骤时调用 update_plan。",
+    "能够用 update_plan 表达计划变化时，不要只在自然语言中描述。",
     "</use-update-tools>",
   ].join("\n"));
 
@@ -59,6 +59,17 @@ test("attachments compose valid tag blocks and reject invalid blocks", () => {
   assert.throws(
     () => attachments.compose(attachments.addTagBlock("message", "A"), "<broken>"),
     /Invalid attachment block at index 1/,
+  );
+});
+
+test("plain agent messages reject Runtime protocol tags", () => {
+  assert.throws(
+    () => agent.turn.message(agent.turn.human_response("选择 A")),
+    /must not contain Runtime tag: human-response/,
+  );
+  assert.throws(
+    () => agent.turn.message(agent.turn.wait_for_human_request("请选择 A 或 B")),
+    /must not contain Runtime tag: wait-for-human-request/,
   );
 });
 

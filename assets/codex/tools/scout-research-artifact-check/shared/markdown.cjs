@@ -117,6 +117,10 @@ function isPlaceholder(value) {
   return text.length === 0 || text === "-" || /^<.*>$/.test(text);
 }
 
+function hasTemplateInstruction(text) {
+  return typeof text === "string" && /<填写[^>\r\n]*>/.test(text);
+}
+
 function isNone(value) {
   return ["none", "无", "n/a", "[]", "irrelevant"].includes(normalized(value));
 }
@@ -133,6 +137,7 @@ module.exports = {
   displayPath,
   evidenceIds,
   hasConcreteContent,
+  hasTemplateInstruction,
   isNone,
   isPlaceholder,
   markdownTable,

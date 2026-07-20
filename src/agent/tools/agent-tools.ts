@@ -1,17 +1,19 @@
 import type { AgentDynamicToolSpec, AgentJsonValue } from "./types.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 import { ScoutAgentRoles } from "../thread/types.js";
-import type { AgentTaskStepToolCall } from "../task/types.js";
-import { attachments } from "../context/attachments.js";
 
 export const AGENT_ASSIGN_TASK_TOOL_NAMESPACE = "scout_agent_assigntask";
 export const AGENT_SEND_MESSAGE_TOOL_NAMESPACE = "scout_agent_sendmessage";
+export const AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE = "scout_agent_requesthumaninput";
+export const AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE = "scout_agent_respondhumaninput";
 export const AGENT_SUBMIT_TASK_TOOL_NAMESPACE = "scout_agent_submittask";
 export const AGENT_ARCHIVE_TASK_TOOL_NAMESPACE = "scout_agent_archivetask";
 
 export const AGENT_TOOL_NAMESPACES = new Set<string>([
   AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
+  AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+  AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
   AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
 ]);
@@ -30,6 +32,17 @@ export interface SendMessageToolCall {
   message: string;
 }
 
+export interface RequestHumanInputToolCall {
+  tool: "RequestHumanInput";
+  request: string;
+}
+
+export interface RespondHumanInputToolCall {
+  tool: "RespondHumanInput";
+  task_id: string;
+  response: string;
+}
+
 export interface SubmitTaskToolCall {
   tool: "SubmitTask";
   outcome: string;
@@ -43,6 +56,8 @@ export interface ArchiveTaskToolCall {
 export type AgentDynamicToolCall =
   | AssignTaskToolCall
   | SendMessageToolCall
+  | RequestHumanInputToolCall
+  | RespondHumanInputToolCall
   | SubmitTaskToolCall
   | ArchiveTaskToolCall;
 
@@ -77,7 +92,7 @@ export function buildSendMessageDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
     name: "SendMessage",
-    description: "向已有 Scout agent 或其当前任务发送 attachment message；Runtime 按 attachment 语义处理对应的接收与状态变化。",
+    description: "向已有 Scout agent 或其当前任务发送普通消息。message 只填写需要传达的中文正文，不构造 Runtime 内部通信协议，也不用于人工输入或正式 task 提交。",
     inputSchema: objectSchema({
       to: {
         type: "string",
@@ -85,9 +100,41 @@ export function buildSendMessageDynamicTool(): AgentDynamicToolSpec {
       },
       message: {
         type: "string",
-        description: "投递给目标 agent 的完整普通 attachment tag block；body 格式遵守对应 attachment 规范。",
+        description: "投递给目标 agent 的普通中文消息正文。",
       },
     }, ["to", "message"]),
+  };
+}
+
+export function buildRequestHumanInputDynamicTool(): AgentDynamicToolSpec {
+  return {
+    namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+    name: "RequestHumanInput",
+    description: "仅供 Worker 请求必须由人工确认的输入。Runtime 将请求投递给 Coordinator；当前 task 保持 running，当前 step 完成后记录 humanInputRequest。一次调用应合并当前工作所需的最小问题，不得用本工具提交 task outcome。",
+    inputSchema: objectSchema({
+      request: {
+        type: "string",
+        description: "完整中文请求正文，包含当前 task、已确认内容、缺失或冲突事实、影响、最小问题和期望回答形态。",
+      },
+    }, ["request"]),
+  };
+}
+
+export function buildRespondHumanInputDynamicTool(): AgentDynamicToolSpec {
+  return {
+    namespace: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
+    name: "RespondHumanInput",
+    description: "仅供 Coordinator 把匹配的用户明确回复投递给原 Worker task。Runtime 在目标 Worker 实际消费回复时记录 humanInputResponse；不得加入 Coordinator 自己的领域结论。",
+    inputSchema: objectSchema({
+      task_id: {
+        type: "string",
+        description: "原 Worker task 的准确 task id。",
+      },
+      response: {
+        type: "string",
+        description: "用户明确确认的中文回复和必要匹配上下文。",
+      },
+    }, ["task_id", "response"]),
   };
 }
 
@@ -170,6 +217,31 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
         message: message.trim(),
       };
     }
+    case "RequestHumanInput": {
+      const request = input.request;
+      if (typeof request !== "string" || request.trim().length === 0) {
+        throw new Error("RequestHumanInput request must be a non-empty string.");
+      }
+      return {
+        tool: "RequestHumanInput",
+        request: request.trim(),
+      };
+    }
+    case "RespondHumanInput": {
+      const taskId = input.task_id;
+      if (typeof taskId !== "string" || taskId.trim().length === 0) {
+        throw new Error("RespondHumanInput task_id must be a non-empty string.");
+      }
+      const response = input.response;
+      if (typeof response !== "string" || response.trim().length === 0) {
+        throw new Error("RespondHumanInput response must be a non-empty string.");
+      }
+      return {
+        tool: "RespondHumanInput",
+        task_id: taskId.trim(),
+        response: response.trim(),
+      };
+    }
     case "SubmitTask": {
       const outcome = input.outcome;
       if (typeof outcome !== "string" || outcome.trim().length === 0) {
@@ -193,25 +265,6 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
     default:
       throw new Error(`Unsupported agent tool: ${tool}`);
   }
-}
-
-export function readSendMessageAttachment(
-  toolCalls: readonly AgentTaskStepToolCall[] | undefined,
-  tag: string,
-): { body: string } | undefined {
-  return (toolCalls ?? []).flatMap((toolCall) => {
-    if (
-      toolCall.namespace !== AGENT_SEND_MESSAGE_TOOL_NAMESPACE
-      || toolCall.tool !== "SendMessage"
-      || toolCall.success !== true
-    ) {
-      return [];
-    }
-    const call = parseAgentDynamicToolCall(toolCall.tool, toolCall.arguments);
-    if (call.tool !== "SendMessage") return [];
-    return attachments.readTagBlock(call.message, tag)
-      .map(({ body }) => ({ body }));
-  })[0];
 }
 
 function objectSchema(

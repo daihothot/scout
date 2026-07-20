@@ -2,6 +2,8 @@ import type { AgentDynamicToolSpec } from "./types.js";
 import {
   buildArchiveTaskDynamicTool,
   buildAssignTaskDynamicTool,
+  buildRequestHumanInputDynamicTool,
+  buildRespondHumanInputDynamicTool,
   buildSendMessageDynamicTool,
   buildSubmitTaskDynamicTool,
 } from "./agent-tools.js";
@@ -15,11 +17,13 @@ export function buildAgentDynamicTools(options: BuildAgentDynamicToolsOptions = 
     return [
       buildAssignTaskDynamicTool(),
       buildSendMessageDynamicTool(),
+      buildRespondHumanInputDynamicTool(),
       buildArchiveTaskDynamicTool(),
     ];
   }
   return [
     buildSendMessageDynamicTool(),
+    buildRequestHumanInputDynamicTool(),
     buildSubmitTaskDynamicTool(),
   ];
 }

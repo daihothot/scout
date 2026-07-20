@@ -24,7 +24,7 @@ summary: 规范 Validation Verifier 的验证点消费、信号采集和 Verific
 
 当 Verifier 已收到可信 Research handoff，需要围绕 verification points 采集证据并形成 BDD Verification Report 时使用本技能。
 
-本技能定义 Validation 验证工作流；代码库检索方法由 `jarvis-codebase` 所有，具体动态工具按当前 mount 说明使用。
+本技能定义 Validation 验证工作流；代码库检索方法由 `jarvis-codebase` 所有。
 
 ## Skill Type
 
@@ -153,7 +153,7 @@ Partial：
 注意事项：
 
 - 代码检索必须遵守 `jarvis-codebase` 的 provenance、symbol 和 source evidence 规则。
-- 动态工具、MCP server 和 plugin 只按当前说明与授权使用。
+- MCP server 和 plugin 只按当前说明与授权使用。
 - 每个信号记录采集方法、目标、结果、版本、环境和 artifact ref。
 - 失败、空结果和无法执行也是验证事实，但不能记为成功证据。
 

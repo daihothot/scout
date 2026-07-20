@@ -79,13 +79,19 @@ function validatePackCommand(args) {
   const packRoot = resolve(args[0]);
   const result = validatePack(packRoot);
   if (result.issues.length > 0) {
-    printFailure("research_pack", { pack_root: packRoot }, result.issues);
+    printFailure("research_pack", {
+      pack_root: packRoot,
+      pack_status: result.packState.status,
+      pack_completion_state: result.packState.completionState,
+    }, result.issues);
     return;
   }
   printSuccess("research_pack", {
     pack_root: packRoot,
     aggregate_count: result.aggregateCount,
     evidence_count: result.evidenceCount,
+    pack_status: result.packState.status,
+    pack_completion_state: result.packState.completionState,
     verification_point_count: result.verificationPointCount,
   });
 }

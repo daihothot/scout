@@ -1,6 +1,6 @@
 const { AGGREGATES, STATE_PAIRS } = require("../shared/constants.cjs");
 const { addIssue } = require("../shared/diagnostics.cjs");
-const { bulletFields, displayPath, isNone, normalized, sectionByTitle } = require("../shared/markdown.cjs");
+const { bulletFields, displayPath, hasTemplateInstruction, isNone, normalized, sectionByTitle } = require("../shared/markdown.cjs");
 const { researchTemplatePath, validateTemplateSections } = require("../shared/templates.cjs");
 
 function validateAggregateBase(document, kind, displayRoot, issues) {
@@ -35,6 +35,9 @@ function validateAggregateState(document, stateHeading, displayRoot, issues) {
   }
   if (status === "blocked" && isNone(blockers)) {
     addIssue(issues, "BLOCKED_WITHOUT_BLOCKER", path, "blocked + blocked requires a concrete blocking_items value.");
+  }
+  if (status === "ready" && hasTemplateInstruction(document.text)) {
+    addIssue(issues, "TEMPLATE_INSTRUCTION_REMAINS", path, "ready + complete artifacts cannot retain template fill instructions.");
   }
   return { status, completionState, fields };
 }

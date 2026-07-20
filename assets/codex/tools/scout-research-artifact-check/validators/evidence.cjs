@@ -1,8 +1,8 @@
 const { basename, isAbsolute } = require("node:path");
-const { EVIDENCE_ID_PATTERN, EVIDENCE_TEMPLATES } = require("../shared/constants.cjs");
+const { COVERAGE_DIMENSIONS, COVERAGE_STATES, EVIDENCE_ID_PATTERN, EVIDENCE_TEMPLATES } = require("../shared/constants.cjs");
 const { addIssue } = require("../shared/diagnostics.cjs");
 const { concreteRepositoryFields, repositoryFields, requireNonNoneFields, requireSectionFields } = require("../shared/fields.cjs");
-const { bulletFields, displayPath, normalized, scalar, sectionByTitle } = require("../shared/markdown.cjs");
+const { bulletFields, displayPath, evidenceIds, hasTemplateInstruction, isPlaceholder, markdownTable, normalized, scalar, sectionByTitle } = require("../shared/markdown.cjs");
 const { codebaseTemplatePath, researchTemplatePath, validateTemplateSections } = require("../shared/templates.cjs");
 
 function validateEvidence(document, displayRoot, issues) {
@@ -14,6 +14,14 @@ function validateEvidence(document, displayRoot, issues) {
   }
 
   const [, kind] = id.match(EVIDENCE_ID_PATTERN);
+  if (kind === "BDD") {
+    addIssue(issues, "BDD_AGGREGATE_FILE_FORBIDDEN", path, "E-BDD-001 is owned by bdd-evidence.md and must not exist under evidence/.");
+    return { evidenceId: id, kind, status: normalized(document.frontMatter.status) };
+  }
+  if (kind === "KB") {
+    addIssue(issues, "KNOWLEDGE_AGGREGATE_FILE_FORBIDDEN", path, "E-KB-001 is owned by knowledge-evidence.md and must not exist under evidence/.");
+    return { evidenceId: id, kind, status: normalized(document.frontMatter.status) };
+  }
   const config = EVIDENCE_TEMPLATES[kind];
   const expectedFile = `${id}.md`;
   if (basename(document.path) !== expectedFile) {
@@ -35,27 +43,59 @@ function validateEvidence(document, displayRoot, issues) {
   if (bodyStatus !== status) {
     addIssue(issues, "EVIDENCE_STATUS_MISMATCH", path, "Frontmatter and Artifact State status must match.");
   }
+  if (["ready", "source_verified"].includes(status) && hasTemplateInstruction(document.text)) {
+    addIssue(issues, "TEMPLATE_INSTRUCTION_REMAINS", path, "completed evidence cannot retain template fill instructions.");
+  }
 
   const templatePath = config.owner === "research"
     ? researchTemplatePath(config.template)
     : codebaseTemplatePath(config.template);
   validateTemplateSections(document, templatePath, displayRoot, issues);
 
-  if (kind === "CG") validateCodeGraphEvidence(document, displayRoot, issues);
+  if (kind === "CAP") validateCapabilityEvidence(document, displayRoot, issues);
+  if (kind === "AVAIL" && id !== "E-AVAIL-001") {
+    addIssue(issues, "AVAILABILITY_SINGLETON_ID", path, "A Research pack permits only E-AVAIL-001.");
+  }
+  if (kind === "PLATFORM" && id !== "E-PLATFORM-001") {
+    addIssue(issues, "PLATFORM_SINGLETON_ID", path, "A Research pack permits only E-PLATFORM-001.");
+  }
+  if (kind === "PERSONA") validateUserPersonaEvidence(document, status, displayRoot, issues);
+  if (kind === "HUMAN") validateHumanConfirmationEvidence(document, status, displayRoot, issues);
   if (kind === "CODE") validateSourceCodeEvidence(document, status, displayRoot, issues);
   return { evidenceId: id, kind, status };
 }
 
-function validateCodeGraphEvidence(document, displayRoot, issues) {
-  const provenance = requireSectionFields(document, "Repository Provenance", repositoryFields(), displayRoot, issues);
-  requireNonNoneFields(document, "Repository Provenance", provenance, concreteRepositoryFields(), displayRoot, issues);
-  requireSectionFields(document, "Result", [
-    "matched_symbol",
-    "matched_file",
-    "source_relative_file",
-    "relation",
-    "confidence",
-  ], displayRoot, issues);
+function validateCapabilityEvidence(document, displayRoot, issues) {
+  const path = displayPath(document.path, displayRoot);
+  const section = sectionByTitle(document, 2, "Specification Coverage Matrix");
+  const rows = section ? markdownTable(section.text) : [];
+  const byDimension = new Map();
+
+  for (const row of rows) {
+    const dimension = scalar(row.dimension);
+    if (byDimension.has(dimension)) {
+      addIssue(issues, "DUPLICATE_COVERAGE_DIMENSION", path, `Duplicate coverage dimension: ${dimension}.`);
+    }
+    byDimension.set(dimension, row);
+  }
+
+  for (const dimension of COVERAGE_DIMENSIONS) {
+    const row = byDimension.get(dimension);
+    if (!row) {
+      addIssue(issues, "COVERAGE_DIMENSION_MISSING", path, `Missing coverage dimension: ${dimension}.`);
+      continue;
+    }
+    const coverageState = normalized(row.coverage_state);
+    if (!COVERAGE_STATES.has(coverageState)) {
+      addIssue(issues, "INVALID_COVERAGE_STATE", path, `${dimension} has invalid coverage_state: ${coverageState || "<empty>"}.`);
+    }
+    if (coverageState === "covered" && (isPlaceholder(row.claim) || isPlaceholder(row.source_refs))) {
+      addIssue(issues, "COVERED_WITHOUT_SOURCE", path, `${dimension} is covered but has no concrete claim or source_refs.`);
+    }
+    if (coverageState !== "covered" && isPlaceholder(row.gap_or_rationale)) {
+      addIssue(issues, "COVERAGE_GAP_MISSING", path, `${dimension} requires gap_or_rationale for ${coverageState || "<empty>"}.`);
+    }
+  }
 }
 
 function validateSourceCodeEvidence(document, status, displayRoot, issues) {
@@ -73,6 +113,10 @@ function validateSourceCodeEvidence(document, status, displayRoot, issues) {
     "start_line",
     "end_line",
     "signature",
+  ], displayRoot, issues);
+  requireSectionFields(document, "Collection", [
+    "method",
+    "query_result_summary",
   ], displayRoot, issues);
 
   const primarySymbolCount = document.headings.filter((heading) => heading.level === 2 && heading.title === "Primary Symbol").length;
@@ -103,6 +147,51 @@ function validateSourceCodeEvidence(document, status, displayRoot, issues) {
   }
   if (gitlinkPath !== "none" && (gitlinkCommit !== sourceCommit || normalized(provenance.get("gitlink_matches_source_commit")) !== "true")) {
     addIssue(issues, "GITLINK_COMMIT_MISMATCH", path, "source_verified nested evidence requires gitlink_commit to equal source_commit.");
+  }
+}
+
+function validateHumanConfirmationEvidence(document, status, displayRoot, issues) {
+  if (status !== "ready") return;
+  requireNonNoneFields(document, "Human Confirmation Source", requireSectionFields(document, "Human Confirmation Source", [
+    "source_type",
+    "task_id",
+    "source_locator",
+  ], displayRoot, issues), [
+    "source_type",
+    "task_id",
+    "source_locator",
+  ], displayRoot, issues);
+  requireNonNoneFields(document, "Confirmed Fact", requireSectionFields(document, "Confirmed Fact", [
+    "field",
+    "value",
+    "applies_to",
+  ], displayRoot, issues), [
+    "field",
+    "value",
+    "applies_to",
+  ], displayRoot, issues);
+}
+
+function validateUserPersonaEvidence(document, status, displayRoot, issues) {
+  if (status !== "ready") return;
+  requireNonNoneFields(document, "Persona Identity", requireSectionFields(document, "Persona Identity", [
+    "persona_id",
+  ], displayRoot, issues), [
+    "persona_id",
+  ], displayRoot, issues);
+  requireNonNoneFields(document, "Persona Facts", requireSectionFields(document, "Persona Facts", [
+    "account_state",
+    "platform",
+    "app_version",
+  ], displayRoot, issues), [
+    "account_state",
+    "platform",
+    "app_version",
+  ], displayRoot, issues);
+  const sourceEvidence = sectionByTitle(document, 2, "Source Evidence");
+  const refs = sourceEvidence ? evidenceIds(sourceEvidence.text) : new Set();
+  if (![...refs].some((id) => /^(?:E-BDD|E-CAP|E-HUMAN)-\d+$/.test(id) || id === "E-KB-001")) {
+    addIssue(issues, "PERSONA_SOURCE_EVIDENCE_MISSING", displayPath(document.path, displayRoot), "ready user persona evidence requires an E-BDD, E-KB-001, E-CAP, or E-HUMAN source evidence ref.");
   }
 }
 

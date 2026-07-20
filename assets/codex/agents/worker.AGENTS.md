@@ -18,18 +18,14 @@
 
 ## Human Input
 
-- 适用领域 Skill 判断当前工作依赖必须由人工确认的输入后，先完成不依赖该输入的工作，并把相关缺口合并成一次最小请求。
-- 必须调用 `SendMessage`，将 `to` 指向当前 Coordinator，并把 `message` 写成完整的 `<wait-for-human-request>...</wait-for-human-request>` attachment tag block。
-- attachment body 必须包含当前 task、已确认内容、缺失或冲突事实、对当前工作的影响、最小问题和期望回答形态。
-- 请求发出后当前 task 保持 `running`；不得调用 `SubmitTask` 进入 `done`，也不得用 partial / blocked artifact、handoff 或普通消息代替人工请求。
-- 请求发出后可以正常处理其它 Coordinator 消息，但普通消息不能解除人工输入依赖；只有与原请求、当前 task 和当前目标匹配的 `<human-response>...</human-response>` attachment 才是人工回复。
-- 收到匹配回复后，只把用户明确确认的内容作为当前 step 的人工回复使用，并从当前阶段继续同一 task；不得为该回复创建新 task 或重启研究流程。
+- 适用领域 Skill 判断当前工作依赖必须由人工确认的输入后，先完成不依赖该输入的工作，并合并为一次最小请求。
+- 获得明确且匹配的用户确认前，不得把缺失内容写成已确认事实，也不得把依赖该内容的工作描述为完成。
+- 收到匹配回复后，只使用用户明确确认的内容，并在当前 task 中从当前阶段继续。
 
 ## Working Rules
 
 - 每次读取、查询、工具调用和持久写入都必须服务于当前 task。
 - 只使用当前 mount/profile 暴露且已经确认可见的能力和路径。
-- 使用 task 工具、动态工具或 handoff 入口时，严格遵守当前工具说明和参数格式。
 - 工具失败时先按适用规则检查和有限重试；无法恢复时交回错误、影响和已尝试动作。
 - 禁止依赖其它 Agent 的私有上下文；需要引用其它角色结果时，只使用 task prompt 或 Runtime 提供的正式 ref。
 - 禁止把自己的判断冒充为其它角色结论、Runtime 状态或人工确认。
