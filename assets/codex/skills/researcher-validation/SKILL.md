@@ -53,7 +53,9 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 ## Human Confirmation Gate
 
 - 仅当适用专项 Research Skill 判定某项必需事实无法从当前输入、证据或可用能力确认，并阻止唯一 BDD、目标版本证据、研究范围或必需产物闭环时，进入本 Gate。
-- 进入本 Gate 前，完成不依赖该事实的研究，并保留已经形成的 artifact、evidence 和 limitation；可选未知项是否阻塞完全遵循专项 Research Skill。
+- 进入本 Gate 后立即停止当前研究，不继续处理后续阶段；已经形成的 artifact、evidence 和 limitation 保留当前状态。
+- 通过正式人工请求入口提出一次最小问题并保持当前 task 为 `running`；Gate 未解除时不得进入 Phase 3，也不得提交任何 Research handoff。
+- 可选未知项是否进入本 Gate 完全遵循专项 Research Skill。
 - 只有与待确认事实、当前 task 和研究目标明确匹配的用户确认才能解除本 Gate；解除后从当前研究阶段继续。
 
 ## Inputs
@@ -106,7 +108,7 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 输出要求：
 
 - 正式 artifact 及字段结构由 `guru-knowledge-research` 定义。
-- Research handoff 必须使用英文 Markdown 标题，标题下的自然语言内容使用中文，并包含 task id、handoff state、唯一 pack ref、`scout-directory-sha256-v1` digest、artifact refs、evidence refs、限制、需人工确认项和继续入口。
+- Research handoff 必须使用英文 Markdown 标题，标题下的自然语言内容使用中文，并包含 task id、handoff state、唯一 pack ref、`scout-directory-sha256-v1` digest、artifact refs、evidence refs、限制、已闭环人工确认记录或 `none`，以及继续入口。
 - `complete` 只表示当前 Research 交付完整，不表示 BDD 已通过验证。
 
 ### Artifact Relationship Rules
@@ -140,7 +142,7 @@ Blocked：
 
 Partial：
 
-- BDD 可定位但版本或其它必填事实边界不完整时，允许进入专项 Skill 的 partial 流程并记录缺口。
+- BDD 可定位但版本或其它必填事实边界不完整时，按专项 Skill 判断是否进入 `Human Confirmation Gate`；进入 Gate 后停留在当前 Phase，不得把 partial artifact 状态解释为允许 handoff。
 
 ## Phase 2: Execute Research Method
 ---
@@ -156,7 +158,7 @@ Partial：
 
 Exit：
 
-- 专项 Skill 已形成 complete、partial 或 blocked 的正式 Research 产物。
+- 专项 Skill 已形成 complete、partial 或 blocked 的正式 Research 产物，且不存在尚未解除的 `Human Confirmation Gate`。
 
 Blocked：
 
@@ -164,7 +166,7 @@ Blocked：
 
 Partial：
 
-- 专项 Skill 允许部分产出时，保留 phase resume、缺口和继续条件。
+- 专项 Skill 允许部分产出时，保留 phase resume、缺口和继续条件；存在尚未解除的 `Human Confirmation Gate` 时不得退出本 Phase。
 
 ## Phase 3: Submit Research Handoff
 ---
@@ -188,7 +190,7 @@ Blocked：
 
 Partial：
 
-- 当前没有等待中的人工确认请求，且专项 Skill 允许部分交接时，可以提交 partial，并明确剩余工作、缺失条件和继续入口。
+- 不存在待人工确认的必需事实，且专项 Skill 允许部分交接时，可以提交 partial，并明确剩余工作、缺失条件和继续入口。
 
 ## Workflow Exit Rules (Enforcement)
 
@@ -196,6 +198,7 @@ Partial：
 - XR-002：专项产物为 partial 或 blocked 时，领域 handoff 必须使用对应状态。
 - XR-003：Research complete 必须包含可供下游消费的正式 artifact refs 和 Verification Manual 摘要。
 - XR-004：Gate 修正后的 handoff 必须保持原 pack ref，并携带修正后 digest 和已处理问题 refs。
+- XR-005：`Human Confirmation Gate` 未解除时必须保持当前 task 为 `running`，不得进入 Phase 3 或提交任何状态的 handoff。
 
 ## Evidence Rules (Enforcement)
 
