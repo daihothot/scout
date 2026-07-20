@@ -9,6 +9,10 @@ export interface AgentProfilesFile {
 
 export interface AgentProfileDefinition {
   config: string;
+  multiAgent: boolean;
+  maxThreads: number;
+  maxDepth: number;
+  customAgents: string[];
   model?: CodexModelConfig;
   skills: string[];
   shellTools?: string[];
@@ -90,6 +94,7 @@ export interface CodexMount {
   writableRoots: string[];
   shellTools: ShellToolContract[];
   mcpServers: MaterializedMcpServer[];
+  customAgents: string[];
   skills: string[];
   plugins: string[];
   manifestPath: string;
@@ -111,6 +116,7 @@ export interface AssetCommit {
   writableRoots: string[];
   shellTools: ShellToolContract[];
   mcpServers: MaterializedMcpServer[];
+  customAgents: string[];
   skills: string[];
   plugins: string[];
   manifestPath: string;
@@ -156,6 +162,7 @@ export interface MountManifest {
     marker?: string;
   }>;
   mcpServers: MaterializedMcpServer[];
+  customAgents: string[];
   skills: string[];
   plugins: string[];
   workerAgent?: string;

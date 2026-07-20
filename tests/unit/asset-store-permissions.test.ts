@@ -4,7 +4,11 @@ import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync
 import { homedir } from "node:os";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { AssetStore, type AgentProfilesFile } from "../../src/asset-store/index.js";
+import {
+  AssetStore,
+  type AgentProfilesFile,
+  resolveAgentProfile,
+} from "../../src/asset-store/index.js";
 
 const repoRoot = process.cwd();
 
@@ -59,7 +63,53 @@ test("AssetStore materializes per-agent trusted and writable roots from agent pr
     reasoningEffort: "high",
     reasoningSummary: "concise",
   });
+  assert.equal(mount.agentProfile.multiAgent, true);
+  assert.equal(mount.agentProfile.maxThreads, 6);
+  assert.equal(mount.agentProfile.maxDepth, 1);
+  assert.deepEqual(mount.agentProfile.customAgents, ["scout-helper"]);
+  assert.deepEqual(mount.customAgents, ["scout-helper"]);
   assert.deepEqual(manifest.agentProfile.model, mount.agentProfile.model);
+  assert.equal(manifest.agentProfile.multiAgent, true);
+  assert.equal(manifest.agentProfile.maxThreads, 6);
+  assert.equal(manifest.agentProfile.maxDepth, 1);
+  assert.deepEqual(manifest.agentProfile.customAgents, ["scout-helper"]);
+});
+
+test("Agent profiles reject invalid native subagent settings", () => {
+  const path = join(repoRoot, "assets", "codex", "agents", "agent-profiles.json");
+  const original = JSON.parse(readFileSync(path, "utf8")) as AgentProfilesFile;
+  const cases: Array<{
+    key: "multiAgent" | "maxThreads" | "maxDepth" | "customAgents";
+    value: unknown;
+  }> = [
+    { key: "multiAgent", value: "true" },
+    { key: "maxThreads", value: 0 },
+    { key: "maxDepth", value: -1 },
+    { key: "customAgents", value: [""] },
+  ];
+
+  for (const invalid of cases) {
+    const profiles = structuredClone(original);
+    const profile = profiles.profiles.researcher as unknown as Record<string, unknown>;
+    profile[invalid.key] = invalid.value;
+    assert.throws(
+      () => resolveAgentProfile(profiles, "researcher"),
+      new RegExp(`agent profile ${invalid.key}`),
+    );
+  }
+});
+
+test("AssetStore rejects a profile that references an unknown custom agent", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-custom-agent-unknown-");
+  updateAgentProfile(fixtureRoot, "researcher", {
+    customAgents: ["missing-helper"],
+  });
+
+  assert.throws(() => new AssetStore().materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-custom-agent-unknown-test",
+    agentId: "researcher",
+  }), /unknown custom agent: missing-helper/);
 });
 
 test("AssetStore resolves a complete per-agent model override", () => {
@@ -228,6 +278,60 @@ test("AssetStore only exposes worker instructions to worker mounts", () => {
   }
 });
 
+test("AssetStore mounts scout-helper only for Worker profiles", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-custom-agent-mount-");
+  const store = new AssetStore();
+  const coordinator = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-coordinator-custom-agent-test",
+    agentId: "coordinator",
+  });
+  const coordinatorManifest = JSON.parse(readFileSync(coordinator.manifestPath, "utf8")) as {
+    assets: Array<{ id: string }>;
+    linkedFiles: Array<{ path: string }>;
+    customAgents: string[];
+  };
+
+  assert.deepEqual(coordinator.customAgents, []);
+  assert.deepEqual(coordinatorManifest.customAgents, []);
+  assert.equal(existsSync(join(coordinator.mountRoot, ".codex", "agents", "scout-helper.toml")), false);
+  assert.equal(
+    coordinatorManifest.assets.some((asset) => asset.id === "codex.custom_agent.scout-helper"),
+    false,
+  );
+  assert.equal(
+    coordinatorManifest.linkedFiles.some((file) => file.path === ".codex/agents/scout-helper.toml"),
+    false,
+  );
+
+  for (const agentId of ["researcher", "verifier", "validator"]) {
+    const worker = store.materializeMount({
+      repoRoot: fixtureRoot,
+      runId: `run-${agentId}-custom-agent-test`,
+      agentId,
+    });
+    const helperPath = join(worker.mountRoot, ".codex", "agents", "scout-helper.toml");
+    const workerManifest = JSON.parse(readFileSync(worker.manifestPath, "utf8")) as {
+      assets: Array<{ id: string }>;
+      linkedFiles: Array<{ path: string }>;
+      customAgents: string[];
+    };
+
+    assert.deepEqual(worker.customAgents, ["scout-helper"]);
+    assert.deepEqual(workerManifest.customAgents, ["scout-helper"]);
+    assert.equal(existsSync(helperPath), true);
+    assert.match(readFileSync(helperPath, "utf8"), /不得调用任何 Scout dynamic tool/);
+    assert.equal(
+      workerManifest.assets.some((asset) => asset.id === "codex.custom_agent.scout-helper"),
+      true,
+    );
+    assert.equal(
+      workerManifest.linkedFiles.some((file) => file.path === ".codex/agents/scout-helper.toml"),
+      true,
+    );
+  }
+});
+
 test("Coordinator resource hash does not depend on worker instructions", () => {
   const fixtureRoot = createCodexAssetFixture("scout-agent-instructions-hash-");
   const store = new AssetStore();
@@ -256,6 +360,41 @@ test("Coordinator resource hash does not depend on worker instructions", () => {
   const researcherAfter = store.materializeMount({
     repoRoot: fixtureRoot,
     runId: "run-researcher-hash-after-test",
+    agentId: "researcher",
+  });
+
+  assert.equal(coordinatorAfter.resourceHash, coordinatorBefore.resourceHash);
+  assert.notEqual(researcherAfter.resourceHash, researcherBefore.resourceHash);
+});
+
+test("Coordinator resource hash does not depend on an unmounted custom agent", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-custom-agent-hash-");
+  const store = new AssetStore();
+  const coordinatorBefore = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-coordinator-custom-agent-hash-before-test",
+    agentId: "coordinator",
+  });
+  const researcherBefore = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-researcher-custom-agent-hash-before-test",
+    agentId: "researcher",
+  });
+
+  writeFileSync(
+    join(fixtureRoot, "assets", "codex", "agents", "scout-helper.toml"),
+    "name = \"scout-helper\"\ndescription = \"updated\"\ndeveloper_instructions = \"updated\"\n",
+    "utf8",
+  );
+
+  const coordinatorAfter = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-coordinator-custom-agent-hash-after-test",
+    agentId: "coordinator",
+  });
+  const researcherAfter = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-researcher-custom-agent-hash-after-test",
     agentId: "researcher",
   });
 

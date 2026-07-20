@@ -10,6 +10,10 @@
   "profiles": {
     "coordinator": {
       "config": "config/base.config.toml",
+      "multiAgent": false,
+      "maxThreads": 6,
+      "maxDepth": 1,
+      "customAgents": [],
       "skills": [
         "coordinator-validation",
         "scout-boundary-inspector"
@@ -33,6 +37,12 @@
     },
     "researcher": {
       "config": "config/base.config.toml",
+      "multiAgent": true,
+      "maxThreads": 6,
+      "maxDepth": 1,
+      "customAgents": [
+        "scout-helper"
+      ],
       "skills": [
         "researcher-validation",
         "guru-knowledge-research",
@@ -71,6 +81,12 @@
     },
     "verifier": {
       "config": "config/base.config.toml",
+      "multiAgent": true,
+      "maxThreads": 6,
+      "maxDepth": 1,
+      "customAgents": [
+        "scout-helper"
+      ],
       "skills": [
         "verifier-validation",
         "jarvis-codebase",
@@ -115,6 +131,12 @@
     },
     "validator": {
       "config": "config/base.config.toml",
+      "multiAgent": true,
+      "maxThreads": 6,
+      "maxDepth": 1,
+      "customAgents": [
+        "scout-helper"
+      ],
       "skills": [
         "validator-validation",
         "guru-knowledge-research",

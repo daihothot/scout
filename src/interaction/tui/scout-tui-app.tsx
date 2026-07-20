@@ -63,6 +63,10 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
     availableRows: availableWorkspaceRows,
     drawerOpen: tasksOpen,
     taskCount: tasks.length,
+    taskPlanStepRows: tasks.reduce(
+      (maximum, task) => Math.max(maximum, task.planSteps.length),
+      0,
+    ),
     desiredActivityRows: resolveActivityBarRows(currentActivity, widths.contentWidth),
   });
   const chatStartY = topChromeRows + workspace.chatOffset + 1;
@@ -94,6 +98,7 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
       appHeight={appHeight}
       rootPaddingX={widths.rootPaddingX}
       workspaceRows={workspace.totalRows}
+      taskGapRows={workspace.taskGapRows}
       activityGapRows={workspace.activityGapRows}
       topChrome={(
         <TopChrome

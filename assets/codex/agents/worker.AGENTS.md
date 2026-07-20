@@ -16,6 +16,14 @@
 - task 与当前角色不匹配时停止，并向 Coordinator 报告职责不匹配和建议角色。
 - 缺少输入、能力、权限或输出位置时，不猜测继续；按缺口类型使用下述人工输入规则或当前正式上游入口。
 
+## When Using Native Subagents
+
+- 只将目标、输入和退出边界明确的内部子任务委派给 Codex native subagent。
+- 父 Worker 始终保留当前 Scout task 的所有权和最终聚合责任。
+- 委派 prompt 必须包含已确认的用户意图、子任务边界、允许的副作用和期望返回结果。
+- 明确要求 child 不调用任何 Scout dynamic tool；child 只能使用 Codex 内建能力和当前 sandbox 允许的命令。
+- child 结果只返回父 Worker；由父 Worker 核对并决定后续工具调用、人工请求和正式 task 提交。
+
 ## Human Input
 
 - 适用领域 Skill 判断当前工作依赖必须由人工确认的输入后，先完成不依赖该输入的工作，并合并为一次最小请求。
