@@ -3,7 +3,10 @@ import type {
   UnsubscribeEventHandler,
 } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
-import type { AgentActivity } from "../activity/activity-event.js";
+import type {
+  AgentActivity,
+  AgentTurnActivity,
+} from "../activity/activity-event.js";
 import type { AgentRegistry } from "../core/agent-registry.js";
 import { AgentEvents } from "../events/index.js";
 
@@ -18,7 +21,7 @@ export class AgentActivityRecorder {
   private readonly eventBus: EventBus;
   private readonly registry: AgentRegistry;
   private readonly activityLoggers = new Map<string, Logger>();
-  private unsubscribe?: UnsubscribeEventHandler;
+  private unsubscribers: UnsubscribeEventHandler[] = [];
 
   constructor(options: AgentActivityRecorderOptions) {
     this.runId = options.runId;
@@ -27,25 +30,42 @@ export class AgentActivityRecorder {
   }
 
   start(): void {
-    if (this.unsubscribe) return;
-    this.unsubscribe = this.eventBus.subscribe<AgentActivity>(
-      AgentEvents.activity.observed,
-      (event) => this.record(event.payload),
+    if (this.unsubscribers.length > 0) return;
+    this.unsubscribers.push(
+      this.eventBus.subscribe<AgentActivity>(
+        AgentEvents.activity.observed,
+        (event) => this.recordActivity(event.payload),
+      ),
+      this.eventBus.subscribe<AgentTurnActivity>(
+        AgentEvents.activity.turnObserved,
+        (event) => this.recordTurn(event.payload),
+      ),
     );
   }
 
   stop(): void {
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
+    while (this.unsubscribers.length > 0) {
+      this.unsubscribers.pop()?.();
+    }
     this.activityLoggers.clear();
   }
 
-  private record(activity: AgentActivity): void {
+  private recordActivity(activity: AgentActivity): void {
     if (activity.type === "dynamicToolCall") return;
     if (activity.type === "reasoning" && activity.status !== "completed") return;
     this.loggerFor(activity.agentId).info({
       module: "agent.activity",
       event: AgentEvents.activity.observed.routeKey,
+      agentId: activity.agentId,
+      taskId: activity.taskId,
+      data: activity,
+    });
+  }
+
+  private recordTurn(activity: AgentTurnActivity): void {
+    this.loggerFor(activity.agentId).info({
+      module: "agent.activity",
+      event: AgentEvents.activity.turnObserved.routeKey,
       agentId: activity.agentId,
       taskId: activity.taskId,
       data: activity,

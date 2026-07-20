@@ -12,7 +12,10 @@ import type {
   RuntimeInteractionPort,
   RuntimeInteractionUnsubscribe,
 } from "../../src/interaction/protocol/port.js";
-import type { AgentActivity } from "../../src/agent/activity/activity-event.js";
+import type {
+  AgentActivity,
+  AgentTurnActivity,
+} from "../../src/agent/activity/activity-event.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
@@ -189,12 +192,23 @@ test("interaction gateway projects assigned task plan and Worker activity into T
     detail: "Locate the current Behavior source.",
     updatedAt: "2026-07-10T00:00:02.000Z",
   } satisfies AgentActivity);
+  await bus.publishAndWait(AgentEvents.activity.turnObserved, {
+    seq: 2,
+    agentId: "researcher",
+    role: "researcher",
+    taskId: "researcher-task-0001",
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    status: "inProgress",
+    updatedAt: "2026-07-10T00:00:03.000Z",
+  } satisfies AgentTurnActivity);
 
   assert.deepEqual(store.snapshot().tasks[0]?.planSteps, [{
     step: "Locate BDD and Behavior source",
     status: "inProgress",
   }]);
   assert.equal(store.snapshot().activities[0]?.taskId, "researcher-task-0001");
+  assert.equal(store.snapshot().turnActivities[0]?.status, "inProgress");
 
   await bus.publishAndWait(AgentEvents.task.done, taskState({
     status: AgentTaskStatuses.Done,
@@ -213,7 +227,9 @@ test("interaction gateway projects assigned task plan and Worker activity into T
   }));
   gateway.stop();
 
-  assert.equal(store.snapshot().tasks.length, 0);
+  assert.equal(store.snapshot().tasks.length, 1);
+  assert.equal(store.snapshot().tasks[0]?.status, "archived");
+  assert.equal(store.snapshot().tasks[0]?.planSteps[0]?.status, "completed");
 });
 
 class TestInteractionPort implements RuntimeInteractionPort {
@@ -231,6 +247,10 @@ class TestInteractionPort implements RuntimeInteractionPort {
   }
 
   async publishAgentActivity(_activity: AgentActivity): Promise<void> {
+    return undefined;
+  }
+
+  async publishAgentTurnActivity(_activity: AgentTurnActivity): Promise<void> {
     return undefined;
   }
 

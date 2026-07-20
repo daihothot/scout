@@ -17,9 +17,21 @@ export interface AgentActivity {
   updatedAt: string;
 }
 
+export interface AgentTurnActivity {
+  seq: number;
+  agentId: string;
+  role: ScoutAgentRole;
+  taskId?: string;
+  threadId: string;
+  turnId: string;
+  status: string;
+  updatedAt: string;
+}
+
 const agentActivityEventCatalog = {
   activity: {
     observed: event<AgentActivity>(),
+    turnObserved: event<AgentTurnActivity>(),
   },
 } as const;
 

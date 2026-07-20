@@ -1,173 +1,83 @@
-import type {
-  TuiTaskPlanStep,
-  TuiTaskSummary,
-} from "./tui-store.js";
-import {
-  terminalDisplayWidth,
-  truncateByDisplayWidth,
-} from "./terminal-text.js";
+import { terminalDisplayWidth } from "./terminal-text.js";
 
-const TASK_STEP_STATUS_COLUMN_WIDTH = 10;
+const ROOT_PADDING_X = 2;
+const INPUT_BORDER_WIDTH = 1;
+const INPUT_PADDING_X = 1;
+const INPUT_PROMPT = "> ";
+const OPEN_DRAWER_STEP_ROWS = 4;
+
+export interface TuiWidths {
+  terminalWidth: number;
+  rootPaddingX: number;
+  contentWidth: number;
+  inputValueWidth: number;
+}
 
 export interface TuiWorkspaceLayout {
   totalRows: number;
-  topMarginRows: number;
-  sectionGapRows: number;
-  coordinatorHeaderOffset: number;
-  coordinatorBodyOffset: number;
-  coordinatorViewportRows: number;
-  taskHeaderOffset?: number;
-  taskStepsOffset?: number;
-  taskStepRows: number;
-  workerHeaderOffset?: number;
-  workerBodyOffset?: number;
-  workerViewportRows: number;
+  chatOffset: number;
+  chatRows: number;
+  tasksOffset: number;
+  taskRows: number;
+  activityGapRows: number;
+  activityOffset: number;
+  activityRows: number;
 }
 
-export interface TuiTaskStepWindow {
-  start: number;
-  steps: TuiTaskPlanStep[];
-}
-
-export interface TuiTaskStepDisplay {
-  marker: string;
-  label: string;
-  labelPadding: string;
-  status: string;
-  statusColumnStart: number;
+export function resolveTuiWidths(columns: number): TuiWidths {
+  const terminalWidth = Math.max(1, Number.isFinite(columns) ? Math.floor(columns) : 1);
+  const rootPaddingX = terminalWidth < 24 ? 0 : terminalWidth < 48 ? 1 : ROOT_PADDING_X;
+  const contentWidth = Math.max(1, terminalWidth - (rootPaddingX * 2));
+  const inputValueWidth = Math.max(
+    0,
+    contentWidth
+      - (INPUT_BORDER_WIDTH * 2)
+      - (INPUT_PADDING_X * 2)
+      - terminalDisplayWidth(INPUT_PROMPT),
+  );
+  return {
+    terminalWidth,
+    rootPaddingX,
+    contentWidth,
+    inputValueWidth,
+  };
 }
 
 export function resolveTuiWorkspaceLayout(input: {
   availableRows: number;
-  hasTask: boolean;
-  workerOpen: boolean;
-  planStepCount: number;
+  drawerOpen: boolean;
+  taskCount: number;
+  desiredActivityRows: number;
 }): TuiWorkspaceLayout {
   const totalRows = Math.max(1, Math.floor(input.availableRows));
-  const topMarginRows = input.hasTask
-    ? (totalRows >= 14 ? 1 : 0)
-    : (totalRows >= 3 ? 1 : 0);
-  const sectionGapRows = input.hasTask && totalRows >= 18 ? 1 : 0;
-  const headerRows = 1 + (input.hasTask ? 1 : 0) + (input.workerOpen ? 1 : 0);
-  const gapRows = sectionGapRows * ((input.hasTask ? 1 : 0) + (input.workerOpen ? 1 : 0));
-  const minimumActivityRows = 1 + (input.workerOpen ? 1 : 0);
-  const taskStepCapacity = Math.max(
+  const minimumTaskRows = totalRows >= 2 ? 1 : 0;
+  const activityGapRows = totalRows >= 4 ? 1 : 0;
+  const maximumActivityRows = Math.max(
     0,
-    totalRows - topMarginRows - headerRows - gapRows - minimumActivityRows,
+    totalRows - minimumTaskRows - activityGapRows - 1,
   );
-  const taskStepRows = input.hasTask
-    ? Math.min(Math.max(0, input.planStepCount), taskStepCapacity)
+  const activityRows = totalRows >= 3
+    ? Math.min(maximumActivityRows, Math.max(1, input.desiredActivityRows))
     : 0;
-  const activityRows = Math.max(
-    minimumActivityRows,
-    totalRows - topMarginRows - headerRows - gapRows - taskStepRows,
+  const maximumTaskRows = Math.max(
+    0,
+    totalRows - activityRows - activityGapRows - 1,
   );
-  const coordinatorViewportRows = input.workerOpen
-    ? Math.max(1, Math.floor(activityRows / 2))
-    : Math.max(1, activityRows);
-  const workerViewportRows = input.workerOpen
-    ? Math.max(1, activityRows - coordinatorViewportRows)
-    : 0;
-
-  let offset = topMarginRows;
-  const coordinatorHeaderOffset = offset;
-  offset += 1;
-  const coordinatorBodyOffset = offset;
-  offset += coordinatorViewportRows;
-
-  let taskHeaderOffset: number | undefined;
-  let taskStepsOffset: number | undefined;
-  if (input.hasTask) {
-    offset += sectionGapRows;
-    taskHeaderOffset = offset;
-    offset += 1;
-    taskStepsOffset = offset;
-    offset += taskStepRows;
-  }
-
-  let workerHeaderOffset: number | undefined;
-  let workerBodyOffset: number | undefined;
-  if (input.workerOpen) {
-    offset += sectionGapRows;
-    workerHeaderOffset = offset;
-    offset += 1;
-    workerBodyOffset = offset;
-  }
-
+  const desiredTaskRows = input.drawerOpen
+    ? 1 + Math.max(1, input.taskCount) + OPEN_DRAWER_STEP_ROWS
+    : minimumTaskRows;
+  const taskRows = Math.min(maximumTaskRows, Math.max(minimumTaskRows, desiredTaskRows));
+  const chatRows = Math.max(1, totalRows - taskRows - activityGapRows - activityRows);
+  const tasksOffset = chatRows;
+  const activityOffset = tasksOffset + taskRows + activityGapRows;
   return {
     totalRows,
-    topMarginRows,
-    sectionGapRows,
-    coordinatorHeaderOffset,
-    coordinatorBodyOffset,
-    coordinatorViewportRows,
-    taskHeaderOffset,
-    taskStepsOffset,
-    taskStepRows,
-    workerHeaderOffset,
-    workerBodyOffset,
-    workerViewportRows,
+    chatOffset: 0,
+    chatRows,
+    tasksOffset,
+    taskRows,
+    activityGapRows,
+    activityOffset,
+    activityRows,
   };
-}
-
-export function selectCurrentTask(tasks: TuiTaskSummary[]): TuiTaskSummary | undefined {
-  return [...tasks].sort((left, right) =>
-    left.taskSequence - right.taskSequence || left.updatedAt.localeCompare(right.updatedAt)
-  ).at(-1);
-}
-
-export function isTerminalTaskStatus(status: string | undefined): boolean {
-  return status === "failed"
-    || status === "stopped";
-}
-
-export function resolveTaskStepWindow(
-  steps: TuiTaskPlanStep[],
-  capacity: number,
-): TuiTaskStepWindow {
-  const normalizedCapacity = Math.max(0, Math.floor(capacity));
-  if (normalizedCapacity === 0) return { start: 0, steps: [] };
-  if (steps.length <= normalizedCapacity) return { start: 0, steps };
-  const activeIndex = steps.findIndex((step) => step.status === "inProgress");
-  const anchor = activeIndex >= 0 ? activeIndex : steps.length - 1;
-  const start = Math.min(
-    steps.length - normalizedCapacity,
-    Math.max(0, anchor - Math.floor((normalizedCapacity - 1) / 2)),
-  );
-  return {
-    start,
-    steps: steps.slice(start, start + normalizedCapacity),
-  };
-}
-
-export function buildTaskStepDisplay(
-  step: TuiTaskPlanStep,
-  width: number,
-): TuiTaskStepDisplay {
-  const normalizedWidth = Math.max(1, Math.floor(width));
-  const marker = taskStepMarker(step.status);
-  const markerWidth = terminalDisplayWidth(`${marker} `);
-  const availableAfterMarker = Math.max(0, normalizedWidth - markerWidth);
-  const statusColumnWidth = Math.min(TASK_STEP_STATUS_COLUMN_WIDTH, availableAfterMarker);
-  const labelColumnWidth = Math.max(0, availableAfterMarker - statusColumnWidth);
-  const label = truncateByDisplayWidth(step.step, labelColumnWidth);
-  const labelPadding = " ".repeat(Math.max(
-    0,
-    labelColumnWidth - terminalDisplayWidth(label),
-  ));
-  return {
-    marker,
-    label,
-    labelPadding,
-    status: truncateByDisplayWidth(step.status, statusColumnWidth),
-    statusColumnStart: markerWidth + labelColumnWidth,
-  };
-}
-
-function taskStepMarker(status: string): string {
-  if (status === "completed") return "✓";
-  if (status === "inProgress") return "→";
-  if (status === "pending") return "✷";
-  if (status === "failed" || status === "blocked") return "!";
-  return "·";
 }

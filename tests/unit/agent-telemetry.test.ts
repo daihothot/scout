@@ -3,7 +3,10 @@ import test from "node:test";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentActivity } from "../../src/agent/activity/activity-event.js";
+import type {
+  AgentActivity,
+  AgentTurnActivity,
+} from "../../src/agent/activity/activity-event.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
@@ -156,15 +159,25 @@ test("AgentActivityRecorder writes stable activity to the role activity log", as
     status: "completed",
     label: "rg BDD-001",
   }));
+  await eventBus.publishAndWait(AgentEvents.activity.turnObserved, turnActivity({
+    seq: 5,
+    status: "inProgress",
+  }));
+  await eventBus.publishAndWait(AgentEvents.activity.turnObserved, turnActivity({
+    seq: 6,
+    status: "completed",
+  }));
   recorder.stop();
 
   const activityLogPath = join(logsRoot, "activity.log");
   const text = readFileSync(activityLogPath, "utf8");
-  assert.equal(readEventCount(text), 2);
+  assert.equal(readEventCount(text), 4);
   assert.match(text, /detail: "Stable summary"/);
   assert.match(text, /label: "rg BDD-001"/);
   assert.doesNotMatch(text, /Partial summary/);
   assert.doesNotMatch(text, /ArchiveTask/);
+  assert.match(text, /event=agent\.activity\.turn_observed/);
+  assert.match(text, /status: "inProgress"/);
   assert.equal(existsSync(join(root, "logs", "runtime.log")), false);
   assert.equal(existsSync(join(logsRoot, "researcher-task-0001.log")), false);
 });
@@ -273,6 +286,20 @@ function activity(input: Partial<AgentActivity>): AgentActivity {
     type: "commandExecution",
     status: "inProgress",
     label: "command",
+    updatedAt: "2026-07-14T00:00:00.000Z",
+    ...input,
+  };
+}
+
+function turnActivity(input: Partial<AgentTurnActivity>): AgentTurnActivity {
+  return {
+    seq: 1,
+    agentId: "researcher",
+    role: "researcher",
+    taskId: "researcher-task-0001",
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    status: "inProgress",
     updatedAt: "2026-07-14T00:00:00.000Z",
     ...input,
   };

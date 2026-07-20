@@ -56,7 +56,10 @@ import type {
   RuntimeInteractionUnsubscribe,
 } from "../../src/interaction/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
-import type { AgentActivity } from "../../src/agent/activity/activity-event.js";
+import type {
+  AgentActivity,
+  AgentTurnActivity,
+} from "../../src/agent/activity/activity-event.js";
 import { InteractionGateway } from "../../src/interaction/index.js";
 import { attachments } from "../../src/agent/context/index.js";
 import { agent } from "../../src/agent/context/agent-attachments.js";
@@ -489,6 +492,72 @@ test("AgentBackend normalizes app-server items into Agent activity", () => {
     updatedAt: "2026-07-14T00:00:00.000Z",
   }]);
   assert.equal(JSON.stringify(activities).includes("private chain of thought"), false);
+});
+
+test("AgentBackend publishes turn lifecycle separately from item activity", () => {
+  const started = {
+    seq: 8,
+    stream: "lifecycle",
+    kind: "turn_started",
+    receivedAt: "2026-07-14T00:00:01.000Z",
+    threadId: "thread-coordinator",
+    turnId: "turn-2",
+  } satisfies AppServerTimelineEntry;
+  const completed = {
+    ...started,
+    seq: 9,
+    kind: "turn_completed",
+    receivedAt: "2026-07-14T00:00:02.000Z",
+  } satisfies AppServerTimelineEntry;
+  const appServer = createFakeAppServer({
+    resolveTimelineEntry: (entry) => ({
+      entry,
+      turn: entry.kind === "turn_completed"
+        ? {
+          id: "turn-2",
+          threadId: "thread-coordinator",
+          status: "completed",
+          items: {},
+          itemOrder: [],
+          finalResponse: "",
+          completedAt: entry.receivedAt,
+          updatedAt: entry.receivedAt,
+        }
+        : undefined,
+    }),
+  });
+  const fixture = createAgentFixture("agent-turn-activity", {
+    appServer,
+    domain: createStaticDomain("domain-agent-turn-activity", []),
+  });
+  const coordinator = new CoordinatorAgent(fixture.options);
+  fixture.registry.registerAgent(coordinator);
+  fixture.registry.bindThread(coordinator.agentId, started.threadId);
+  const turnActivities: AgentTurnActivity[] = [];
+  fixture.eventBus.subscribe<AgentTurnActivity>(
+    AgentEvents.activity.turnObserved,
+    (event) => {
+      turnActivities.push(event.payload);
+    },
+  );
+  new AgentBackend({
+    agentProvider: {
+      resolveWorker(input): WorkerAgent {
+        return fixture.registry.resolveAgent(input.role) as WorkerAgent;
+      },
+    },
+  }).start();
+
+  appServer.emitTimeline(started);
+  appServer.emitTimeline(completed);
+
+  assert.deepEqual(
+    turnActivities.map((activity) => [activity.turnId, activity.status, activity.seq]),
+    [
+      ["turn-2", "inProgress", 8],
+      ["turn-2", "completed", 9],
+    ],
+  );
 });
 
 test("AgentBackend logs only health failures from an unbound app-server event burst", () => {
@@ -1133,6 +1202,7 @@ function buildDomainTool(namespace: string): AgentDynamicToolSpec {
 class CapturingInteractionPort implements RuntimeInteractionPort {
   readonly disclosures: RuntimeDisclosureEvent[] = [];
   readonly activities: AgentActivity[] = [];
+  readonly turnActivities: AgentTurnActivity[] = [];
   readonly taskEvents: ScoutEvent[] = [];
   readonly agentMessages: AgentMessageReply[] = [];
 
@@ -1146,6 +1216,10 @@ class CapturingInteractionPort implements RuntimeInteractionPort {
 
   async publishAgentActivity(activity: AgentActivity): Promise<void> {
     this.activities.push(activity);
+  }
+
+  async publishAgentTurnActivity(activity: AgentTurnActivity): Promise<void> {
+    this.turnActivities.push(activity);
   }
 
   async publishTaskEvent(event: ScoutEvent): Promise<void> {
