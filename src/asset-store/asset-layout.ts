@@ -2,6 +2,7 @@ export const CodexAssetLayout = {
   agentsMd: "agents/AGENTS.md",
   agentProfiles: "agents/agent-profiles.json",
   workerAgent: "agents/worker.AGENTS.md",
+  customAgentsRoot: "agents",
   baseConfig: "config/base.config.toml",
   mcpServers: "mcp/servers.json",
   shellTools: "tools/shell-tools.json",

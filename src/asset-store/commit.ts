@@ -22,6 +22,7 @@ export function buildAssetCommit(options: BuildAssetCommitOptions): AssetCommit 
     writableRoots: options.mount.writableRoots,
     shellTools: options.mount.shellTools,
     mcpServers: options.mount.mcpServers,
+    customAgents: options.mount.customAgents,
     skills: options.mount.skills,
     plugins: options.mount.plugins,
     manifestPath: options.mount.manifestPath,

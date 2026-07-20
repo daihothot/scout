@@ -53,7 +53,10 @@ export class AgentBuilder {
         orchestrationTools: role === ScoutAgentRoles.Coordinator,
       }),
       ...this.scope.domain.dynamicToolsForRole(role),
-    ];
+    ].map((tool) => ({
+      ...tool,
+      description: `${tool.description}\n\n调用约束：仅注册 Scout Agent 的 root thread 可以调用；Codex native subagent 调用会被 Runtime 拒绝。`,
+    }));
   }
 
   private agentOptionsForRole(role: ScoutAgentRole): ScoutAgentOptions {

@@ -19,7 +19,11 @@ export class VerifierAgent extends WorkerAgent {
         model: { ...options.agentMount.agentProfile.model },
         config: {
           features: {
-            multi_agent: false,
+            multi_agent: options.agentMount.agentProfile.multiAgent,
+          },
+          agents: {
+            max_threads: options.agentMount.agentProfile.maxThreads,
+            max_depth: options.agentMount.agentProfile.maxDepth,
           },
         },
         developerInstructions: readWorkerRoleInstructions(options, ScoutAgentRoles.Verifier),

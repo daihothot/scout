@@ -37,6 +37,7 @@ export function TasksDrawer({
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [expandedTaskId, setExpandedTaskId] = useState<string>();
+  const [requestedScrollTop, setRequestedScrollTop] = useState<number>();
 
   useEffect(() => {
     setSelectedIndex((current) => Math.max(0, Math.min(current, tasks.length - 1)));
@@ -46,7 +47,51 @@ export function TasksDrawer({
   }, [tasks]);
 
   const moveSelection = (delta: number) => {
+    setRequestedScrollTop(undefined);
     setSelectedIndex((current) => Math.max(0, Math.min(tasks.length - 1, current + delta)));
+  };
+
+  const visualRows = useMemo(
+    () => buildTaskDrawerRows(tasks, expandedTaskId),
+    [expandedTaskId, tasks],
+  );
+  const bodyRows = Math.max(0, height - 1);
+  const selectedVisualIndex = visualRows.findIndex((row) =>
+    row.kind === "task" && row.taskIndex === selectedIndex
+  );
+  const scrollTop = resolveTaskDrawerScrollTop(
+    visualRows.length,
+    bodyRows,
+    selectedVisualIndex,
+    requestedScrollTop,
+  );
+
+  useEffect(() => {
+    setRequestedScrollTop((current) => current === undefined
+      ? undefined
+      : resolveTaskDrawerScrollTop(
+        visualRows.length,
+        bodyRows,
+        selectedVisualIndex,
+        current,
+      ));
+  }, [bodyRows, selectedVisualIndex, visualRows.length]);
+
+  const scrollBy = (delta: number) => {
+    setRequestedScrollTop((current) => {
+      const currentTop = resolveTaskDrawerScrollTop(
+        visualRows.length,
+        bodyRows,
+        selectedVisualIndex,
+        current,
+      );
+      return resolveTaskDrawerScrollTop(
+        visualRows.length,
+        bodyRows,
+        selectedVisualIndex,
+        currentTop + delta,
+      );
+    });
   };
 
   useInput((value, key) => {
@@ -54,11 +99,19 @@ export function TasksDrawer({
     const mouse = parseSgrMouseEvent(value);
     if (mouse && mouse.y >= startY && mouse.y < startY + height) {
       const delta = mouseWheelDelta(mouse, 1);
-      if (delta !== undefined) moveSelection(delta);
+      if (delta !== undefined) scrollBy(delta);
       return;
     }
     if (key.escape) {
       onClose();
+      return;
+    }
+    if (key.pageUp) {
+      scrollBy(-Math.max(1, bodyRows));
+      return;
+    }
+    if (key.pageDown) {
+      scrollBy(Math.max(1, bodyRows));
       return;
     }
     if (key.upArrow) {
@@ -72,14 +125,10 @@ export function TasksDrawer({
     if (key.return) {
       const selected = tasks[selectedIndex];
       if (!selected) return;
+      setRequestedScrollTop(undefined);
       setExpandedTaskId((current) => current === selected.taskId ? undefined : selected.taskId);
     }
   });
-
-  const visualRows = useMemo(
-    () => buildTaskDrawerRows(tasks, expandedTaskId),
-    [expandedTaskId, tasks],
-  );
 
   if (!open) {
     return (
@@ -89,15 +138,6 @@ export function TasksDrawer({
     );
   }
 
-  const bodyRows = Math.max(0, height - 1);
-  const selectedVisualIndex = visualRows.findIndex((row) =>
-    row.kind === "task" && row.taskIndex === selectedIndex
-  );
-  const scrollTop = resolveTaskDrawerScrollTop(
-    visualRows.length,
-    bodyRows,
-    selectedVisualIndex,
-  );
   const visibleRows = visualRows.slice(scrollTop, scrollTop + bodyRows);
 
   return (
@@ -169,15 +209,20 @@ function buildTaskDrawerRows(
   ]);
 }
 
-function resolveTaskDrawerScrollTop(
+export function resolveTaskDrawerScrollTop(
   totalRows: number,
   viewportRows: number,
   selectedRow: number,
+  requestedTop?: number,
 ): number {
   if (viewportRows <= 0 || totalRows <= viewportRows) return 0;
+  const maximumTop = totalRows - viewportRows;
+  if (requestedTop !== undefined) {
+    return Math.min(maximumTop, Math.max(0, requestedTop));
+  }
   const anchor = Math.max(0, selectedRow);
   return Math.min(
-    totalRows - viewportRows,
+    maximumTop,
     Math.max(0, anchor - Math.floor((viewportRows - 1) / 2)),
   );
 }

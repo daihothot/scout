@@ -4,7 +4,6 @@ const ROOT_PADDING_X = 2;
 const INPUT_BORDER_WIDTH = 1;
 const INPUT_PADDING_X = 1;
 const INPUT_PROMPT = "> ";
-const OPEN_DRAWER_STEP_ROWS = 4;
 
 export interface TuiWidths {
   terminalWidth: number;
@@ -17,6 +16,7 @@ export interface TuiWorkspaceLayout {
   totalRows: number;
   chatOffset: number;
   chatRows: number;
+  taskGapRows: number;
   tasksOffset: number;
   taskRows: number;
   activityGapRows: number;
@@ -47,33 +47,39 @@ export function resolveTuiWorkspaceLayout(input: {
   availableRows: number;
   drawerOpen: boolean;
   taskCount: number;
+  taskPlanStepRows: number;
   desiredActivityRows: number;
 }): TuiWorkspaceLayout {
   const totalRows = Math.max(1, Math.floor(input.availableRows));
   const minimumTaskRows = totalRows >= 2 ? 1 : 0;
-  const activityGapRows = totalRows >= 4 ? 1 : 0;
+  const taskGapRows = totalRows >= 4 ? 1 : 0;
+  const activityGapRows = totalRows >= 5 ? 1 : 0;
   const maximumActivityRows = Math.max(
     0,
-    totalRows - minimumTaskRows - activityGapRows - 1,
+    totalRows - minimumTaskRows - taskGapRows - activityGapRows - 1,
   );
   const activityRows = totalRows >= 3
     ? Math.min(maximumActivityRows, Math.max(1, input.desiredActivityRows))
     : 0;
   const maximumTaskRows = Math.max(
     0,
-    totalRows - activityRows - activityGapRows - 1,
+    totalRows - activityRows - taskGapRows - activityGapRows - 1,
   );
   const desiredTaskRows = input.drawerOpen
-    ? 1 + Math.max(1, input.taskCount) + OPEN_DRAWER_STEP_ROWS
+    ? 1 + Math.max(1, input.taskCount) + Math.max(0, input.taskPlanStepRows)
     : minimumTaskRows;
   const taskRows = Math.min(maximumTaskRows, Math.max(minimumTaskRows, desiredTaskRows));
-  const chatRows = Math.max(1, totalRows - taskRows - activityGapRows - activityRows);
-  const tasksOffset = chatRows;
+  const chatRows = Math.max(
+    1,
+    totalRows - taskRows - taskGapRows - activityGapRows - activityRows,
+  );
+  const tasksOffset = chatRows + taskGapRows;
   const activityOffset = tasksOffset + taskRows + activityGapRows;
   return {
     totalRows,
     chatOffset: 0,
     chatRows,
+    taskGapRows,
     tasksOffset,
     taskRows,
     activityGapRows,

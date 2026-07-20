@@ -56,8 +56,18 @@ function cloneAgentProfile(
   profile: AgentProfileDefinition,
   model: CodexModelConfig,
 ): AgentProfile {
+  if (
+    !Array.isArray(profile.customAgents)
+    || profile.customAgents.some((name) => typeof name !== "string" || name.trim().length === 0)
+  ) {
+    throw new Error("Missing or invalid agent profile customAgents.");
+  }
   return {
     config: profile.config,
+    multiAgent: requireBoolean(profile.multiAgent, "agent profile multiAgent"),
+    maxThreads: requireInteger(profile.maxThreads, "agent profile maxThreads", 1),
+    maxDepth: requireInteger(profile.maxDepth, "agent profile maxDepth", 0),
+    customAgents: profile.customAgents.map((name) => name.trim()),
     model,
     skills: [...profile.skills],
     shellTools: [...(profile.shellTools ?? [])],
@@ -66,6 +76,20 @@ function cloneAgentProfile(
     trustedRoots: [...(profile.trustedRoots ?? [])],
     writableRoots: [...(profile.writableRoots ?? [])],
   };
+}
+
+function requireBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`Missing or invalid ${label}.`);
+  }
+  return value;
+}
+
+function requireInteger(value: unknown, label: string, minimum: number): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < minimum) {
+    throw new Error(`Missing or invalid ${label}.`);
+  }
+  return value;
 }
 
 function normalizeModelConfig(value: unknown, label: string): CodexModelConfig {

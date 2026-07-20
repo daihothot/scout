@@ -10,6 +10,7 @@ export function ScoutShell({
   chatPanel,
   tasksDrawer,
   activityBar,
+  taskGapRows,
   activityGapRows,
   promptInput,
   workspaceRows,
@@ -22,6 +23,7 @@ export function ScoutShell({
   chatPanel: ReactNode;
   tasksDrawer: ReactNode;
   activityBar: ReactNode;
+  taskGapRows: number;
   activityGapRows: number;
   promptInput?: ReactNode;
   workspaceRows: number;
@@ -43,6 +45,7 @@ export function ScoutShell({
         flexShrink={0}
       >
         {chatPanel}
+        {taskGapRows > 0 && <Box height={taskGapRows} flexShrink={0} />}
         {tasksDrawer}
         {activityGapRows > 0 && <Box height={activityGapRows} flexShrink={0} />}
         {activityBar}

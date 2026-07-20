@@ -72,6 +72,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
   ensureDir(artifactRoot);
   ensureDir(logsRoot);
   ensureDir(join(mountRoot, ".codex"));
+  ensureDir(join(mountRoot, ".codex", "agents"));
   ensureDir(join(mountRoot, ".agents", "skills"));
   ensureDir(join(mountRoot, ".agents", "plugins"));
   ensureDir(join(mountRoot, "agents"));
@@ -84,6 +85,10 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
   assertAssetFileExists(assetsRoot, agentProfile.config, `config for agent ${agentId}`);
   const profiledMcpServers = filterMcpServers(mcpServers, agentProfile.mcpServers);
   const profiledShellTools = filterShellTools(shellTools.tools, agentProfile.shellTools ?? []);
+  const profiledCustomAgentPaths = filterCustomAgents(
+    listCustomAgentPaths(assetsRoot),
+    agentProfile.customAgents,
+  );
   const profiledSkillPaths = filterSkills(listSkillPaths(assetsRoot), agentProfile.skills);
   const profiledPluginPaths = filterPlugins(listPluginPaths(assetsRoot), agentProfile.plugins);
   const resourceHash = computeResourceHash({
@@ -92,6 +97,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     agentProfile,
     mcpServers: profiledMcpServers,
     shellTools: profiledShellTools,
+    customAgentPaths: profiledCustomAgentPaths,
     skillPaths: profiledSkillPaths,
     pluginPaths: profiledPluginPaths,
   });
@@ -148,6 +154,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
   writeTextFile(join(mountRoot, ".codex", "config.toml"), configText);
   writeTextFile(join(mountRoot, ".codex", "hooks.json"), "{\n  \"hooks\": []\n}\n");
 
+  const customAgentNames = materializeCustomAgents(assetsRoot, mountRoot, profiledCustomAgentPaths);
   const skillNames = materializeSkills(assetsRoot, mountRoot, profiledSkillPaths);
   const pluginNames = materializePlugins(assetsRoot, mountRoot, profiledPluginPaths);
   const shellMaterialization = materializeShellTools(mountRoot, profiledShellTools, assetsRoot);
@@ -166,9 +173,11 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     assetsRoot,
     mcpServers: materializedMcpServers,
     shellTools: shellMaterialization.shellTools,
+    customAgentPaths: profiledCustomAgentPaths,
     skillPaths: profiledSkillPaths,
     pluginPaths: profiledPluginPaths,
     shellWrappers: shellMaterialization.wrappers,
+    customAgentNames,
     skillNames,
     pluginNames,
     workerAgentPath,
@@ -193,6 +202,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     writableRoots,
     shellTools: shellMaterialization.shellTools,
     mcpServers: materializedMcpServers,
+    customAgents: customAgentNames,
     skills: skillNames,
     plugins: pluginNames,
     manifestPath,
@@ -234,6 +244,16 @@ function filterShellTools(tools: ShellToolContract[], ids: string[]): ShellToolC
   });
 }
 
+function filterCustomAgents(customAgentPaths: string[], names: string[]): string[] {
+  assertUnique(names, "customAgents");
+  const byName = new Map(customAgentPaths.map((path) => [customAgentNameFromPath(path), path] as const));
+  return names.map((name) => {
+    const path = byName.get(name);
+    if (!path) throw new Error(`Agent profile references unknown custom agent: ${name}`);
+    return path;
+  });
+}
+
 function filterSkills(skillPaths: string[], names: string[]): string[] {
   assertUnique(names, "skills");
   const byName = new Map(skillPaths.map((path) => [skillNameFromPath(path), path] as const));
@@ -261,6 +281,15 @@ function listSkillPaths(assetsRoot: string): string[] {
     .filter((entry) => entry.isDirectory())
     .map((entry) => join(CodexAssetLayout.skillsRoot, entry.name, "SKILL.md"))
     .filter((path) => existsSync(join(assetsRoot, path)))
+    .sort();
+}
+
+function listCustomAgentPaths(assetsRoot: string): string[] {
+  const customAgentsRoot = join(assetsRoot, CodexAssetLayout.customAgentsRoot);
+  if (!existsSync(customAgentsRoot)) return [];
+  return readdirSync(customAgentsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".toml"))
+    .map((entry) => join(CodexAssetLayout.customAgentsRoot, entry.name))
     .sort();
 }
 
@@ -331,6 +360,7 @@ function computeResourceHash(input: {
   agentProfile: AgentProfile;
   mcpServers: McpServersFile;
   shellTools: ShellToolContract[];
+  customAgentPaths: string[];
   skillPaths: string[];
   pluginPaths: string[];
 }): string {
@@ -344,6 +374,7 @@ function computeResourceHash(input: {
     ...computeMcpServerResourceHashParts(input.assetsRoot, input.mcpServers),
     `shell:${sha256File(join(input.assetsRoot, CodexAssetLayout.shellTools))}`,
     ...computeShellToolResourceHashParts(input.assetsRoot, input.shellTools),
+    ...input.customAgentPaths.map((path) => `customAgent:${path}:${sha256File(join(input.assetsRoot, path))}`),
     ...hashVendorDirectories(input.assetsRoot),
     ...(input.agentId === "coordinator"
       ? []
@@ -403,6 +434,25 @@ function materializeSkills(assetsRoot: string, mountRoot: string, skills: string
   });
 }
 
+function materializeCustomAgents(
+  assetsRoot: string,
+  mountRoot: string,
+  customAgents: string[],
+): string[] {
+  return customAgents.map((customAgentPath) => {
+    const name = customAgentNameFromPath(customAgentPath);
+    safeSymlink(
+      join(assetsRoot, customAgentPath),
+      join(mountRoot, ".codex", "agents", `${name}.toml`),
+    );
+    return name;
+  });
+}
+
+function customAgentNameFromPath(customAgentPath: string): string {
+  return basename(customAgentPath, ".toml");
+}
+
 function skillNameFromPath(skillPath: string): string {
   const source = resolve(skillPath);
   return basename(source) === "SKILL.md" ? basename(resolve(source, "..")) : basename(source);
@@ -456,9 +506,11 @@ function buildMountManifest(input: {
   assetsRoot: string;
   mcpServers: MaterializedMcpServer[];
   shellTools: ShellToolContract[];
+  customAgentPaths: string[];
   skillPaths: string[];
   pluginPaths: string[];
   shellWrappers: Array<{ id: string; wrapperPath: string }>;
+  customAgentNames: string[];
   skillNames: string[];
   pluginNames: string[];
   workerAgentPath?: string;
@@ -481,6 +533,11 @@ function buildMountManifest(input: {
       path,
       sourcePath: assetSourcePath(roleAgentPath(role)),
       hash: sha256File(join(input.mountRoot, path)),
+    })),
+    ...input.customAgentPaths.map((path) => ({
+      path: join(".codex", "agents", `${customAgentNameFromPath(path)}.toml`),
+      sourcePath: assetSourcePath(path),
+      hash: sha256File(join(input.assetsRoot, path)),
     })),
   ];
 
@@ -551,6 +608,12 @@ function buildMountManifest(input: {
         sourcePath: assetSourcePath(input.agentProfile.config),
         hash: sha256File(join(input.assetsRoot, input.agentProfile.config)),
       },
+      ...input.customAgentPaths.map((path) => ({
+        id: `codex.custom_agent.${customAgentNameFromPath(path)}`,
+        type: "custom_agent",
+        sourcePath: assetSourcePath(path),
+        hash: sha256File(join(input.assetsRoot, path)),
+      })),
       {
         id: "mcp.servers",
         type: "mcp_server_config",
@@ -597,6 +660,7 @@ function buildMountManifest(input: {
       writableRoots: server.writableRoots,
       smoke: server.smoke,
     })),
+    customAgents: input.customAgentNames,
     skills: input.skillNames,
     plugins: input.pluginNames,
     ...(input.workerAgentPath ? { workerAgent: input.workerAgentPath } : {}),

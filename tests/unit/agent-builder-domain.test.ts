@@ -32,6 +32,7 @@ import { AgentEvents } from "../../src/agent/events/index.js";
 import type { DynamicToolCallHandler } from "../../src/agent-server/types.js";
 import type {
   AppServerResolvedTimelineEntry,
+  AppServerThreadState,
   AppServerTimelineEntry,
 } from "../../src/agent-server/codex/app-server-event-store.js";
 import type {
@@ -40,6 +41,7 @@ import type {
 } from "../../src/agent-server/codex/app-server-client.js";
 import type { AssetCommit, CodexMount } from "../../src/asset-store/index.js";
 import type { ScoutDomain } from "../../src/domain/index.js";
+import type { ScoutDomainDynamicToolCall } from "../../src/domain/types.js";
 import {
   buildRunContextBundle,
   type RunEnvironment,
@@ -102,10 +104,17 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
     reasoningEffort: "high",
     reasoningSummary: "concise",
   });
-  assert.deepEqual(agent.spec.config?.features, {
-    shell_tool: true,
-    multi_agent: false,
-    apps: false,
+  assert.deepEqual(agent.spec.config, {
+    web_search: "disabled",
+    features: {
+      shell_tool: true,
+      multi_agent: false,
+      apps: false,
+    },
+    agents: {
+      max_threads: 6,
+      max_depth: 1,
+    },
   });
   assert.equal(fixture.registry.listAgents()[0], agent);
   assert.ok(tools.some((tool) => tool.namespace === AGENT_ASSIGN_TASK_TOOL_NAMESPACE && tool.name === "AssignTask"));
@@ -116,6 +125,7 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
   assert.equal(tools.some((tool) => tool.name === "RequestHumanInput"), false);
   assert.ok(tools.some((tool) => tool.namespace === "domain-a" && tool.name === "DomainProbe"));
   assert.equal(tools.some((tool) => tool.namespace === "domain-b"), false);
+  assert.ok(tools.every((tool) => /仅注册 Scout Agent 的 root thread 可以调用/.test(tool.description)));
   const instructions = agent.spec.developerInstructions ?? "";
   assert.match(instructions, /common instructions/);
   assert.match(instructions, /coordinator instructions/);
@@ -145,6 +155,15 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
 
   assert.ok(agent instanceof ResearcherAgent);
   assert.equal(agent.runner, undefined);
+  assert.deepEqual(agent.spec.config, {
+    features: {
+      multi_agent: true,
+    },
+    agents: {
+      max_threads: 6,
+      max_depth: 1,
+    },
+  });
   assert.equal(fixture.registry.resolveAgent(ScoutAgentRoles.Researcher), agent);
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SEND_MESSAGE_TOOL_NAMESPACE && tool.name === "SendMessage"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RequestHumanInput"));
@@ -154,6 +173,7 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
     "RequestHumanInput",
     "SubmitTask",
   ]);
+  assert.ok(tools.every((tool) => /Codex native subagent 调用会被 Runtime 拒绝/.test(tool.description)));
   assert.equal(tools.some((tool) => tool.name === "AssignTask"), false);
   assert.equal(tools.some((tool) => tool.name === "ArchiveTask"), false);
   assert.equal(tools.some((tool) => tool.name === "RespondHumanInput"), false);
@@ -185,6 +205,16 @@ test("Validator turns use workspace-write with only the profile write roots", as
   assert.ok(validator instanceof ValidatorAgent);
   assert.equal(validator.spec.sandbox, "workspace-write");
   await validator.start();
+  assert.deepEqual(validator.threadSnapshot?.startInput.config, {
+    features: {
+      multi_agent: true,
+    },
+    agents: {
+      max_threads: 6,
+      max_depth: 1,
+    },
+    model_reasoning_effort: "high",
+  });
   await validator.runTurn({ prompt: "Write the Research Pack Gate." });
 
   assert.deepEqual(appServer.turnInputs[0]?.writableRoots, [validatorMount.artifactRoot]);
@@ -622,6 +652,128 @@ test("AgentBackend stop removes app-server dynamic tool and timeline handlers", 
   backend.stop();
   assert.equal(appServer.handler, undefined);
   assert.equal(appServer.timelineHandlerCount, 0);
+});
+
+test("Worker child threads cannot inherit domain tool access from their registered parent", async () => {
+  const calls: ScoutDomainDynamicToolCall[] = [];
+  const appServer = createFakeAppServer({
+    parentThreadIds: {
+      "thread-child": "thread-test",
+      "thread-grandchild": "thread-child",
+    },
+  });
+  const domain: ScoutDomain = {
+    domainId: "domain-child-tool",
+    name: "domain-child-tool",
+    dynamicToolsForRole: () => [buildDomainTool("domain-child-tool")],
+    handleDynamicToolCall(call) {
+      calls.push(call);
+      return {
+        success: true,
+        contentItems: [{ type: "inputText", text: "domain result" }],
+      };
+    },
+  };
+  const fixture = createAgentFixture("worker-child-domain-tool", { appServer, domain });
+  const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  const researcher = new AgentBuilder({
+    preparedAgents: {
+      ...fixture.preparedAgents,
+      [ScoutAgentRoles.Researcher]: {
+        agentMount: researcherMount,
+        assetCommit: createAssetCommit(researcherMount),
+      },
+    },
+  }).buildWorker(ScoutAgentRoles.Researcher);
+  new AgentBackend({
+    agentProvider: {
+      resolveWorker(input): WorkerAgent {
+        return fixture.registry.resolveAgent(input.role) as WorkerAgent;
+      },
+    },
+  }).start();
+  await researcher.start();
+
+  assert.ok(appServer.handler);
+  const result = await appServer.handler({
+    threadId: "thread-grandchild",
+    turnId: "turn-child-domain-tool",
+    callId: "call-child-domain-tool",
+    namespace: "domain-child-tool",
+    tool: "DomainProbe",
+    arguments: {},
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.contentItems[0]?.text ?? "", /Unknown dynamic tool caller thread: thread-grandchild/);
+  assert.equal(calls.length, 0);
+  assert.equal(fixture.registry.resolveAgentByThreadId("thread-child"), undefined);
+  assert.equal(fixture.registry.resolveAgentByThreadId("thread-grandchild"), undefined);
+});
+
+test("Child threads cannot call Scout agent lifecycle tools", async () => {
+  const appServer = createFakeAppServer({
+    parentThreadIds: {
+      "thread-child": "thread-test",
+    },
+  });
+  const fixture = createAgentFixture("worker-child-lifecycle-tool", { appServer });
+  const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  const researcher = new AgentBuilder({
+    preparedAgents: {
+      ...fixture.preparedAgents,
+      [ScoutAgentRoles.Researcher]: {
+        agentMount: researcherMount,
+        assetCommit: createAssetCommit(researcherMount),
+      },
+    },
+  }).buildWorker(ScoutAgentRoles.Researcher);
+  new AgentBackend({
+    agentProvider: {
+      resolveWorker(input): WorkerAgent {
+        return fixture.registry.resolveAgent(input.role) as WorkerAgent;
+      },
+    },
+  }).start();
+  await researcher.start();
+
+  assert.ok(appServer.handler);
+  const result = await appServer.handler({
+    threadId: "thread-child",
+    turnId: "turn-child-submit-task",
+    callId: "call-child-submit-task",
+    namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+    tool: "SubmitTask",
+    arguments: { outcome: "## Outcome" },
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.contentItems[0]?.text ?? "", /Unknown dynamic tool caller thread: thread-child/);
+});
+
+test("Unknown threads remain unauthorized for domain dynamic tools", async () => {
+  const appServer = createFakeAppServer();
+  const fixture = createAgentFixture("unknown-domain-tool-caller", { appServer });
+  new AgentBackend({
+    agentProvider: {
+      resolveWorker(input): WorkerAgent {
+        return fixture.registry.resolveAgent(input.role) as WorkerAgent;
+      },
+    },
+  }).start();
+
+  assert.ok(appServer.handler);
+  const result = await appServer.handler({
+    threadId: "thread-unknown",
+    turnId: "turn-unknown-domain-tool",
+    callId: "call-unknown-domain-tool",
+    namespace: "domain-unknown-domain-tool-caller",
+    tool: "DomainProbe",
+    arguments: {},
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.contentItems[0]?.text ?? "", /Unknown dynamic tool caller thread: thread-unknown/);
 });
 
 test("SendMessage reports an undelivered message when the target Worker has no runner", async () => {
@@ -1143,6 +1295,10 @@ function createMount(root: string, role: string): CodexMount {
     agentId: role,
     agentProfile: {
       config: "config/config.toml",
+      multiAgent: role !== ScoutAgentRoles.Coordinator,
+      maxThreads: 6,
+      maxDepth: 1,
+      customAgents: role === ScoutAgentRoles.Coordinator ? [] : ["scout-helper"],
       model: {
         id: "gpt-5.5",
         provider: "GuruOpenAI",
@@ -1164,6 +1320,7 @@ function createMount(root: string, role: string): CodexMount {
     writableRoots: [artifactRoot],
     shellTools: [],
     mcpServers: [],
+    customAgents: role === ScoutAgentRoles.Coordinator ? [] : ["scout-helper"],
     skills: [],
     plugins: [],
     manifestPath: join(mountRoot, "mount-manifest.json"),
@@ -1324,6 +1481,7 @@ function createFakeAppServer(options: {
   ) => AgentTaskStepToolCall[] | void | Promise<AgentTaskStepToolCall[] | void>;
   finalResponse?: string;
   resolveTimelineEntry?: (entry: AppServerTimelineEntry) => AppServerResolvedTimelineEntry;
+  parentThreadIds?: Record<string, string | null>;
 } = {}): CodexAppServerClient & {
   handler?: DynamicToolCallHandler;
   readonly timelineHandlerCount: number;
@@ -1378,6 +1536,24 @@ function createFakeAppServer(options: {
     },
     resolveTimelineEntry(entry: AppServerTimelineEntry): AppServerResolvedTimelineEntry {
       return options.resolveTimelineEntry?.(entry) ?? { entry };
+    },
+    threadSnapshot(threadId: string): AppServerThreadState | undefined {
+      const parentThreadId = options.parentThreadIds?.[threadId];
+      if (parentThreadId === undefined) return undefined;
+      return {
+        id: threadId,
+        meta: {
+          id: threadId,
+          parentThreadId,
+        },
+        plan: {
+          explanation: "",
+          steps: [],
+        },
+        turns: {},
+        turnOrder: [],
+        updatedAt: "2026-07-20T00:00:00.000Z",
+      };
     },
     startThread: async (threadInput: ThreadStartOptions) => {
       appServer.threadInputs.push(threadInput);

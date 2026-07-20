@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCollapsedTaskSummary } from "../../src/interaction/tui/panels/tasks-drawer.js";
+import {
+  buildCollapsedTaskSummary,
+  resolveTaskDrawerScrollTop,
+} from "../../src/interaction/tui/panels/tasks-drawer.js";
 import { buildTaskStepDisplay } from "../../src/interaction/tui/rows/task-summary-row.js";
 import { selectTaskSummaries } from "../../src/interaction/tui/selectors/task-summaries.js";
 import { terminalDisplayWidth } from "../../src/interaction/tui/terminal-text.js";
@@ -16,13 +19,15 @@ test("workspace keeps Chat full width above the collapsed task and activity rows
     availableRows: 12,
     drawerOpen: false,
     taskCount: 3,
+    taskPlanStepRows: 4,
     desiredActivityRows: 1,
   });
 
   assert.deepEqual(layout, {
     totalRows: 12,
     chatOffset: 0,
-    chatRows: 9,
+    chatRows: 8,
+    taskGapRows: 1,
     tasksOffset: 9,
     taskRows: 1,
     activityGapRows: 1,
@@ -36,13 +41,15 @@ test("expanded task drawer takes bounded bottom rows without removing Chat", () 
     availableRows: 12,
     drawerOpen: true,
     taskCount: 3,
+    taskPlanStepRows: 4,
     desiredActivityRows: 1,
   });
 
   assert.deepEqual(layout, {
     totalRows: 12,
     chatOffset: 0,
-    chatRows: 2,
+    chatRows: 1,
+    taskGapRows: 1,
     tasksOffset: 2,
     taskRows: 8,
     activityGapRows: 1,
@@ -56,11 +63,13 @@ test("short workspaces preserve Chat before optional chrome rows", () => {
     availableRows: 2,
     drawerOpen: true,
     taskCount: 3,
+    taskPlanStepRows: 5,
     desiredActivityRows: 1,
   }), {
     totalRows: 2,
     chatOffset: 0,
     chatRows: 1,
+    taskGapRows: 0,
     tasksOffset: 1,
     taskRows: 1,
     activityGapRows: 0,
@@ -74,17 +83,46 @@ test("workspace reserves wrapped Activity rows below the task gap", () => {
     availableRows: 12,
     drawerOpen: false,
     taskCount: 1,
+    taskPlanStepRows: 5,
     desiredActivityRows: 3,
   }), {
     totalRows: 12,
     chatOffset: 0,
-    chatRows: 7,
+    chatRows: 6,
+    taskGapRows: 1,
     tasksOffset: 7,
     taskRows: 1,
     activityGapRows: 1,
     activityOffset: 9,
     activityRows: 3,
   });
+});
+
+test("expanded task drawer budgets every current plan step when space is available", () => {
+  assert.deepEqual(resolveTuiWorkspaceLayout({
+    availableRows: 15,
+    drawerOpen: true,
+    taskCount: 1,
+    taskPlanStepRows: 5,
+    desiredActivityRows: 1,
+  }), {
+    totalRows: 15,
+    chatOffset: 0,
+    chatRows: 5,
+    taskGapRows: 1,
+    tasksOffset: 6,
+    taskRows: 7,
+    activityGapRows: 1,
+    activityOffset: 14,
+    activityRows: 1,
+  });
+});
+
+test("task drawer viewport can reach plan rows clipped by terminal height", () => {
+  assert.equal(resolveTaskDrawerScrollTop(6, 5, 0), 0);
+  assert.equal(resolveTaskDrawerScrollTop(6, 5, 0, 1), 1);
+  assert.equal(resolveTaskDrawerScrollTop(6, 5, 0, 99), 1);
+  assert.equal(resolveTaskDrawerScrollTop(10, 3, 8), 7);
 });
 
 test("task drawer keeps archived tasks after current tasks and summarizes their count", () => {

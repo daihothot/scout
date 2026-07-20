@@ -28,8 +28,12 @@ export class CoordinatorAgent extends ScoutAgent {
           web_search: "disabled",
           features: {
             shell_tool: true,
-            multi_agent: false,
+            multi_agent: options.agentMount.agentProfile.multiAgent,
             apps: false,
+          },
+          agents: {
+            max_threads: options.agentMount.agentProfile.maxThreads,
+            max_depth: options.agentMount.agentProfile.maxDepth,
           },
         },
         developerInstructions: [
