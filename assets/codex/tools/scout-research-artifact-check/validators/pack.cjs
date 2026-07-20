@@ -14,7 +14,7 @@ function validatePack(packRoot) {
 
   if (!existsSync(packRoot) || !statSync(packRoot).isDirectory()) {
     addIssue(issues, "PACK_NOT_FOUND", packRoot, "Research pack directory does not exist.");
-    return result(issues, 0, 0, 0);
+    return result(issues, 0, 0, 0, { status: "blocked", completionState: "blocked" });
   }
 
   if (/-v\d+$/i.test(basename(resolve(packRoot)))) {
@@ -49,6 +49,12 @@ function validatePack(packRoot) {
   const evidence = readEvidenceArtifacts(packRoot, issues);
   for (const document of evidence.values()) validateEvidence(document, packRoot, issues);
   const registryIds = aggregateResults.get("evidence-registry")?.registryIds ?? new Set();
+  const aggregateStates = Object.keys(AGGREGATES).map((kind) => aggregateResults.get(kind)?.state);
+  const packState = aggregateStates.some((state) => state?.status === "blocked")
+    ? { status: "blocked", completionState: "blocked" }
+    : aggregateStates.every((state) => state?.status === "ready" && state.completionState === "complete")
+      ? { status: "ready", completionState: "complete" }
+      : { status: "draft", completionState: "partial" };
 
   validatePackRelations({
     aggregateResults,
@@ -56,11 +62,12 @@ function validatePack(packRoot) {
     evidence,
     issues,
     packRoot,
+    packState,
     registryIds,
   });
 
   const verificationPointCount = aggregateResults.get("verification-manual")?.verificationPointCount ?? 0;
-  return result(issues, documents.size, evidence.size, verificationPointCount);
+  return result(issues, documents.size, evidence.size, verificationPointCount, packState);
 }
 
 function readEvidenceArtifacts(packRoot, issues) {
@@ -81,8 +88,8 @@ function readEvidenceArtifacts(packRoot, issues) {
   return artifacts;
 }
 
-function result(issues, aggregateCount, evidenceCount, verificationPointCount) {
-  return { issues, aggregateCount, evidenceCount, verificationPointCount };
+function result(issues, aggregateCount, evidenceCount, verificationPointCount, packState) {
+  return { issues, aggregateCount, evidenceCount, packState, verificationPointCount };
 }
 
 module.exports = { validatePack };

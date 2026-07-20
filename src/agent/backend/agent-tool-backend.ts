@@ -9,13 +9,15 @@ import {
   type AssignTaskToolCall,
   AGENT_TOOL_NAMESPACES,
   parseAgentDynamicToolCall,
+  type RequestHumanInputToolCall,
+  type RespondHumanInputToolCall,
   type SendMessageToolCall,
   type SubmitTaskToolCall,
   type AgentDynamicToolCall,
 } from "../tools/agent-tools.js";
 import type { AgentTaskBackend } from "./agent-task-backend.js";
 import type { AgentProvider } from "./types.js";
-import type { AgentTaskState } from "../task/types.js";
+import { AgentTaskStatuses, type AgentTaskState } from "../task/types.js";
 import { WorkerAgent } from "../roles/worker-agent.js";
 import { agent } from "../context/agent-attachments.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
@@ -169,7 +171,6 @@ export class AgentToolBackend {
 
   private handleSendMessageToolCall(
     call: SendMessageToolCall,
-    caller: ScoutAgent,
   ): Record<string, unknown> {
     const task = this.taskStore.getTask(call.to);
     const target = task
@@ -177,7 +178,7 @@ export class AgentToolBackend {
       : this.registry.resolveAgent(call.to);
     const result = target.sendMessage({
       taskId: task?.taskId,
-      message: call.message,
+      message: agent.turn.message(call.message),
     });
     if (!result.ok) {
       throw new Error(result.error);
@@ -194,6 +195,56 @@ export class AgentToolBackend {
       };
   }
 
+  private handleRequestHumanInputToolCall(
+    call: RequestHumanInputToolCall,
+    caller: ScoutAgent,
+  ): Record<string, unknown> {
+    if (!(caller instanceof WorkerAgent)) {
+      throw new Error("RequestHumanInput is only available to Worker agents.");
+    }
+    const task = caller.snapshot().activeTask;
+    if (!task || task.status !== AgentTaskStatuses.Running) {
+      throw new Error(`Worker agent ${caller.agentId} has no running task for RequestHumanInput.`);
+    }
+    const coordinator = this.registry.listAgents().find((candidate) =>
+      candidate.role === ScoutAgentRoles.Coordinator
+    );
+    if (!coordinator) {
+      throw new Error(`Worker agent ${caller.agentId} cannot find the Coordinator agent.`);
+    }
+    const result = coordinator.sendMessage({
+      message: agent.turn.wait_for_human_request(call.request),
+    });
+    if (!result.ok) throw new Error(result.error);
+    return {
+      status: "queued",
+      taskId: task.taskId,
+      agentId: coordinator.agentId,
+    };
+  }
+
+  private handleRespondHumanInputToolCall(
+    call: RespondHumanInputToolCall,
+    caller: ScoutAgent,
+  ): Record<string, unknown> {
+    if (caller.role !== ScoutAgentRoles.Coordinator) {
+      throw new Error("RespondHumanInput is only available to the Coordinator agent.");
+    }
+    const task = this.taskStore.getTask(call.task_id);
+    if (!task) throw new Error(`Unknown agent task: ${call.task_id}`);
+    const target = this.registry.resolveAgent(task.agentId);
+    const result = target.sendMessage({
+      taskId: task.taskId,
+      message: agent.turn.human_response(call.response),
+    });
+    if (!result.ok) throw new Error(result.error);
+    return {
+      status: "queued",
+      taskId: task.taskId,
+      agentId: target.agentId,
+    };
+  }
+
   private async dispatchAgentDynamicToolCall(
     call: AgentDynamicToolCall,
     caller: ScoutAgent,
@@ -202,7 +253,11 @@ export class AgentToolBackend {
       case "AssignTask":
         return this.handleAssignTaskToolCall(call);
       case "SendMessage":
-        return this.handleSendMessageToolCall(call, caller);
+        return this.handleSendMessageToolCall(call);
+      case "RequestHumanInput":
+        return this.handleRequestHumanInputToolCall(call, caller);
+      case "RespondHumanInput":
+        return this.handleRespondHumanInputToolCall(call, caller);
       case "SubmitTask":
         return this.handleSubmitTaskToolCall(call, caller);
       case "ArchiveTask":

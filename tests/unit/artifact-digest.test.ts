@@ -18,7 +18,7 @@ test("scout-artifact-digest produces a location-independent directory digest", (
 test("scout-artifact-digest changes when artifact content changes", () => {
   const pack = createPack("scout-artifact-digest-change-");
   const before = readDigest(pack);
-  writeFileSync(join(pack, "evidence", "E-KB-001.md"), "changed\n", "utf8");
+  writeFileSync(join(pack, "evidence", "E-CAP-001.md"), "changed\n", "utf8");
 
   assert.notEqual(readDigest(pack), before);
 });
@@ -40,7 +40,7 @@ test("scout-artifact-digest rejects symbolic links", () => {
 function createPack(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(root, "evidence"), { recursive: true });
-  writeFileSync(join(root, "evidence", "E-KB-001.md"), "knowledge\n", "utf8");
+  writeFileSync(join(root, "evidence", "E-CAP-001.md"), "capability\n", "utf8");
   writeFileSync(join(root, "index.md"), "index\n", "utf8");
   return root;
 }

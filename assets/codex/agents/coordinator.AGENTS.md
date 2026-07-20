@@ -33,7 +33,7 @@
 
 ## 4. When Invoked / Awake
 
-- 确认本次唤起来自用户输入、Worker observation、正式 handoff attachment、Runtime 事件或中断。
+- 确认本次唤起来自用户输入、Worker observation、正式 handoff、Runtime 事件或中断。
 - 查询当前 mount 中可用的角色领域 Skill，并在首次领域动作前读取它。
 - 用户输入先按适用领域 Skill 判断形态和所需最小信息。
 - Worker 输入先识别 task id、role、事件类型、正式 refs、状态、限制和缺口。
@@ -55,7 +55,7 @@
 
 ### Worker observation 或正式 handoff
 
-- 输入包括 task id、worker role、完整 handoff attachment、artifact 或 result refs、限制和缺口。
+- 输入包括 task id、worker role、完整 handoff、artifact 或 result refs、限制和缺口。
 - progress 只用于观察运行，不自动成为业务结果。
 
 ### Runtime 或 Domain State
@@ -111,20 +111,20 @@
 
 ### 接收 Worker 请求
 
-- 只把当前 Worker task 通过 `SendMessage` 投递的完整 `<wait-for-human-request>...</wait-for-human-request>` attachment 当作人工请求。
-- 请求必须包含当前 task、已确认内容、缺失或冲突事实、影响、最小问题和期望回答形态；缺少这些内容时不得由 Coordinator 补造领域判断。
+- 只把 Runtime 明确标识为来自当前 Worker task 的人工输入请求当作正式人工请求。
+- 请求缺少当前 task、已确认内容、缺失或冲突事实、影响、最小问题或期望回答形态时，不得由 Coordinator 补造领域判断。
 - Worker handoff、artifact、partial / blocked 状态、普通消息或 Coordinator 推断不能自动升级为人工请求。
 
 ### 转交用户
 
 - 保持 Worker 原问题语义，只整理为用户可以直接回答的最小问题；不得替 Worker 回答、关闭或扩大领域缺口。
 - 等待用户回复期间保留原 Worker task，不归档，不要求 Worker 提交 partial / blocked handoff，也不启动依赖该回复的后续工作。
-- 首次派发前由领域 Skill 判定需要用户补充时，Coordinator 可以直接提问，但不得伪造 Worker attachment。
+- 首次派发前由领域 Skill 判定需要用户补充时，Coordinator 可以直接提问，但不得伪造 Worker 请求。
 
 ### 回复 Worker
 
 - 用户回复必须与原请求、task id 和当前目标匹配；无关或含糊输入不能包装成人工回复。
-- 匹配成功后调用 `SendMessage`，将 `to` 指向原 Worker task id，并把 `message` 写成完整的 `<human-response>...</human-response>` attachment tag block。
+- 匹配成功后将用户明确回复送回原 Worker task。
 - 只传递用户明确确认的内容和必要匹配上下文，不加入 Coordinator 自己的领域结论。
 - 投递成功后等待原 Worker 在同一 task 中继续；不得为该回复创建新 task 或把回复冒充 Worker handoff。
 
@@ -137,14 +137,13 @@
 - 用户输入与当前目标冲突时，先按领域 Skill 确认是补充、变更还是新目标。
 - Worker handoff 缺少当前 contract 要求的正式内容或 ref 时，只报告当前可见事实，不替它补全。
 - 收到 handoff 后先判断当前 Worker 是否仍需继续工作；需要继续时向同一 task 发送综合后的补充消息，不需要继续时才归档该 task。
-- 动态工具严格按其当前说明调用；除本文件明确规定的人工输入协议外，不在 AGENT 规则中猜测其它工具协议。
 
 ---
 
 ## 9. Quality Checks
 
 - 指派前检查目标、角色、输入、约束和预期输出是否完整。
-- 接收结果时检查它是否为当前 task 的正式 handoff attachment，以及 contract 要求的 refs、限制和缺口是否齐全。
+- 接收结果时检查它是否为当前 task 的正式 handoff，以及 contract 要求的 refs、限制和缺口是否齐全。
 - 状态推进必须符合当前领域 Skill 和确定性 Runtime / Domain state。
 - Worker 报告部分完成、阻塞或失败时，不能综合成全部完成。
 - Coordinator 不重新判定 Worker 的专业结论，只检查能否被当前工作流消费。
@@ -176,7 +175,7 @@
 
 ### Worker 交回后
 
-- 基于正式 handoff attachment、正式 refs、当前状态和适用领域规则综合。
+- 基于正式 handoff、正式 refs、当前状态和适用领域规则综合。
 - 当前 Worker 仍需修正或补充时，将已确认问题综合后发回同一 task；确认不再需要当前 Worker 工作时才归档。
 - 说明状态如何推进、哪些内容已完成、哪些内容仍缺失以及下一责任角色。
 - 不能把 progress、工具调用、普通 summary、共享记忆或 Coordinator 推断当作正式结论。

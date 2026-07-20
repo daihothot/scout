@@ -39,7 +39,7 @@ import {
   installRunScope,
   RunScope,
 } from "../../src/run/run-scope.js";
-import { AGENT_SEND_MESSAGE_TOOL_NAMESPACE } from "../../src/agent/tools/agent-tools.js";
+import { AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE } from "../../src/agent/tools/agent-tools.js";
 
 test("WorkerRunner runs the initial turn once and keeps the result on its completed step", async () => {
   let turnCount = 0;
@@ -66,6 +66,9 @@ test("WorkerRunner runs the initial turn once and keeps the result on its comple
   assert.equal(task?.steps?.length, 1);
   assert.equal(task?.steps?.[0]?.status, AgentTaskStepStatuses.Completed);
   assert.equal(task?.steps?.[0]?.finalResponse, "worker response 1");
+  assert.match(task?.steps?.[0]?.prompt ?? "", /当前任务信息：/);
+  assert.match(task?.steps?.[0]?.prompt ?? "", /任务 ID：task-1/);
+  assert.match(task?.steps?.[0]?.prompt ?? "", /Agent 角色：verifier/);
   assert.equal(harness.terminalTasks.length, 0);
   assert.ok(harness.events.some((event) =>
     AgentEvents.task.stepCompleted.is(event)
@@ -103,15 +106,17 @@ test("WorkerRunner starts another turn only after a message is queued", async ()
   assert.equal(task?.steps?.length, 2);
   assert.match(turnPrompts[0] ?? "", /use-update-tools/);
   assert.match(turnPrompts[0] ?? "", /Initial task prompt/);
+  assert.match(turnPrompts[0] ?? "", /任务 ID：task-1/);
   assert.match(turnPrompts[1] ?? "", /use-update-tools/);
   assert.match(turnPrompts[1] ?? "", /Continue with the new evidence\./);
+  assert.doesNotMatch(turnPrompts[1] ?? "", /当前任务信息：/);
   assert.ok(harness.events.some((event) =>
     AgentEvents.task.stepCompleted.is(event)
     && (event.payload as AgentTaskState).status === AgentTaskStatuses.Running
   ));
 });
 
-test("WorkerRunner records a wait-request SendMessage without changing task status", async () => {
+test("WorkerRunner records RequestHumanInput without changing task status", async () => {
   let turnCount = 0;
   const harness = createHarness({
     taskInput: {
@@ -123,11 +128,10 @@ test("WorkerRunner records a wait-request SendMessage without changing task stat
     runTurn: async () => {
       turnCount += 1;
       return completedTurn("waiting", "turn-1", [{
-        namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-        tool: "SendMessage",
+        namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+        tool: "RequestHumanInput",
         arguments: {
-          to: ScoutAgentRoles.Coordinator,
-          message: agent.turn.wait_for_human_request("Need human input."),
+          request: "Need human input.",
         },
         success: true,
       }]);
@@ -246,11 +250,10 @@ test("WorkerRunner rejects an untagged message without starting another step", a
     },
     runTurn: async () => {
       return completedTurn("waiting", "turn-1", [{
-        namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-        tool: "SendMessage",
+        namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+        tool: "RequestHumanInput",
         arguments: {
-          to: ScoutAgentRoles.Coordinator,
-          message: agent.turn.wait_for_human_request("Need human input."),
+          request: "Need human input.",
         },
         success: true,
       }]);
@@ -286,11 +289,10 @@ test("WorkerRunner serves an ordinary message after a request step yields", asyn
       turnPrompts.push(turn.prompt);
       if (turnCount === 1) {
         return completedTurn("waiting", "turn-1", [{
-          namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-          tool: "SendMessage",
+          namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+          tool: "RequestHumanInput",
           arguments: {
-            to: ScoutAgentRoles.Coordinator,
-            message: agent.turn.wait_for_human_request("Need human input."),
+            request: "Need human input.",
           },
           success: true,
         }]);
@@ -331,11 +333,10 @@ test("WorkerRunner records a human-input request on its completed step", async (
     },
     runTurn: async () => {
       return completedTurn("waiting", "turn-1", [{
-        namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-        tool: "SendMessage",
+        namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+        tool: "RequestHumanInput",
         arguments: {
-          to: ScoutAgentRoles.Coordinator,
-          message: agent.turn.wait_for_human_request("Need human input."),
+          request: "Need human input.",
         },
         success: true,
       }]);
@@ -368,11 +369,10 @@ test("WorkerRunner records a delayed human response on the step that consumes it
       turnPrompts.push(turn.prompt);
       if (turnCount <= 2) {
         return completedTurn(`request-${turnCount}`, `turn-${turnCount}`, [{
-          namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-          tool: "SendMessage",
+          namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+          tool: "RequestHumanInput",
           arguments: {
-            to: ScoutAgentRoles.Coordinator,
-            message: agent.turn.wait_for_human_request(`Need human input ${turnCount}.`),
+            request: `Need human input ${turnCount}.`,
           },
           success: true,
         }]);

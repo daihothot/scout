@@ -44,6 +44,7 @@
         "scoutMemory",
         "scoutJsonWrite",
         "scoutResearchArtifactCheck",
+        "scoutArtifactDigest",
         "jarvis",
         "codegraph",
         "rg",

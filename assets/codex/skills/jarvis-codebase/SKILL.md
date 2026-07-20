@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: jarvis-codebase
 description: Scout 使用 Jarvis codebase 管理 Guru 托管代码库路径、版本与 CodeGraph 索引，并用独立 codegraph CLI 收集源码语义证据。
 id: skills.jarvis.codebase
-version: 0.2.0
+version: 0.4.0
 phase: [research, verify]
 tags: [jarvis, codebase, codegraph, source, evidence]
 devices: [any]
@@ -17,7 +17,7 @@ summary: 先用 jarvis codebase 解析托管代码库，再用 codegraph 和源�
 
 当 Scout Agent 需要从 Guru 托管代码库定位当前版本源码语义、CodeGraph 符号、调用关系或代码行证据时使用本技能。
 
-本技能的目标是把 Guru managed codebase 的路径、版本、索引状态、CodeGraph 查询和源码符号证据整理成可复查的 `E-CG-*` 与 `E-CODE-*` evidence。
+本技能的目标是使用 Guru managed codebase、CodeGraph 查询和源码核验形成可复查的 `E-CODE-*` evidence。
 
 ## Core Use
 
@@ -29,7 +29,7 @@ summary: 先用 jarvis codebase 解析托管代码库，再用 codegraph 和源�
 - 在明确版本要求下确认或切换 SDK version / branch。
 - 确认 CodeGraph 索引状态。
 - 使用独立 `codegraph` CLI 查询符号、文件、调用关系和影响面。
-- 将 CodeGraph 结果与源码行号整理成弱 schema Markdown evidence artifact。
+- 将 CodeGraph 查询过程记录为采集 provenance，并把源码符号、行号和关键行整理成弱 schema Markdown evidence artifact。
 
 不使用本技能处理：
 
@@ -150,7 +150,7 @@ codegraph files -p "<codebase-path>"
 - 所有 CodeGraph 命令必须显式传入 `-p "<codebase-path>"`。
 - `codebase-path` 必须来自当前 `jarvis codebase <repo> path` 输出。
 - 自然语言 topic 查询只能作为探索入口，不能直接写成源码证据。
-- CodeGraph 输出属于 Activity State；必须继续形成 `E-CG-*` artifact，并用源码行号形成 `E-CODE-*`。
+- CodeGraph 输出属于 Activity State，只能作为源码定位和采集 provenance；代码事实必须用源码行号形成 `E-CODE-*`。
 - CodeGraph 的项目根可以是 root repository；证据中的 source repository 仍必须按目标文件实际所属 Git root 单独解析。
 
 ## Inputs
@@ -228,7 +228,7 @@ codegraph files -p "<codebase-path>"
 - Phase 3：确认 root repository identity、version / branch / commit、working tree 和 CodeGraph 索引状态。
 - Phase 4：用 CodeGraph 定位符号、文件、调用关系和影响面，并解析目标文件所属 source repository。
 - Phase 5：读取必要源码片段，核对行号、signature 和 key lines。
-- Phase 6：使用模板写入 `E-CG-*` 和 `E-CODE-*` evidence artifact。
+- Phase 6：使用模板写入 `E-CODE-*` evidence artifact。
 
 ## Evidence Output Layout
 
@@ -245,23 +245,23 @@ templates/template-index.md
 创建 evidence artifact 时使用本技能模板：
 
 ```text
-templates/codegraph-evidence.md
 templates/source-code-evidence.md
 ```
 
+模板中未注明 `Nice to Have，可不填写` 的事实字段必须使用当前 repository、CodeGraph 或源码证据取得的确切信息；无法确认时记录需人工确认项或阻塞项。明确可不填写的字段缺失不阻塞 evidence 形成。结构字段按中文填写说明由 workflow 生成或由 contract 校验。所有 `<填写...>` 说明必须在提交 evidence artifact 前替换。
+
 文件职责：
 
-- `codegraph-evidence.md`：记录 `E-CG-*`，包括 root / source repository provenance、CodeGraph status、query command、matched symbol、matched file、relation 和 located symbols。
-- `source-code-evidence.md`：记录 `E-CODE-*`，包括 root / source repository provenance、gitlink、唯一 primary symbol、source-relative file、line range、signature、key lines、collection commands、supports 和 limitations。
+- `source-code-evidence.md`：记录 `E-CODE-*`，包括 root / source repository provenance、gitlink、唯一 primary symbol、source-relative file、line range、signature、key lines、CodeGraph 查询与源码采集命令、supports 和 limitations。
 
 ### Artifact Relationship Rules
 
-- Summary artifact：本技能不生成 summary aggregation；上游 Skill 负责把 `E-CG-*` / `E-CODE-*` 汇总到自己的 evidence pack。
-- Detail artifact：`codegraph-evidence.md` 和 `source-code-evidence.md` 是单条 detail evidence artifact。
+- Summary artifact：本技能不生成 summary aggregation；上游 Skill 负责把 `E-CODE-*` 汇总到自己的 evidence pack。
+- Detail artifact：`source-code-evidence.md` 是单条 detail evidence artifact。
 - Registry / index：`templates/template-index.md` 只做模板导航；本技能不生成 evidence registry。
 - Claim owner：`source-code-evidence.md` 只定义 source symbol evidence claim；业务 implementation claim 由上游 evidence pack 或 verification manual 所属 Skill 定义。
 - Downstream reference rule：下游只能通过 evidence id、artifact ref、`source_commit + source_relative_file`、primary symbol 和 line range 引用本技能产物。
-- Ref field policy：当下游聚合 `E-CG-*` 或 `E-CODE-*` 时，必须记录实际 artifact ref；本技能返回或报告产物时也必须给出实际 artifact ref。
+- Ref field policy：当下游聚合 `E-CODE-*` 时，必须记录实际 artifact ref；本技能返回或报告产物时也必须给出实际 artifact ref。
 
 ## Phase 1: Confirm Mount and Supported Codebase
 ---
@@ -387,9 +387,8 @@ codegraph files -p "<codebase-path>"
 注意事项：
 
 - 命令用途和使用规则以 `Common CodeGraph Commands` 为准。
-- CodeGraph evidence 只能定位 candidate source semantics。
-- `E-CG-*` 不能单独支撑 current version implementation claim；必须继续形成 `E-CODE-*`。
-- 所有查询命令、query、options、matched symbol、matched file 和 relation 必须进入 evidence artifact 或 provenance。
+- CodeGraph 只能定位 candidate source semantics，查询输出不能作为独立 evidence 或直接支撑 current version implementation claim。
+- 所有查询命令、query、options、matched symbol、matched file 和 relation 必须进入目标 `E-CODE-*` 的 `Collection` 或 provenance。
 - 对每个 matched file，使用文件所在目录执行 `git rev-parse --show-toplevel`，解析实际 source repository。
 - source repository 与 root repository 不同时，计算 `gitlink_path`，并使用 `git ls-tree` 读取 root commit 中的 `gitlink_commit`。
 - source repository 与 root repository 相同时，source identity 复制 root identity，gitlink 字段明确写 `none`。
@@ -401,11 +400,11 @@ Exit：
 
 Blocked：
 
-- CodeGraph 查询失败、无候选、候选不可映射源码文件、source repository/gitlink 无法解析或结果无法形成 `E-CG-*`。
+- CodeGraph 查询失败、无候选、候选不可映射源码文件或 source repository/gitlink 无法解析。
 
 Partial：
 
-- 只有弱候选或多候选时，可以写 `E-CG-*` limitation，但不得直接进入完成状态。
+- 只有弱候选或多候选时，记录查询结果、limitation 和未进入源码核验的原因，不得直接进入完成状态。
 
 ## Phase 5: Collect Source Code Evidence
 ---
@@ -447,32 +446,32 @@ Blocked：
 
 Partial：
 
-- CodeGraph 候选存在但源码行证据不足时，只保留 `E-CG-*` 和 limitation，不生成完成状态的 `E-CODE-*`。
+- CodeGraph 候选存在但源码行证据不足时，记录查询 provenance 和 limitation，不生成完成状态的 `E-CODE-*`。
 
 ## Phase 6: Write Code Evidence Artifacts
 ---
 
-本阶段把 CodeGraph 结果和源码符号证据写成弱 schema Markdown artifact。
+本阶段把 CodeGraph 查询 provenance 和源码符号证据写成 `E-CODE-*` 弱 schema Markdown artifact。
 
 使用模板：
 
 ```text
-templates/codegraph-evidence.md
 templates/source-code-evidence.md
 ```
 
 注意事项：
 
-- `E-CG-*` 使用 `templates/codegraph-evidence.md`。
 - `E-CODE-*` 使用 `templates/source-code-evidence.md`。
+- CodeGraph 查询命令和结果摘要写入 `E-CODE-*` 的 `Collection`，不能获得独立 evidence id。
 - `E-CODE-*` 的 `source_commit + source_relative_file` 必须可重放定位，并且只有一个 `Primary Symbol` 章节。
 - `supports` 应引用上游提供的 verification point、claim id 或 evidence registry 项。
 - 模板中的空字段必须用实际来源、命令、locator 或明确 limitation 填充。
+- Artifact 的 Markdown 标题保留模板中的英文标题；标题下的 claim、reason、note、limitation 等自然语言内容使用中文，字段 key、symbol、命令和状态值保持原样。
 - 不把命令输出原文当作业务结论；必须整理成 evidence claim、locator、supports 和 limitations。
 
 Exit：
 
-- `E-CG-*` / `E-CODE-*` artifact 已按模板写入或返回，且实际 artifact ref 已记录。
+- `E-CODE-*` artifact 已按模板写入或返回，且实际 artifact ref 已记录。
 
 Blocked：
 
@@ -480,27 +479,27 @@ Blocked：
 
 Partial：
 
-- 只写出 `E-CG-*` 或候选 evidence 时，必须记录 limitation 和缺少 `E-CODE-*` 的原因。
+- 只能形成源码候选时，必须记录查询 provenance、limitation 和缺少 `E-CODE-*` 的原因。
 
 ## Workflow Exit Rules (Enforcement)
 
 - XR-001：Phase 1 只有在 required shell tools 可见且目标 repo 能用当前 `jarvis codebase supported` 输出判断时，才能进入 Phase 2。
 - XR-002：Phase 2 只有在 managed codebase path 已解析并记录 provenance 后，才能进入 Phase 3。
 - XR-003：Phase 3 只有在 root repository 的 version / branch / commit / working tree state 和 CodeGraph status 已记录，或缺口已标记为需人工确认项或阻塞项后，才能进入 Phase 4。
-- XR-004：Phase 4 只有在 CodeGraph 查询结果已整理为 `E-CG-*` 候选、目标文件所属 source repository 与 gitlink 已解析，且未把候选当作实现事实时，才能进入 Phase 5。
+- XR-004：Phase 4 只有在 CodeGraph 查询结果已收敛到待核验源码候选、目标文件所属 source repository 与 gitlink 已解析，且未把候选当作实现事实时，才能进入 Phase 5。
 - XR-005：Phase 5 只有在 root/source repository provenance、gitlink、唯一 primary symbol、source-relative file、start_line / end_line、signature 和 key lines 已核对后，才能进入 Phase 6。
-- XR-006：Phase 6 只有在 `E-CG-*` 和 `E-CODE-*` artifact ref、failed_commands、retry_log 和 limitations 已按需记录后，才能宣称本技能输出完成。
+- XR-006：Phase 6 只有在 `E-CODE-*` artifact ref、CodeGraph 查询 provenance、failed_commands、retry_log 和 limitations 已按需记录后，才能宣称本技能输出完成。
 
 ## Evidence Rules (Enforcement)
 
 - ER-001：Guru managed codebase 的源码语义检索优先使用 CodeGraph。
 - ER-002：`jarvis codebase` 只负责 codebase 管理、路径解析、版本切换和索引刷新；源码语义检索必须使用独立 `codegraph` CLI。
 - ER-003：禁止把 `rg` 作为 Guru managed codebase 的首选源码语义检索方式。
-- ER-004：CodeGraph 查询、状态输出和工具命令属于 Activity State；只有整理进 evidence artifact 并带 locator 后，才能支撑 source claim。
+- ER-004：CodeGraph 查询、状态输出和工具命令属于 Activity State，只能记录在 `E-CODE-*` 的 `Collection` 或 provenance；它们不能直接支撑 source claim。
 - ER-005：`rg-fallback` 产物必须标记为低置信度来源，并记录 CodeGraph 失败原因、检索命令和范围。
 - ER-006：代码证据必须记录 root/source repo identity、version / branch / commit、working tree state、gitlink、source-relative file、唯一 primary symbol、start_line、end_line、signature、key lines 和 collection commands。
 - ER-007：本机绝对路径只能作为本次 Scout runtime artifact provenance，不能作为 canonical source locator。
-- ER-008：`E-CG-*` 只能说明候选语义定位；implementation claim 必须有 `E-CODE-*` 支撑。
+- ER-008：CodeGraph 查询结果不能获得 evidence id；implementation claim 必须有 `E-CODE-*` 支撑。
 - ER-009：`E-CODE-*` 只能说明当前版本源码存在该实现；behavior observed claim 必须等待 runtime / log / UI / test / device evidence。
 - ER-010：有副作用命令必须记录执行原因、授权来源、预期副作用和执行后的 version / branch / commit。
 - ER-011：`E-CODE-*` 的 canonical replay locator 必须是 `source_commit + source_relative_file`；root commit 或本机绝对路径不能替代 source commit。
@@ -509,7 +508,7 @@ Partial：
 ## Failure Rules (Enforcement)
 
 - FR-001：`scout-assets tools`、`jarvis codebase supported`、`jarvis codebase <repo> path` 或 `codegraph status` 失败、空输出、权限失败或解析失败时，必须记录 failed_commands、输出摘要和影响阶段。
-- FR-002：CodeGraph 无命中、多命中、索引不可读或 node/range 不可定位时，不得生成 source-verified claim；只能记录为 `E-CG-*` limitation 或阻塞项。
+- FR-002：CodeGraph 无命中、多命中、索引不可读或 node/range 不可定位时，不得生成 source-verified claim；只能记录查询失败、limitation 或阻塞项。
 - FR-003：源码文件不可读、行号不稳定、signature 无法确认或 key lines 无法解释时，不得生成 `E-CODE-*`。
 - FR-004：evidence artifact 写入失败或模板字段无法填充时，不得宣称本技能完成；必须向上游报告 artifact target 和失败原因。
 - FR-005：source repository、source commit、gitlink 或目标文件 working tree state 无法解析时，不得把 root repository commit 代填为 source commit。
@@ -533,7 +532,7 @@ Partial：
 ## Prohibited Rules (Enforcement)
 
 - PR-001：禁止修改 Guru knowledge、代码库源码、synaptic 或 Scout runtime state。
-- PR-002：禁止创建或变更 Runtime 事件、attachment payload、profile、mount 或 MCP server。
+- PR-002：禁止创建或变更 Runtime 事件、内部通信协议、profile、mount 或 MCP server。
 - PR-003：禁止根据非当前 `jarvis codebase supported` 输出直接断言当前 repo 可用。
 - PR-004：禁止在缺少 version / branch / commit 时主动选择 `latest`。
 - PR-005：禁止在没有上游明确授权时执行 `jarvis codebase <repo> versions`、`latest` 或 `<version>`。
@@ -562,9 +561,8 @@ supports: VP-001 from verification-manual.md
 4. 执行 `codegraph status "<codebase-path>"`，确认索引状态。
 5. 用 `codegraph query` / `explore` / `node` 定位相关 symbol 和 file，并解析文件所属 source repository 与 gitlink。
 6. 读取定位文件的必要行，记录 source commit、source-relative file、primary symbol、start_line、end_line、signature 和 key lines。
-7. 使用模板写入 `E-CG-*` 和 `E-CODE-*` evidence artifact。
+7. 将 CodeGraph 查询命令和结果摘要写入 `Collection`，使用模板写入 `E-CODE-*` evidence artifact。
 
 输出：
 
-- `codegraph-evidence.md`：记录 root/source repository provenance、CodeGraph query、matched symbol、matched file、relation 和 limitations。
-- `source-code-evidence.md`：记录可重放的 source commit/path、唯一 primary symbol、行号、key lines、collection commands 和 supports。
+- `source-code-evidence.md`：记录可重放的 source commit/path、唯一 primary symbol、行号、key lines、CodeGraph 查询与源码采集命令和 supports。

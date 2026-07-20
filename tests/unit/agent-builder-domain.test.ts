@@ -17,6 +17,8 @@ import type { ScoutAgentOptions } from "../../src/agent/core/scout-agent.js";
 import {
   AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
   AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
+  AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+  AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
   AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
 } from "../../src/agent/tools/agent-tools.js";
@@ -105,8 +107,10 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
   assert.equal(fixture.registry.listAgents()[0], agent);
   assert.ok(tools.some((tool) => tool.namespace === AGENT_ASSIGN_TASK_TOOL_NAMESPACE && tool.name === "AssignTask"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SEND_MESSAGE_TOOL_NAMESPACE && tool.name === "SendMessage"));
+  assert.ok(tools.some((tool) => tool.namespace === AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RespondHumanInput"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_ARCHIVE_TASK_TOOL_NAMESPACE && tool.name === "ArchiveTask"));
   assert.equal(tools.some((tool) => tool.name === "SubmitTask"), false);
+  assert.equal(tools.some((tool) => tool.name === "RequestHumanInput"), false);
   assert.ok(tools.some((tool) => tool.namespace === "domain-a" && tool.name === "DomainProbe"));
   assert.equal(tools.some((tool) => tool.namespace === "domain-b"), false);
   const instructions = agent.spec.developerInstructions ?? "";
@@ -140,13 +144,16 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   assert.equal(agent.runner, undefined);
   assert.equal(fixture.registry.resolveAgent(ScoutAgentRoles.Researcher), agent);
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SEND_MESSAGE_TOOL_NAMESPACE && tool.name === "SendMessage"));
+  assert.ok(tools.some((tool) => tool.namespace === AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RequestHumanInput"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SUBMIT_TASK_TOOL_NAMESPACE && tool.name === "SubmitTask"));
   assert.deepEqual(tools.filter((tool) => tool.namespace !== "domain-worker").map((tool) => tool.name), [
     "SendMessage",
+    "RequestHumanInput",
     "SubmitTask",
   ]);
   assert.equal(tools.some((tool) => tool.name === "AssignTask"), false);
   assert.equal(tools.some((tool) => tool.name === "ArchiveTask"), false);
+  assert.equal(tools.some((tool) => tool.name === "RespondHumanInput"), false);
   assert.ok(tools.some((tool) => tool.namespace === "domain-worker" && tool.name === "DomainProbe"));
   const instructions = agent.spec.developerInstructions ?? "";
   assert.match(instructions, /common instructions/);
@@ -637,7 +644,7 @@ test("Worker SendMessage reaches Coordinator and Coordinator output reaches the 
     tool: "SendMessage",
     arguments: {
       to: coordinator.agentId,
-      message: agent.turn.message("Need expected result."),
+      message: "Need expected result.",
     },
   });
 
@@ -652,7 +659,7 @@ test("Worker SendMessage reaches Coordinator and Coordinator output reaches the 
   ));
 });
 
-test("Worker lifecycle attachments deliver to Coordinator and update the bound task", async () => {
+test("Human input tools deliver through Coordinator and update the bound task", async () => {
   let verifier: WorkerAgent | undefined;
   let requestSucceeded = false;
   let submitSucceeded = false;
@@ -661,26 +668,23 @@ test("Worker lifecycle attachments deliver to Coordinator and update the bound t
       const prompt = turn.prompt ?? "";
       if (!verifier || !appServer.handler) return;
       if (prompt.includes("<message>\nPerform lifecycle handoff.\n</message>")) {
-        const message = agent.turn.wait_for_human_request("Need target account.");
         const result = await appServer.handler({
           threadId: verifier.threadId ?? "",
           turnId: "turn-wait-for-human-input",
           callId: "call-wait-for-human-input",
-          namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-          tool: "SendMessage",
+          namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+          tool: "RequestHumanInput",
           arguments: {
-            to: ScoutAgentRoles.Coordinator,
-            message,
+            request: "Need target account.",
           },
         });
         requestSucceeded = result.success;
         return [{
-          namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-          tool: "SendMessage",
+          namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+          tool: "RequestHumanInput",
           callId: "call-wait-for-human-input",
           arguments: {
-            to: ScoutAgentRoles.Coordinator,
-            message,
+            request: "Need target account.",
           },
           success: result.success,
         }];
@@ -751,11 +755,11 @@ test("Worker lifecycle attachments deliver to Coordinator and update the bound t
     threadId: "thread-coordinator",
     turnId: "turn-human-response",
     callId: "call-human-response",
-    namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
-    tool: "SendMessage",
+    namespace: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
+    tool: "RespondHumanInput",
     arguments: {
-      to: assignment.value.taskId,
-      message: agent.turn.human_response("Use staging account."),
+      task_id: assignment.value.taskId,
+      response: "Use staging account.",
     },
   });
   assert.equal(response.success, true);
@@ -769,6 +773,33 @@ test("Worker lifecycle attachments deliver to Coordinator and update the bound t
   assert.ok(appServer.turnInputs.some((turn) =>
     turn.prompt?.includes("<task-outcome>\n## Outcome\n\n- Artifact: artifacts/result.md\n</task-outcome>")
   ));
+
+  const coordinatorRequest = await appServer.handler({
+    threadId: "thread-coordinator",
+    turnId: "turn-invalid-human-request",
+    callId: "call-invalid-human-request",
+    namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+    tool: "RequestHumanInput",
+    arguments: {
+      request: "Need another account.",
+    },
+  });
+  assert.equal(coordinatorRequest.success, false);
+  assert.match(coordinatorRequest.contentItems[0]?.text ?? "", /only available to Worker agents/);
+
+  const workerResponse = await appServer.handler({
+    threadId: verifier.threadId ?? "",
+    turnId: "turn-invalid-human-response",
+    callId: "call-invalid-human-response",
+    namespace: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
+    tool: "RespondHumanInput",
+    arguments: {
+      task_id: assignment.value.taskId,
+      response: "Use another account.",
+    },
+  });
+  assert.equal(workerResponse.success, false);
+  assert.match(workerResponse.contentItems[0]?.text ?? "", /only available to the Coordinator agent/);
   coordinator.runner.stop();
 });
 

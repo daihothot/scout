@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: validator-validation
 description: Scout Validator 对 Researcher 提交的 Guru Research pack 执行独立结构、证据语义、代码 provenance 与引用闭环检查，并生成 Research Pack Gate 报告时使用。
 id: skills.validation.validator
-version: 0.2.0
+version: 0.5.2
 phase: [validate]
 tags: [scout, validation, research, gate, evidence, audit, workflow]
 devices: [any]
@@ -52,7 +52,7 @@ summary: 独立检查 Research pack，并形成绑定内容摘要的 Research Pa
 - `guru-knowledge-research` 定义 Research pack、聚合产物、独立 evidence 和引用关系；Validator 将其作为 producer contract 读取，不执行其生产 workflow。
 - `jarvis-codebase` 定义 CodeGraph 与 source-code evidence 的 provenance、symbol 和 locator 规则；Validator 将其作为代码证据 contract 读取。
 - Validator 只读取 Researcher 正式 artifact，所有检查报告只写入 Validator 自己的 artifact root。
-- 每次 Gate 绑定一个 `sha256` pack digest；Research pack 内容改变后，旧 Gate 不再适用于新内容。
+- 每次 Gate 只绑定 `scout-artifact-digest` 返回的 `scout-directory-sha256-v1` digest；Research pack 内容改变后，旧 Gate 不再适用于新内容。
 - 每次检查创建一份新的 `research-pack-gate-NNNN.md`；正式 handoff 后该 Gate 记录不可修改。
 - 复查必须创建下一份 Gate 记录；旧 Gate 只证明其绑定 digest 当时的检查结果。
 
@@ -78,12 +78,13 @@ blocked > insufficient_evidence > needs_fix > accepted
 
 描述：
 
-- Coordinator 提供的 Researcher task id、正式 handoff state、Research pack ref、限制和当前检查目标。
+- Coordinator 提供的 Researcher task id、正式 handoff state、Research pack ref、上游声明的 digest algorithm / digest、限制和当前检查目标。
 
 注意事项：
 
 - 普通 summary、progress、task activity 或文件名猜测不能替代正式 Research handoff。
 - handoff 未提供唯一 Research pack ref 时停止，不扫描其它 Worker 目录猜测目标。
+- 上游不能指定或覆盖 Validator 使用的 digest 算法；Validator 只接受并独立复算 `scout-directory-sha256-v1`。
 
 ### I-002: Research Pack
 ---
@@ -134,16 +135,7 @@ ${SCOUT_ARTIFACT_ROOT}/research-pack-gate-0003.md
 templates/research-pack-gate.md
 ```
 
-每份报告必须包含：
-
-- `gate_id`、`created_at` 和 `validator_task_id`。
-- `checked_pack_ref` 和 `checked_pack_digest`。
-- Validator task、Researcher task、上游声明状态和唯一 Research pack ref。
-- pack digest、digest algorithm、适用 contract refs。
-- 已检查 refs、未检查范围和限制。
-- Gate 状态、摘要和按 `V-001` 递增的问题列表。
-- 每个问题的严重性、分类、受影响 refs、检查依据、影响和最小解除条件。
-- failed commands、retry log 和报告自身的完成状态。
+每份报告必须完整遵循模板。未注明 `Nice to Have，可不填写` 的事实字段必须使用本次检查取得的确切信息；明确可不填写的字段缺失不阻塞 Gate。Markdown 标题使用英文，标题下的自然语言内容使用中文；字段 key、evidence id 和状态值保持 contract 原值。所有 `<填写...>` 说明必须替换。
 
 报告状态：
 
@@ -155,7 +147,7 @@ templates/research-pack-gate.md
 
 - 摘要产物：每个 `research-pack-gate-NNNN.md` 是对应检查的唯一 Gate 报告，不复制 Research evidence 正文。
 - 明细产物：本技能不创建独立 check 文件；具体问题全部记录在同一报告的 `V-*` 条目中。
-- Registry / index：Validator 只检查 Researcher 的 registry 和 index，不创建第二套 registry 或 evidence id。
+- Registry / Pack state：Validator 检查 Researcher 的 evidence registry 和 checker 派生的 Pack 状态，不创建第二套 registry、状态 artifact 或 evidence id。
 - Claim owner：Research pack 保持 BDD、knowledge 和 implementation claim 所有权；Gate 报告只拥有检查范围与 Gate claim。
 - 下游引用规则：Coordinator 引用 Gate 报告 ref、pack digest、Gate 和问题 id；不得把 Gate 摘要当作 Research evidence。
 - Ref 字段策略：Research pack ref、每个已检查 artifact ref 和问题影响 ref 必填；不存在的目标必须按缺失 ref 明确记录。
@@ -177,6 +169,8 @@ scout-artifact-digest <research-pack-dir>
 - 读取 `guru-knowledge-research/SKILL.md`、`templates/template-index.md` 和本次 pack 实际涉及的模板。
 - 读取 `jarvis-codebase/SKILL.md` 及其代码证据模板，用于 Phase 3 的代码 evidence 检查。
 - 记录初始 digest、文件数量和 Researcher handoff state。
+- 独立计算的 digest algorithm 必须是 `scout-directory-sha256-v1`。
+- 上游缺少 digest、声明其它算法或声明 digest 与独立计算结果不一致时继续完成可读范围检查，并将 Gate 至少判为 `needs_fix`；不得改用上游自定义算法复算。
 - 不调用 Researcher 的 artifact checker，也不把 Researcher 的自检输出当作当前检查结果。
 
 Exit：
@@ -198,9 +192,9 @@ Partial：
 
 检查内容：
 
-- `index.md`、`bdd-fact.md`、`knowledge-evidence.md`、`code-evidence.md`、`evidence-registry.md` 和下游手册是否与 handoff 声明及当前 producer contract 一致。
+- `bdd-evidence.md`、`knowledge-evidence.md`、`code-evidence.md`、`evidence-registry.md` 和下游手册是否与 handoff 声明及当前 producer contract 一致。
 - workflow artifact 的 `status`、`completion_state`、blocking items、failed commands、retry log 和 limitations 是否自洽。
-- 每条 BDD、knowledge、availability、API、platform、CodeGraph 和 source-code evidence 是否为独立文件。
+- `E-BDD-001` 与 `E-KB-001` 是否分别由顶层聚合文件拥有，以及 `E-CAP-*`、`E-AVAIL-001`、`E-PLATFORM-001`、`E-PERSONA-*`、`E-HUMAN-*` 和 `E-CODE-*` 是否按 producer contract 独立保存。
 - 聚合文件是否只保存摘要和 `artifact_ref`，registry 是否登记全部 evidence id、locator、claim 和 supports。
 - 下游手册中的 evidence ids、verification points、用户画像、Given / When / Then 和待采集 signals 是否与 registry 闭环。
 
@@ -276,6 +270,7 @@ templates/research-pack-gate.md
 
 - 写报告前重新计算 digest；与 Phase 1 不一致时丢弃当前 Gate 判断，对新内容重新检查一次。
 - 第二次检查期间 digest 再次变化时输出 blocked，禁止对移动目标给出 Gate。
+- 报告中的 `checked_pack_digest` 必须写入第二次 `scout-artifact-digest` 返回值；禁止写入 Coordinator 或 Researcher 提供的其它摘要算法结果。
 - 根据优先级选择唯一 Gate，不把问题严重性直接映射为 blocked。
 - 按下一可用序号创建新 Gate；不得打开旧 Gate 原地更新 pack digest、检查范围、Gate 或问题列表。
 - Gate 写入并正式 handoff 后不可修改；后续任何复查都创建下一序号文件。
@@ -301,6 +296,7 @@ Partial：
 - XR-004：Researcher 修正 pack 后必须按新 digest 完整复查；旧 Gate 不自动延续。
 - XR-005：每次检查只产生一份新的 Gate 记录；已正式 handoff 的记录禁止修改，复查必须创建下一份记录。
 - XR-006：正式 handoff 必须明确引用本次 Gate ref；不得要求 Coordinator 扫描目录推断最新记录。
+- XR-007：`accepted` 要求上游声明 `scout-directory-sha256-v1`，且其 digest 与 Validator 在检查前后独立计算的稳定 digest 完全一致。
 
 ## Evidence Rules (Enforcement)
 
@@ -316,10 +312,11 @@ Partial：
 - FR-002：模板字段、状态组合、evidence id、locator 或引用不闭环时，不得通过自然语言解释覆盖失败。
 - FR-003：报告写入或正式 handoff 失败时不得用普通消息冒充 Gate 已提交。
 - FR-004：无法读取当前代码来源时不得把 knowledge 或 CodeGraph 候选提升为 source-verified evidence。
+- FR-005：上游 digest algorithm 非 `scout-directory-sha256-v1`、digest 缺失或与独立计算结果不一致时必须记录 `V-*` 问题并使用 `needs_fix`，不得降级为 limitation 后输出 `accepted`。
 
 ## Blocking Rules (Enforcement)
 
-- BR-001：缺少 Research pack、producer contract、digest 能力或 Validator artifact 写权限时必须 blocked。
+- BR-001：缺少 Research pack、producer contract、`scoutArtifactDigest` 能力或 Validator artifact 写权限时必须 blocked。
 - BR-002：权限或环境导致关键输入不可读并阻止必要检查时必须 blocked。
 - BR-003：pack 在检查过程中持续变化时必须 blocked，不得绑定过期 digest。
 - BR-004：pack 可读但 evidence 本身不足时使用 `insufficient_evidence`，不得错误归类为 blocked。
@@ -338,6 +335,7 @@ Partial：
 - PR-003：禁止把 Gate 描述为 Verification 已执行、BDD 已通过或全局 Validation 已完成。
 - PR-004：禁止为使用 producer Skill 而继承或执行其生产命令和副作用能力。
 - PR-005：禁止创建强 schema 状态投影或第二套 Gate registry。
+- PR-006：禁止把 Gate artifact 和 handoff 的英文 Markdown 标题改成中文，或在标题下使用非中文自然语言内容；contract 字段和值除外。
 
 ## Example
 

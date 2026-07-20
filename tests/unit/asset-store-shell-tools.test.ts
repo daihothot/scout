@@ -144,16 +144,24 @@ test("AssetStore exposes Research artifact checking and git tools to the researc
     agentId: "researcher",
   });
   const checker = mount.shellTools.find((tool) => tool.id === "scoutResearchArtifactCheck");
+  const digest = mount.shellTools.find((tool) => tool.id === "scoutArtifactDigest");
   const git = mount.shellTools.find((tool) => tool.id === "git");
   const wrapperPath = join(mount.mountRoot, "bin", "scout-research-artifact-check");
+  const digestWrapperPath = join(mount.mountRoot, "bin", "scout-artifact-digest");
 
   assert.ok(checker);
+  assert.ok(digest);
   assert.ok(git);
   assert.equal(existsSync(wrapperPath), true);
+  assert.equal(existsSync(digestWrapperPath), true);
   assert.match(execFileSync(wrapperPath, ["--smoke"], {
     cwd: mount.mountRoot,
     encoding: "utf8",
   }), /SCOUT_RESEARCH_ARTIFACT_CHECK_OK/);
+  assert.match(execFileSync(digestWrapperPath, ["--smoke"], {
+    cwd: mount.mountRoot,
+    encoding: "utf8",
+  }), /SCOUT_ARTIFACT_DIGEST_OK/);
 });
 
 test("AssetStore gives the validator producer contracts, code inspection tools, and a neutral digest tool", () => {

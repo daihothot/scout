@@ -29,7 +29,7 @@ summary: 规范 Researcher 与 Validator 的 Research Pack Gate 调度循环。
 - 判断用户输入是否具备可派发的 BDD 定位形态。
 - 在 Researcher 与 Validator 之间维护同一 Research pack 的生产、检查和修正循环。
 - 将多轮已确认用户意图综合为稳定 task prompt。
-- 处理 Validation 目标的 BDD 定位补充和正式 handoff attachment。
+- 处理 Validation 目标的 BDD 定位补充和正式 handoff。
 - 基于正式 Research artifact、pack digest 和 Gate 报告形成阶段 synthesis。
 
 不使用本技能处理：
@@ -65,12 +65,12 @@ summary: 规范 Researcher 与 Validator 的 Research Pack Gate 调度循环。
 
 描述：
 
-- Worker 通过正式消息入口交回的完整 handoff attachment，以及其中引用的 artifact refs、evidence refs、状态、限制和缺口。
+- Worker 交回的完整正式 handoff，以及其中引用的 artifact refs、evidence refs、状态、限制和缺口。
 
 注意事项：
 
-- progress 或普通自然语言回复不能替代正式 handoff attachment。
-- handoff attachment 只负责传递状态和 refs，本身不是 Research pack；blocked / partial 文本摘要不能替代 pack 目录。
+- progress 或普通自然语言回复不能替代正式 handoff。
+- handoff 只负责传递状态和 refs，本身不是 Research pack；blocked / partial 文本摘要不能替代 pack 目录。
 - 不由 Coordinator 补写 Worker 的完成依据或缺口判断。
 - task 进入 `done` 只表示 Worker 已交回当前一轮工作，不表示 Validation 已完成或 task 应立即归档。
 
@@ -267,7 +267,7 @@ Partial：
 流程：
 
 1. 将 BDD ID、用户目标和已确认约束综合为 Researcher task。
-2. 接收 Researcher 正式 handoff attachment 和 Research artifact refs。
+2. 接收 Researcher 正式 handoff 和 Research artifact refs。
 3. 保留 Researcher task，指派 Validator 对唯一 Research pack 形成 Research Pack Gate。
 4. Gate 为 `needs_fix` 时把报告问题发回原 Researcher task；Researcher 修正后由原 Validator task 复查。
 5. Gate 为 `accepted` 且 digest 对应最新 pack 时归档两个 task，并明确当前只完成 Research Gate。

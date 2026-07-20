@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: scout-internal-skill-creator
 description: 创建或修改 Scout Internal Skill 的统一方法论，覆盖目录创建、metadata、phase、tags、模板、profile 挂载、边界和验证规则。
 id: skills.scout.internal-skill-creator
-version: 0.1.0
+version: 0.2.0
 phase: [research, validate]
 tags: [scout, skill, asset, template, workflow, governance]
 devices: [any]
@@ -234,6 +234,11 @@ Output Layout 写法：
 - Skill 不随意定义新的 canonical artifact 目录。
 - 产物位置由上游、当前 role layout 或当前 task artifact layout 决定。
 - 模板只定义 artifact 形态、字段约束、证据编号和 provenance 要求。
+- Artifact 模板中的事实字段默认要求取得确切信息，不显式增加 `Verify`、`Required` 或其它分类标记。
+- 当前输入、证据和工具结果都无法确认默认事实字段时，由使用该模板的 Skill 统一进入人工求证。
+- 只有中文填写说明末尾明确写出 `Nice to Have，可不填写` 的字段允许缺失；缺失不阻塞完成，也不单独触发人工求证。
+- 状态、ID、ref、digest 等由 workflow 生成或由 contract 校验的结构字段直接使用中文填写说明。
+- 模板不得保留无说明的空字段；每个待填位置必须使用中文 `<填写...>` 说明，且 Skill 必须禁止把填写说明提交为 artifact 事实。
 - 模板应包含弱 schema 状态字段，例如 `status`、`blocking_items`、`failed_commands`、`retry_log` 和 `limitations`，用于交接失败、阻塞和重试事实。
 - 工作流总览、聚合、手册或 gate 类 artifact 应使用 `status: draft | ready | blocked` 和 `completion_state: complete | partial | blocked`。
 - 轻量单条 detail / evidence artifact 可以只使用 `status`，但必须说明该状态的枚举或来源；参与交接时仍应包含 `blocking_items`、`failed_commands`、`retry_log` 和 `limitations`。
@@ -270,7 +275,7 @@ Output Layout 写法：
 不适合创建内部 Skill 的场景：
 
 - 只服务一次 task 的临时说明。
-- Runtime 事件、状态机、mailbox、attachment 或调度实现。
+- Runtime 事件、状态机、mailbox、内部通信协议或调度实现。
 - 需要写代码实现的 shell tool、MCP server 或 plugin。
 - 还没有经过归纳的知识库原文、源码片段、聊天记录或开发过程事实。
 - 需要用户确认的业务判断或产品决策。
@@ -319,7 +324,7 @@ summary: 先用 jarvis codebase 解析托管代码库，再用 codegraph 和源�
 ---
 ```
 
-正文必须说明命令副作用、只读查询、版本确认、CodeGraph 与源码行号的证据边界，以及下游如何引用 `E-CG-*` / `E-CODE-*`。
+正文必须说明命令副作用、只读查询、版本确认，以及 CodeGraph 查询与 `E-CODE-*` 源码行号证据的边界；CodeGraph 查询结果不得建模为独立 evidence。
 
 ## 示例：边界查询 Skill
 
@@ -391,6 +396,8 @@ Workflow Skill 必检项：
 - `### Artifact Relationship Rules` 明确 summary artifact、detail artifact、registry / index、claim owner、downstream reference rule 和 ref field policy。
 - workflow / summary / manual / gate 类模板包含 `status: draft | ready | blocked` 和 `completion_state: complete | partial | blocked`，或明确说明为何不需要 `completion_state`。
 - 单条 detail / evidence 模板至少包含 `status`、`blocking_items`、`failed_commands`、`retry_log` 和 `limitations`，或明确说明不适用原因。
+- Artifact 模板的事实字段默认要求确切信息，只有填写说明中明确写出 `Nice to Have，可不填写` 的字段允许缺失。
+- 模板没有无说明的空字段；待填位置包含中文 `<填写...>` 说明，且完成态产物禁止残留填写说明。
 
 Tool Skill 必检项：
 

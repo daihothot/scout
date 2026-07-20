@@ -1,5 +1,5 @@
-const EVIDENCE_ID_PATTERN = /^E-(BDD|KB|AVAIL|API|PLATFORM|CG|CODE)-\d+$/;
-const EVIDENCE_ID_GLOBAL = /\bE-(?:BDD|KB|AVAIL|API|PLATFORM|CG|CODE)-\d+\b/g;
+const EVIDENCE_ID_PATTERN = /^E-(BDD|KB|CAP|AVAIL|PLATFORM|PERSONA|HUMAN|CODE)-\d+$/;
+const EVIDENCE_ID_GLOBAL = /\bE-(?:BDD|KB|CAP|AVAIL|API|PLATFORM|PERSONA|HUMAN|CODE)-\d+\b/g;
 const STATE_PAIRS = new Set(["draft:partial", "ready:complete", "blocked:blocked"]);
 
 const COVERAGE_DIMENSIONS = [
@@ -24,15 +24,10 @@ const COVERAGE_STATES = new Set([
 ]);
 
 const AGGREGATES = {
-  index: {
-    file: "index.md",
-    template: "research-index.md",
-    stateHeading: "Research State",
-  },
-  "bdd-fact": {
-    file: "bdd-fact.md",
-    template: "bdd-fact.md",
-    stateHeading: "Fact State",
+  "bdd-evidence": {
+    file: "bdd-evidence.md",
+    template: "bdd-evidence.md",
+    stateHeading: "Evidence State",
   },
   "knowledge-evidence": {
     file: "knowledge-evidence.md",
@@ -57,16 +52,10 @@ const AGGREGATES = {
 };
 
 const EVIDENCE_TEMPLATES = {
-  BDD: {
+  CAP: {
     owner: "research",
-    template: "bdd-evidence.md",
-    evidenceType: "bdd",
-    statuses: new Set(["candidate", "ready", "blocked"]),
-  },
-  KB: {
-    owner: "research",
-    template: "knowledge-evidence-block.md",
-    evidenceType: "knowledge",
+    template: "capability-evidence.md",
+    evidenceType: "capability",
     statuses: new Set(["candidate", "ready", "blocked"]),
   },
   AVAIL: {
@@ -75,22 +64,22 @@ const EVIDENCE_TEMPLATES = {
     evidenceType: "availability",
     statuses: new Set(["candidate", "ready", "blocked"]),
   },
-  API: {
-    owner: "research",
-    template: "api-evidence.md",
-    evidenceType: "api_semantic",
-    statuses: new Set(["candidate", "ready", "blocked"]),
-  },
   PLATFORM: {
     owner: "research",
     template: "platform-evidence.md",
     evidenceType: "platform_knowledge",
     statuses: new Set(["candidate", "ready", "blocked"]),
   },
-  CG: {
-    owner: "codebase",
-    template: "codegraph-evidence.md",
-    evidenceType: "codegraph",
+  PERSONA: {
+    owner: "research",
+    template: "user-persona-evidence.md",
+    evidenceType: "user_persona",
+    statuses: new Set(["candidate", "ready", "blocked"]),
+  },
+  HUMAN: {
+    owner: "research",
+    template: "human-confirmation-evidence.md",
+    evidenceType: "human_confirmation",
     statuses: new Set(["candidate", "ready", "blocked"]),
   },
   CODE: {

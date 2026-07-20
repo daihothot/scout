@@ -4,29 +4,29 @@ artifact_version: 1
 status: draft
 completion_state: partial
 gate: blocked
-gate_id:
-created_at:
-validator_task_id:
-checked_pack_ref:
-checked_pack_digest:
+gate_id: "<填写当前 Gate ID>"
+created_at: "<填写本次检查记录的创建时间>"
+validator_task_id: "<填写当前 Validator task ID>"
+checked_pack_ref: "<填写本次实际检查的 Research pack 路径>"
+checked_pack_digest: "<填写 Validator 第二次计算得到的 sha256 digest>"
 ---
 
 # Validator Handoff: Research Pack Gate
 
-## 基本信息
+## Basic Information
 
 - 当前角色：Validator
-- 校验目标：
-- Gate ID：
-- Created at：
-- Validator task：
+- 校验目标：<填写当前唯一 BDD ID>
+- Gate ID：<填写当前 Gate ID>
+- 创建时间：<填写本次检查记录的创建时间>
+- Validator task：<填写当前 Validator task ID>
 - 上游角色：Researcher
-- 上游 Research task：
-- 上游声明状态：
-- Research pack：
-- Pack digest：`sha256:`
-- Digest algorithm：`scout-directory-sha256-v1`
-- 适用 contract：
+- 上游 Research task：<填写上游 Researcher task ID>
+- 上游声明状态：<填写上游 handoff 声明状态>
+- Research pack：<填写本次实际检查的唯一 pack 路径>
+- Pack digest：<填写 Validator 第二次计算得到的 sha256 digest>
+- Digest 算法：`scout-directory-sha256-v1`
+- 适用 contract：<列出 Validator AGENTS、validator-validation 和生产者 Skill refs>
 
 状态枚举：
 
@@ -34,18 +34,18 @@ checked_pack_digest:
 - `completion_state: complete | blocked`
 - `gate: accepted | needs_fix | insufficient_evidence | blocked`
 
-## 已检查的 refs
+## Checked Refs
 
--
+- <逐项列出本次实际读取并检查的 artifact ref>
 
-## 未检查范围
+## Unchecked Scope
 
 - none
 
-## Gate 结论
+## Gate Conclusion
 
-- 状态：
-- 摘要：
+- 状态：<填写 accepted、needs_fix、insufficient_evidence 或 blocked>
+- 摘要：<填写本次 Gate 对当前 digest 对应 Research pack 的检查结论>
 
 Gate 优先级：
 
@@ -53,16 +53,16 @@ Gate 优先级：
 blocked > insufficient_evidence > needs_fix > accepted
 ```
 
-## 问题列表
+## Issue List
 
-### V-001：问题标题
+### V-001: Issue Title
 
 - 严重性：Critical | High | Medium | Low
 - 分类：structure | state | reference | knowledge | code | evidence | limitation | blocked
-- 受影响 refs：
-- 检查依据：
-- 影响：
-- 最小解除条件：
+- 受影响 refs：<列出直接受该问题影响的 artifact 或 evidence refs>
+- 检查依据：<列出对应模板、Skill 规则或当前代码证据>
+- 影响：<说明该问题为何影响当前 Gate 结论>
+- 最小解除条件：<说明 Researcher 需要修正的最小事实或引用闭环>
 
 没有问题时写：
 
@@ -70,8 +70,8 @@ blocked > insufficient_evidence > needs_fix > accepted
 none
 ```
 
-## 检查执行状态
+## Inspection Execution State
 
-- failed_commands:
-- retry_log:
-- limitations:
+- failed_commands: <无失败命令时填写 none，否则记录命令及错误摘要>
+- retry_log: <无重试时填写 none，否则记录重试命令和结果>
+- limitations: <没有未检查范围时填写 none，否则说明本次 Gate 的检查边界>

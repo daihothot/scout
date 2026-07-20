@@ -25,7 +25,10 @@ import type {
   ScoutAgentTurnOutcome,
 } from "../../core/scout-agent.js";
 import type { AgentThreadSpec } from "../../thread/types.js";
-import { readSendMessageAttachment } from "../../tools/agent-tools.js";
+import {
+  AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+  parseAgentDynamicToolCall,
+} from "../../tools/agent-tools.js";
 import { AgentRunner } from "../types.js";
 
 export interface WorkerRunnerSnapshot {
@@ -284,7 +287,14 @@ export class WorkerRunner extends AgentRunner {
     }
     const prompt = attachments.compose(
       agent.turn.use_update_tools(),
-      ...(initialPrompt === undefined ? [] : [initialPrompt]),
+      ...(initialPrompt === undefined ? [] : [
+        agent.turn.message([
+          "当前任务信息：",
+          `- 任务 ID：${task.taskId}`,
+          `- Agent 角色：${this.host.role}`,
+        ].join("\n")),
+        initialPrompt,
+      ]),
       ...pendingMessages,
     );
 
@@ -432,10 +442,17 @@ export class WorkerRunner extends AgentRunner {
         status: input.status,
         finalResponse: input.outcome.finalResponse,
         toolCalls: input.outcome.toolCalls ?? [],
-        humanInputRequest: readSendMessageAttachment(
-          input.outcome.toolCalls,
-          AgentContextTags.WaitForHumanRequest,
-        ),
+        humanInputRequest: (input.outcome.toolCalls ?? []).flatMap((toolCall) => {
+          if (
+            toolCall.namespace !== AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE
+            || toolCall.tool !== "RequestHumanInput"
+            || toolCall.success !== true
+          ) {
+            return [];
+          }
+          const call = parseAgentDynamicToolCall(toolCall.tool, toolCall.arguments);
+          return call.tool === "RequestHumanInput" ? [{ body: call.request }] : [];
+        })[0],
         finishedAt: input.outcome.turn.finishedAt,
         durationMs: input.durationMs,
         protocolWarnings: input.protocolWarnings,

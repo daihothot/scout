@@ -1,13 +1,11 @@
-const { validateBddFact } = require("./bdd-fact.cjs");
+const { validateBddEvidence } = require("./bdd-evidence.cjs");
 const { validateCodeEvidence } = require("./code-evidence.cjs");
 const { validateEvidenceRegistry } = require("./evidence-registry.cjs");
 const { validateKnowledgeEvidence } = require("./knowledge-evidence.cjs");
-const { validateResearchIndex } = require("./research-index.cjs");
 const { validateVerificationManual } = require("./verification-manual.cjs");
 
 const aggregateValidators = {
-  index: validateResearchIndex,
-  "bdd-fact": validateBddFact,
+  "bdd-evidence": validateBddEvidence,
   "knowledge-evidence": validateKnowledgeEvidence,
   "code-evidence": validateCodeEvidence,
   "evidence-registry": validateEvidenceRegistry,

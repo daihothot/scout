@@ -129,6 +129,10 @@ templates/<artifact-template>.md
 
 - Skill 不随意发明新的 canonical artifact 目录。
 - 模板只定义 artifact 形态、字段约束、证据编号和 provenance 要求。
+- Artifact 模板中的事实字段默认要求确切信息；无法从当前输入、证据或工具结果确认时进入人工求证。
+- 只有填写说明中明确写出 `Nice to Have，可不填写` 的字段允许缺失，且不触发人工求证。
+- 状态、ID、ref、digest 等结构字段直接使用中文填写说明。
+- 模板不得保留无说明的空字段；待填位置使用中文 `<填写...>` 说明，产出时必须替换全部填写说明。
 
 ## Phase 1: <Phase Name>
 ---
