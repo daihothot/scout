@@ -510,6 +510,7 @@ test("AgentTaskBackend reduces app-server plan timeline entries into task state"
   }));
   const backend = new AgentTaskBackend();
   const firstPlan = planState("turn-1", "first", "inProgress");
+  const completedFirstPlan = planState("turn-1", "first completed", "completed");
   const secondPlan = planState("turn-2", "second", "completed");
 
   backend.handleAppServerTimelineEntry(
@@ -519,14 +520,20 @@ test("AgentTaskBackend reduces app-server plan timeline entries into task state"
   );
   backend.handleAppServerTimelineEntry(
     agent,
-    planTimelineEntry(2, "turn-2"),
+    planTimelineEntry(2, "turn-1"),
+    () => resolvedPlanEntry(completedFirstPlan),
+  );
+  backend.handleAppServerTimelineEntry(
+    agent,
+    planTimelineEntry(3, "turn-2"),
     () => resolvedPlanEntry(secondPlan),
   );
   const task = store.getTask("task-1");
   assert.equal(task?.plan?.turnId, "turn-2");
   assert.equal(task?.plan?.explanation, "second");
   assert.deepEqual(task?.planRecords?.map((plan) => plan.turnId), ["turn-1", "turn-2"]);
-  assert.deepEqual(task?.planRecords?.map((plan) => plan.steps[0]?.status), ["inProgress", "completed"]);
+  assert.deepEqual(task?.planRecords?.map((plan) => plan.explanation), ["first completed", "second"]);
+  assert.deepEqual(task?.planRecords?.map((plan) => plan.steps[0]?.status), ["completed", "completed"]);
 });
 
 function createHarness(input: {

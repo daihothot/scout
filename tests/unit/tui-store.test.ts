@@ -177,29 +177,41 @@ test("TuiStore ignores task updates until assignment is confirmed", () => {
   assert.deepEqual(store.snapshot().logs, []);
 });
 
-test("TuiStore keeps an archived task with its last projected plan", () => {
+test("TuiStore appends plans across turns and keeps them after archive", () => {
   const store = createStore();
   const bus = new InMemoryEventBus();
   const assigned = taskState();
-  const plan = {
+  const firstPlan = {
     turnId: "turn-1",
     explanation: "Research the selected BDD.",
     steps: [
       { step: "Read role and skills", status: "completed" as const, raw: {} },
       { step: "Locate BDD", status: "inProgress" as const, raw: {} },
-      { step: "Write research artifact", status: "pending" as const, raw: {} },
+    ],
+  };
+  const completedFirstPlan = {
+    ...firstPlan,
+    steps: firstPlan.steps.map((step) => ({ ...step, status: "completed" as const })),
+  };
+  const secondPlan = {
+    turnId: "turn-2",
+    explanation: "Write the Research pack.",
+    steps: [
+      { step: "Write research artifact", status: "completed" as const, raw: {} },
+      { step: "Submit research handoff", status: "completed" as const, raw: {} },
     ],
   };
 
   store.addTaskEvent(bus.publish(AgentEvents.task.assigned, assigned));
-  store.addTaskEvent(bus.publish(AgentEvents.task.planUpdated, taskState({ plan })));
+  store.addTaskEvent(bus.publish(AgentEvents.task.planUpdated, taskState({
+    plan: firstPlan,
+    planRecords: [firstPlan],
+  })));
   store.addTaskEvent(bus.publish(AgentEvents.task.done, taskState({
     status: "done",
     updatedAt: "2026-07-10T00:00:03.000Z",
-    plan: {
-      ...plan,
-      steps: plan.steps.map((step) => ({ ...step, status: "completed" as const })),
-    },
+    plan: secondPlan,
+    planRecords: [completedFirstPlan, secondPlan],
   })));
 
   assert.deepEqual(store.snapshot().tasks, [{
@@ -214,6 +226,7 @@ test("TuiStore keeps an archived task with its last projected plan", () => {
       { step: "Read role and skills", status: "completed" },
       { step: "Locate BDD", status: "completed" },
       { step: "Write research artifact", status: "completed" },
+      { step: "Submit research handoff", status: "completed" },
     ],
   }]);
   assert.deepEqual(
@@ -242,6 +255,7 @@ test("TuiStore keeps an archived task with its last projected plan", () => {
       { step: "Read role and skills", status: "completed" },
       { step: "Locate BDD", status: "completed" },
       { step: "Write research artifact", status: "completed" },
+      { step: "Submit research handoff", status: "completed" },
     ],
   }]);
   assert.equal(store.snapshot().logs.at(-1)?.text, "任务 researcher-task-0001 已归档。");

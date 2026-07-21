@@ -11,7 +11,7 @@ export interface TerminalMarkdownStyle {
   underline?: boolean;
   strikethrough?: boolean;
   dimColor?: boolean;
-  color?: "cyan" | "yellow" | "gray";
+  color?: "cyan" | "yellow" | "gray" | "#c1beb0" | "#a898a9";
   inverse?: boolean;
 }
 
@@ -110,7 +110,7 @@ function renderCode(token: Tokens.Code, width: number): TerminalMarkdownLine[] {
   for (const sourceLine of token.text.split("\n")) {
     const lines = wrapSpans([{
       text: sourceLine.length > 0 ? sourceLine : " ",
-      style: { color: "yellow" },
+      style: { color: "#a898a9" },
     }], width, "code");
     output.push(...lines);
   }
@@ -218,7 +218,7 @@ function inlineSpans(tokens: Token[], inherited: TerminalMarkdownStyle = {}): Te
         const code = token as Tokens.Codespan;
         return [{
           text: code.text,
-          style: mergeStyle(inherited, { color: "yellow", inverse: true }),
+          style: mergeStyle(inherited, { color: "#c1beb0" }),
         }];
       }
       case "br":

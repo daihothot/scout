@@ -57,6 +57,30 @@ test("terminal markdown renders lists and wraps using terminal display width", (
   );
 });
 
+test("terminal markdown renders inline code with a muted inverse highlight", () => {
+  const lines = buildTerminalMarkdownLines("任务 `researcher-task-0001` 已指派。", 80);
+  const code = lines[0]?.spans.find((span) => span.text === "researcher-task-0001");
+
+  assert.deepEqual(code?.style, {
+    color: "#858277",
+    inverse: true,
+  });
+});
+
+test("terminal markdown renders fenced code with a pale foreground", () => {
+  const lines = buildTerminalMarkdownLines("```gherkin\nGiven 已提供 BDD 目标\n```", 80);
+  const language = lines.find((line) => line.spans.some((span) => span.text === "[gherkin]"));
+  const code = lines.find((line) => line.spans.some((span) => span.text === "Given 已提供 BDD 目标"));
+
+  assert.deepEqual(language?.spans[0]?.style, {
+    color: "gray",
+    dimColor: true,
+  });
+  assert.deepEqual(code?.spans[0]?.style, {
+    color: "#a9a698",
+  });
+});
+
 test("Chat projection keeps semantic rows and one spacer between messages", () => {
   const state = tuiState({
     logs: [

@@ -68,8 +68,12 @@ export class AgentTaskBackend {
       case "plan": {
         if (entry.kind !== "plan_updated" || !activeTask) return;
         const resolved = resolver(entry);
-        if (resolved.plan) {
-          this.applyPlanUpdate(activeTask, resolved.plan);
+        const turnId = resolved.plan?.turnId ?? entry.turnId;
+        if (resolved.plan && turnId) {
+          this.applyPlanUpdate(activeTask, {
+            ...resolved.plan,
+            turnId,
+          });
         }
         return;
       }
@@ -104,10 +108,14 @@ export class AgentTaskBackend {
     task: AgentTaskState,
     plan: AppServerPlanState,
   ): AgentTaskState {
+    const planRecords = task.planRecords ?? [];
+    const existingTurnIndex = planRecords.findIndex((record) => record.turnId === plan.turnId);
     const updated: AgentTaskState = {
       ...task,
       plan,
-      planRecords: [...(task.planRecords ?? []), plan],
+      planRecords: existingTurnIndex < 0
+        ? [...planRecords, plan]
+        : planRecords.map((record, index) => index === existingTurnIndex ? plan : record),
       updatedAt: new Date().toISOString(),
     };
     const stored = this.taskStore.updateTask(updated.taskId, () => updated);
