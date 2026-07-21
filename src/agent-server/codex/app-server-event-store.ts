@@ -77,6 +77,30 @@ export interface AppServerFileChangeItem extends AppServerBaseItem {
   status?: AppServerItemStatus;
 }
 
+export interface AppServerCollabAgentState {
+  status: string;
+  message: string | null;
+}
+
+export interface AppServerCollabAgentToolCallItem extends AppServerBaseItem {
+  type: "collabAgentToolCall";
+  tool: string;
+  status: AppServerItemStatus;
+  senderThreadId: string;
+  receiverThreadIds: string[];
+  prompt: string | null;
+  model: string | null;
+  reasoningEffort: string | null;
+  agentsStates: Record<string, AppServerCollabAgentState>;
+}
+
+export interface AppServerSubAgentActivityItem extends AppServerBaseItem {
+  type: "subAgentActivity";
+  kind: string;
+  agentThreadId: string;
+  agentPath: string;
+}
+
 export interface AppServerUnknownItem extends AppServerBaseItem {
   type: "unknown";
   rawType: string;
@@ -91,12 +115,15 @@ export type AppServerItem =
   | AppServerDynamicToolCallItem
   | AppServerMcpToolCallItem
   | AppServerFileChangeItem
+  | AppServerCollabAgentToolCallItem
+  | AppServerSubAgentActivityItem
   | AppServerUnknownItem;
 
 export type AppServerProgressSourceItem =
   | AppServerCommandExecutionItem
   | AppServerDynamicToolCallItem
-  | AppServerMcpToolCallItem;
+  | AppServerMcpToolCallItem
+  | AppServerCollabAgentToolCallItem;
 
 export interface AppServerPlanStep {
   step: string;
@@ -120,7 +147,7 @@ export interface AppServerProgressItem {
   itemId: string;
   threadId: string;
   turnId: string;
-  type: "commandExecution" | "dynamicToolCall" | "mcpToolCall";
+  type: "commandExecution" | "dynamicToolCall" | "mcpToolCall" | "collabAgentToolCall";
   status: string;
   label: string;
   detail?: string;
@@ -906,6 +933,8 @@ function progressLabel(item: AppServerProgressSourceItem): string {
       return item.tool;
     case "mcpToolCall":
       return `${item.server}.${item.tool}`;
+    case "collabAgentToolCall":
+      return `Native subagent ${item.tool}`;
   }
 }
 
@@ -916,6 +945,10 @@ function progressDetail(item: AppServerProgressSourceItem): string | undefined {
     case "dynamicToolCall":
     case "mcpToolCall":
       return item.arguments === undefined ? undefined : JSON.stringify(item.arguments);
+    case "collabAgentToolCall":
+      return item.receiverThreadIds.length > 0
+        ? item.receiverThreadIds.join(", ")
+        : item.senderThreadId;
   }
 }
 
@@ -998,6 +1031,37 @@ function normalizeItem(value: unknown): AppServerItem | undefined {
         changes: readArray(raw.changes),
         status: readString(raw, "status"),
       };
+    case "collabAgentToolCall":
+      return {
+        id,
+        type,
+        tool: readString(raw, "tool") ?? "unknown",
+        status: readStatus(raw),
+        senderThreadId: readString(raw, "senderThreadId") ?? "",
+        receiverThreadIds: readStringArray(raw.receiverThreadIds) ?? [],
+        prompt: readString(raw, "prompt") ?? null,
+        model: readString(raw, "model") ?? null,
+        reasoningEffort: readString(raw, "reasoningEffort") ?? null,
+        agentsStates: Object.fromEntries(
+          Object.entries(readObjectOrUndefined(raw.agentsStates) ?? {}).flatMap(([threadId, value]) => {
+            const state = readObjectOrUndefined(value);
+            const status = readString(state, "status");
+            if (!status) return [];
+            return [[threadId, {
+              status,
+              message: readString(state, "message") ?? null,
+            }]];
+          }),
+        ),
+      };
+    case "subAgentActivity":
+      return {
+        id,
+        type,
+        kind: readString(raw, "kind") ?? "unknown",
+        agentThreadId: readString(raw, "agentThreadId") ?? "",
+        agentPath: readString(raw, "agentPath") ?? "",
+      };
     default:
       return {
         id,
@@ -1041,7 +1105,8 @@ function normalizeGoal(value: unknown, fallbackThreadId?: string): AppServerThre
 function isProgressSourceItem(item: AppServerItem): item is AppServerProgressSourceItem {
   return item.type === "commandExecution"
     || item.type === "dynamicToolCall"
-    || item.type === "mcpToolCall";
+    || item.type === "mcpToolCall"
+    || item.type === "collabAgentToolCall";
 }
 
 function isResponse(value: unknown): value is JsonRpcResponse {

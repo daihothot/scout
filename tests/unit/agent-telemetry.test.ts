@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   AgentActivity,
+  AgentNativeSubagentActivity,
   AgentTurnActivity,
 } from "../../src/agent/activity/activity-event.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
@@ -180,6 +181,78 @@ test("AgentActivityRecorder writes stable activity to the role activity log", as
   assert.match(text, /status: "inProgress"/);
   assert.equal(existsSync(join(root, "logs", "runtime.log")), false);
   assert.equal(existsSync(join(logsRoot, "researcher-task-0001.log")), false);
+});
+
+test("AgentActivityRecorder writes complete native subagent facts to a dedicated log", async () => {
+  const root = mkdtempSync(join(tmpdir(), "scout-subagent-recorder-"));
+  const logsRoot = join(root, "agents", "researcher", "logs");
+  const eventBus = new InMemoryEventBus();
+  const registry = registryWithAgent("researcher", logsRoot);
+  const recorder = new AgentActivityRecorder({
+    runId: "run-subagent-recorder",
+    eventBus,
+    registry,
+  });
+  recorder.start();
+
+  await eventBus.publishAndWait(AgentEvents.activity.observed, activity({
+    type: "collabAgentToolCall",
+    status: "completed",
+    label: "Native subagent spawnAgent",
+    detail: "thread-child-1",
+  }));
+  await eventBus.publishAndWait(AgentEvents.activity.nativeSubagentObserved, {
+    seq: 2,
+    agentId: "researcher",
+    role: "researcher",
+    taskId: "researcher-task-0001",
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    itemId: "collab-1",
+    type: "collabAgentToolCall",
+    tool: "spawnAgent",
+    status: "completed",
+    senderThreadId: "thread-researcher",
+    receiverThreadIds: ["thread-child-1"],
+    prompt: "检查一个边界明确的只读子任务。",
+    model: "gpt-5.5",
+    reasoningEffort: "high",
+    agentsStates: {
+      "thread-child-1": {
+        status: "running",
+        message: null,
+      },
+    },
+    updatedAt: "2026-07-21T00:00:00.000Z",
+  } satisfies AgentNativeSubagentActivity);
+  await eventBus.publishAndWait(AgentEvents.activity.nativeSubagentObserved, {
+    seq: 3,
+    agentId: "researcher",
+    role: "researcher",
+    taskId: "researcher-task-0001",
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    itemId: "subagent-activity-1",
+    type: "subAgentActivity",
+    kind: "started",
+    agentThreadId: "thread-child-1",
+    agentPath: "019f-child-1",
+    updatedAt: "2026-07-21T00:00:01.000Z",
+  } satisfies AgentNativeSubagentActivity);
+  recorder.stop();
+
+  const subagentLogPath = join(logsRoot, "subagent.log");
+  const text = readFileSync(subagentLogPath, "utf8");
+  assert.equal(readEventCount(text), 2);
+  assert.match(text, /event=agent\.activity\.native_subagent_observed/);
+  assert.match(text, /tool: "spawnAgent"/);
+  assert.match(text, /receiverThreadIds:/);
+  assert.match(text, /thread-child-1/);
+  assert.match(text, /prompt: "检查一个边界明确的只读子任务。"/);
+  assert.match(text, /kind: "started"/);
+  assert.match(text, /agentPath: "019f-child-1"/);
+  assert.equal(existsSync(join(logsRoot, "activity.log")), false);
+  assert.equal(existsSync(join(root, "logs", "runtime.log")), false);
 });
 
 test("AgentThreadRecorder writes complete startup facts and incremental close facts", async () => {

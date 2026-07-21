@@ -225,6 +225,92 @@ test("AppServerEventStore normalizes user messages and aggregates reasoning summ
   ]);
 });
 
+test("AppServerEventStore normalizes native subagent control and lifecycle items", () => {
+  const store = new AppServerEventStore();
+
+  store.ingestNotification(notification("item/completed", {
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    item: {
+      id: "collab-1",
+      type: "collabAgentToolCall",
+      tool: "spawnAgent",
+      status: "completed",
+      senderThreadId: "thread-researcher",
+      receiverThreadIds: ["thread-child-1"],
+      prompt: "检查一个边界明确的只读子任务。",
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+      agentsStates: {
+        "thread-child-1": {
+          status: "running",
+          message: null,
+        },
+      },
+    },
+  }));
+  store.ingestNotification(notification("item/completed", {
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    item: {
+      id: "subagent-activity-1",
+      type: "subAgentActivity",
+      kind: "started",
+      agentThreadId: "thread-child-1",
+      agentPath: "019f-child-1",
+    },
+  }));
+
+  const collab = store.itemSnapshot({
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    itemId: "collab-1",
+  });
+  assert.deepEqual(collab, {
+    id: "collab-1",
+    type: "collabAgentToolCall",
+    tool: "spawnAgent",
+    status: "completed",
+    senderThreadId: "thread-researcher",
+    receiverThreadIds: ["thread-child-1"],
+    prompt: "检查一个边界明确的只读子任务。",
+    model: "gpt-5.5",
+    reasoningEffort: "high",
+    agentsStates: {
+      "thread-child-1": {
+        status: "running",
+        message: null,
+      },
+    },
+  });
+  assert.deepEqual(store.progressItem({
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    itemId: "collab-1",
+  }), {
+    itemId: "collab-1",
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    type: "collabAgentToolCall",
+    status: "completed",
+    label: "Native subagent spawnAgent",
+    detail: "thread-child-1",
+    item: collab,
+    updatedAt: store.turnSnapshot("thread-researcher", "turn-1")?.updatedAt,
+  });
+  assert.deepEqual(store.itemSnapshot({
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    itemId: "subagent-activity-1",
+  }), {
+    id: "subagent-activity-1",
+    type: "subAgentActivity",
+    kind: "started",
+    agentThreadId: "thread-child-1",
+    agentPath: "019f-child-1",
+  });
+});
+
 function notification(method: string, params: unknown): JsonRpcNotification {
   return {
     method,

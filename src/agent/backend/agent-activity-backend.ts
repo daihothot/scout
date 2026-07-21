@@ -5,6 +5,7 @@ import type {
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import type {
   AgentActivity,
+  AgentNativeSubagentActivity,
   AgentTurnActivity,
 } from "../activity/activity-event.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
@@ -52,6 +53,42 @@ export class AgentActivityBackend {
 
     const activeTask = this.scope.taskStore.findActiveTaskForAgent(agent.agentId);
     const resolved = resolve();
+    if (resolved.item?.type === "collabAgentToolCall") {
+      this.scope.eventBus.publish(AgentEvents.activity.nativeSubagentObserved, {
+        seq: entry.seq,
+        agentId: agent.agentId,
+        role: agent.role,
+        taskId: activeTask?.taskId,
+        threadId: entry.threadId,
+        turnId: entry.turnId,
+        itemId: resolved.item.id,
+        type: resolved.item.type,
+        tool: resolved.item.tool,
+        status: resolved.item.status,
+        senderThreadId: resolved.item.senderThreadId,
+        receiverThreadIds: [...resolved.item.receiverThreadIds],
+        prompt: resolved.item.prompt,
+        model: resolved.item.model,
+        reasoningEffort: resolved.item.reasoningEffort,
+        agentsStates: structuredClone(resolved.item.agentsStates),
+        updatedAt: entry.receivedAt,
+      } satisfies AgentNativeSubagentActivity);
+    } else if (resolved.item?.type === "subAgentActivity") {
+      this.scope.eventBus.publish(AgentEvents.activity.nativeSubagentObserved, {
+        seq: entry.seq,
+        agentId: agent.agentId,
+        role: agent.role,
+        taskId: activeTask?.taskId,
+        threadId: entry.threadId,
+        turnId: entry.turnId,
+        itemId: resolved.item.id,
+        type: resolved.item.type,
+        kind: resolved.item.kind,
+        agentThreadId: resolved.item.agentThreadId,
+        agentPath: resolved.item.agentPath,
+        updatedAt: entry.receivedAt,
+      } satisfies AgentNativeSubagentActivity);
+    }
     const progressItem = resolved.progressItem;
     const activity: AgentActivity | undefined = progressItem
       ? {
@@ -80,7 +117,11 @@ export class AgentActivityBackend {
           type: resolved.item.type,
           status: resolved.item.status ?? (entry.kind === "item_completed" ? "completed" : "inProgress"),
           label: itemLabel(resolved.item),
-          detail: resolved.item.type === "reasoning" ? reasoningSummary(resolved.item.summary) : undefined,
+          detail: resolved.item.type === "reasoning"
+            ? reasoningSummary(resolved.item.summary)
+            : resolved.item.type === "subAgentActivity"
+              ? `${resolved.item.kind}: ${resolved.item.agentThreadId}`
+              : undefined,
           updatedAt: entry.receivedAt,
         }
         : undefined;
@@ -97,6 +138,10 @@ function itemLabel(item: NonNullable<AppServerResolvedTimelineEntry["item"]>): s
       return "Reasoning";
     case "fileChange":
       return "File changes";
+    case "collabAgentToolCall":
+      return `Native subagent ${item.tool}`;
+    case "subAgentActivity":
+      return "Native subagent activity";
     case "unknown":
       return `Unknown item (${item.rawType})`;
     default:

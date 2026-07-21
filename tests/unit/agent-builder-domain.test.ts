@@ -31,6 +31,7 @@ import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type { DynamicToolCallHandler } from "../../src/agent-server/types.js";
 import type {
+  AppServerCollabAgentToolCallItem,
   AppServerResolvedTimelineEntry,
   AppServerThreadState,
   AppServerTimelineEntry,
@@ -60,6 +61,7 @@ import type {
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import type {
   AgentActivity,
+  AgentNativeSubagentActivity,
   AgentTurnActivity,
 } from "../../src/agent/activity/activity-event.js";
 import { InteractionGateway } from "../../src/interaction/index.js";
@@ -522,6 +524,108 @@ test("AgentBackend normalizes app-server items into Agent activity", () => {
     updatedAt: "2026-07-14T00:00:00.000Z",
   }]);
   assert.equal(JSON.stringify(activities).includes("private chain of thought"), false);
+});
+
+test("AgentBackend publishes native subagent audit facts and concise activity", () => {
+  const entry = {
+    seq: 8,
+    stream: "item",
+    kind: "item_completed",
+    receivedAt: "2026-07-21T00:00:00.000Z",
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    itemId: "collab-1",
+  } satisfies AppServerTimelineEntry;
+  const item = {
+    id: "collab-1",
+    type: "collabAgentToolCall",
+    tool: "spawnAgent",
+    status: "completed",
+    senderThreadId: "thread-researcher",
+    receiverThreadIds: ["thread-child-1"],
+    prompt: "检查一个边界明确的只读子任务。",
+    model: "gpt-5.5",
+    reasoningEffort: "high",
+    agentsStates: {
+      "thread-child-1": {
+        status: "running",
+        message: null,
+      },
+    },
+  } satisfies AppServerCollabAgentToolCallItem;
+  const appServer = createFakeAppServer({
+    resolveTimelineEntry: () => ({
+      entry,
+      item,
+      progressItem: {
+        itemId: item.id,
+        threadId: entry.threadId,
+        turnId: entry.turnId,
+        type: item.type,
+        status: item.status,
+        label: "Native subagent spawnAgent",
+        detail: "thread-child-1",
+        item,
+        updatedAt: entry.receivedAt,
+      },
+    }),
+  });
+  const fixture = createAgentFixture("native-subagent-activity", {
+    appServer,
+    domain: createStaticDomain("domain-native-subagent-activity", []),
+  });
+  const researcher = new ResearcherAgent(fixture.options);
+  fixture.registry.registerAgent(researcher);
+  fixture.registry.bindThread(researcher.agentId, entry.threadId);
+  const activities: AgentActivity[] = [];
+  const nativeSubagentActivities: AgentNativeSubagentActivity[] = [];
+  fixture.eventBus.subscribe<AgentActivity>(AgentEvents.activity.observed, (event) => {
+    activities.push(event.payload);
+  });
+  fixture.eventBus.subscribe<AgentNativeSubagentActivity>(
+    AgentEvents.activity.nativeSubagentObserved,
+    (event) => {
+      nativeSubagentActivities.push(event.payload);
+    },
+  );
+  new AgentBackend({
+    agentProvider: {
+      resolveWorker(input): WorkerAgent {
+        return fixture.registry.resolveAgent(input.role) as WorkerAgent;
+      },
+    },
+  }).start();
+
+  appServer.emitTimeline(entry);
+
+  assert.deepEqual(nativeSubagentActivities, [{
+    seq: 8,
+    agentId: "researcher",
+    role: "researcher",
+    taskId: undefined,
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    itemId: "collab-1",
+    type: "collabAgentToolCall",
+    tool: "spawnAgent",
+    status: "completed",
+    senderThreadId: "thread-researcher",
+    receiverThreadIds: ["thread-child-1"],
+    prompt: "检查一个边界明确的只读子任务。",
+    model: "gpt-5.5",
+    reasoningEffort: "high",
+    agentsStates: {
+      "thread-child-1": {
+        status: "running",
+        message: null,
+      },
+    },
+    updatedAt: "2026-07-21T00:00:00.000Z",
+  }]);
+  assert.equal(activities.length, 1);
+  assert.equal(activities[0]?.label, "Native subagent spawnAgent");
+  assert.equal(activities[0]?.detail, "thread-child-1");
+  assert.equal(JSON.stringify(activities).includes("检查一个边界明确的只读子任务"), false);
 });
 
 test("AgentBackend publishes turn lifecycle separately from item activity", () => {
