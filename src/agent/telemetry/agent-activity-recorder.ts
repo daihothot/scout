@@ -5,6 +5,7 @@ import type {
 import { Logger } from "../../core/logging/index.js";
 import type {
   AgentActivity,
+  AgentNativeSubagentActivity,
   AgentTurnActivity,
 } from "../activity/activity-event.js";
 import type { AgentRegistry } from "../core/agent-registry.js";
@@ -21,6 +22,7 @@ export class AgentActivityRecorder {
   private readonly eventBus: EventBus;
   private readonly registry: AgentRegistry;
   private readonly activityLoggers = new Map<string, Logger>();
+  private readonly nativeSubagentLoggers = new Map<string, Logger>();
   private unsubscribers: UnsubscribeEventHandler[] = [];
 
   constructor(options: AgentActivityRecorderOptions) {
@@ -40,6 +42,10 @@ export class AgentActivityRecorder {
         AgentEvents.activity.turnObserved,
         (event) => this.recordTurn(event.payload),
       ),
+      this.eventBus.subscribe<AgentNativeSubagentActivity>(
+        AgentEvents.activity.nativeSubagentObserved,
+        (event) => this.recordNativeSubagentActivity(event.payload),
+      ),
     );
   }
 
@@ -48,14 +54,26 @@ export class AgentActivityRecorder {
       this.unsubscribers.pop()?.();
     }
     this.activityLoggers.clear();
+    this.nativeSubagentLoggers.clear();
   }
 
   private recordActivity(activity: AgentActivity): void {
     if (activity.type === "dynamicToolCall") return;
+    if (activity.type === "collabAgentToolCall" || activity.type === "subAgentActivity") return;
     if (activity.type === "reasoning" && activity.status !== "completed") return;
     this.loggerFor(activity.agentId).info({
       module: "agent.activity",
       event: AgentEvents.activity.observed.routeKey,
+      agentId: activity.agentId,
+      taskId: activity.taskId,
+      data: activity,
+    });
+  }
+
+  private recordNativeSubagentActivity(activity: AgentNativeSubagentActivity): void {
+    this.nativeSubagentLoggerFor(activity.agentId).info({
+      module: "agent.subagent",
+      event: AgentEvents.activity.nativeSubagentObserved.routeKey,
       agentId: activity.agentId,
       taskId: activity.taskId,
       data: activity,
@@ -82,6 +100,19 @@ export class AgentActivityRecorder {
       fileName: "activity.log",
     });
     this.activityLoggers.set(agentId, logger);
+    return logger;
+  }
+
+  private nativeSubagentLoggerFor(agentId: string): Logger {
+    const existing = this.nativeSubagentLoggers.get(agentId);
+    if (existing) return existing;
+    const agent = this.registry.resolveAgent(agentId);
+    const logger = new Logger({
+      runId: this.runId,
+      logsRoot: agent.mount.logsRoot,
+      fileName: "subagent.log",
+    });
+    this.nativeSubagentLoggers.set(agentId, logger);
     return logger;
   }
 }

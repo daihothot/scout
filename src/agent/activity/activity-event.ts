@@ -28,10 +28,48 @@ export interface AgentTurnActivity {
   updatedAt: string;
 }
 
+interface AgentNativeSubagentActivityBase {
+  seq: number;
+  agentId: string;
+  role: ScoutAgentRole;
+  taskId?: string;
+  threadId: string;
+  turnId?: string;
+  itemId: string;
+  updatedAt: string;
+}
+
+export interface AgentNativeSubagentToolActivity extends AgentNativeSubagentActivityBase {
+  type: "collabAgentToolCall";
+  tool: string;
+  status: string;
+  senderThreadId: string;
+  receiverThreadIds: string[];
+  prompt: string | null;
+  model: string | null;
+  reasoningEffort: string | null;
+  agentsStates: Record<string, {
+    status: string;
+    message: string | null;
+  }>;
+}
+
+export interface AgentNativeSubagentLifecycleActivity extends AgentNativeSubagentActivityBase {
+  type: "subAgentActivity";
+  kind: string;
+  agentThreadId: string;
+  agentPath: string;
+}
+
+export type AgentNativeSubagentActivity =
+  | AgentNativeSubagentToolActivity
+  | AgentNativeSubagentLifecycleActivity;
+
 const agentActivityEventCatalog = {
   activity: {
     observed: event<AgentActivity>(),
     turnObserved: event<AgentTurnActivity>(),
+    nativeSubagentObserved: event<AgentNativeSubagentActivity>(),
   },
 } as const;
 
