@@ -192,6 +192,11 @@ export class TuiStore {
       && !AgentEvents.task.assigned.is(event)
       && !archived
     ) return;
+    const plans = task.planRecords?.length
+      ? task.planRecords
+      : task.plan
+        ? [task.plan]
+        : [];
     this.taskMap.set(task.taskId, {
       taskId: task.taskId,
       taskSequence: task.taskSequence,
@@ -200,11 +205,11 @@ export class TuiStore {
       status: archived ? "archived" : task.status,
       description: task.description,
       updatedAt: archived ? event.occurredAt : task.updatedAt,
-      planSteps: task.plan
-        ? task.plan.steps.map((step) => ({
+      planSteps: plans.length > 0
+        ? plans.flatMap((plan) => plan.steps.map((step) => ({
           step: step.step,
           status: step.status,
-        }))
+        })))
         : (existing?.planSteps.map((step) => ({ ...step })) ?? []),
     });
     if (archived) {
