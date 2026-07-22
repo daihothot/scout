@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: guru-knowledge-research
 description: Scout Researcher 使用 Guru knowledge、Behaviors、当前版本代码语义、Evidence Pack、evidence-registry 和 verification-manual.md 锁定 BDD 验证内容、证据编号与用户画像。
 id: skills.guru.knowledge-research
-version: 0.10.0
+version: 0.10.3
 phase: [research]
 tags: [guru, knowledge, codegraph, codebase, evidence, research]
 devices: [any]
@@ -86,7 +86,7 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 - 模板中未注明 `Nice to Have，可不填写` 的事实字段必须取得确切信息；现有输入、证据和工具结果都无法确认时，识别后必须立即发起人工求证、停止后续阶段并保持 `draft + partial`。
 - 明确注明 `Nice to Have，可不填写` 的字段有可靠信息时填写；缺失不阻塞完成，也不单独触发人工求证。
 - 由人工确认闭环的事实必须登记为 `E-HUMAN-*`；knowledge 候选或 Researcher 推断不能替代用户确认。
-- task handoff 必须使用英文标题 `Research Handoff State`，在标题下用中文明确 `complete | partial | blocked` 状态并给出 Verification Manual 摘要；存在待人工确认的必需事实时不得提交 handoff，artifact 为其它原因部分完成时不得在 handoff 中描述为 Research 已完成。
+- task handoff 必须使用英文标题 `Research Handoff State`，在标题下用中文传递 `complete | partial | blocked` 状态、唯一 pack ref、digest、evidence registry ref、verification manual ref、问题或限制、人工确认状态和继续入口；不得复制 artifact 中的证据或验证点详情。存在待人工确认的必需事实时不得提交 handoff，artifact 为其它原因部分完成时不得在 handoff 中描述为 Research 已完成。
 
 ## Repository Provenance Model
 
@@ -97,6 +97,29 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 - 嵌套源码必须记录 root commit 中的 `gitlink_path` / `gitlink_commit`，且 `gitlink_commit` 必须和收集证据时的 `source_commit` 对齐。
 - `E-CODE-*` 必须使用 `source_commit + source_relative_file` 作为 canonical replay locator；本地绝对路径只作为当前 run provenance。
 - 每个 `E-CODE-*` 只能记录一个 primary symbol。相关源码文件有未提交改动时，该证据不得标记为 `source_verified`。
+
+## Native Subagent Strategy
+
+本技能明确授权父 Researcher 自主决定是否使用 Codex native subagent。只有子任务边界稳定、能够独立推进，并且预期节省的时间高于启动、等待和聚合成本时才派发；是否派发、派发数量以及并行或串行方式均由父 Researcher 判断。Native subagent 只负责返回候选事实和可复查来源，不直接写正式 Research pack。
+
+- 父 Researcher 派发前只锁定当前 task 的唯一 BDD identity 与 ref、knowledge root、目标 repository path、版本、CodeGraph index 状态和 canonical Research pack；不得提前执行准备委派范围内的正文检索、分析或完整核验。
+- Knowledge 与 Code 是可选的候选拆分。Knowledge child 可独占已选 BDD、全部相关 Capability、唯一 Availability 和唯一 Platform 的只读提取；不得提取、推导或建议 `E-PERSONA-*`、`E-HUMAN-*` 或人工请求。Code child 可独占 Source Query Target 推导、只读 CodeGraph 查询、源码核验和 source locator 收敛。
+- 父 Researcher 可以委派其中一个、多个或均不委派；只有相互独立且并行收益明确时才并行。多个 child 必须使用相同的已确认 BDD 与版本边界，不得写正式 Research artifact，也不得相互改写范围。
+- 父 Researcher 不得重复执行 child 已覆盖的完整检索，只能抽查将进入正式 claim 的关键 locator、解决两个结果之间的冲突或补齐 child 明确披露的未覆盖范围。
+- 父 Researcher 决定不派发时直接自行执行，不需要记录 fallback 原因；派发失败或结果不可用时，可以在停止或释放对应 child 后收回该范围，不得与仍在执行的 child 重复工作。
+
+必须由父 Researcher 串行完成的工作：
+
+- 唯一 BDD 选择、Human Confirmation Gate 判断和人工请求。
+- `jarvis codebase` 的 supported/path/version 解析、checkout、submodule 更新和 CodeGraph index 准备。
+- evidence id 最终分配、交叉引用消歧、聚合 artifact、evidence registry、verification manual 和正式 Research pack 写入。
+- `scout-research-artifact-check`、pack digest、Scout dynamic tool 调用和正式 Research handoff。
+
+使用 child 时，委派 prompt 必须包含只读输入范围、允许使用的命令和禁止写入的正式 artifact 路径。Knowledge child 只按 `Source Refs`、`Candidate Evidence`、`Conflicts`、`Commands`、`Failed Commands`、`Limitations` 六段返回；Code child 按 `jarvis-codebase` 定义的六段返回。每份结果不超过 4000 个中文字符，不复制来源正文，不重复 contract 或形成最终 handoff。父 Researcher 必须消费对应结果后才能写依赖该结果的 artifact。
+
+父 Researcher 按 artifact 的真实数据依赖写 canonical Research pack：依赖 child 结果的内容必须等待对应结果返回并被消费；不依赖 child 或由父 Researcher 自行完成的内容可以直接写入。不得跨依赖提前写文件；全部 artifact 稳定并完成人工事实闭环后才能执行最终 checker 和 digest。不强制固定写入批次数量或 `fileChange` 数量。
+
+提速不得以删除已经形成且仍有效的 `E-CODE-*` 为代价。Gate 修正时复用同一 canonical pack，并保留仍能支撑当前版本 claim 的代码证据；只修正失效内容、引用和聚合关系。
 
 ## Knowledge Map
 
@@ -501,7 +524,7 @@ templates/verification-manual.md
 Exit：
 
 - 每个 verification point 都有 `persona_evidence_ref`、Given / When / Then、supporting evidence ids 和 signals to collect；所有 refs 已通过 `scout-research-artifact-check` 检查。
-- 已准备 task handoff 使用的验证手册摘要，包括 manual ref、verification points、用户画像、supporting evidence ids、signals to collect，以及已闭环人工确认记录或 `none`。
+- 已准备 task handoff 使用的 verification manual ref、问题或限制、人工确认状态和继续入口；验证点详情、用户画像、supporting evidence ids 和 signals to collect 保留在正式 artifact 中。
 
 Blocked：
 
@@ -523,7 +546,7 @@ Partial：
 - XR-006：verification manual 只能引用 evidence id，不得重新定义 claim、复制证据正文或制定 runtime 执行策略。
 - XR-007：完整 Research pack 必须通过 `scout-research-artifact-check`，并由 checker 派生为 `ready + complete`，才能提交标题为 `Research Handoff State`、内容为中文的 complete handoff。
 - XR-008：checker 将 Research pack 派生为 `draft + partial` 或 `blocked + blocked`，且不存在待人工确认的必需事实时，handoff 必须使用对应的 `partial` 或 `blocked`；存在待人工确认的必需事实时不得提交 handoff。
-- XR-009：task handoff 必须包含 Verification Manual 摘要；manual 尚未形成时必须说明停留阶段和原因，不能用 artifact 列表替代摘要。
+- XR-009：task handoff 必须包含 Verification Manual ref；manual 尚未形成时必须说明停留阶段和原因。不得用 artifact 列表或复制验证点详情替代正式 ref。
 - XR-010：同一 run/BDD 的首次提交和 Gate 修正必须使用同一个 `<bdd-id>-research-pack/` ref；每次提交都必须携带 `scout-artifact-digest` 计算的当前 `scout-directory-sha256-v1` digest 和算法名。
 - XR-011：完成态 verification manual 及其引用的 `E-PERSONA-*` 中所有未注明可不填写的事实字段必须闭环；通过人工求证确认的字段必须有已登记到 registry 的 `E-HUMAN-*`，并由其 `applies_to` 定位该字段。
 
@@ -608,7 +631,7 @@ Partial：
 - `code-evidence.md`：记录当前版本匿名登录入口、fallback 逻辑和相关 symbol evidence。
 - `evidence-registry.md`：集中列出 `E-BDD-001`、`E-KB-001`、`E-CAP-*`、`E-AVAIL-001`、`E-PLATFORM-001` 和 `E-CODE-*`。
 - `verification-manual.md`：只用 BDD、`E-PERSONA-*`、其它 evidence ids 和待采集信号描述验证点。
-- task handoff：使用英文标题 `Research Handoff State`，在标题下用中文明确 pack 的 `complete | partial | blocked` 状态，并摘要 manual ref、verification points、用户画像、supporting evidence ids、signals to collect，以及已闭环人工确认记录或 `none`；存在待人工确认的必需事实时不生成 task handoff。
+- task handoff：使用英文标题 `Research Handoff State`，在标题下用中文传递 pack 的 `complete | partial | blocked` 状态、唯一 pack ref、digest、evidence registry ref、verification manual ref、问题或限制、人工确认状态和继续入口；不复制 artifact 内容，存在待人工确认的必需事实时不生成 task handoff。
 - `verification-manual.md`：列出 VP-001，通过 `persona_evidence_ref` 引用独立用户画像 evidence，并包含 Given / When / Then、supporting evidence ids 和 signals to collect。
 
 边界示例：

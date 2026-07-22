@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: jarvis-codebase
 description: Scout 使用 Jarvis codebase 管理 Guru 托管代码库路径、版本与 CodeGraph 索引，并用独立 codegraph CLI 收集源码语义证据。
 id: skills.jarvis.codebase
-version: 0.4.0
+version: 0.4.3
 phase: [research, verify]
 tags: [jarvis, codebase, codegraph, source, evidence]
 devices: [any]
@@ -152,6 +152,17 @@ codegraph files -p "<codebase-path>"
 - 自然语言 topic 查询只能作为探索入口，不能直接写成源码证据。
 - CodeGraph 输出属于 Activity State，只能作为源码定位和采集 provenance；代码事实必须用源码行号形成 `E-CODE-*`。
 - CodeGraph 的项目根可以是 root repository；证据中的 source repository 仍必须按目标文件实际所属 Git root 单独解析。
+
+## Native Subagent Strategy
+
+- 本技能明确授权父 Agent 在预计能够提高当前代码研究效率时自主决定是否使用 Codex native subagent；是否派发、派发数量以及并行或串行方式由父 Agent 判断，不构成 Phase 的必需步骤。
+- Phase 1 至 Phase 3 由父 Agent 串行完成，用于锁定唯一 repo、managed codebase path、目标版本、root/source repository identity、working tree 和 CodeGraph index 状态。
+- `jarvis codebase <repo> path` 在 checkout 缺失时可能产生 clone、submodule 更新和索引刷新；`latest`、版本切换及任何索引准备都不得由多个 child 并发执行。
+- 只有存在边界稳定、互不依赖的 Source Query Target，并且预期节省的时间高于启动、等待和聚合成本时才派发。上游 Research Skill 已将代码范围委派给专用 Code child 时，该 child 独占 Phase 4 至 Phase 5 的全部 Source Query Target，不再按 target 派发嵌套 child；互不依赖的只读命令可以在该 child 内并行执行。
+- Code child 必须使用父 Agent 已锁定的同一个 codebase path 和版本，不得 checkout、切 branch、更新 submodule、刷新索引、修改源码或写正式 evidence artifact。
+- Code child 只按 `Source Refs`、`Source Query Targets`、`Source Locators`、`Commands`、`Failed Commands`、`Limitations` 六段返回不超过 4000 个中文字符的代码研究结果；不复制源码正文，`Source Locators` 按 Target 只记录 CodeGraph candidates、source repository identity、primary symbol、source-relative file、line range、signature 和必要 key lines。
+- Phase 6 由父 Agent 分配 evidence id、解决候选冲突、抽查关键 source locator，并为每个唯一 primary symbol 写入正式 `E-CODE-*`；父 Agent 不重复执行 child 已完成的完整代码扫描。
+- 父 Agent 决定不派发时直接自行执行 Phase 4 至 Phase 5，不需要记录 fallback 原因；派发失败或结果不可用时，可以在停止或释放对应 child 后收回该范围，不得与仍在执行的 child 重复查询。
 
 ## Inputs
 

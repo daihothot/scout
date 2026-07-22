@@ -5,7 +5,7 @@
 ## Worker Role
 
 - Worker 由 Coordinator 调度，只执行分配给当前角色的 task。
-- Worker 不直接面向用户做最终 synthesis，不创建、调度或停止其它 Agent。
+- Worker 不直接面向用户做最终 synthesis，不创建、调度或停止其它注册的 Scout Agent；Codex native subagent 不属于注册的 Scout Agent。
 - Worker 不决定全局 run 状态或 task 是否归档，只交回本角色正式产物、结果、缺口、限制和建议。
 - 具体业务职责、输入口径和输出 contract 必须来自适用领域 Skill，不能从通用 Worker 规则中猜测。
 
@@ -15,14 +15,6 @@
 - 读取当前角色规则，并加载 profile 中适用于当前角色和 task 的领域 Skill、方法 Skill。
 - task 与当前角色不匹配时停止，并向 Coordinator 报告职责不匹配和建议角色。
 - 缺少输入、能力、权限或输出位置时，不猜测继续；按缺口类型使用下述人工输入规则或当前正式上游入口。
-
-## When Using Native Subagents
-
-- 只将目标、输入和退出边界明确的内部子任务委派给 Codex native subagent。
-- 父 Worker 始终保留当前 Scout task 的所有权和最终聚合责任。
-- 委派 prompt 必须包含已确认的用户意图、子任务边界、允许的副作用和期望返回结果。
-- 明确要求 child 不调用任何 Scout dynamic tool；child 只能使用 Codex 内建能力和当前 sandbox 允许的命令。
-- child 结果只返回父 Worker；由父 Worker 核对并决定后续工具调用、人工请求和正式 task 提交。
 
 ## Human Input
 

@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: researcher-validation
 description: Scout Researcher 在 Validation Domain 中接收 BDD 定位输入、调用适用研究方法、形成可追溯 Research handoff 并为 Verifier 提供稳定验证输入时使用。
 id: skills.validation.researcher
-version: 0.5.0
+version: 0.5.3
 phase: [research]
 tags: [scout, validation, bdd, research, workflow]
 devices: [any]
@@ -58,6 +58,17 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 - 可选未知项是否进入本 Gate 完全遵循专项 Research Skill。
 - 只有与待确认事实、当前 task 和研究目标明确匹配的用户确认才能解除本 Gate；解除后从当前研究阶段继续。
 
+## Native Subagent Strategy
+
+- 本技能明确授权父 Researcher 自主决定是否使用 Codex native subagent 加速当前 Research task；是否派发、派发数量以及并行或串行方式由父 Researcher 根据实际效率判断，不形成新的 Scout task，也不改变当前 task 的生命周期。
+- 只有子任务目标、输入和退出边界稳定，能够独立推进，并且预期节省的时间高于启动、等待和聚合成本时才派发。存在未解除的 `Human Confirmation Gate` 时不得派发依赖该事实的 child。
+- Knowledge 与 Code 是可选的候选拆分：Knowledge child 可只读取已选 BDD、Capability、Availability 和 Platform，且不得提取、推导或建议 Persona/Human evidence；Code child 可只负责 Source Query Target、CodeGraph 查询、源码核验和 source locator。父 Researcher 可以委派其中一个、多个或均不委派，不得为了满足形式而派发。
+- 父 Researcher 独占 Human Confirmation Gate、Persona/Human evidence、evidence id 与 ref 分配、正式 artifact 写入、checker、digest 和 Research handoff。
+- child 独占已委派范围；父 Researcher 不得重新执行完整 knowledge scan 或 code scan，只能抽查 child 返回的关键 locator、解决冲突和验证会进入正式 claim 的最小片段。
+- Knowledge child 只按 `Source Refs`、`Candidate Evidence`、`Conflicts`、`Commands`、`Failed Commands`、`Limitations` 六段返回；Code child 只按 `Source Refs`、`Source Query Targets`、`Source Locators`、`Commands`、`Failed Commands`、`Limitations` 六段返回。每份结果不超过 4000 个中文字符，不复制来源正文，不重复 contract、背景或形成最终 Research 状态。
+- 每个依赖 child 结果的写入批次必须等待对应结果返回并被父 Researcher 消费；空结果、超时或 `closeAgent` 清理都不能替代正式结果。
+- 父 Researcher 决定不派发时直接自行执行，不需要记录 fallback 原因；派发失败或结果不可用时，可以收回该范围并继续，但必须先停止或释放对应 child，且不得与仍在执行的 child 重复工作。
+
 ## Inputs
 
 ### I-001: Research Task
@@ -108,16 +119,32 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 输出要求：
 
 - 正式 artifact 及字段结构由 `guru-knowledge-research` 定义。
-- Research handoff 必须使用英文 Markdown 标题，标题下的自然语言内容使用中文，并包含 task id、handoff state、唯一 pack ref、`scout-directory-sha256-v1` digest、artifact refs、evidence refs、限制、已闭环人工确认记录或 `none`，以及继续入口。
+- Research handoff 必须使用下列固定十字段；英文 Markdown 标题和字段 key 保持原样，字段内容使用中文，字段不得增加、删除、改名或展开为额外摘要：
+
+```markdown
+# Research Handoff State
+
+- task_id: <当前 Researcher task id>
+- handoff_state: <complete | partial | blocked>
+- research_pack_ref: <唯一 pack ref>
+- digest_algorithm: scout-directory-sha256-v1
+- digest: <当前 pack digest>
+- evidence_registry_ref: <evidence-registry.md ref>
+- verification_manual_ref: <verification-manual.md ref>
+- issues_or_limitations: <问题 ids 或最小限制；没有时写 none>
+- human_confirmation_state: <resolved | not_required>
+- continuation_entry: <下一步消费入口>
+```
+- Research handoff 不得复制 evidence claim、源码定位、verification point 的 Given / When / Then、signals to collect、checker 完整输出或 artifact 文件清单；这些内容只能通过正式 artifact ref 消费。
 - `complete` 只表示当前 Research 交付完整，不表示 BDD 已通过验证。
 
 ### Artifact Relationship Rules
 
-- 摘要产物：Research handoff 只摘要专项 Research pack 的状态和关键 refs。
+- 摘要产物：Research handoff 只传递专项 Research pack 的状态、关键 refs、digest、问题或限制和继续入口，不复制 pack 内容。
 - 明细产物：由 `guru-knowledge-research` 及其依赖 Skill 所有。
 - Registry / Pack state：沿用专项 Skill 生成的 evidence registry；Pack 状态由 checker 根据必需聚合 artifact 派生，本技能不创建第二套状态 artifact。
 - Claim owner：BDD、knowledge 和 implementation claim 的所有权遵守专项 Skill。
-- 下游引用规则：Verifier 只消费正式 handoff 中提供的 artifact refs、evidence refs 和 verification manual ref。
+- 下游引用规则：Verifier 从正式 handoff 获取唯一 pack ref、evidence registry ref 和 verification manual ref，再通过 registry 与 manual 解析详细 artifact refs 和 evidence refs。
 - Ref 字段策略：本技能只传递已有 ref，不产生第二套 artifact_ref 或 evidence id。
 - 修正关系：Validator Gate 只适用于其记录的 digest；Researcher 在同一 pack ref 内修正后提交新 digest，不创建 revision pack 或 Gate follow-up artifact。
 
@@ -175,8 +202,8 @@ Partial：
 
 注意事项：
 
-- handoff 必须包含 Verification Manual 摘要或明确说明尚未形成及停留阶段。
-- 不得用 artifact 文件列表替代状态、关键验证点和限制摘要。
+- handoff 必须包含 Verification Manual ref；尚未形成时明确说明停留阶段和原因。
+- 不得在 handoff 中复制 artifact 文件列表、证据正文、关键验证点详情或检查工具完整输出。
 - complete、partial、blocked 必须来自实际产物，不由自然语言自评。
 - 每次 handoff 前必须执行 `scout-artifact-digest <research-pack-dir>`，并提交其返回的 `scout-directory-sha256-v1` digest；不得使用自定义目录摘要算法或继续引用修正前 digest。
 
@@ -196,7 +223,7 @@ Partial：
 
 - XR-001：不得跳过专项研究 Skill 定义的前置 Phase、模板或验证工具。
 - XR-002：专项产物为 partial 或 blocked 时，领域 handoff 必须使用对应状态。
-- XR-003：Research complete 必须包含可供下游消费的正式 artifact refs 和 Verification Manual 摘要。
+- XR-003：Research complete handoff 必须包含可供下游消费的 evidence registry ref 和 Verification Manual ref；详细证据和验证点只存在于对应 artifact。
 - XR-004：Gate 修正后的 handoff 必须保持原 pack ref，并携带修正后 digest 和已处理问题 refs。
 - XR-005：`Human Confirmation Gate` 未解除时必须保持当前 task 为 `running`，不得进入 Phase 3 或提交任何状态的 handoff。
 
@@ -249,4 +276,4 @@ Coordinator 分配 account-anon-first-launch-signin 的 Research task，并提�
 输出：
 
 - 专项 Skill 产生的 artifact refs 和 evidence refs。
-- Research handoff state、Verification Manual 摘要、限制和继续入口；标题使用英文，内容使用中文。
+- Research handoff state、唯一 pack ref、digest、evidence registry ref、Verification Manual ref、问题或限制、人工确认状态和继续入口；标题使用英文，内容使用中文。
