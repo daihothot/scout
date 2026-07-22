@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: coordinator-validation
 description: Scout Coordinator 在当前 Validation Domain 中接收 BDD 目标、组织 Researcher 与 Validator 的 Research Pack Gate 往返、处理 BDD 定位补充并综合 Research gate 状态时使用。
 id: skills.validation.coordinator
-version: 0.2.0
+version: 0.2.1
 phase: [coordinate]
 tags: [scout, validation, bdd, coordination, workflow]
 devices: [any]
@@ -113,7 +113,7 @@ summary: 规范 Researcher 与 Validator 的 Research Pack Gate 调度循环。
 
 输出形态：
 
-- Task synthesis：已确认目标、约束、输入 refs、未确认内容和期望返回内容。
+- Task synthesis：已确认目标、约束、输入 refs、未确认内容，以及对应 Worker Skill 已定义的最小 handoff contract。
 - BDD clarification request：最小必要问题及当前无法派发的原因。
 - Worker follow-up：原问题、匹配回复、task id 和继续目标。
 - Task archive decision：当前 Worker 是否仍需继续工作，以及归档所依据的正式 handoff 和当前状态。
@@ -125,7 +125,7 @@ summary: 规范 Researcher 与 Validator 的 Research Pack Gate 调度循环。
 - 明细产物：由对应 Worker 和专项 Skill 所有。
 - Registry / index：Coordinator 不创建 evidence registry，也不重新编号 evidence。
 - Claim owner：Research claim 由 Researcher artifact 所有，Gate claim 由 Validator Gate 报告所有。
-- 下游引用规则：task prompt 和 synthesis 只引用 artifact ref、evidence ref、task id、pack digest 和 Gate。
+- 下游引用规则：Researcher task prompt 只要求 `researcher-validation` 定义的固定十字段 handoff；Validator task prompt 只要求 `validator-validation` 定义的固定七字段 handoff。不得增加 artifact 摘要、证据正文或检查过程字段。
 - Ref 字段策略：引用已有 ref；不得用聊天摘要制造新的 artifact ref 或 evidence ref。
 
 ## Phase 1: Qualify and Synthesize Input
@@ -160,6 +160,7 @@ Partial：
 
 - Researcher 接收 BDD 定位与 Research 输入收敛任务。
 - Validator 只在 Researcher 已提交正式 handoff，且 handoff 明确引用唯一、可读的 Research pack 目录后接收 Research Pack Gate task。
+- Coordinator 的 assignment prompt 必须原样引用对应 Worker Skill 的固定 handoff 字段，不得扩张 contract：不得要求 Researcher 返回证据摘要、关键结论、源码细节或 artifact 清单，也不得要求 Validator 返回 Checked Refs、检查过程、源码定位或问题正文。
 - Researcher handoff 已明确声明某项必需事实必须由人工确认并给出最小问题时，先处理人工确认，不得创建或继续 Validator task。
 - Researcher handoff 缺少唯一可读 pack ref 时，保留原 Researcher task；不得把 handoff 文本包装成 Validator 输入，也不得创建 Validator task。
 - Researcher task 进入 `done` 后保持未归档，直到 Validator 对对应 pack digest 给出 `accepted`。
@@ -196,7 +197,7 @@ Partial：
 
 注意事项：
 
-- 正式 handoff 必须按角色、artifact refs、evidence refs、限制和缺口整理。
+- 正式 handoff 只按角色 Skill 的固定 contract 整理：Researcher 使用十字段格式，Validator 使用七字段格式；Coordinator 不改名、不扩写，也不把 artifact 内容拼入 task prompt。
 - Researcher handoff 明确声明待人工确认的必需事实并给出最小问题时，Coordinator 可以直接向用户询问并把明确答复送回原 Researcher task；这只是对 Researcher 已声明问题的兜底转发，不得扩写或关闭领域缺口。
 - Researcher handoff 只声明存在问题，但没有明确是否必须人工确认或没有给出最小问题时，先询问原 Researcher task；不得由 Coordinator 预判 Human Confirmation Gate。
 - Researcher handoff 为 complete、partial 或 blocked，提供唯一可读 pack ref 且不存在待人工确认的必需事实时，才指派 Validator 检查实际内容；不得由 Coordinator 预判 Research Pack Gate。

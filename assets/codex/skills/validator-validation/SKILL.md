@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: validator-validation
 description: Scout Validator 对 Researcher 提交的 Guru Research pack 执行独立结构、证据语义、代码 provenance 与引用闭环检查，并生成 Research Pack Gate 报告时使用。
 id: skills.validation.validator
-version: 0.5.2
+version: 0.5.5
 phase: [validate]
 tags: [scout, validation, research, gate, evidence, audit, workflow]
 devices: [any]
@@ -70,6 +70,18 @@ blocked > insufficient_evidence > needs_fix > accepted
 ```
 
 问题严重性与 Gate 状态分离。`Critical` 问题可以得到 `needs_fix` 或 `insufficient_evidence`；只有检查本身无法继续时才使用 `blocked`。
+
+## Native Subagent Strategy
+
+- 本技能明确授权父 Validator 在预计能够提高当前检查效率时自主决定是否使用 Codex native subagent；是否派发、派发数量以及并行或串行方式由父 Validator 判断，不构成 Gate 检查的必需步骤。
+- Phase 1 必须由父 Validator 锁定唯一 Research pack、当前 producer contracts、初始 digest 和下一 Gate id；锁定前不得派发内容检查。
+- 只有检查范围边界稳定、能够独立推进，并且预期节省的时间高于启动、等待和聚合成本时才派发。Structure 与 Semantics 是可选的候选拆分：Structure child 可只检查文件结构、artifact 状态、模板字段和跨文件引用闭环；Semantics child 可只检查 BDD/knowledge 语义、implementation claim、代码 provenance、source locator 和 verification point 支撑关系。父 Validator 可以委派其中一个、多个或均不委派，不得为了满足形式而派发。
+- 多个 child 必须收到相同 pack ref、初始 digest 和适用 contract；范围必须互斥，不得按 artifact 任意重叠拆分，也不得执行对方范围。
+- child 只按 `Checked Refs`、`Check Results`、`Issue Candidates`、`Commands`、`Failed Commands`、`Uninspected Scope` 六段返回不超过 4000 个中文字符的检查结果；不复制被检查 artifact 正文，不得写入 Research pack、分配最终问题 id、选择 Gate 或创建 Gate artifact。
+- 父 Validator 不重复执行 child 已完成的完整检查，只负责锁定输入、消费已派发范围的结果、抽查冲突 locator、合并和去重问题、分配问题 id、复核 digest、选择 Gate、写入不可变 Gate artifact 并正式 handoff。
+- 所有已派发且会影响 Gate 的 child 结果返回并被消费前，不得复核最终 digest、写 Gate 或提交 handoff；空结果、超时和 `closeAgent` 清理都不能视为结果已返回。
+- child 检查期间发现 pack digest 变化时，父 Validator 必须丢弃该批结果并按现有移动目标规则处理，不得把不同 digest 的检查结果合并。
+- 父 Validator 决定不派发时直接自行检查，不需要记录 fallback 原因；派发失败或结果不可用时，可以在停止或释放对应 child 后收回该范围，不得与仍在执行的 child 重复检查。
 
 ## Inputs
 
@@ -268,13 +280,27 @@ templates/research-pack-gate.md
 
 注意事项：
 
+- 本次实际派发且会影响 Gate 的 child 结果必须全部返回并被消费；任一所需结果缺失时不得进入 Gate 写入。父 Validator 未派发 child 时，由父 Validator 完成全部适用检查。
 - 写报告前重新计算 digest；与 Phase 1 不一致时丢弃当前 Gate 判断，对新内容重新检查一次。
 - 第二次检查期间 digest 再次变化时输出 blocked，禁止对移动目标给出 Gate。
 - 报告中的 `checked_pack_digest` 必须写入第二次 `scout-artifact-digest` 返回值；禁止写入 Coordinator 或 Researcher 提供的其它摘要算法结果。
 - 根据优先级选择唯一 Gate，不把问题严重性直接映射为 blocked。
 - 按下一可用序号创建新 Gate；不得打开旧 Gate 原地更新 pack digest、检查范围、Gate 或问题列表。
 - Gate 写入并正式 handoff 后不可修改；后续任何复查都创建下一序号文件。
-- 正式 handoff 必须包含 Gate 报告 ref、pack digest、Gate、问题 ids 和未检查范围。
+- 正式 handoff 必须使用下列固定七字段；英文 Markdown 标题和字段 key 保持原样，字段内容使用中文，字段不得增加、删除、改名或展开为额外摘要：
+
+```markdown
+# Validator Handoff: Research Pack Gate
+
+- validator_task_id: <当前 Validator task id>
+- gate_ref: <本次不可变 Gate artifact ref>
+- checked_pack_digest: <scout-directory-sha256-v1:digest>
+- gate: <accepted | needs_fix | insufficient_evidence | blocked>
+- issue_ids: <V-*；没有时写 none>
+- uninspected_scope_or_limitations: <未检查范围或限制；没有时写 none>
+- continuation_entry: <下一步消费入口>
+```
+- 正式 handoff 不得复制 Checked Refs、检查过程、证据 claim、源码 locator、Gate 结论摘要或完整问题正文；这些内容只能通过不可变 Gate artifact ref 消费。
 
 Exit：
 
@@ -295,7 +321,7 @@ Partial：
 - XR-003：`accepted` 必须满足全部适用检查、引用闭环、当前版本代码证据和未检查范围为空。
 - XR-004：Researcher 修正 pack 后必须按新 digest 完整复查；旧 Gate 不自动延续。
 - XR-005：每次检查只产生一份新的 Gate 记录；已正式 handoff 的记录禁止修改，复查必须创建下一份记录。
-- XR-006：正式 handoff 必须明确引用本次 Gate ref；不得要求 Coordinator 扫描目录推断最新记录。
+- XR-006：正式 handoff 必须明确引用本次 Gate ref，并只传递 Gate、pack digest、问题 ids、未检查范围或限制和继续入口；不得复制 Gate artifact 内容，也不得要求 Coordinator 扫描目录推断最新记录。
 - XR-007：`accepted` 要求上游声明 `scout-directory-sha256-v1`，且其 digest 与 Validator 在检查前后独立计算的稳定 digest 完全一致。
 
 ## Evidence Rules (Enforcement)

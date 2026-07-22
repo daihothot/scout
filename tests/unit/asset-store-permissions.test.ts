@@ -320,7 +320,10 @@ test("AssetStore mounts scout-helper only for Worker profiles", () => {
     assert.deepEqual(worker.customAgents, ["scout-helper"]);
     assert.deepEqual(workerManifest.customAgents, ["scout-helper"]);
     assert.equal(existsSync(helperPath), true);
-    assert.match(readFileSync(helperPath, "utf8"), /不得调用任何 Scout dynamic tool/);
+    const helperConfig = readFileSync(helperPath, "utf8");
+    assert.match(helperConfig, /不得调用任何 Scout dynamic tool/);
+    assert.match(helperConfig, /^model = "gpt-5\.5"$/m);
+    assert.match(helperConfig, /^model_reasoning_effort = "high"$/m);
     assert.equal(
       workerManifest.assets.some((asset) => asset.id === "codex.custom_agent.scout-helper"),
       true,
