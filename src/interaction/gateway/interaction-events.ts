@@ -4,8 +4,8 @@ import { SystemEvents } from "../../system/events/catalog.js";
 const interactionEventCatalog = {
   interaction: {
     disclosureRequested: event(),
-    userMessageSubmitted: event(),
-    exitRequested: event(),
+    userMessageSubmitted: event<UserMessageSubmittedPayload>(),
+    exitRequested: event<InteractionExitRequestedPayload>(),
   },
 } as const;
 

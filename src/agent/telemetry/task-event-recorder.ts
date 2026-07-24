@@ -1,36 +1,20 @@
 import type {
-  EventBus,
   ScoutEvent,
   UnsubscribeEventHandler,
 } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
+import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
-import type { AgentRegistry } from "../core/agent-registry.js";
 import type { AgentTaskNotAssignedEventPayload } from "../task/task-events.js";
 import type { AgentTaskState } from "../task/types.js";
 
-export interface TaskEventRecorderOptions {
-  runId: string;
-  eventBus: EventBus;
-  registry: AgentRegistry;
-}
-
 export class TaskEventRecorder {
-  private readonly runId: string;
-  private readonly eventBus: EventBus;
-  private readonly registry: AgentRegistry;
   private readonly taskLoggers = new Map<string, Logger>();
   private unsubscribe?: UnsubscribeEventHandler;
 
-  constructor(options: TaskEventRecorderOptions) {
-    this.runId = options.runId;
-    this.eventBus = options.eventBus;
-    this.registry = options.registry;
-  }
-
   start(): void {
     if (this.unsubscribe) return;
-    this.unsubscribe = this.eventBus.subscribe(AgentEvents.task, (event) => {
+    this.unsubscribe = currentRunScope().eventBus.subscribe(AgentEvents.task, (event) => {
       this.record(event);
     });
   }
@@ -165,9 +149,10 @@ export class TaskEventRecorder {
     const key = `${agentId}:${taskId}`;
     const existing = this.taskLoggers.get(key);
     if (existing) return existing;
-    const agent = this.registry.resolveAgent(agentId);
+    const scope = currentRunScope();
+    const agent = scope.agentRegistry.resolveAgent(agentId);
     const logger = new Logger({
-      runId: this.runId,
+      runId: scope.runId,
       logsRoot: agent.mount.logsRoot,
       fileName: `${safeTaskId(taskId)}.log`,
     });

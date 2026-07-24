@@ -13,6 +13,7 @@ export const AgentTaskStepStatuses = {
   Running: "running",
   Completed: "completed",
   Failed: "failed",
+  Interrupted: "interrupted",
 } as const;
 export type AgentTaskStepStatus = typeof AgentTaskStepStatuses[keyof typeof AgentTaskStepStatuses];
 export interface AgentTaskUsage {
@@ -87,4 +88,8 @@ export interface AssignAgentTaskInput {
 export interface SendAgentMessageInput {
   taskId?: string;
   message: string;
+  delivery?: {
+    messageId: string;
+    queuedAt: string;
+  };
 }

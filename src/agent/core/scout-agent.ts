@@ -26,6 +26,7 @@ export interface ScoutAgentTurnInput {
   sandbox?: "readOnly" | "workspaceWrite";
   writableRoots?: string[];
   onStatusMessage?: (message: string) => void;
+  onTurnStarted?(invocationId: string): void | Promise<void>;
 }
 
 export interface ScoutAgentTurnRecord {
@@ -118,7 +119,7 @@ export abstract class ScoutAgent {
     return this.agentMount;
   }
 
-  abstract sendMessage(input: SendAgentMessageInput): Result<void, string>;
+  abstract sendMessage(input: SendAgentMessageInput): Promise<Result<void, string>>;
 
   async start(): Promise<AgentThreadSnapshot> {
     if (this.thread?.status === "active") return this.thread;
@@ -154,9 +155,9 @@ export abstract class ScoutAgent {
     return this.thread;
   }
 
-  stop(reason: string): void {
+  async stop(reason: string): Promise<void> {
     try {
-      this.runner?.stop(reason);
+      await this.runner?.stop(reason);
     } finally {
       if (this.thread?.status === "active") {
         this.thread = {
@@ -177,9 +178,23 @@ export abstract class ScoutAgent {
     }
     const invocationId = this.nextInvocationId(thread.threadId);
     const startedAt = new Date().toISOString();
+    const activeTask = this.runScope.taskStore.findActiveTaskForAgent(this.agentId);
+    this.eventBus.publish(AgentEvents.turn.started, {
+      invocationId,
+      agentId: this.agentId,
+      role: this.role,
+      taskId: activeTask?.taskId,
+      threadId: thread.threadId,
+      prompt: input.prompt,
+      startedAt,
+    }, {
+      occurredAt: startedAt,
+    });
+    await input.onTurnStarted?.(invocationId);
 
+    let result: Awaited<ReturnType<CodexAppServerClient["runTurn"]>>;
     try {
-      const result = await this.appServer.runTurn({
+      result = await this.appServer.runTurn({
         threadId: thread.threadId,
         prompt: input.prompt,
         model: this.spec.model.id,
@@ -190,24 +205,6 @@ export abstract class ScoutAgent {
         writableRoots: input.writableRoots ?? this.defaultWritableRoots(),
         onStatusMessage: input.onStatusMessage,
       });
-      const turn: ScoutAgentTurnRecord = {
-        invocationId,
-        agentId: this.agentId,
-        role: this.spec.role,
-        threadId: thread.threadId,
-        turnId: result.turnId,
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        status: "completed",
-        outputContract: input.outputContract,
-      };
-      return {
-        turn,
-        finalResponse: result.finalResponse,
-        toolCalls: extractToolCalls(result.progressItems ?? []),
-        plan: result.plan,
-        goal: result.goal,
-      };
     } catch (error) {
       const turn: ScoutAgentTurnRecord = {
         invocationId,
@@ -220,8 +217,39 @@ export abstract class ScoutAgent {
         outputContract: input.outputContract,
         error: error instanceof Error ? error.stack ?? error.message : String(error),
       };
+      this.eventBus.publish(AgentEvents.turn.completed, {
+        taskId: activeTask?.taskId,
+        turn,
+      }, {
+        occurredAt: turn.finishedAt,
+      });
       return { turn };
     }
+
+    const turn: ScoutAgentTurnRecord = {
+      invocationId,
+      agentId: this.agentId,
+      role: this.spec.role,
+      threadId: thread.threadId,
+      turnId: result.turnId,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      status: "completed",
+      outputContract: input.outputContract,
+    };
+    this.eventBus.publish(AgentEvents.turn.completed, {
+      taskId: activeTask?.taskId,
+      turn,
+    }, {
+      occurredAt: turn.finishedAt,
+    });
+    return {
+      turn,
+      finalResponse: result.finalResponse,
+      toolCalls: extractToolCalls(result.progressItems ?? []),
+      plan: result.plan,
+      goal: result.goal,
+    };
   }
 
   async setGoal(input: {
@@ -258,7 +286,6 @@ export abstract class ScoutAgent {
       agentId: this.agentId,
       thread,
       mount: this.agentMount,
-      appServer: this.appServer,
     })
       .then((threadPreflight) => {
         if (this.thread?.threadId === thread.threadId) this.threadPreflight = threadPreflight;

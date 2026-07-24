@@ -6,7 +6,7 @@ import type {
   AgentTurnActivity,
 } from "../../agent/activity/activity-event.js";
 import type { ScoutEvent } from "../../core/events/index.js";
-import type { BootSnapshot } from "../../run/boot/boot-stage.js";
+import type { RunLifecycleSnapshot } from "../../run/lifecycle/run-stage.js";
 import type {
   AgentMessageReply,
   AgentMessageSend,
@@ -53,7 +53,7 @@ export interface TuiRuntimeInfo {
 
 export interface TuiState {
   runtime: TuiRuntimeInfo;
-  boot?: BootSnapshot;
+  lifecycle?: RunLifecycleSnapshot;
   logs: TuiLogEntry[];
   tasks: TuiTaskSummary[];
   activities: AgentActivity[];
@@ -79,7 +79,7 @@ export class TuiStore {
   private readonly activityMap = new Map<string, AgentActivity>();
   private readonly turnActivityMap = new Map<string, AgentTurnActivity>();
   private readonly logs: TuiLogEntry[] = [];
-  private boot?: BootSnapshot;
+  private lifecycle?: RunLifecycleSnapshot;
   private runtime: TuiRuntimeInfo;
   private sequence = 0;
 
@@ -96,7 +96,9 @@ export class TuiStore {
   snapshot(): TuiState {
     return {
       runtime: { ...this.runtime },
-      boot: this.boot ? cloneBootSnapshot(this.boot) : undefined,
+      lifecycle: this.lifecycle
+        ? cloneRunLifecycleSnapshot(this.lifecycle)
+        : undefined,
       logs: [...this.logs],
       tasks: [...this.taskMap.values()],
       activities: [...this.activityMap.values()],
@@ -116,12 +118,12 @@ export class TuiStore {
     this.emit();
   }
 
-  setBootSnapshot(snapshot: BootSnapshot): void {
-    this.boot = cloneBootSnapshot(snapshot);
+  setRunLifecycleSnapshot(snapshot: RunLifecycleSnapshot): void {
+    this.lifecycle = cloneRunLifecycleSnapshot(snapshot);
     this.runtime = {
       ...this.runtime,
       runId: snapshot.runId,
-      status: tuiStatusForBoot(snapshot),
+      status: tuiStatusForRunLifecycle(snapshot),
     };
     this.emit();
   }
@@ -247,6 +249,17 @@ export class TuiStore {
     this.addAgentMessage(message.text);
   }
 
+  restoreUserMessage(message: { id: string; text: string; createdAt: string }): void {
+    this.sequence += 1;
+    this.logs.push({
+      id: `log-${this.sequence}`,
+      kind: "input",
+      text: message.text,
+      createdAt: message.createdAt,
+    });
+    this.emit();
+  }
+
   submitInput(text: string): void {
     if (this.runtime.status !== "ready") return;
     const message = text.trim();
@@ -299,14 +312,16 @@ function turnActivityKey(activity: AgentTurnActivity): string {
   return `${activity.agentId}:${activity.threadId}:${activity.turnId}`;
 }
 
-function tuiStatusForBoot(snapshot: BootSnapshot): TuiRunStatus {
+function tuiStatusForRunLifecycle(snapshot: RunLifecycleSnapshot): TuiRunStatus {
   if (snapshot.status === "ready") return "ready";
   if (snapshot.status === "failed") return "failed";
   if (snapshot.status === "terminating" || snapshot.status === "terminated") return "stopping";
   return "preparing";
 }
 
-function cloneBootSnapshot(snapshot: BootSnapshot): BootSnapshot {
+function cloneRunLifecycleSnapshot(
+  snapshot: RunLifecycleSnapshot,
+): RunLifecycleSnapshot {
   return {
     ...snapshot,
     stages: snapshot.stages.map((stage) => ({ ...stage })),

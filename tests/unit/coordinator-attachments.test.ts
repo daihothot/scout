@@ -12,22 +12,6 @@ test("coordinator attachments build tagged context blocks", () => {
     text: "用户输入 BDD",
     submittedAt: "2026-07-03T00:00:00.000Z",
   });
-  const dispatch = coordinator.observation({
-    type: "dispatch",
-    dispatchId: "dispatch-1",
-    reason: "agent_error",
-    message: "需要 Coordinator 处理调度状态。",
-    createdAt: "2026-07-03T00:00:01.000Z",
-    data: { code: "agent_error" },
-  });
-  const interrupt = coordinator.observation({
-    type: "interrupt",
-    eventKey: "agent.interrupt.raised",
-    interruptKind: "approval",
-    taskId: "task-1",
-    agentId: "verifier",
-    requestId: "input-1",
-  });
   const taskAssigned = coordinator.taskAssigned({
     agentId: "verifier",
     taskId: "task-1",
@@ -42,8 +26,6 @@ test("coordinator attachments build tagged context blocks", () => {
 
   const prompt = attachments.compose(
     userMessage,
-    dispatch,
-    interrupt,
     taskAssigned,
     taskNotAssigned,
   );
@@ -58,15 +40,8 @@ test("coordinator attachments build tagged context blocks", () => {
     .find((block) => block.body.startsWith("### Task Assigned"))?.body;
   const taskNotAssignedBody = observationBlocks
     .find((block) => block.body.startsWith("### Task Not Assigned"))?.body;
-  const observationPayloads = observationBlocks
-    .filter((block) => !block.body.startsWith("### Task Assigned")
-      && !block.body.startsWith("### Task Not Assigned"))
-    .map((block) => JSON.parse(block.body) as { type?: string; eventKey?: string; agentId?: string; taskId?: string });
 
   assert.equal(userPayload.text, "用户输入 BDD");
-  const interruptPayload = observationPayloads.find((payload) => payload.type === "interrupt");
-  assert.ok(interruptPayload);
-  assert.equal(interruptPayload.eventKey, "agent.interrupt.raised");
   assert.equal(taskAssignedBody, [
     "### Task Assigned",
     "",

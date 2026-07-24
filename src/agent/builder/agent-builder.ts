@@ -1,4 +1,3 @@
-import type { AssetCommit, CodexMount } from "../../asset-store/index.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import { CoordinatorAgent } from "../roles/coordinator-agent.js";
 import { ResearcherAgent } from "../roles/researcher-agent.js";
@@ -12,23 +11,8 @@ import { buildAgentDynamicTools } from "../tools/tool-profiles.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 import { ScoutAgentRoles } from "../thread/types.js";
 
-export type PreparedAgentInputs = Partial<Record<ScoutAgentRole, {
-    agentMount: CodexMount;
-    assetCommit: AssetCommit;
-}>>;
-
-export interface AgentBuilderOptions {
-  preparedAgents: PreparedAgentInputs;
-}
-
 export class AgentBuilder {
-  private readonly options: AgentBuilderOptions;
-  private readonly scope: RunScope;
-
-  constructor(options: AgentBuilderOptions) {
-    this.options = options;
-    this.scope = currentRunScope();
-  }
+  private readonly scope: RunScope = currentRunScope();
 
   buildCoordinator(): CoordinatorAgent {
     const agent = new CoordinatorAgent({
@@ -60,13 +44,13 @@ export class AgentBuilder {
   }
 
   private agentOptionsForRole(role: ScoutAgentRole): ScoutAgentOptions {
-    const preparedAgent = this.options.preparedAgents[role];
+    const preparedAgent = this.scope.environment.agents[role];
     if (!preparedAgent) {
       throw new Error(`Missing prepared agent runtime for role ${role}.`);
     }
     return {
       agentId: role,
-      agentMount: preparedAgent.agentMount,
+      agentMount: preparedAgent.mount,
       assetCommit: preparedAgent.assetCommit,
     };
   }

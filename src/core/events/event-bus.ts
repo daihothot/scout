@@ -6,6 +6,18 @@ export interface EventPublishOptions {
   occurredAt?: string;
 }
 
+export const EventSubscriptionPriorities = {
+  High: 300,
+  Normal: 200,
+  Low: 100,
+} as const;
+export type EventSubscriptionPriority =
+  typeof EventSubscriptionPriorities[keyof typeof EventSubscriptionPriorities];
+
+export interface EventSubscriptionOptions {
+  priority?: EventSubscriptionPriority;
+}
+
 export interface ScoutEvent<TPayload = unknown> {
   id: string;
   key: EventKey;
@@ -24,8 +36,16 @@ export interface EventBus {
     payload: TPayload,
     options?: EventPublishOptions,
   ): Promise<ScoutEvent<TPayload>>;
-  subscribe<TPayload>(target: EventSubscriptionTarget, handler: ScoutEventHandler<TPayload>): UnsubscribeEventHandler;
-  subscribeOnce<TPayload>(target: EventSubscriptionTarget, handler: ScoutEventHandler<TPayload>): UnsubscribeEventHandler;
+  subscribe<TPayload>(
+    target: EventSubscriptionTarget,
+    handler: ScoutEventHandler<TPayload>,
+    options?: EventSubscriptionOptions,
+  ): UnsubscribeEventHandler;
+  subscribeOnce<TPayload>(
+    target: EventSubscriptionTarget,
+    handler: ScoutEventHandler<TPayload>,
+    options?: EventSubscriptionOptions,
+  ): UnsubscribeEventHandler;
 }
 
 export class InMemoryEventBus implements EventBus {
@@ -39,10 +59,7 @@ export class InMemoryEventBus implements EventBus {
     options: EventPublishOptions = {},
   ): ScoutEvent<TPayload> {
     const event = this.createEvent(type, payload, options);
-    for (const registered of this.snapshotHandlers(event)) {
-      if (registered.once) this.removeHandler(registered.target, registered.handler);
-      void Promise.resolve(registered.handler(event)).catch(() => undefined);
-    }
+    void this.dispatch(event).catch(() => undefined);
     return event;
   }
 
@@ -52,30 +69,35 @@ export class InMemoryEventBus implements EventBus {
     options: EventPublishOptions = {},
   ): Promise<ScoutEvent<TPayload>> {
     const event = this.createEvent(type, payload, options);
-    const results: Promise<void>[] = [];
-    for (const registered of this.snapshotHandlers(event)) {
-      if (registered.once) this.removeHandler(registered.target, registered.handler);
-      results.push(Promise.resolve(registered.handler(event)));
-    }
-    await Promise.all(results);
+    await this.dispatch(event);
     return event;
   }
 
-  subscribe<TPayload>(target: EventSubscriptionTarget, handler: ScoutEventHandler<TPayload>): UnsubscribeEventHandler {
+  subscribe<TPayload>(
+    target: EventSubscriptionTarget,
+    handler: ScoutEventHandler<TPayload>,
+    options: EventSubscriptionOptions = {},
+  ): UnsubscribeEventHandler {
     const registered = {
       once: false,
       handler: handler as ScoutEventHandler,
       target,
+      priority: options.priority ?? EventSubscriptionPriorities.Low,
     };
     this.addHandler(target, registered);
     return () => this.removeHandler(target, registered.handler);
   }
 
-  subscribeOnce<TPayload>(target: EventSubscriptionTarget, handler: ScoutEventHandler<TPayload>): UnsubscribeEventHandler {
+  subscribeOnce<TPayload>(
+    target: EventSubscriptionTarget,
+    handler: ScoutEventHandler<TPayload>,
+    options: EventSubscriptionOptions = {},
+  ): UnsubscribeEventHandler {
     const registered = {
       once: true,
       handler: handler as ScoutEventHandler,
       target,
+      priority: options.priority ?? EventSubscriptionPriorities.Low,
     };
     this.addHandler(target, registered);
     return () => this.removeHandler(target, registered.handler);
@@ -121,12 +143,32 @@ export class InMemoryEventBus implements EventBus {
       .flatMap(([, handlers]) => handlers);
     return [...exact, ...groups];
   }
+
+  private async dispatch(event: ScoutEvent): Promise<void> {
+    const handlers = this.snapshotHandlers(event);
+    const priorities = [...new Set(handlers.map((handler) => handler.priority))]
+      .sort((left, right) => right - left);
+    for (const priority of priorities) {
+      const group = handlers.filter((handler) => handler.priority === priority);
+      const results: Promise<void>[] = [];
+      for (const registered of group) {
+        if (registered.once) this.removeHandler(registered.target, registered.handler);
+        try {
+          results.push(Promise.resolve(registered.handler(event)));
+        } catch (error) {
+          results.push(Promise.reject(error));
+        }
+      }
+      await Promise.all(results);
+    }
+  }
 }
 
 interface RegisteredHandler {
   once: boolean;
   handler: ScoutEventHandler;
   target: EventSubscriptionTarget;
+  priority: EventSubscriptionPriority;
 }
 
 function isEventGroup(target: EventSubscriptionTarget): target is EventGroup {

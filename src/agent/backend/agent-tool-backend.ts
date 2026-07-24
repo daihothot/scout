@@ -16,15 +16,16 @@ import {
   type AgentDynamicToolCall,
 } from "../tools/agent-tools.js";
 import type { AgentTaskBackend } from "./agent-task-backend.js";
-import type { AgentProvider } from "./types.js";
 import { AgentTaskStatuses, type AgentTaskState } from "../task/types.js";
 import { WorkerAgent } from "../roles/worker-agent.js";
 import { agent } from "../context/agent-attachments.js";
+import { attachments } from "../context/attachments.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
+import { randomUUID } from "node:crypto";
+import { AgentEvents } from "../events/index.js";
 
 export interface AgentToolBackendOptions {
   taskBackend: AgentTaskBackend;
-  agentProvider: AgentProvider;
 }
 
 type AssignTaskToolResponse =
@@ -47,16 +48,18 @@ export class AgentToolBackend {
   private readonly registry: RunScope["agentRegistry"];
   private readonly taskStore: RunScope["taskStore"];
   private readonly taskBackend: AgentTaskBackend;
-  private readonly agentProvider: AgentProvider;
   private readonly domain: RunScope["domain"];
+  private readonly humanInputStore: RunScope["humanInputStore"];
+  private readonly eventBus: RunScope["eventBus"];
 
   constructor(options: AgentToolBackendOptions) {
     const scope = currentRunScope();
     this.registry = scope.agentRegistry;
     this.taskStore = scope.taskStore;
     this.taskBackend = options.taskBackend;
-    this.agentProvider = options.agentProvider;
     this.domain = scope.domain;
+    this.humanInputStore = scope.humanInputStore;
+    this.eventBus = scope.eventBus;
   }
 
   async handleDynamicToolCall(input: DynamicToolCallInput): Promise<DynamicToolCallResponse> {
@@ -105,11 +108,11 @@ export class AgentToolBackend {
     }
   }
 
-  private handleAssignTaskToolCall(
+  private async handleAssignTaskToolCall(
     call: AssignTaskToolCall,
-  ): AssignTaskToolResponse {
+  ): Promise<AssignTaskToolResponse> {
     const worker = this.resolveAssignableWorker(call);
-    const assignment = worker.assignTask({
+    const assignment = await worker.assignTask({
       agentId: worker.agentId,
       description: call.description,
       subagentType: call.subagent_type,
@@ -152,12 +155,24 @@ export class AgentToolBackend {
     };
   }
 
-  private handleSubmitTaskToolCall(
+  private async handleSubmitTaskToolCall(
     call: SubmitTaskToolCall,
     caller: ScoutAgent,
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     if (!(caller instanceof WorkerAgent)) {
       throw new Error("SubmitTask is only available to Worker agents.");
+    }
+    const task = caller.snapshot().activeTask;
+    if (!task) {
+      throw new Error(`Worker agent ${caller.agentId} has no active task to submit.`);
+    }
+    const unresolvedRequest = this.humanInputStore.listForTask(task.taskId).find((request) =>
+      request.taskId === task.taskId && !request.response
+    );
+    if (unresolvedRequest) {
+      throw new Error(
+        `Worker task ${task.taskId} cannot be submitted while human request ${unresolvedRequest.requestId} is unresolved.`,
+      );
     }
     const submitted = caller.submitTask(call.outcome);
     if (!submitted.ok) throw new Error(submitted.error);
@@ -169,14 +184,14 @@ export class AgentToolBackend {
     };
   }
 
-  private handleSendMessageToolCall(
+  private async handleSendMessageToolCall(
     call: SendMessageToolCall,
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     const task = this.taskStore.getTask(call.to);
     const target = task
       ? this.registry.resolveAgent(task.agentId)
       : this.registry.resolveAgent(call.to);
-    const result = target.sendMessage({
+    const result = await target.sendMessage({
       taskId: task?.taskId,
       message: agent.turn.message(call.message),
     });
@@ -195,10 +210,10 @@ export class AgentToolBackend {
       };
   }
 
-  private handleRequestHumanInputToolCall(
+  private async handleRequestHumanInputToolCall(
     call: RequestHumanInputToolCall,
     caller: ScoutAgent,
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     if (!(caller instanceof WorkerAgent)) {
       throw new Error("RequestHumanInput is only available to Worker agents.");
     }
@@ -212,36 +227,139 @@ export class AgentToolBackend {
     if (!coordinator) {
       throw new Error(`Worker agent ${caller.agentId} cannot find the Coordinator agent.`);
     }
-    const result = coordinator.sendMessage({
-      message: agent.turn.wait_for_human_request(call.request),
+    const existing = this.humanInputStore.listForTask(task.taskId).find((request) =>
+      request.taskId === task.taskId && !request.response
+    );
+    if (existing) {
+      if (existing.body !== call.request) {
+        throw new Error(`Worker task ${task.taskId} already has unresolved human request ${existing.requestId}.`);
+      }
+      const result = await coordinator.sendMessage({
+        message: existing.message.body,
+        delivery: {
+          messageId: existing.message.messageId,
+          queuedAt: existing.message.queuedAt,
+        },
+      });
+      if (!result.ok) throw new Error(result.error);
+      return {
+        status: "queued",
+        taskId: task.taskId,
+        agentId: coordinator.agentId,
+        requestId: existing.requestId,
+      };
+    }
+    const requestId = `${task.taskId}-human-${randomUUID()}`;
+    const requestedAt = new Date().toISOString();
+    const message = {
+      messageId: `${requestId}-request`,
+      agentId: coordinator.agentId,
+      body: attachments.compose(agent.turn.wait_for_human_request(call.request)),
+      queuedAt: requestedAt,
+    };
+    await this.eventBus.publishAndWait(AgentEvents.humanInput.requested, {
+      requestId,
+      taskId: task.taskId,
+      agentId: caller.agentId,
+      body: call.request,
+      requestedAt,
+      message,
+    }, {
+      occurredAt: requestedAt,
+    });
+    const result = await coordinator.sendMessage({
+      message: message.body,
+      delivery: {
+        messageId: message.messageId,
+        queuedAt: message.queuedAt,
+      },
     });
     if (!result.ok) throw new Error(result.error);
     return {
       status: "queued",
       taskId: task.taskId,
       agentId: coordinator.agentId,
+      requestId,
     };
   }
 
-  private handleRespondHumanInputToolCall(
+  private async handleRespondHumanInputToolCall(
     call: RespondHumanInputToolCall,
     caller: ScoutAgent,
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     if (caller.role !== ScoutAgentRoles.Coordinator) {
       throw new Error("RespondHumanInput is only available to the Coordinator agent.");
     }
     const task = this.taskStore.getTask(call.task_id);
     if (!task) throw new Error(`Unknown agent task: ${call.task_id}`);
+    if (task.status !== AgentTaskStatuses.Running) {
+      throw new Error(`Worker task ${task.taskId} cannot receive human input from status ${task.status}.`);
+    }
     const target = this.registry.resolveAgent(task.agentId);
-    const result = target.sendMessage({
+    const taskRequests = this.humanInputStore.listForTask(task.taskId);
+    const requests = taskRequests.filter((request) =>
+      request.taskId === task.taskId && !request.response
+    );
+    if (requests.length === 0) {
+      const responded = taskRequests.find((request) =>
+        request.taskId === task.taskId && request.response?.body === call.response
+      );
+      if (!responded?.response) {
+        throw new Error(`Worker task ${task.taskId} has no unresolved human request.`);
+      }
+      const result = await target.sendMessage({
+        taskId: task.taskId,
+        message: responded.response.message.body,
+        delivery: {
+          messageId: responded.response.message.messageId,
+          queuedAt: responded.response.message.queuedAt,
+        },
+      });
+      if (!result.ok) throw new Error(result.error);
+      return {
+        status: "queued",
+        taskId: task.taskId,
+        agentId: target.agentId,
+        requestId: responded.requestId,
+      };
+    }
+    if (requests.length !== 1) {
+      throw new Error(`Worker task ${task.taskId} must have exactly one unresolved human request.`);
+    }
+    const request = requests[0];
+    if (!request) throw new Error(`Worker task ${task.taskId} has no unresolved human request.`);
+    const respondedAt = new Date().toISOString();
+    const message = {
+      messageId: `${request.requestId}-response`,
+      agentId: target.agentId,
       taskId: task.taskId,
-      message: agent.turn.human_response(call.response),
+      body: attachments.compose(agent.turn.human_response(call.response)),
+      queuedAt: respondedAt,
+    };
+    await this.eventBus.publishAndWait(AgentEvents.humanInput.responded, {
+      requestId: request.requestId,
+      taskId: task.taskId,
+      agentId: task.agentId,
+      body: call.response,
+      respondedAt,
+      message,
+    }, {
+      occurredAt: respondedAt,
+    });
+    const result = await target.sendMessage({
+      taskId: task.taskId,
+      message: message.body,
+      delivery: {
+        messageId: message.messageId,
+        queuedAt: message.queuedAt,
+      },
     });
     if (!result.ok) throw new Error(result.error);
     return {
       status: "queued",
       taskId: task.taskId,
       agentId: target.agentId,
+      requestId: request.requestId,
     };
   }
 
@@ -268,11 +386,11 @@ export class AgentToolBackend {
   }
 
   private resolveAssignableWorker(call: AssignTaskToolCall): WorkerAgent {
-    const worker = call.agent_id
-      ? this.registry.resolveAgent(call.agent_id) as WorkerAgent
-      : this.agentProvider.resolveWorker({
-        role: call.subagent_type,
-      });
+    const agent = this.registry.resolveAgent(call.agent_id ?? call.subagent_type);
+    if (!(agent instanceof WorkerAgent)) {
+      throw new Error(`Agent ${agent.agentId} is not a Worker agent.`);
+    }
+    const worker = agent;
     if (worker.role !== call.subagent_type) {
       throw new Error(`Agent ${worker.agentId} is ${worker.role}, not ${call.subagent_type}.`);
     }

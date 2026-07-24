@@ -1,14 +1,13 @@
 import {
-  type EventBus,
   type ScoutEvent,
   type UnsubscribeEventHandler,
 } from "../../core/events/index.js";
+import { currentRunScope } from "../../run/run-scope.js";
 import { SystemEvents } from "../../system/events/index.js";
 import { AgentEvents } from "../../agent/events/index.js";
 import type {
   AgentMessageSend,
   RuntimeDisclosureEvent,
-  RuntimeInteractionPort,
 } from "../protocol/port.js";
 import type {
   AgentActivity,
@@ -23,55 +22,39 @@ import type {
   UserMessageSubmittedPayload,
 } from "./interaction-events.js";
 
-export interface InteractionGatewayOptions {
-  eventBus: EventBus;
-  interactionPort: RuntimeInteractionPort;
-  logger?: {
-    warn(input: unknown): void;
-  };
-}
-
 export class InteractionGateway {
-  private readonly eventBus: EventBus;
-  private readonly interactionPort: RuntimeInteractionPort;
-  private readonly logger?: InteractionGatewayOptions["logger"];
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
-
-  constructor(options: InteractionGatewayOptions) {
-    this.eventBus = options.eventBus;
-    this.interactionPort = options.interactionPort;
-    this.logger = options.logger;
-  }
 
   start(): void {
     if (this.unsubscribers.length > 0) return;
+    const scope = currentRunScope();
     this.unsubscribers.push(
-      this.eventBus.subscribe<RuntimeDisclosureEvent>(
+      scope.eventBus.subscribe<RuntimeDisclosureEvent>(
         SystemEvents.interaction.disclosureRequested,
         (event) => this.handleDisclosureRequest(event),
       ),
-      this.eventBus.subscribe<AgentActivity>(
+      scope.eventBus.subscribe<AgentActivity>(
         AgentEvents.activity.observed,
         (event) => this.handleAgentActivity(event),
       ),
-      this.eventBus.subscribe<AgentTurnActivity>(
+      scope.eventBus.subscribe<AgentTurnActivity>(
         AgentEvents.activity.turnObserved,
         (event) => this.handleAgentTurnActivity(event),
       ),
-      this.eventBus.subscribe(
+      scope.eventBus.subscribe(
         AgentEvents.task,
         (event) => this.handleTaskEvent(event),
       ),
-      this.eventBus.subscribe<CoordinatorMessageProducedPayload>(
+      scope.eventBus.subscribe<CoordinatorMessageProducedPayload>(
         AgentEvents.coordinator.messageProduced,
         (event) => this.handleAgentMessageProduced(event),
       ),
     );
-    const unsubscribeAgentMessage = this.interactionPort.sendAgentMessage?.((message) =>
+    const unsubscribeAgentMessage = scope.interactionPort.sendAgentMessage?.((message) =>
       this.handleAgentMessage(message)
     );
     if (unsubscribeAgentMessage) this.unsubscribers.push(unsubscribeAgentMessage);
-    const unsubscribeExit = this.interactionPort.onExitRequested?.(() =>
+    const unsubscribeExit = scope.interactionPort.onExitRequested?.(() =>
       this.handleExitRequested()
     );
     if (unsubscribeExit) this.unsubscribers.push(unsubscribeExit);
@@ -83,15 +66,15 @@ export class InteractionGateway {
     }
   }
 
-  submitUserMessage(input: {
+  async submitUserMessage(input: {
     text: string;
     messageId?: string;
     source?: string;
     data?: unknown;
-  }): void {
+  }): Promise<void> {
     const messageId = input.messageId ?? `user-message-${Date.now()}`;
     const submittedAt = new Date().toISOString();
-    this.eventBus.publish(SystemEvents.interaction.userMessageSubmitted, {
+    const payload = {
       messageId,
       text: input.text,
       submittedAt,
@@ -104,14 +87,19 @@ export class InteractionGateway {
       }),
       source: input.source,
       data: input.data,
-    } satisfies UserMessageSubmittedPayload);
+    } satisfies UserMessageSubmittedPayload;
+    await currentRunScope().eventBus.publishAndWait(
+      SystemEvents.interaction.userMessageSubmitted,
+      payload,
+      { occurredAt: submittedAt },
+    );
   }
 
   private async handleDisclosureRequest(
     event: ScoutEvent<RuntimeDisclosureEvent>,
   ): Promise<void> {
     try {
-      await this.interactionPort.disclose(event.payload);
+      await currentRunScope().interactionPort.disclose(event.payload);
     } catch (error) {
       this.warnInteractionError("disclosure_request_failed", error, {
         eventId: event.id,
@@ -122,7 +110,7 @@ export class InteractionGateway {
 
   private async handleAgentActivity(event: ScoutEvent<AgentActivity>): Promise<void> {
     try {
-      await this.interactionPort.publishAgentActivity(event.payload);
+      await currentRunScope().interactionPort.publishAgentActivity(event.payload);
     } catch (error) {
       this.warnInteractionError("agent_activity_publish_failed", error, {
         eventId: event.id,
@@ -134,7 +122,7 @@ export class InteractionGateway {
 
   private async handleAgentTurnActivity(event: ScoutEvent<AgentTurnActivity>): Promise<void> {
     try {
-      await this.interactionPort.publishAgentTurnActivity(event.payload);
+      await currentRunScope().interactionPort.publishAgentTurnActivity(event.payload);
     } catch (error) {
       this.warnInteractionError("agent_turn_activity_publish_failed", error, {
         eventId: event.id,
@@ -146,7 +134,7 @@ export class InteractionGateway {
 
   private async handleTaskEvent(event: ScoutEvent): Promise<void> {
     try {
-      await this.interactionPort.publishTaskEvent(event);
+      await currentRunScope().interactionPort.publishTaskEvent(event);
     } catch (error) {
       this.warnInteractionError("task_event_publish_failed", error, {
         eventId: event.id,
@@ -157,7 +145,7 @@ export class InteractionGateway {
 
   private handleAgentMessageProduced(event: ScoutEvent<CoordinatorMessageProducedPayload>): void {
     void Promise.resolve(
-      this.interactionPort.receiveAgentMessage({
+      currentRunScope().interactionPort.receiveAgentMessage({
         id: event.payload.messageId,
         text: event.payload.text,
         data: event.payload.data,
@@ -174,7 +162,7 @@ export class InteractionGateway {
     error: unknown,
     context: Record<string, unknown> = {},
   ): void {
-    this.logger?.warn({
+    currentRunScope().logger.warn({
       module: "interaction.gateway",
       event,
       data: {
@@ -184,8 +172,8 @@ export class InteractionGateway {
     });
   }
 
-  private handleAgentMessage(message: AgentMessageSend): void {
-    this.submitUserMessage({
+  private async handleAgentMessage(message: AgentMessageSend): Promise<void> {
+    await this.submitUserMessage({
       messageId: message.id,
       text: message.text,
       data: message.data,
@@ -193,7 +181,7 @@ export class InteractionGateway {
   }
 
   private async handleExitRequested(): Promise<void> {
-    await this.eventBus.publishAndWait(SystemEvents.interaction.exitRequested, {
+    await currentRunScope().eventBus.publishAndWait(SystemEvents.interaction.exitRequested, {
       requestedAt: new Date().toISOString(),
     } satisfies InteractionExitRequestedPayload);
   }

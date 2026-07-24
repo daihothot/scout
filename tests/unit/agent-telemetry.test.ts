@@ -20,17 +20,18 @@ import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
 import type { AgentTaskNotAssignedEventPayload } from "../../src/agent/task/task-events.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
+import { installTestRunScope } from "../helpers/run-persistence.js";
 
-test("TaskEventRecorder writes incremental task events without repeating task history", async () => {
+test("TaskEventRecorder writes incremental task events without repeating task history", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-task-recorder-"));
   const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
-  const registry = registryWithAgent("researcher", logsRoot);
-  const recorder = new TaskEventRecorder({
+  const registry = installTestRunScope(t, {
     runId: "run-task-recorder",
     eventBus,
-    registry,
-  });
+  }).agentRegistry;
+  registerAgent(registry, "researcher", logsRoot);
+  const recorder = new TaskEventRecorder();
   recorder.start();
 
   const task = taskState();
@@ -123,16 +124,16 @@ test("TaskEventRecorder writes incremental task events without repeating task hi
   assert.equal(existsSync(join(logsRoot, "activity.log")), false);
 });
 
-test("AgentActivityRecorder writes stable activity to the role activity log", async () => {
+test("AgentActivityRecorder writes stable activity to the role activity log", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-activity-recorder-"));
   const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
-  const registry = registryWithAgent("researcher", logsRoot);
-  const recorder = new AgentActivityRecorder({
+  const registry = installTestRunScope(t, {
     runId: "run-activity-recorder",
     eventBus,
-    registry,
-  });
+  }).agentRegistry;
+  registerAgent(registry, "researcher", logsRoot);
+  const recorder = new AgentActivityRecorder();
   recorder.start();
 
   await eventBus.publishAndWait(AgentEvents.activity.observed, activity({
@@ -183,16 +184,16 @@ test("AgentActivityRecorder writes stable activity to the role activity log", as
   assert.equal(existsSync(join(logsRoot, "researcher-task-0001.log")), false);
 });
 
-test("AgentActivityRecorder writes complete native subagent facts to a dedicated log", async () => {
+test("AgentActivityRecorder writes complete native subagent facts to a dedicated log", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-subagent-recorder-"));
   const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
-  const registry = registryWithAgent("researcher", logsRoot);
-  const recorder = new AgentActivityRecorder({
+  const registry = installTestRunScope(t, {
     runId: "run-subagent-recorder",
     eventBus,
-    registry,
-  });
+  }).agentRegistry;
+  registerAgent(registry, "researcher", logsRoot);
+  const recorder = new AgentActivityRecorder();
   recorder.start();
 
   await eventBus.publishAndWait(AgentEvents.activity.observed, activity({
@@ -255,16 +256,16 @@ test("AgentActivityRecorder writes complete native subagent facts to a dedicated
   assert.equal(existsSync(join(root, "logs", "runtime.log")), false);
 });
 
-test("AgentThreadRecorder writes complete startup facts and incremental close facts", async () => {
+test("AgentThreadRecorder writes complete startup facts and incremental close facts", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-thread-recorder-"));
   const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
-  const registry = registryWithAgent("researcher", logsRoot);
-  const recorder = new AgentThreadRecorder({
+  const registry = installTestRunScope(t, {
     runId: "run-thread-recorder",
     eventBus,
-    registry,
-  });
+  }).agentRegistry;
+  registerAgent(registry, "researcher", logsRoot);
+  const recorder = new AgentThreadRecorder();
   const developerInstructions = `${"complete-instruction ".repeat(300)}END_OF_FULL_INSTRUCTIONS`;
   const started: AgentThreadSnapshot = {
     agentId: "researcher",
@@ -320,15 +321,17 @@ test("AgentThreadRecorder writes complete startup facts and incremental close fa
   assert.doesNotMatch(text, /threadPreflight/);
 });
 
-function registryWithAgent(agentId: string, logsRoot: string): AgentRegistry {
-  const registry = new AgentRegistry();
+function registerAgent(
+  registry: AgentRegistry,
+  agentId: string,
+  logsRoot: string,
+): void {
   registry.registerAgent({
     agentId,
     get mount() {
       return { logsRoot };
     },
   } as ScoutAgent);
-  return registry;
 }
 
 function taskState(): AgentTaskState {

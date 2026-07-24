@@ -21,7 +21,7 @@ export abstract class AgentRunner {
     return undefined;
   }
 
-  stopTask(_taskId: string, _reason?: string): AgentTaskState {
+  stopTask(_taskId: string, _reason?: string): Promise<AgentTaskState> {
     return this.unsupportedTaskMethod("stopTask");
   }
 

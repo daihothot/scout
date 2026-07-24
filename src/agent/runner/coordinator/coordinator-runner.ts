@@ -2,18 +2,12 @@ import type {
   ScoutAgentTurnInput,
   ScoutAgentTurnOutcome,
 } from "../../core/scout-agent.js";
-import type {
-  EventBus,
-  ScoutEvent,
-} from "../../../core/events/index.js";
+import type { ScoutEvent } from "../../../core/events/index.js";
+import { currentRunScope } from "../../../run/run-scope.js";
 import { SystemEvents } from "../../../system/events/index.js";
 import { AgentEvents } from "../../events/index.js";
 import { AgentInbox } from "../../core/agent-inbox.js";
 import { AgenticLoop } from "../../core/agentic-loop.js";
-import type {
-  AgentOrchestrationDispatchRequestedPayload,
-  AgentInterruptEventPayload,
-} from "../../orchestration/orchestrator-events.js";
 import type {
   AgentTaskNotAssignedEventPayload,
 } from "../../task/task-events.js";
@@ -23,6 +17,8 @@ import type { UserMessageSubmittedPayload } from "../../../interaction/gateway/i
 import { AgentRunner } from "../types.js";
 import { attachments } from "../../context/attachments.js";
 import { coordinator } from "./coordinator-attachments.js";
+import { randomUUID } from "node:crypto";
+import type { AgentMessage } from "../../message/types.js";
 
 export interface CoordinatorRunnerHost {
   readonly agentId: string;
@@ -33,18 +29,18 @@ export interface CoordinatorRunnerHost {
 export class CoordinatorRunner extends AgentRunner {
   readonly runnerKind = "coordinator";
   private readonly host: CoordinatorRunnerHost;
-  private readonly eventBus: EventBus;
   private readonly inbox: AgentInbox;
-  private readonly loop: AgenticLoop<string[]>;
-  private pendingMessages: string[] = [];
+  private readonly loop: AgenticLoop<AgentMessage[]>;
+  private readonly acceptedMessages = new Map<string, AgentMessage>();
+  private pendingMessages: AgentMessage[] = [];
+  private resumeContext?: string;
   private stopped = false;
   private stopReason?: string;
 
-  constructor(options: { host: CoordinatorRunnerHost; eventBus: EventBus }) {
+  constructor(options: { host: CoordinatorRunnerHost }) {
     super();
     this.host = options.host;
-    this.eventBus = options.eventBus;
-    this.loop = new AgenticLoop<string[]>({
+    this.loop = new AgenticLoop<AgentMessage[]>({
       agentId: this.host.agentId,
       takeTick: () => this.takeCoordinatorTick(),
       runTick: (messages) => this.runCoordinatorTick(messages),
@@ -52,14 +48,11 @@ export class CoordinatorRunner extends AgentRunner {
       onError: (error) => this.publishFailure(error),
     });
     this.inbox = new AgentInbox({
-      eventBus: this.eventBus,
       isStopped: () => this.stopped,
       onEvents: (events) => this.handleInboxEvents(events),
       onError: (error) => this.publishFailure(error),
     });
     this.inbox.subscribe<UserMessageSubmittedPayload>(SystemEvents.interaction.userMessageSubmitted);
-    this.inbox.subscribe<AgentOrchestrationDispatchRequestedPayload>(AgentEvents.orchestration.dispatchRequested);
-    this.inbox.subscribe<AgentInterruptEventPayload>(AgentEvents.interrupt);
     this.inbox.subscribe<AgentTaskState>(AgentEvents.task.assigned);
     this.inbox.subscribe<AgentTaskNotAssignedEventPayload>(AgentEvents.task.notAssigned);
   }
@@ -68,66 +61,107 @@ export class CoordinatorRunner extends AgentRunner {
     return this.host.agentId;
   }
 
-  stop(reason?: string): void {
+  private get eventBus() {
+    return currentRunScope().eventBus;
+  }
+
+  async stop(reason?: string): Promise<void> {
     this.stopped = true;
     this.stopReason = reason;
     this.inbox.stop();
     this.loop.stop();
+    await Promise.all([
+      this.inbox.runToIdle(),
+      this.loop.runToIdle(),
+    ]);
   }
 
-  queueMessage(input: SendAgentMessageInput): void {
-    if (this.stopped) {
-      throw new Error(`Coordinator runner ${this.agentId} is stopped.${this.stopReason ? ` Reason: ${this.stopReason}` : ""}`);
-    }
+  async queueMessage(input: SendAgentMessageInput): Promise<void> {
     if (input.taskId) {
       throw new Error(`Coordinator runner ${this.agentId} does not own task ${input.taskId}.`);
     }
-    this.queueMessages([attachments.compose(input.message)]);
+    this.acceptMessage({
+      messageId: input.delivery?.messageId ?? `${this.agentId}-message-${randomUUID()}`,
+      agentId: this.agentId,
+      body: attachments.compose(input.message),
+      queuedAt: input.delivery?.queuedAt ?? new Date().toISOString(),
+    });
+    if (!this.stopped) this.loop.schedule();
+  }
+
+  restoreState(input: {
+    acceptedMessages: AgentMessage[];
+    pendingMessages: AgentMessage[];
+    resumeContext: string;
+  }): void {
+    this.pendingMessages = structuredClone(input.pendingMessages);
+    this.acceptedMessages.clear();
+    for (const message of [...input.acceptedMessages, ...this.pendingMessages]) {
+      const accepted = this.acceptedMessages.get(message.messageId);
+      if (accepted && (
+        accepted.agentId !== message.agentId
+        || accepted.taskId !== message.taskId
+        || accepted.body !== message.body
+        || accepted.queuedAt !== message.queuedAt
+      )) {
+        throw new Error(`Message ${message.messageId} does not match its Coordinator delivery.`);
+      }
+      this.acceptedMessages.set(message.messageId, structuredClone(message));
+    }
+    this.resumeContext = input.resumeContext;
+  }
+
+  activateRestoredState(): void {
     this.loop.schedule();
   }
 
-  private takeCoordinatorTick(): string[] | undefined {
-    return this.countPendingMessages() > 0 ? this.drainPendingMessages() : undefined;
+  override snapshot(): { pendingMessageCount: number } {
+    return { pendingMessageCount: this.pendingMessages.length };
+  }
+
+  private takeCoordinatorTick(): AgentMessage[] | undefined {
+    return this.pendingMessages.length > 0 || this.resumeContext
+      ? structuredClone(this.pendingMessages)
+      : undefined;
   }
 
   private async handleInboxEvents(events: ScoutEvent[]): Promise<void> {
     for (const event of events) {
       if (SystemEvents.interaction.userMessageSubmitted.is(event)) {
-        const payload = event.payload as UserMessageSubmittedPayload;
+        const payload = event.payload;
         if (payload.attachment.trim().length > 0) {
-          this.queueMessages([payload.attachment]);
-        }
-        continue;
-      }
-
-      if (AgentEvents.orchestration.dispatchRequested.is(event)) {
-        const payload = event.payload as AgentOrchestrationDispatchRequestedPayload;
-        if (payload.attachment.trim().length > 0) {
-          this.queueMessages([payload.attachment]);
-        }
-        continue;
-      }
-
-      if (AgentEvents.interrupt.is(event)) {
-        const payload = event.payload as AgentInterruptEventPayload;
-        if (payload.attachment.trim().length > 0) {
-          this.queueMessages([payload.attachment]);
+          this.acceptMessage({
+            messageId: payload.messageId,
+            agentId: this.agentId,
+            body: payload.attachment,
+            queuedAt: payload.submittedAt,
+          });
         }
         continue;
       }
 
       if (AgentEvents.task.assigned.is(event)) {
-        const task = event.payload as AgentTaskState;
-        this.queueMessages([coordinator.taskAssigned({
-          agentId: task.agentId,
-          taskId: task.taskId,
-        })]);
+        const task = event.payload;
+        this.acceptMessage({
+          messageId: `task-assigned-${task.taskId}`,
+          agentId: this.agentId,
+          body: coordinator.taskAssigned({
+            agentId: task.agentId,
+            taskId: task.taskId,
+          }),
+          queuedAt: task.createdAt,
+        });
         continue;
       }
 
       if (AgentEvents.task.notAssigned.is(event)) {
-        const payload = event.payload as AgentTaskNotAssignedEventPayload;
-        this.queueMessages([coordinator.taskNotAssigned(payload)]);
+        const payload = event.payload;
+        this.acceptMessage({
+          messageId: event.id,
+          agentId: this.agentId,
+          body: coordinator.taskNotAssigned(payload),
+          queuedAt: event.occurredAt,
+        });
         continue;
       }
 
@@ -135,37 +169,55 @@ export class CoordinatorRunner extends AgentRunner {
     this.loop.schedule();
   }
 
-  private async runCoordinatorTick(messages: string[]): Promise<void> {
+  private async runCoordinatorTick(messages: AgentMessage[]): Promise<void> {
     if (this.stopped) {
       throw new Error(`Coordinator runner ${this.agentId} is stopped.${this.stopReason ? ` Reason: ${this.stopReason}` : ""}`);
     }
+    const prompt = attachments.compose(
+      ...(this.resumeContext ? [this.resumeContext] : []),
+      ...messages.map((message) => message.body),
+    );
     const outcome = await this.host.runTurn({
-      prompt: attachments.compose(...messages),
+      prompt,
       sandbox: "workspaceWrite",
       outputContract: "coordinator_main_loop",
-    });
-    this.eventBus.publish(AgentEvents.coordinator.turnCompleted, {
-      agentId: this.agentId,
-      threadId: outcome.turn.threadId,
-      turnId: outcome.turn.turnId,
-      status: outcome.turn.status,
-      completedAt: outcome.turn.finishedAt,
-      turn: outcome.turn,
+      onTurnStarted: () => {
+        for (const message of messages) {
+          const consumedAt = new Date().toISOString();
+          this.eventBus.publish(AgentEvents.message.consumed, {
+            messageId: message.messageId,
+            agentId: message.agentId,
+            consumedAt,
+          }, {
+            occurredAt: consumedAt,
+          });
+        }
+        const consumed = new Set(messages.map((message) => message.messageId));
+        this.pendingMessages = this.pendingMessages.filter((message) =>
+          !consumed.has(message.messageId)
+        );
+        this.resumeContext = undefined;
+      },
     });
     const text = outcome.finalResponse?.trim();
     if (!text) return;
-    this.eventBus.publish(AgentEvents.coordinator.messageProduced, {
+    const produced = {
       messageId: `${outcome.turn.invocationId}-message`,
       agentId: this.agentId,
       threadId: outcome.turn.threadId,
       turnId: outcome.turn.turnId,
       text,
       createdAt: outcome.turn.finishedAt,
-    });
+    };
+    this.eventBus.publish(
+      AgentEvents.coordinator.messageProduced,
+      produced,
+      { occurredAt: produced.createdAt },
+    );
   }
 
   private publishFailure(error: unknown): void {
-    this.eventBus.publish(AgentEvents.coordinator.messageProduced, {
+    const produced = {
       messageId: `${this.agentId}-runner-error-${Date.now()}`,
       agentId: this.agentId,
       threadId: this.host.threadId,
@@ -174,21 +226,31 @@ export class CoordinatorRunner extends AgentRunner {
       data: {
         level: "error",
       },
-    });
+    };
+    this.eventBus.publish(
+      AgentEvents.coordinator.messageProduced,
+      produced,
+      { occurredAt: produced.createdAt },
+    );
   }
 
-  private queueMessages(messages: string[]): void {
-    if (messages.length === 0) return;
-    this.pendingMessages = [...this.pendingMessages, ...messages];
-  }
-
-  private drainPendingMessages(): string[] {
-    const messages = this.pendingMessages;
-    this.pendingMessages = [];
-    return messages;
-  }
-
-  private countPendingMessages(): number {
-    return this.pendingMessages.length;
+  private acceptMessage(message: AgentMessage): void {
+    const accepted = this.acceptedMessages.get(message.messageId);
+    if (accepted && (
+      accepted.agentId !== message.agentId
+      || accepted.taskId !== message.taskId
+      || accepted.body !== message.body
+      || accepted.queuedAt !== message.queuedAt
+    )) {
+      throw new Error(`Message ${message.messageId} does not match its Coordinator delivery.`);
+    }
+    if (accepted) return;
+    this.eventBus.publish(
+      AgentEvents.message.queued,
+      message,
+      { occurredAt: message.queuedAt },
+    );
+    this.acceptedMessages.set(message.messageId, structuredClone(message));
+    this.pendingMessages = [...this.pendingMessages, message];
   }
 }

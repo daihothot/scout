@@ -8,13 +8,14 @@ import {
   RunScope,
 } from "../../src/run/run-scope.js";
 import type { RunEnvironment } from "../../src/run/types.js";
+import { createTestRunPersistence } from "../helpers/run-persistence.js";
 
 test("currentRunScope rejects access outside an active run", () => {
   assert.throws(() => currentRunScope(), /No active Scout run scope/);
 });
 
-test("installRunScope exposes one run scope until release", () => {
-  const scope = createRunScope("run-scope-active");
+test("installRunScope exposes one run scope until release", (t) => {
+  const scope = createRunScope(t, "run-scope-active");
   const release = installRunScope(scope);
 
   assert.equal(currentRunScope(), scope);
@@ -23,13 +24,13 @@ test("installRunScope exposes one run scope until release", () => {
   assert.throws(() => currentRunScope(), /No active Scout run scope/);
 });
 
-test("installRunScope rejects a second active run without replacing the first", () => {
-  const first = createRunScope("run-scope-first");
+test("installRunScope rejects a second active run without replacing the first", (t) => {
+  const first = createRunScope(t, "run-scope-first");
   const release = installRunScope(first);
 
   try {
     assert.throws(
-      () => installRunScope(createRunScope("run-scope-second")),
+      () => installRunScope(createRunScope(t, "run-scope-second")),
       /Run scope already installed: run-scope-first/,
     );
     assert.equal(currentRunScope(), first);
@@ -38,8 +39,8 @@ test("installRunScope rejects a second active run without replacing the first", 
   }
 });
 
-test("run scope release cannot be applied twice", () => {
-  const release = installRunScope(createRunScope("run-scope-release"));
+test("run scope release cannot be applied twice", (t) => {
+  const release = installRunScope(createRunScope(t, "run-scope-release"));
 
   release();
 
@@ -49,8 +50,8 @@ test("run scope release cannot be applied twice", () => {
   );
 });
 
-test("RunScope exposes staged resources only after their owner registers them", () => {
-  const scope = createRunScope("run-scope-resources");
+test("RunScope exposes staged resources only after their owner registers them", (t) => {
+  const scope = createRunScope(t, "run-scope-resources");
   const appServer = {} as RunScope["appServer"];
   const environment = createRunEnvironment(scope.runId);
 
@@ -72,8 +73,8 @@ test("RunScope exposes staged resources only after their owner registers them", 
   assert.throws(() => scope.appServer, /app-server is not available/);
 });
 
-test("RunScope rejects clearing a client it does not own", () => {
-  const scope = createRunScope("run-scope-client-owner");
+test("RunScope rejects clearing a client it does not own", (t) => {
+  const scope = createRunScope(t, "run-scope-client-owner");
   const appServer = {} as RunScope["appServer"];
 
   scope.setAppServer(appServer);
@@ -85,7 +86,7 @@ test("RunScope rejects clearing a client it does not own", () => {
   assert.equal(scope.appServer, appServer);
 });
 
-function createRunScope(runId: string): RunScope {
+function createRunScope(t: import("node:test").TestContext, runId: string): RunScope {
   return new RunScope({
     runId,
     repoRoot: "/repo",
@@ -97,6 +98,7 @@ function createRunScope(runId: string): RunScope {
       name: "test",
       dynamicToolsForRole: () => [],
     },
+    ...createTestRunPersistence(t, runId),
     terminate: async () => undefined,
   });
 }

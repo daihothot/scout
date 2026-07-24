@@ -1,0 +1,132 @@
+import {
+  AgentTaskStatuses,
+  AgentTaskStepStatuses,
+} from "../../../agent/task/types.js";
+import { inferTaskRecoveryCheckpoint } from "../projection/task-recovery.js";
+import {
+  boundedText,
+  renderArtifact,
+  renderIdentity,
+  renderResumeAction,
+  type ResumePacket,
+  type ResumePacketInput,
+} from "./resume-packet-common.js";
+
+export function buildWorkerResumePacket(
+  input: ResumePacketInput,
+): ResumePacket {
+  const task = input.projection.tasks.find((candidate) => candidate.agentId === input.agentId);
+  const pendingMessages = input.projection.pendingMessages.filter((message) =>
+    message.agentId === input.agentId
+  );
+  const allPendingMessageIds = new Set(
+    input.projection.pendingMessages.map((message) => message.messageId),
+  );
+  const checkpoint = inferTaskRecoveryCheckpoint(input.projection, task);
+  const requests = task
+    ? input.projection.humanInputRequests.filter((request) => request.taskId === task.taskId)
+    : [];
+  const interrupted = task
+    ? input.projection.turns.filter((turn) =>
+      turn.taskId === task.taskId
+      && (turn.completedAt === undefined || turn.status === "interrupted")
+    )
+    : [];
+
+  const renderTask = (): Record<string, unknown> | undefined => {
+    if (!task) return undefined;
+    const currentStep = task.steps?.at(-1);
+    return {
+      id: task.taskId,
+      status: task.status,
+      description: boundedText(task.description),
+      initial_prompt: boundedText(task.initialPrompt),
+      current_step: currentStep
+        ? {
+          id: currentStep.stepId,
+          status: currentStep.status,
+          final_response: boundedText(currentStep.finalResponse),
+        }
+        : undefined,
+    };
+  };
+
+  const renderReported = (): Array<Record<string, unknown>> =>
+    input.projection.taskOutcomes
+      .filter((outcome) => outcome.agentId === input.agentId)
+      .slice(-2)
+      .map((outcome) => ({
+        task_id: outcome.taskId,
+        step_id: outcome.stepId,
+        submitted_at: outcome.submittedAt,
+        outcome: boundedText(outcome.outcome),
+      }));
+
+  const renderConfirmed = (): Array<Record<string, unknown>> =>
+    requests
+      .filter((request) =>
+        request.response
+        && !allPendingMessageIds.has(request.response.message.messageId)
+      )
+      .map((request) => ({
+        request_id: request.requestId,
+        response: boundedText(request.response?.body),
+        responded_at: request.response?.respondedAt,
+      }));
+
+  const renderOpen = (): Array<Record<string, unknown>> => [
+    ...(task?.steps?.at(-1)?.status === AgentTaskStepStatuses.Running
+      || task?.steps?.at(-1)?.status === AgentTaskStepStatuses.Interrupted
+      ? [{
+        type: task.steps.at(-1)?.status === AgentTaskStepStatuses.Interrupted
+          ? "interrupted_task_step"
+          : "incomplete_task_step",
+        step_id: task.steps.at(-1)?.stepId,
+        started_at: task.steps.at(-1)?.startedAt,
+        prompt: boundedText(task.steps.at(-1)?.prompt),
+      }]
+      : []),
+    ...requests.filter((request) =>
+      !request.response
+      && task?.status !== AgentTaskStatuses.Done
+      && task?.status !== AgentTaskStatuses.Failed
+      && task?.status !== AgentTaskStatuses.Stopped
+    ).map((request) => ({
+      type: "human_input_request",
+      request_id: request.requestId,
+      body: boundedText(request.body),
+      requested_at: request.requestedAt,
+    })),
+    ...interrupted.map((turn) => ({
+      type: "interrupted_turn",
+      invocation_id: turn.invocationId,
+      started_at: turn.startedAt,
+      prompt: boundedText(turn.prompt),
+    })),
+  ];
+
+  const renderArtifacts = (): Array<Record<string, unknown>> =>
+    input.projection.artifacts
+      .filter((artifact) => artifact.agentId === input.agentId || artifact.taskId === task?.taskId)
+      .slice(-20)
+      .map(renderArtifact);
+
+  const renderPendingMessages = (): Array<Record<string, unknown>> =>
+    pendingMessages.map((message) => ({
+      message_id: message.messageId,
+      task_id: message.taskId,
+      queued_at: message.queuedAt,
+    }));
+
+  return {
+    identity: renderIdentity(input),
+    task_recovery_checkpoint: checkpoint,
+    resume_actions: input.resumeActions.map(renderResumeAction),
+    task: renderTask(),
+    reported: renderReported(),
+    confirmed: renderConfirmed(),
+    open: renderOpen(),
+    artifacts: renderArtifacts(),
+    pending_messages: renderPendingMessages(),
+  };
+}

@@ -4,7 +4,7 @@ import {
   buildActivityBarPresentation,
   resolveActivityBarRows,
 } from "../../src/interaction/tui/chrome/activity-bar.js";
-import { buildBootProgressPresentation } from "../../src/interaction/tui/chrome/top-chrome.js";
+import { buildRunLifecycleProgressPresentation } from "../../src/interaction/tui/chrome/top-chrome.js";
 import { buildChatVisualRows } from "../../src/interaction/tui/panels/chat-panel.js";
 import { buildCoordinatorMessageRows } from "../../src/interaction/tui/rows/coordinator-message-row.js";
 import { taskMarker } from "../../src/interaction/tui/markers.js";
@@ -17,7 +17,7 @@ import {
 } from "../../src/interaction/tui/terminal-markdown.js";
 import { terminalDisplayWidth } from "../../src/interaction/tui/terminal-text.js";
 import type { TuiState } from "../../src/interaction/tui/tui-store.js";
-import type { BootSnapshot } from "../../src/run/boot/boot-stage.js";
+import type { RunLifecycleSnapshot } from "../../src/run/lifecycle/index.js";
 
 test("terminal markdown renders headings as separate styled blocks", () => {
   const lines = buildTerminalMarkdownLines(
@@ -57,13 +57,12 @@ test("terminal markdown renders lists and wraps using terminal display width", (
   );
 });
 
-test("terminal markdown renders inline code with a muted inverse highlight", () => {
+test("terminal markdown renders inline code with a pale foreground", () => {
   const lines = buildTerminalMarkdownLines("任务 `researcher-task-0001` 已指派。", 80);
   const code = lines[0]?.spans.find((span) => span.text === "researcher-task-0001");
 
   assert.deepEqual(code?.style, {
-    color: "#858277",
-    inverse: true,
+    color: "#c1beb0",
   });
 });
 
@@ -77,7 +76,7 @@ test("terminal markdown renders fenced code with a pale foreground", () => {
     dimColor: true,
   });
   assert.deepEqual(code?.spans[0]?.style, {
-    color: "#a9a698",
+    color: "#a898a9",
   });
 });
 
@@ -129,8 +128,8 @@ test("Coordinator message rows reflow without exceeding terminal width", () => {
   }
 });
 
-test("Boot progress scales its fill and caps its width", () => {
-  const snapshot: BootSnapshot = {
+test("Run lifecycle progress scales its fill and caps its width", () => {
+  const snapshot: RunLifecycleSnapshot = {
     runId: "run-boot",
     status: "starting",
     completedStages: 4,
@@ -139,7 +138,7 @@ test("Boot progress scales its fill and caps its width", () => {
   };
 
   for (const width of [20, 40, 80]) {
-    const presentation = buildBootProgressPresentation(snapshot, width);
+    const presentation = buildRunLifecycleProgressPresentation(snapshot, width);
     const expectedWidth = Math.min(width, 42);
     assert.equal(
       terminalDisplayWidth(`${presentation.filled}${presentation.remaining}`),

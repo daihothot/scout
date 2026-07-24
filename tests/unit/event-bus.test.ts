@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  EventSubscriptionPriorities,
   InMemoryEventBus,
   EventMailbox,
   createEventKeyFactory,
@@ -73,7 +74,7 @@ test("event bus subscribes to an event catalog group", () => {
   });
   bus.publish(AgentEvents.task.assigned, { taskId: "task-1" });
   bus.publish(AgentEvents.task.messageQueued, { taskId: "task-1" });
-  bus.publish(AgentEvents.interrupt.raised, { interruptKind: "approval" });
+  bus.publish(AgentEvents.coordinator.messageProduced, { messageId: "message-1" });
 
   assert.deepEqual(received, [
     "agent.task.assigned",
@@ -129,11 +130,11 @@ test("event bus subscribeOnce removes handler after first delivery", () => {
   const bus = new InMemoryEventBus();
   let count = 0;
 
-  bus.subscribeOnce(AgentEvents.interrupt.raised, () => {
+  bus.subscribeOnce(AgentEvents.task.messageQueued, () => {
     count += 1;
   });
-  bus.publish(AgentEvents.interrupt.raised, { interruptKind: "approval" });
-  bus.publish(AgentEvents.interrupt.raised, { interruptKind: "exception" });
+  bus.publish(AgentEvents.task.messageQueued, { taskId: "task-1" });
+  bus.publish(AgentEvents.task.messageQueued, { taskId: "task-2" });
 
   assert.equal(count, 1);
 });
@@ -164,6 +165,103 @@ test("event bus publishAndWait awaits async handlers", async () => {
   await bus.publishAndWait(AgentEvents.task.assigned, { taskId: "task-1" });
 
   assert.equal(completed, true);
+});
+
+test("event bus dispatches subscription priorities from high to low", async () => {
+  const bus = new InMemoryEventBus();
+  const calls: string[] = [];
+
+  bus.subscribe(AgentEvents.task.assigned, async () => {
+    calls.push("low");
+  }, {
+    priority: EventSubscriptionPriorities.Low,
+  });
+  bus.subscribe(AgentEvents.task.assigned, async () => {
+    calls.push("high:start");
+    await Promise.resolve();
+    calls.push("high:end");
+  }, {
+    priority: EventSubscriptionPriorities.High,
+  });
+  bus.subscribe(AgentEvents.task.assigned, async () => {
+    calls.push("normal");
+  }, {
+    priority: EventSubscriptionPriorities.Normal,
+  });
+
+  await bus.publishAndWait(AgentEvents.task.assigned, { taskId: "task-1" });
+
+  assert.deepEqual(calls, [
+    "high:start",
+    "high:end",
+    "normal",
+    "low",
+  ]);
+});
+
+test("event bus dispatches subscribers at the same priority concurrently", async () => {
+  const bus = new InMemoryEventBus();
+  const calls: string[] = [];
+  let releaseHandlers: (() => void) | undefined;
+  const handlersReleased = new Promise<void>((resolve) => {
+    releaseHandlers = resolve;
+  });
+
+  bus.subscribe(AgentEvents.task.assigned, async () => {
+    calls.push("first:start");
+    await handlersReleased;
+    calls.push("first:end");
+  }, {
+    priority: EventSubscriptionPriorities.High,
+  });
+  bus.subscribe(AgentEvents.task.assigned, async () => {
+    calls.push("second:start");
+    await handlersReleased;
+    calls.push("second:end");
+  }, {
+    priority: EventSubscriptionPriorities.High,
+  });
+
+  const publishing = bus.publishAndWait(AgentEvents.task.assigned, { taskId: "task-1" });
+  await Promise.resolve();
+  assert.deepEqual(calls, ["first:start", "second:start"]);
+
+  releaseHandlers?.();
+  await publishing;
+  assert.deepEqual(calls, [
+    "first:start",
+    "second:start",
+    "first:end",
+    "second:end",
+  ]);
+});
+
+test("event bus stops lower priorities when a high-priority subscriber fails", async () => {
+  const bus = new InMemoryEventBus();
+  const calls: string[] = [];
+
+  bus.subscribe(AgentEvents.task.assigned, () => {
+    calls.push("low");
+  }, {
+    priority: EventSubscriptionPriorities.Low,
+  });
+  bus.subscribe(AgentEvents.task.assigned, () => {
+    calls.push("high");
+    throw new Error("journal write failed");
+  }, {
+    priority: EventSubscriptionPriorities.High,
+  });
+  bus.subscribe(AgentEvents.task.assigned, () => {
+    calls.push("normal");
+  }, {
+    priority: EventSubscriptionPriorities.Normal,
+  });
+
+  await assert.rejects(
+    bus.publishAndWait(AgentEvents.task.assigned, { taskId: "task-1" }),
+    /journal write failed/,
+  );
+  assert.deepEqual(calls, ["high"]);
 });
 
 test("event mailbox filters subscribed events before enqueueing", () => {

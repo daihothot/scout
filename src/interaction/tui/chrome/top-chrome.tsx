@@ -1,6 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
-import type { BootSnapshot } from "../../../run/boot/boot-stage.js";
+import type { RunLifecycleSnapshot } from "../../../run/lifecycle/run-stage.js";
 import type {
   TuiRunStatus,
   TuiState,
@@ -9,8 +9,8 @@ import { truncateByDisplayWidth } from "../terminal-text.js";
 
 const COMPACT_TOP_CHROME_ROWS = 12;
 const FULL_TOP_CHROME_ROWS = 18;
-const BOOT_PROGRESS_ROWS = 1;
-const BOOT_PROGRESS_MAX_WIDTH = 42;
+const LIFECYCLE_PROGRESS_ROWS = 1;
+const LIFECYCLE_PROGRESS_MAX_WIDTH = 42;
 const FULL_LOGO = [
   "  ____   ____ ___  _   _ _____",
   " / ___| / ___/ _ \\| | | |_   _|",
@@ -19,9 +19,9 @@ const FULL_LOGO = [
   " |____/ \\____\\___/ \\___/  |_|",
 ];
 
-export function resolveTopChromeRows(compact: boolean, showBootProgress: boolean): number {
+export function resolveTopChromeRows(compact: boolean, showLifecycleProgress: boolean): number {
   return (compact ? COMPACT_TOP_CHROME_ROWS : FULL_TOP_CHROME_ROWS)
-    + (showBootProgress ? BOOT_PROGRESS_ROWS : 0);
+    + (showLifecycleProgress ? LIFECYCLE_PROGRESS_ROWS : 0);
 }
 
 export function TopChrome({
@@ -35,7 +35,9 @@ export function TopChrome({
   compact: boolean;
   width: number;
 }) {
-  const showBootProgress = Boolean(state.boot && state.runtime.status !== "ready");
+  const showLifecycleProgress = Boolean(
+    state.lifecycle && state.runtime.status !== "ready",
+  );
   return (
     <Box flexDirection="column" width={width} flexShrink={0}>
       <TopLine state={state} width={width} />
@@ -56,8 +58,8 @@ export function TopChrome({
 
       <RuntimeStatusLine state={state} activeTasks={activeTasks} width={width} />
 
-      {showBootProgress && state.boot && (
-        <BootProgress snapshot={state.boot} width={width} />
+      {showLifecycleProgress && state.lifecycle && (
+        <RunLifecycleProgress snapshot={state.lifecycle} width={width} />
       )}
     </Box>
   );
@@ -141,16 +143,16 @@ function RuntimeStatusLine({ state, activeTasks, width }: {
   );
 }
 
-function BootProgress({ snapshot, width }: {
-  snapshot: BootSnapshot;
+function RunLifecycleProgress({ snapshot, width }: {
+  snapshot: RunLifecycleSnapshot;
   width: number;
 }) {
-  const presentation = buildBootProgressPresentation(snapshot, width);
+  const presentation = buildRunLifecycleProgressPresentation(snapshot, width);
   return (
     <Box
       flexDirection="column"
       width={presentation.width}
-      height={BOOT_PROGRESS_ROWS}
+      height={LIFECYCLE_PROGRESS_ROWS}
       flexShrink={0}
       overflow="hidden"
     >
@@ -162,8 +164,8 @@ function BootProgress({ snapshot, width }: {
   );
 }
 
-export function buildBootProgressPresentation(
-  snapshot: BootSnapshot,
+export function buildRunLifecycleProgressPresentation(
+  snapshot: RunLifecycleSnapshot,
   width: number,
 ): {
   width: number;
@@ -173,7 +175,7 @@ export function buildBootProgressPresentation(
   const ratio = snapshot.totalStages === 0
     ? 0
     : Math.min(1, Math.max(0, snapshot.completedStages / snapshot.totalStages));
-  const barWidth = Math.max(1, Math.min(width, BOOT_PROGRESS_MAX_WIDTH));
+  const barWidth = Math.max(1, Math.min(width, LIFECYCLE_PROGRESS_MAX_WIDTH));
   const filledWidth = Math.min(barWidth, Math.round(ratio * barWidth));
   return {
     width: barWidth,

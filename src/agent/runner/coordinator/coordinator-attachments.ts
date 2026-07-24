@@ -27,32 +27,9 @@ export interface CoordinatorTaskNotAssignedAttachmentInput {
   reason: string;
 }
 
-export type CoordinatorObservationAttachmentInput =
-  | {
-    type: "dispatch";
-    dispatchId: string;
-    reason: string;
-    message?: string;
-    createdAt: string;
-    data?: unknown;
-  }
-  | {
-    type: "interrupt";
-    eventKey: string;
-    occurredAt?: string;
-    interruptKind: string;
-    taskId?: string;
-    agentId?: string;
-    turnId?: string;
-    requestId?: string;
-  };
-
 export const coordinator = {
   user(input: CoordinatorUserAttachmentInput): string {
     return attachments.addTagBlock(CoordinatorContextTags.User, JSON.stringify(input, null, 2));
-  },
-  observation(input: CoordinatorObservationAttachmentInput): string {
-    return attachments.addTagBlock(CoordinatorContextTags.Observation, JSON.stringify(input, null, 2));
   },
   taskAssigned(input: CoordinatorTaskAssignedAttachmentInput): string {
     return attachments.addTagBlock(CoordinatorContextTags.Observation, [

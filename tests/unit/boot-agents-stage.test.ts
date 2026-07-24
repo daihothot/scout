@@ -4,9 +4,9 @@ import { cpSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  BootAgentsStage,
-  BootEnvironmentStage,
-} from "../../src/run/boot/index.js";
+  AgentsStage,
+} from "../../src/run/lifecycle/index.js";
+import { PrepareEnvironmentStage } from "../../src/run/startup/index.js";
 import {
   installRunScope,
   RunScope,
@@ -17,10 +17,11 @@ import type { ScoutDomain } from "../../src/domain/index.js";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
+import { createTestRunPersistence } from "../helpers/run-persistence.js";
 
 const repoRoot = process.cwd();
 
-test("BootAgentsStage starts all role threads in parallel on the installed RunScope", async (t) => {
+test("AgentsStage starts all role threads in parallel on the installed RunScope", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-boot-agents-"));
   mkdirSync(join(root, "assets"), { recursive: true });
   cpSync(join(repoRoot, "assets", "codex"), join(root, "assets", "codex"), {
@@ -43,14 +44,15 @@ test("BootAgentsStage starts all role threads in parallel on the installed RunSc
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
     domain: createStaticDomain(),
+    ...createTestRunPersistence(t, runId, root),
     terminate: async () => undefined,
   });
   scope.setAppServer(appServer);
   const releaseScope = installRunScope(scope);
-  const environment = new BootEnvironmentStage({
+  const environment = new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
   });
-  const stage = new BootAgentsStage();
+  const stage = new AgentsStage();
   t.after(async () => {
     await stage.stop("test_cleanup");
     scope.clearAppServer(appServer);
@@ -87,7 +89,7 @@ test("BootAgentsStage starts all role threads in parallel on the installed RunSc
   }
 });
 
-test("BootAgentsStage closes started threads when another Agent fails to start", async (t) => {
+test("AgentsStage closes started threads when another Agent fails to start", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-boot-agents-failure-"));
   mkdirSync(join(root, "assets"), { recursive: true });
   cpSync(join(repoRoot, "assets", "codex"), join(root, "assets", "codex"), {
@@ -108,14 +110,15 @@ test("BootAgentsStage closes started threads when another Agent fails to start",
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
     domain: createStaticDomain(),
+    ...createTestRunPersistence(t, runId, root),
     terminate: async () => undefined,
   });
   scope.setAppServer(appServer);
   const releaseScope = installRunScope(scope);
-  const environment = new BootEnvironmentStage({
+  const environment = new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
   });
-  const stage = new BootAgentsStage();
+  const stage = new AgentsStage();
   t.after(async () => {
     await stage.stop("test_cleanup");
     scope.clearAppServer(appServer);

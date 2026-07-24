@@ -8,7 +8,9 @@ import {
 
 export interface EventType<TPayload = unknown> extends EventKey {
   readonly kind: "event";
-  is(event: ScoutEvent): boolean;
+  is(
+    event: ScoutEvent,
+  ): event is ScoutEvent<TPayload> & { key: EventType<TPayload> };
 }
 
 export interface EventGroup {
@@ -166,7 +168,7 @@ function defineEventType(input: {
   const type: EventType = {
     kind: "event",
     ...key,
-    is(event) {
+    is(event): event is ScoutEvent<unknown> & { key: EventType<unknown> } {
       return event.key.routeKey === type.routeKey;
     },
   };
