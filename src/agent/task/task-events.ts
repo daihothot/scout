@@ -3,6 +3,13 @@ import { AgentEvents } from "../events/catalog.js";
 import type { AgentTaskState } from "./types.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 
+export interface AgentTaskOutcomeSubmission {
+  task: AgentTaskState;
+  stepId: string;
+  outcome: string;
+  submittedAt: string;
+}
+
 const taskEventCatalog = {
   task: {
     assigned: event<AgentTaskState>(),
@@ -14,6 +21,8 @@ const taskEventCatalog = {
     pendingMessagesDrained: event<AgentTaskState>(),
     stepStarted: event<AgentTaskState>(),
     stepCompleted: event<AgentTaskState>(),
+    stepInterrupted: event<AgentTaskState>(),
+    outcomeSubmitted: event<AgentTaskOutcomeSubmission>(),
     failed: event<AgentTaskState>(),
     planUpdated: event<AgentTaskState>(),
     terminal: event<AgentTaskState>(),

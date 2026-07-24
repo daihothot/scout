@@ -26,15 +26,18 @@ import type {
 import { AgentTaskStatuses } from "../../src/agent/task/types.js";
 import { TuiInteractionAdapter } from "../../src/interaction/tui/tui-interaction-adapter.js";
 import { TuiStore } from "../../src/interaction/tui/tui-store.js";
-import type { BootSnapshot } from "../../src/run/boot/boot-stage.js";
+import type { RunLifecycleSnapshot } from "../../src/run/lifecycle/index.js";
+import { installTestRunScope } from "../helpers/run-persistence.js";
 
-test("interaction gateway publishes exit request from interaction port", async () => {
+test("interaction gateway publishes exit request from interaction port", async (t) => {
   const bus = new InMemoryEventBus();
   const port = new TestInteractionPort();
-  const gateway = new InteractionGateway({
+  installTestRunScope(t, {
+    runId: "interaction-exit",
     eventBus: bus,
     interactionPort: port,
   });
+  const gateway = new InteractionGateway();
   const observed: ScoutEvent<InteractionExitRequestedPayload>[] = [];
   bus.subscribe<InteractionExitRequestedPayload>(
     SystemEvents.interaction.exitRequested,
@@ -51,13 +54,15 @@ test("interaction gateway publishes exit request from interaction port", async (
   assert.equal(typeof observed[0]?.payload.requestedAt, "string");
 });
 
-test("interaction gateway waits for exit subscribers to finish", async () => {
+test("interaction gateway waits for exit subscribers to finish", async (t) => {
   const bus = new InMemoryEventBus();
   const port = new TestInteractionPort();
-  const gateway = new InteractionGateway({
+  installTestRunScope(t, {
+    runId: "interaction-exit-wait",
     eventBus: bus,
     interactionPort: port,
   });
+  const gateway = new InteractionGateway();
   let terminated = false;
   bus.subscribe(SystemEvents.interaction.exitRequested, async () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -71,13 +76,15 @@ test("interaction gateway waits for exit subscribers to finish", async () => {
   assert.equal(terminated, true);
 });
 
-test("interaction gateway separates Coordinator output from user input", async () => {
+test("interaction gateway separates Coordinator output from user input", async (t) => {
   const bus = new InMemoryEventBus();
   const port = new TestInteractionPort();
-  const gateway = new InteractionGateway({
+  installTestRunScope(t, {
+    runId: "interaction-message-direction",
     eventBus: bus,
     interactionPort: port,
   });
+  const gateway = new InteractionGateway();
   const observed: UserMessageSubmittedPayload[] = [];
   bus.subscribe<UserMessageSubmittedPayload>(
     SystemEvents.interaction.userMessageSubmitted,
@@ -117,13 +124,15 @@ test("interaction gateway separates Coordinator output from user input", async (
   gateway.stop();
 });
 
-test("interaction gateway publishes every task event once", async () => {
+test("interaction gateway publishes every task event once", async (t) => {
   const bus = new InMemoryEventBus();
   const port = new TestInteractionPort();
-  const gateway = new InteractionGateway({
+  installTestRunScope(t, {
+    runId: "interaction-task-events",
     eventBus: bus,
     interactionPort: port,
   });
+  const gateway = new InteractionGateway();
 
   gateway.start();
   await bus.publishAndWait(
@@ -157,7 +166,7 @@ test("interaction gateway publishes every task event once", async () => {
   );
 });
 
-test("interaction gateway projects assigned task plan and Worker activity into TuiStore", async () => {
+test("interaction gateway projects assigned task plan and Worker activity into TuiStore", async (t) => {
   const bus = new InMemoryEventBus();
   const store = new TuiStore({
     cwd: "/repo/scout",
@@ -165,10 +174,12 @@ test("interaction gateway projects assigned task plan and Worker activity into T
     model: "gpt-5.5",
     reasoningEffort: "high",
   });
-  const gateway = new InteractionGateway({
+  installTestRunScope(t, {
+    runId: "interaction-tui-projection",
     eventBus: bus,
     interactionPort: new TuiInteractionAdapter(store),
   });
+  const gateway = new InteractionGateway();
 
   gateway.start();
   await bus.publishAndWait(
@@ -238,7 +249,7 @@ class TestInteractionPort implements RuntimeInteractionPort {
   readonly receivedMessages: AgentMessageReply[] = [];
   readonly taskEvents: ScoutEvent[] = [];
 
-  async publishBootSnapshot(_snapshot: BootSnapshot): Promise<void> {
+  async publishRunLifecycleSnapshot(_snapshot: RunLifecycleSnapshot): Promise<void> {
     return undefined;
   }
 
@@ -260,6 +271,10 @@ class TestInteractionPort implements RuntimeInteractionPort {
 
   async receiveAgentMessage(_message: AgentMessageReply): Promise<void> {
     this.receivedMessages.push(_message);
+    return undefined;
+  }
+
+  async restoreUserMessage(): Promise<void> {
     return undefined;
   }
 

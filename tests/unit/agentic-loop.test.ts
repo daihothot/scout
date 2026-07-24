@@ -23,55 +23,6 @@ test("AgenticLoop runs tick work until idle", async () => {
   assert.equal(loop.isRunning(), false);
 });
 
-test("AgenticLoop schedules delayed tick continuation", async () => {
-  const pending = [1];
-  const ticks: number[] = [];
-  let stopped = false;
-  const loop = new AgenticLoop<number>({
-    agentId: "worker",
-    takeTick: () => pending.shift(),
-    runTick: async (tick) => {
-      ticks.push(tick);
-      if (ticks.length === 1) return { continueAfterMs: 1 };
-      stopped = true;
-      return undefined;
-    },
-    isStopped: () => stopped,
-    onError: () => undefined,
-  });
-
-  loop.schedule();
-  await waitFor(() => ticks.length >= 2);
-
-  assert.deepEqual(ticks, [1, 1]);
-});
-
-test("AgenticLoop lets immediate tick work replace delayed continuation", async () => {
-  const pending = [1];
-  const ticks: number[] = [];
-  let stopped = false;
-  const loop = new AgenticLoop<number>({
-    agentId: "worker",
-    takeTick: () => pending.shift(),
-    runTick: async (tick) => {
-      ticks.push(tick);
-      if (tick === 1) return { continueAfterMs: 50 };
-      stopped = true;
-      return undefined;
-    },
-    isStopped: () => stopped,
-    onError: () => undefined,
-  });
-
-  loop.schedule();
-  await waitFor(() => ticks.length === 1);
-  pending.push(2);
-  loop.schedule();
-  await waitFor(() => ticks.length >= 2);
-
-  assert.deepEqual(ticks, [1, 2]);
-});
-
 test("AgenticLoop schedules again when new tick work appears during finally", async () => {
   const pending = [1];
   let stopped = false;
@@ -118,12 +69,3 @@ test("AgenticLoop does not run tick when no tick can be taken", async () => {
   assert.equal(ticks, 0);
   assert.equal(loop.isRunning(), false);
 });
-
-async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 1));
-  }
-  assert.fail("Timed out waiting for condition.");
-}

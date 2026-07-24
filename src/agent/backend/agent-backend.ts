@@ -4,13 +4,8 @@ import type {
 import { AgentActivityBackend } from "./agent-activity-backend.js";
 import { AgentTaskBackend } from "./agent-task-backend.js";
 import { AgentToolBackend } from "./agent-tool-backend.js";
-import type { AgentBackendOptions } from "./types.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
-
-export type {
-  AgentBackendOptions,
-} from "./types.js";
 
 export class AgentBackend {
   readonly registry: RunScope["agentRegistry"];
@@ -18,16 +13,12 @@ export class AgentBackend {
   readonly task: AgentTaskBackend;
   readonly tool: AgentToolBackend;
   readonly domain: RunScope["domain"];
-  private readonly runId: string;
-  private readonly options: AgentBackendOptions;
   private readonly scope: RunScope;
   private unsubscribeDynamicTools?: () => void;
   private unsubscribeTimeline?: () => void;
 
-  constructor(options: AgentBackendOptions) {
+  constructor() {
     const scope = currentRunScope();
-    this.runId = scope.runId;
-    this.options = options;
     this.scope = scope;
     this.domain = scope.domain;
     this.registry = scope.agentRegistry;
@@ -35,7 +26,6 @@ export class AgentBackend {
     this.task = new AgentTaskBackend();
     this.tool = new AgentToolBackend({
       taskBackend: this.task,
-      agentProvider: this.options.agentProvider,
     });
   }
 
@@ -111,7 +101,7 @@ export class AgentBackend {
       agentId: agent?.agentId,
       taskId: activeTask?.taskId,
       data: {
-        runId: this.runId,
+        runId: this.scope.runId,
         seq: entry.seq,
         threadId: entry.threadId,
         turnId: entry.turnId,

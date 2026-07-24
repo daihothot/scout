@@ -1,4 +1,3 @@
-import type { AgentTaskStore } from "../task/agent-task-store.js";
 import {
   AgentTaskStatuses,
   type AgentTaskState,
@@ -12,18 +11,19 @@ import { ScoutAgent, type ScoutAgentOptions } from "../core/scout-agent.js";
 import { ScoutAgentRoles, type AgentThreadSpec } from "../thread/types.js";
 import { WorkerRunner } from "../runner/worker/worker-runner.js";
 import { agent } from "../context/agent-attachments.js";
+import type { AgentMessage } from "../message/types.js";
 
 export abstract class WorkerAgent extends ScoutAgent {
   declare runner: WorkerRunner | undefined;
-  private readonly workerTaskStore: AgentTaskStore;
   private taskSequence = 0;
 
   constructor(options: ScoutAgentOptions & { spec: AgentThreadSpec }) {
     super(options);
-    this.workerTaskStore = this.runScope.taskStore;
   }
 
-  assignTask(input: AssignAgentTaskInput): Result<AgentTaskState, AgentTaskNotAssignedEventPayload> {
+  async assignTask(
+    input: AssignAgentTaskInput,
+  ): Promise<Result<AgentTaskState, AgentTaskNotAssignedEventPayload>> {
     if (this.runner) {
       const activeTask = this.runner.snapshot().activeTask;
       if (!activeTask) {
@@ -42,22 +42,19 @@ export abstract class WorkerAgent extends ScoutAgent {
     }
 
     const taskSequence = this.taskSequence + 1;
-    const runner = this.createWorkerRunner(input, taskSequence);
-    const task = runner.snapshot().activeTask;
-    if (!task) {
-      throw new Error(`Worker agent ${this.agentId} failed to initialize assigned task.`);
-    }
+    const runner = this.createWorkerRunner({ taskSequence });
+    const task = await runner.assignTask(input);
     this.taskSequence = taskSequence;
     this.runner = runner;
     return Result.ok(task);
   }
 
-  sendMessage(input: SendAgentMessageInput): Result<void, string> {
+  async sendMessage(input: SendAgentMessageInput): Promise<Result<void, string>> {
     const runner = this.runner;
     if (!runner) {
       return Result.err(`Worker agent ${this.agentId} has no task runner to receive a message.`);
     }
-    runner.queueMessage(input);
+    await runner.queueMessage(input);
     return Result.ok(undefined);
   }
 
@@ -93,13 +90,49 @@ export abstract class WorkerAgent extends ScoutAgent {
     return archived;
   }
 
-  private createWorkerRunner(taskInput: AssignAgentTaskInput, taskSequence: number): WorkerRunner {
+  restoreTask(input: {
+    task: AgentTaskState;
+    maxTaskSequence: number;
+  }): void {
+    if (this.runner) {
+      throw new Error(`Worker agent ${this.agentId} already has a runner.`);
+    }
+    this.taskSequence = Math.max(this.taskSequence, input.maxTaskSequence);
+    this.runner = this.createWorkerRunner({
+      taskSequence: input.task.taskSequence,
+      restoredTask: input.task,
+    });
+  }
+
+  restoreState(input: {
+    acceptedMessages: AgentMessage[];
+    pendingMessages: AgentMessage[];
+    resumeContext: string;
+    resumeImmediately: boolean;
+  }): void {
+    if (!this.runner) throw new Error(`Worker agent ${this.agentId} has no restored runner.`);
+    this.runner.restoreState(input);
+  }
+
+  restoreTaskSequence(taskSequence: number): void {
+    if (this.runner) {
+      throw new Error(`Worker agent ${this.agentId} cannot change task sequence with an active runner.`);
+    }
+    this.taskSequence = Math.max(this.taskSequence, taskSequence);
+  }
+
+  activateRestoredTask(): void {
+    if (!this.runner) throw new Error(`Worker agent ${this.agentId} has no restored runner.`);
+    this.runner.activateRestoredTask();
+  }
+
+  private createWorkerRunner(input: {
+    taskSequence: number;
+    restoredTask?: AgentTaskState;
+  }): WorkerRunner {
     const worker = this;
     return new WorkerRunner({
-      store: this.workerTaskStore,
-      eventBus: this.eventBus,
-      taskInput,
-      taskSequence,
+      ...input,
       host: {
         get agentId() {
           return worker.agentId;
@@ -111,14 +144,14 @@ export abstract class WorkerAgent extends ScoutAgent {
           return worker.spec;
         },
         runTurn: (turnInput) => worker.runTurn(turnInput),
-        deliverTaskOutcome: (outcome) => {
+        deliverTaskOutcome: async (outcome) => {
           const coordinator = worker.registry.listAgents().find((candidate) =>
             candidate.role === ScoutAgentRoles.Coordinator
           );
           if (!coordinator) {
             throw new Error(`Worker agent ${worker.agentId} cannot find the Coordinator agent.`);
           }
-          const delivered = coordinator.sendMessage({
+          const delivered = await coordinator.sendMessage({
             message: agent.turn.task_outcome(outcome),
           });
           if (!delivered.ok) throw new Error(delivered.error);

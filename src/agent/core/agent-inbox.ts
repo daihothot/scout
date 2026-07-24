@@ -1,23 +1,22 @@
 import {
   EventMailbox,
-  type EventBus,
   type EventMailboxSubscribeOptions,
   type EventSubscriptionTarget,
   type ScoutEvent,
 } from "../../core/events/index.js";
+import { currentRunScope } from "../../run/run-scope.js";
 
 export interface AgentInboxOptions {
-  eventBus: EventBus;
   isStopped(): boolean;
   onEvents(events: ScoutEvent[]): Promise<void>;
-  onError(error: unknown): void;
+  onError(error: unknown): void | Promise<void>;
 }
 
 export class AgentInbox {
   private readonly mailbox: EventMailbox;
   private readonly isStopped: () => boolean;
   private readonly onEvents: (events: ScoutEvent[]) => Promise<void>;
-  private readonly onError: (error: unknown) => void;
+  private readonly onError: (error: unknown) => void | Promise<void>;
   private execution?: Promise<void>;
 
   constructor(options: AgentInboxOptions) {
@@ -25,7 +24,7 @@ export class AgentInbox {
     this.onEvents = options.onEvents;
     this.onError = options.onError;
     this.mailbox = new EventMailbox({
-      eventBus: options.eventBus,
+      eventBus: currentRunScope().eventBus,
       onEvent: () => this.schedule(),
     });
   }
@@ -78,7 +77,7 @@ export class AgentInbox {
       try {
         await this.onEvents(events);
       } catch (error) {
-        this.onError(error);
+        await this.onError(error);
       }
     }
   }

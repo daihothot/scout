@@ -12,6 +12,10 @@ export interface ScoutRunOptions {
   interactionPort?: RuntimeInteractionPort;
 }
 
+export interface ResumeRunOptions extends ScoutRunOptions {
+  run: string;
+}
+
 export interface RunRootAccess {
   mountRoots: string[];
   trustedRoots: string[];

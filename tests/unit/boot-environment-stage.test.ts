@@ -1,30 +1,39 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
+import type { MountManifest } from "../../src/asset-store/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
-import { BootEnvironmentStage } from "../../src/run/boot/index.js";
+import { PrepareEnvironmentStage } from "../../src/run/startup/index.js";
+import { RestoreEnvironmentStage } from "../../src/run/resume/stages/index.js";
 import {
   installRunScope,
   RunScope,
 } from "../../src/run/run-scope.js";
+import { createTestRunPersistence } from "../helpers/run-persistence.js";
 
 const repoRoot = process.cwd();
 
-test("BootEnvironmentStage materializes, preflights, and commits every agent mount", async (t) => {
+test("PrepareEnvironmentStage materializes, preflights, and commits every agent mount", async (t) => {
   const fixtureRoot = createFixture("scout-boot-environment-");
-  const runtime = installEnvironmentScope(fixtureRoot, "boot-environment-test");
+  const runtime = installEnvironmentScope(t, fixtureRoot, "boot-environment-test");
   t.after(runtime.release);
   const preflightedAgents: string[] = [];
-  const stage = new BootEnvironmentStage({
-    preflightMount: async (input) => {
-      assert.equal(input.appServer, runtime.appServer);
-      preflightedAgents.push(input.mount.agentId);
+  const stage = new PrepareEnvironmentStage({
+    preflightMount: async (mount) => {
+      preflightedAgents.push(mount.agentId);
       return { status: "passed" };
     },
   });
@@ -55,13 +64,30 @@ test("BootEnvironmentStage materializes, preflights, and commits every agent mou
     runtime.scope.contextBundle.assetCommit.assetCommitId,
     stage.agents.coordinator.assetCommit.assetCommitId,
   );
+  const manifest = runtime.scope.manifestStore.read();
+  const runRoot = join(fixtureRoot, "run", stage.runId);
+  assert.equal(manifest.version, 2);
+  assert.equal("environment" in manifest, false);
+  assert.equal("assetCommitId" in manifest, false);
+  assert.deepEqual(Object.keys(manifest.agents ?? {}).sort(), [...roles].sort());
+  for (const role of roles) {
+    const agent = stage.agents[role];
+    const entry = manifest.agents?.[role];
+    assert.ok(entry);
+    assert.equal(entry.mountId, agent.mount.mountId);
+    assert.equal(entry.assetCommitId, agent.assetCommit.assetCommitId);
+    assert.equal(entry.resourceHash, agent.assetCommit.resourceHash);
+    assert.equal(entry.mountManifestRef, relative(runRoot, agent.mount.manifestPath));
+    assert.equal(entry.assetCommitRef, relative(runRoot, agent.assetCommitPath));
+    assert.equal(entry.preflightRef, relative(runRoot, agent.preflightPath));
+  }
 });
 
-test("BootEnvironmentStage preserves failed preflight artifacts and rejects startup", async (t) => {
+test("PrepareEnvironmentStage preserves failed preflight artifacts and rejects startup", async (t) => {
   const fixtureRoot = createFixture("scout-boot-environment-failed-");
-  const runtime = installEnvironmentScope(fixtureRoot, "boot-environment-failed");
+  const runtime = installEnvironmentScope(t, fixtureRoot, "boot-environment-failed");
   t.after(runtime.release);
-  const stage = new BootEnvironmentStage({
+  const stage = new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "failed" }),
   });
 
@@ -80,6 +106,29 @@ test("BootEnvironmentStage preserves failed preflight artifacts and rejects star
   ));
 });
 
+test("RestoreEnvironmentStage rejects source asset drift", async (t) => {
+  const fixtureRoot = createFixture("scout-restore-environment-drift-");
+  const runtime = installEnvironmentScope(t, fixtureRoot, "restore-environment-drift");
+  t.after(runtime.release);
+  const startStage = new PrepareEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  });
+  await startStage.start();
+
+  const coordinator = runtime.scope.environment.agents[ScoutAgentRoles.Coordinator];
+  const mountManifest = JSON.parse(
+    readFileSync(coordinator.mount.manifestPath, "utf8"),
+  ) as MountManifest;
+  const sourceAsset = mountManifest.assets.find((asset) => asset.type !== "plugin");
+  assert.ok(sourceAsset);
+  writeFileSync(resolve(fixtureRoot, sourceAsset.sourcePath), "changed", "utf8");
+
+  await assert.rejects(
+    new RestoreEnvironmentStage().start(),
+    /Persisted asset changed/,
+  );
+});
+
 function createFixture(prefix: string): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
@@ -89,7 +138,11 @@ function createFixture(prefix: string): string {
   return fixtureRoot;
 }
 
-function installEnvironmentScope(repoRoot: string, runId: string): {
+function installEnvironmentScope(
+  t: import("node:test").TestContext,
+  repoRoot: string,
+  runId: string,
+): {
   scope: RunScope;
   appServer: CodexAppServerClient;
   release(): void;
@@ -106,6 +159,7 @@ function installEnvironmentScope(repoRoot: string, runId: string): {
       name: "test",
       dynamicToolsForRole: () => [],
     },
+    ...createTestRunPersistence(t, runId, repoRoot),
     terminate: async () => undefined,
   });
   scope.setAppServer(appServer);

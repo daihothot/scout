@@ -1,5 +1,6 @@
 import type { CodexAppServerClient } from "../agent-server/codex/app-server-client.js";
 import { AgentRegistry } from "../agent/core/agent-registry.js";
+import { AgentHumanInputStore } from "../agent/human-input/index.js";
 import { AgentTaskStore } from "../agent/task/agent-task-store.js";
 import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
@@ -9,6 +10,8 @@ import type {
   RunContextBundle,
   RunEnvironment,
 } from "./types.js";
+import type { RunJournal } from "./journal/index.js";
+import type { RunManifestStore } from "./persistence/index.js";
 
 export interface RunScopeOptions {
   runId: string;
@@ -17,6 +20,8 @@ export interface RunScopeOptions {
   eventBus: EventBus;
   interactionPort: RuntimeInteractionPort;
   domain: ScoutDomain;
+  journal: RunJournal;
+  manifestStore: RunManifestStore;
   terminate(reason: string): Promise<void>;
 }
 
@@ -28,7 +33,10 @@ export class RunScope {
   readonly interactionPort: RuntimeInteractionPort;
   readonly agentRegistry = new AgentRegistry();
   readonly taskStore = new AgentTaskStore();
+  readonly humanInputStore: AgentHumanInputStore;
   readonly domain: ScoutDomain;
+  readonly journal: RunJournal;
+  readonly manifestStore: RunManifestStore;
   private readonly terminateRun: RunScopeOptions["terminate"];
   private activeAppServer?: CodexAppServerClient;
   private preparedEnvironment?: RunEnvironment;
@@ -39,7 +47,10 @@ export class RunScope {
     this.logger = options.logger;
     this.eventBus = options.eventBus;
     this.interactionPort = options.interactionPort;
+    this.humanInputStore = new AgentHumanInputStore();
     this.domain = options.domain;
+    this.journal = options.journal;
+    this.manifestStore = options.manifestStore;
     this.terminateRun = options.terminate;
   }
 
@@ -94,6 +105,10 @@ export class RunScope {
   terminate(reason: string): Promise<void> {
     return this.terminateRun(reason);
   }
+
+  dispose(): void {
+    this.humanInputStore.dispose();
+  }
 }
 
 let activeRunScope: RunScope | undefined;
@@ -103,11 +118,18 @@ export function installRunScope(scope: RunScope): () => void {
     throw new Error(`Run scope already installed: ${activeRunScope.runId}`);
   }
   activeRunScope = scope;
+  try {
+    scope.humanInputStore.start();
+  } catch (error) {
+    activeRunScope = undefined;
+    throw error;
+  }
   return () => {
     if (activeRunScope !== scope) {
       throw new Error(`Cannot release inactive run scope: ${scope.runId}`);
     }
     activeRunScope = undefined;
+    scope.dispose();
   };
 }
 

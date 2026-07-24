@@ -12,7 +12,7 @@ import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { TuiStore } from "../../src/interaction/tui/tui-store.js";
-import type { BootSnapshot } from "../../src/run/boot/boot-stage.js";
+import type { RunLifecycleSnapshot } from "../../src/run/lifecycle/index.js";
 
 test("TuiStore emits user-message ids for user input", () => {
   const store = createStore();
@@ -47,9 +47,9 @@ test("TuiStore does not deliver ordinary input before the run is ready", () => {
   assert.deepEqual(store.snapshot().logs, []);
 });
 
-test("TuiStore projects Boot snapshots into runtime state", () => {
+test("TuiStore projects Run lifecycle snapshots into runtime state", () => {
   const store = createStore();
-  const snapshot = bootSnapshot({
+  const snapshot = lifecycleSnapshot({
     status: "starting",
     completedStages: 1,
     stages: [
@@ -58,17 +58,17 @@ test("TuiStore projects Boot snapshots into runtime state", () => {
     ],
   });
 
-  store.setBootSnapshot(snapshot);
+  store.setRunLifecycleSnapshot(snapshot);
   snapshot.stages[0]!.status = "failed";
 
   assert.equal(store.snapshot().runtime.runId, "run-boot-test");
   assert.equal(store.snapshot().runtime.status, "preparing");
-  assert.equal(store.snapshot().boot?.stages[0]?.status, "completed");
+  assert.equal(store.snapshot().lifecycle?.stages[0]?.status, "completed");
 
-  store.setBootSnapshot(bootSnapshot({ status: "ready", completedStages: 2 }));
+  store.setRunLifecycleSnapshot(lifecycleSnapshot({ status: "ready", completedStages: 2 }));
   assert.equal(store.snapshot().runtime.status, "ready");
 
-  store.setBootSnapshot(bootSnapshot({ status: "failed", completedStages: 1 }));
+  store.setRunLifecycleSnapshot(lifecycleSnapshot({ status: "failed", completedStages: 1 }));
   assert.equal(store.snapshot().runtime.status, "failed");
 });
 
@@ -346,7 +346,9 @@ function taskState(input: Partial<AgentTaskState> = {}): AgentTaskState {
   };
 }
 
-function bootSnapshot(input: Partial<BootSnapshot> = {}): BootSnapshot {
+function lifecycleSnapshot(
+  input: Partial<RunLifecycleSnapshot> = {},
+): RunLifecycleSnapshot {
   return {
     runId: "run-boot-test",
     status: "starting",

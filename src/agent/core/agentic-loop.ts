@@ -1,16 +1,11 @@
 export interface AgenticLoopCommonHandlers {
   isStopped(): boolean;
-  onError(error: unknown): void;
-}
-
-export interface AgenticTickContinuation<TTick> {
-  continueAfterMs?: number;
-  continueWith?: TTick;
+  onError(error: unknown): void | Promise<void>;
 }
 
 export interface AgenticTickLoopHandlers<TTick> extends AgenticLoopCommonHandlers {
   takeTick(): TTick | undefined;
-  runTick(tick: TTick): Promise<void | AgenticTickContinuation<TTick>>;
+  runTick(tick: TTick): Promise<void>;
 }
 
 export interface AgenticLoopOptions<TTick> extends AgenticTickLoopHandlers<TTick> {
@@ -22,9 +17,6 @@ export class AgenticLoop<TTick> {
   private readonly handlers: AgenticTickLoopHandlers<TTick>;
   private execution?: Promise<void>;
   private pendingWork?: TTick;
-  private delayedWork?: TTick;
-  private delayedSchedule?: NodeJS.Timeout;
-  private delayedScheduleVersion = 0;
 
   constructor(options: AgenticLoopOptions<TTick>) {
     this.agentId = options.agentId;
@@ -33,11 +25,10 @@ export class AgenticLoop<TTick> {
 
   schedule(): void {
     if (this.execution) return;
-    if (this.handlers.isStopped() || !this.hasWork({ includeDelayed: false })) return;
-    this.clearDelayedSchedule();
+    if (this.handlers.isStopped() || !this.hasWork()) return;
     this.execution = this.runUntilIdle().finally(() => {
       this.execution = undefined;
-      if (!this.handlers.isStopped() && this.hasWork({ includeDelayed: false })) {
+      if (!this.handlers.isStopped() && this.hasWork()) {
         this.schedule();
       }
     });
@@ -55,7 +46,6 @@ export class AgenticLoop<TTick> {
   }
 
   stop(): void {
-    this.clearDelayedSchedule();
     this.pendingWork = undefined;
   }
 
@@ -69,16 +59,14 @@ export class AgenticLoop<TTick> {
 
   private async runWork(work: TTick): Promise<void> {
     try {
-      const continuation = await this.handlers.runTick(work);
-      this.scheduleTickContinuation(work, continuation);
+      await this.handlers.runTick(work);
     } catch (error) {
-      this.handlers.onError(error);
+      await this.handlers.onError(error);
     }
   }
 
-  private hasWork(input: { includeDelayed: boolean }): boolean {
+  private hasWork(): boolean {
     if (this.pendingWork !== undefined) return true;
-    if (input.includeDelayed && this.delayedWork !== undefined) return true;
     const work = this.takeWorkFromHandlers();
     if (work === undefined) return false;
     this.pendingWork = work;
@@ -91,52 +79,10 @@ export class AgenticLoop<TTick> {
       this.pendingWork = undefined;
       return work;
     }
-    if (this.delayedWork !== undefined) {
-      const work = this.delayedWork;
-      this.delayedWork = undefined;
-      return work;
-    }
     return this.takeWorkFromHandlers();
   }
 
   private takeWorkFromHandlers(): TTick | undefined {
     return this.handlers.takeTick();
-  }
-
-  private scheduleTickContinuation(work: TTick, continuation: void | AgenticTickContinuation<TTick>): void {
-    if (!continuation || continuation.continueAfterMs === undefined) return;
-    const delayMs = Math.max(0, continuation.continueAfterMs);
-    const nextWork = continuation.continueWith ?? work;
-    this.clearDelayedSchedule();
-    const version = ++this.delayedScheduleVersion;
-    const timer = setTimeout(() => {
-      if (version !== this.delayedScheduleVersion) return;
-      this.delayedSchedule = undefined;
-      if (this.handlers.isStopped()) return;
-      this.delayedWork = nextWork;
-      this.scheduleDelayedWork();
-    }, delayMs);
-    timer.unref?.();
-    this.delayedSchedule = timer;
-  }
-
-  private scheduleDelayedWork(): void {
-    if (this.execution) return;
-    if (this.handlers.isStopped() || !this.hasWork({ includeDelayed: true })) return;
-    this.execution = this.runUntilIdle().finally(() => {
-      this.execution = undefined;
-      if (!this.handlers.isStopped() && this.hasWork({ includeDelayed: false })) {
-        this.schedule();
-      }
-    });
-  }
-
-  private clearDelayedSchedule(): void {
-    this.delayedScheduleVersion += 1;
-    if (this.delayedSchedule) {
-      clearTimeout(this.delayedSchedule);
-    }
-    this.delayedSchedule = undefined;
-    this.delayedWork = undefined;
   }
 }

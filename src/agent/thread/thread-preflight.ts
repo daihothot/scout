@@ -1,6 +1,6 @@
 import type { ThreadPreflightReport } from "../../agent-server/types.js";
-import type { CodexAppServerClient } from "../../agent-server/codex/app-server-client.js";
 import type { CodexMount } from "../../asset-store/types.js";
+import { currentRunScope } from "../../run/run-scope.js";
 import type { AgentThreadSnapshot } from "./types.js";
 
 export interface ScoutAgentThreadPreflightSnapshot {
@@ -15,7 +15,6 @@ export async function runThreadPreflight(input: {
   agentId: string;
   thread: AgentThreadSnapshot;
   mount: CodexMount;
-  appServer: CodexAppServerClient;
 }): Promise<ScoutAgentThreadPreflightSnapshot> {
   return {
     agentId: input.agentId,
@@ -29,10 +28,10 @@ export async function runThreadPreflight(input: {
 async function checkThread(input: {
   thread: AgentThreadSnapshot;
   mount: CodexMount;
-  appServer: CodexAppServerClient;
 }): Promise<ThreadPreflightReport> {
+  const appServer = currentRunScope().appServer;
   try {
-    const mcpServerStatus = await input.appServer.request("mcpServerStatus/list", {
+    const mcpServerStatus = await appServer.request("mcpServerStatus/list", {
       threadId: input.thread.threadId,
       detail: "full",
     });
@@ -45,7 +44,7 @@ async function checkThread(input: {
         };
       }
       try {
-        const result = await input.appServer.request("mcpServer/tool/call", {
+        const result = await appServer.request("mcpServer/tool/call", {
           threadId: input.thread.threadId,
           server: server.name,
           tool: server.smoke.tool,

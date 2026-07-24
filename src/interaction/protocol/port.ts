@@ -3,7 +3,7 @@ import type {
   AgentTurnActivity,
 } from "../../agent/activity/activity-event.js";
 import type { ScoutEvent } from "../../core/events/index.js";
-import type { BootSnapshot } from "../../run/boot/boot-stage.js";
+import type { RunLifecycleSnapshot } from "../../run/lifecycle/run-stage.js";
 
 export type RuntimeDisclosureLevel = "debug" | "info" | "warn" | "error";
 
@@ -26,21 +26,28 @@ export interface AgentMessageReply {
   data?: unknown;
 }
 
+export interface RestoredUserMessage {
+  id: string;
+  text: string;
+  createdAt: string;
+}
+
 export type RuntimeInteractionUnsubscribe = () => void;
 
 export interface RuntimeInteractionPort {
-  publishBootSnapshot(snapshot: BootSnapshot): Promise<void>;
+  publishRunLifecycleSnapshot(snapshot: RunLifecycleSnapshot): Promise<void>;
   disclose(event: RuntimeDisclosureEvent): Promise<void>;
   publishAgentActivity(activity: AgentActivity): Promise<void>;
   publishAgentTurnActivity(activity: AgentTurnActivity): Promise<void>;
   publishTaskEvent(event: ScoutEvent): Promise<void>;
   receiveAgentMessage(message: AgentMessageReply): Promise<void>;
+  restoreUserMessage(message: RestoredUserMessage): Promise<void>;
   sendAgentMessage?(handler: (message: AgentMessageSend) => void | Promise<void>): RuntimeInteractionUnsubscribe;
   onExitRequested?(handler: () => void | Promise<void>): RuntimeInteractionUnsubscribe;
 }
 
 export class NoopRuntimeInteractionPort implements RuntimeInteractionPort {
-  async publishBootSnapshot(): Promise<void> {
+  async publishRunLifecycleSnapshot(): Promise<void> {
     // no-op
   }
 
@@ -61,6 +68,10 @@ export class NoopRuntimeInteractionPort implements RuntimeInteractionPort {
   }
 
   async receiveAgentMessage(): Promise<void> {
+    // no-op
+  }
+
+  async restoreUserMessage(): Promise<void> {
     // no-op
   }
 

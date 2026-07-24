@@ -7,10 +7,9 @@ import {
 } from "../../context/agent-attachments.js";
 import { AgenticLoop } from "../../core/agentic-loop.js";
 import {
-  AgentTaskStore,
   cloneAgentTaskState as cloneTaskState,
 } from "../../task/agent-task-store.js";
-import type { EventBus } from "../../../core/events/index.js";
+import { currentRunScope } from "../../../run/run-scope.js";
 import { AgentEvents } from "../../events/index.js";
 import {
   AgentTaskStatuses,
@@ -30,6 +29,8 @@ import {
   parseAgentDynamicToolCall,
 } from "../../tools/agent-tools.js";
 import { AgentRunner } from "../types.js";
+import { randomUUID } from "node:crypto";
+import type { AgentMessage } from "../../message/types.js";
 
 export interface WorkerRunnerSnapshot {
   activeTask?: AgentTaskState;
@@ -41,25 +42,24 @@ export interface WorkerRunnerHost {
   readonly role: AgentThreadSpec["role"];
   readonly spec: AgentThreadSpec;
   runTurn(input: ScoutAgentTurnInput): Promise<ScoutAgentTurnOutcome>;
-  deliverTaskOutcome(outcome: string): void;
+  deliverTaskOutcome(outcome: string): Promise<void>;
 }
 
 export interface WorkerRunnerOptions {
   host: WorkerRunnerHost;
-  store: AgentTaskStore;
-  eventBus: EventBus;
   taskSequence: number;
-  taskInput?: AssignAgentTaskInput;
+  restoredTask?: AgentTaskState;
 }
 
 export class WorkerRunner extends AgentRunner {
   readonly runnerKind = "worker";
   private readonly host: WorkerRunnerHost;
-  private readonly store: AgentTaskStore;
-  private readonly eventBus: EventBus;
   private readonly taskSequence: number;
   private readonly loop: AgenticLoop<AgentTaskState>;
-  private pendingMessages: string[] = [];
+  private readonly acceptedMessages = new Map<string, AgentMessage>();
+  private pendingMessages: AgentMessage[] = [];
+  private resumeContext?: string;
+  private resumeImmediately = false;
   private pendingSubmission?: {
     stepId: string;
     outcome: string;
@@ -70,8 +70,6 @@ export class WorkerRunner extends AgentRunner {
   constructor(options: WorkerRunnerOptions) {
     super();
     this.host = options.host;
-    this.store = options.store;
-    this.eventBus = options.eventBus;
     this.taskSequence = options.taskSequence;
     this.loop = new AgenticLoop<AgentTaskState>({
       agentId: this.host.agentId,
@@ -80,8 +78,8 @@ export class WorkerRunner extends AgentRunner {
       isStopped: () => this.stopped,
       onError: (error) => this.failActiveTask(error),
     });
-    if (options.taskInput) {
-      this.initializeTask(options.taskInput);
+    if (options.restoredTask) {
+      this.restoreTask(options.restoredTask);
     }
   }
 
@@ -89,7 +87,15 @@ export class WorkerRunner extends AgentRunner {
     return this.host.agentId;
   }
 
-  private initializeTask(input: AssignAgentTaskInput): AgentTaskState {
+  private get store() {
+    return currentRunScope().taskStore;
+  }
+
+  private get eventBus() {
+    return currentRunScope().eventBus;
+  }
+
+  async assignTask(input: AssignAgentTaskInput): Promise<AgentTaskState> {
     if (this.stopped) {
       throw new Error(`Agent ${this.host.agentId} is stopped.`);
     }
@@ -112,9 +118,13 @@ export class WorkerRunner extends AgentRunner {
       createdAt: now,
       updatedAt: now,
     };
+    this.eventBus.publish(
+      AgentEvents.task.assigned,
+      task,
+      { occurredAt: now },
+    );
     const stored = this.store.addTask(task);
     this.activeTask = stored;
-    this.eventBus.publish(AgentEvents.task.assigned, stored);
     queueMicrotask(() => this.loop.schedule());
     return stored;
   }
@@ -123,12 +133,34 @@ export class WorkerRunner extends AgentRunner {
     return `${this.host.agentId}-task-${String(taskSequence).padStart(4, "0")}`;
   }
 
-  queueMessage(input: SendAgentMessageInput): void {
+  async queueMessage(input: SendAgentMessageInput): Promise<void> {
     const task = this.resolveMessageTarget(input.taskId);
     if (isTerminalTaskStatus(task.status)) {
       throw new Error(`Cannot queue message for terminal task ${task.taskId}. Status: ${task.status}`);
     }
-    const message = attachments.compose(input.message);
+    const message: AgentMessage = {
+      messageId: input.delivery?.messageId ?? `${task.taskId}-message-${randomUUID()}`,
+      agentId: this.host.agentId,
+      taskId: task.taskId,
+      body: attachments.compose(input.message),
+      queuedAt: input.delivery?.queuedAt ?? new Date().toISOString(),
+    };
+    const accepted = this.acceptedMessages.get(message.messageId);
+    if (accepted && (
+      accepted.agentId !== message.agentId
+      || accepted.taskId !== message.taskId
+      || accepted.body !== message.body
+      || accepted.queuedAt !== message.queuedAt
+    )) {
+      throw new Error(`Message ${message.messageId} does not match its Worker delivery.`);
+    }
+    if (accepted) return;
+    this.eventBus.publish(
+      AgentEvents.message.queued,
+      message,
+      { occurredAt: message.queuedAt },
+    );
+    this.acceptedMessages.set(message.messageId, structuredClone(message));
     this.pendingMessages = [...this.pendingMessages, message];
     const updated = this.updateTask(task.taskId, (currentTask) => ({
       ...currentTask,
@@ -159,35 +191,40 @@ export class WorkerRunner extends AgentRunner {
     return cloneTaskState(task);
   }
 
-  stopTask(taskId: string, reason = "任务已被 Coordinator 停止。"): AgentTaskState {
+  async stopTask(
+    taskId: string,
+    reason = "任务已被 Coordinator 停止。",
+  ): Promise<AgentTaskState> {
     const task = this.getTask(taskId);
     if (isTerminalTaskStatus(task.status)) return cloneTaskState(task);
     this.pendingMessages = [];
     this.pendingSubmission = undefined;
-    const stopped = this.updateTask(taskId, (current) => ({
-      ...current,
+    const stoppedState = {
+      ...task,
       status: AgentTaskStatuses.Stopped,
       error: reason,
       finishedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-    }));
+    } satisfies AgentTaskState;
+    this.eventBus.publish(
+      AgentEvents.task.stopped,
+      stoppedState,
+      { occurredAt: stoppedState.updatedAt },
+    );
+    const stopped = this.updateTask(taskId, () => stoppedState);
     this.activeTask = stopped;
-    this.eventBus.publish(AgentEvents.task.stopped, stopped);
     this.eventBus.publish(AgentEvents.task.terminal, stopped);
     return cloneTaskState(stopped);
   }
 
-  stopAgent(reason = "Agent stopped."): void {
+  async stopAgent(reason = "Agent stopped."): Promise<void> {
     this.stopped = true;
-    const task = this.activeTask;
-    if (task && !isTerminalTaskStatus(task.status)) {
-      this.stopTask(task.taskId, reason);
-    }
     this.loop.stop();
+    await this.loop.runToIdle();
   }
 
-  stop(reason?: string): void {
-    this.stopAgent(reason);
+  stop(reason?: string): Promise<void> {
+    return this.stopAgent(reason);
   }
 
   getTaskSnapshot(taskId: string): AgentTaskState | undefined {
@@ -202,32 +239,63 @@ export class WorkerRunner extends AgentRunner {
     await this.loop.runToIdle();
     this.pendingMessages = [];
     this.pendingSubmission = undefined;
+    const task = this.getTask(taskId);
+    const archivedAt = new Date().toISOString();
+    this.eventBus.publish(
+      AgentEvents.task.archived,
+      task,
+      { occurredAt: archivedAt },
+    );
     const archived = this.store.removeTask(taskId);
     this.activeTask = undefined;
-    this.eventBus.publish(AgentEvents.task.archived, archived);
     return cloneTaskState(archived);
-  }
-
-  private applyPendingMessageState(
-    task: AgentTaskState,
-    messages: string[],
-  ): AgentTaskState {
-    const shouldResume = messages.length > 0
-      && task.status === AgentTaskStatuses.Done;
-    if (!shouldResume) {
-      return task;
-    }
-    const updated = this.updateTask(task.taskId, (current) => ({
-      ...current,
-      status: AgentTaskStatuses.Running,
-      updatedAt: new Date().toISOString(),
-    }));
-    this.activeTask = updated;
-    return updated;
   }
 
   async runTasksToIdle(): Promise<void> {
     await this.loop.runToIdle();
+  }
+
+  activateRestoredTask(): void {
+    const task = this.activeTask;
+    if (!task) throw new Error(`Worker runner ${this.host.agentId} has no restored task.`);
+    if (
+      task.status === AgentTaskStatuses.Queued
+      || this.pendingMessages.length > 0
+      || this.resumeImmediately
+    ) {
+      this.loop.schedule();
+    }
+    this.resumeImmediately = false;
+  }
+
+  restoreState(input: {
+    acceptedMessages: AgentMessage[];
+    pendingMessages: AgentMessage[];
+    resumeContext: string;
+    resumeImmediately: boolean;
+  }): void {
+    if (!this.activeTask) {
+      throw new Error(`Worker runner ${this.host.agentId} has no restored task.`);
+    }
+    if (this.pendingMessages.length > 0 || this.resumeContext) {
+      throw new Error(`Worker runner ${this.host.agentId} runtime state is already restored.`);
+    }
+    this.pendingMessages = structuredClone(input.pendingMessages);
+    this.acceptedMessages.clear();
+    for (const message of [...input.acceptedMessages, ...this.pendingMessages]) {
+      const accepted = this.acceptedMessages.get(message.messageId);
+      if (accepted && (
+        accepted.agentId !== message.agentId
+        || accepted.taskId !== message.taskId
+        || accepted.body !== message.body
+        || accepted.queuedAt !== message.queuedAt
+      )) {
+        throw new Error(`Message ${message.messageId} does not match its Worker delivery.`);
+      }
+      this.acceptedMessages.set(message.messageId, structuredClone(message));
+    }
+    this.resumeContext = input.resumeContext;
+    this.resumeImmediately = input.resumeImmediately;
   }
 
   snapshot(): WorkerRunnerSnapshot {
@@ -241,7 +309,8 @@ export class WorkerRunner extends AgentRunner {
     const task = this.activeTask;
     if (!task) return undefined;
     return task.status === AgentTaskStatuses.Queued
-        || this.countPendingMessages(task.taskId) > 0
+        || this.pendingMessages.length > 0
+        || this.resumeContext !== undefined
       ? task
       : undefined;
   }
@@ -263,30 +332,18 @@ export class WorkerRunner extends AgentRunner {
       if (!initialPrompt) {
         throw new Error(`Task ${taskId} has no initial prompt.`);
       }
-      task = this.updateTask(taskId, (current) => ({
-        ...current,
+      task = {
+        ...task,
         startedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      }));
-      task = this.getTask(taskId);
-      if (isTerminalTaskStatus(task.status)) {
-        this.activeTask = task;
-        return;
-      }
+      };
     }
 
-    const pendingMessages = this.drainPendingMessages(taskId);
-    task = this.applyPendingMessageState(task, pendingMessages);
-    if (pendingMessages.length > 0) {
-      this.eventBus.publish(AgentEvents.task.pendingMessagesDrained, task);
-    }
-    task = this.getTask(taskId);
-    if (isTerminalTaskStatus(task.status)) {
-      this.activeTask = task;
-      return;
-    }
+    const pendingMessages = structuredClone(this.pendingMessages);
+    const resumeContext = this.resumeContext;
     const prompt = attachments.compose(
       agent.turn.use_update_tools(),
+      ...(resumeContext ? [resumeContext] : []),
       ...(initialPrompt === undefined ? [] : [
         agent.turn.message([
           "当前任务信息：",
@@ -295,19 +352,43 @@ export class WorkerRunner extends AgentRunner {
         ].join("\n")),
         initialPrompt,
       ]),
-      ...pendingMessages,
+      ...pendingMessages.map((message) => message.body),
     );
 
-    const running = this.updateTask(taskId, (current) => this.appendTaskStep({
+    const runningState = this.appendTaskStep({
       task: {
-        ...current,
+        ...task,
         status: AgentTaskStatuses.Running,
       },
       prompt,
       startedAt: new Date().toISOString(),
-    }));
+    });
+    this.eventBus.publish(
+      AgentEvents.task.stepStarted,
+      runningState,
+      { occurredAt: runningState.updatedAt },
+    );
+    for (const message of pendingMessages) {
+      const consumedAt = new Date().toISOString();
+      this.eventBus.publish(AgentEvents.message.consumed, {
+        messageId: message.messageId,
+        agentId: message.agentId,
+        taskId: message.taskId,
+        consumedAt,
+      }, {
+        occurredAt: consumedAt,
+      });
+    }
+    const running = this.updateTask(taskId, () => runningState);
+    const consumed = new Set(pendingMessages.map((message) => message.messageId));
+    this.pendingMessages = this.pendingMessages.filter((message) =>
+      !consumed.has(message.messageId)
+    );
+    this.resumeContext = undefined;
     this.activeTask = running;
-    this.eventBus.publish(AgentEvents.task.stepStarted, running);
+    if (pendingMessages.length > 0) {
+      this.eventBus.publish(AgentEvents.task.pendingMessagesDrained, running);
+    }
 
     const startedAt = Date.now();
     const outcome = await this.host.runTurn({
@@ -323,26 +404,36 @@ export class WorkerRunner extends AgentRunner {
     }
     if (isTerminalTaskStatus(latest.status)) {
       this.pendingSubmission = undefined;
-      const updated = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
-        task: current,
+      const completedState = this.completeLatestTaskStep({
+        task: latest,
         outcome,
         durationMs,
         status: outcome.turn.status === "failed" ? AgentTaskStepStatuses.Failed : AgentTaskStepStatuses.Completed,
-      }));
+      });
+      this.eventBus.publish(
+        AgentEvents.task.stepCompleted,
+        completedState,
+        { occurredAt: completedState.updatedAt },
+      );
+      const updated = this.updateTask(taskId, () => completedState);
       this.activeTask = updated;
-      this.eventBus.publish(AgentEvents.task.stepCompleted, updated);
       return;
     }
 
     if (outcome.turn.status === "completed") {
-      const stillRunning = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
-        task: current,
+      const completedState = this.completeLatestTaskStep({
+        task: latest,
         outcome,
         durationMs,
         status: AgentTaskStepStatuses.Completed,
-      }));
+      });
+      this.eventBus.publish(
+        AgentEvents.task.stepCompleted,
+        completedState,
+        { occurredAt: completedState.updatedAt },
+      );
+      const stillRunning = this.updateTask(taskId, () => completedState);
       this.activeTask = stillRunning;
-      this.eventBus.publish(AgentEvents.task.stepCompleted, stillRunning);
       const submission = this.pendingSubmission;
       this.pendingSubmission = undefined;
       if (submission) {
@@ -352,22 +443,36 @@ export class WorkerRunner extends AgentRunner {
             `Worker task ${taskId} submitted outcome for ${submission.stepId}, not ${completedStep?.stepId ?? "<none>"}.`,
           );
         }
-        this.host.deliverTaskOutcome(submission.outcome);
-        const done = this.updateTask(taskId, (current) => ({
-          ...current,
+        const doneState = {
+          ...stillRunning,
           status: AgentTaskStatuses.Done,
           updatedAt: new Date().toISOString(),
-        }));
+        } satisfies AgentTaskState;
+        const submittedAt = new Date().toISOString();
+        this.eventBus.publish(AgentEvents.task.outcomeSubmitted, {
+          task: doneState,
+          stepId: submission.stepId,
+          outcome: submission.outcome,
+          submittedAt,
+        }, {
+          occurredAt: submittedAt,
+        });
+        const done = this.updateTask(taskId, () => doneState);
         this.activeTask = done;
-        this.eventBus.publish(AgentEvents.task.done, done);
+        this.eventBus.publish(
+          AgentEvents.task.done,
+          done,
+          { occurredAt: done.updatedAt },
+        );
+        await this.host.deliverTaskOutcome(submission.outcome);
       }
       return;
     }
 
     this.pendingSubmission = undefined;
-    const failed = this.updateTask(taskId, (current) => this.completeLatestTaskStep({
+    const failedState = this.completeLatestTaskStep({
       task: {
-        ...current,
+        ...latest,
         status: AgentTaskStatuses.Failed,
         error: outcome.turn.error,
         finishedAt: new Date().toISOString(),
@@ -375,9 +480,14 @@ export class WorkerRunner extends AgentRunner {
       outcome,
       durationMs,
       status: AgentTaskStepStatuses.Failed,
-    }));
+    });
+    this.eventBus.publish(
+      AgentEvents.task.failed,
+      failedState,
+      { occurredAt: failedState.updatedAt },
+    );
+    const failed = this.updateTask(taskId, () => failedState);
     this.activeTask = failed;
-    this.eventBus.publish(AgentEvents.task.failed, failed);
     this.eventBus.publish(AgentEvents.task.terminal, failed);
   }
 
@@ -386,16 +496,29 @@ export class WorkerRunner extends AgentRunner {
     if (!this.activeTask) {
       return;
     }
+    if (
+      this.activeTask.status === AgentTaskStatuses.Done
+      || this.activeTask.status === AgentTaskStatuses.Failed
+      || this.activeTask.status === AgentTaskStatuses.Stopped
+    ) {
+      return;
+    }
     const taskId = this.activeTask.taskId;
-    const failed = this.updateTask(taskId, (current) => ({
+    const current = this.getTask(taskId);
+    const failedState = {
       ...current,
       status: AgentTaskStatuses.Failed,
       error: error instanceof Error ? error.stack ?? error.message : String(error),
       finishedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-    }));
+    } satisfies AgentTaskState;
+    this.eventBus.publish(
+      AgentEvents.task.failed,
+      failedState,
+      { occurredAt: failedState.updatedAt },
+    );
+    const failed = this.updateTask(taskId, () => failedState);
     this.activeTask = failed;
-    this.eventBus.publish(AgentEvents.task.failed, failed);
     this.eventBus.publish(AgentEvents.task.terminal, failed);
   }
 
@@ -434,7 +557,9 @@ export class WorkerRunner extends AgentRunner {
     return this.updateLatestTaskStep({
       task: {
         ...input.task,
-        status: input.status === AgentTaskStepStatuses.Completed ? input.task.status : input.status,
+        status: input.status === AgentTaskStepStatuses.Failed
+          ? AgentTaskStatuses.Failed
+          : input.task.status,
       },
       update: (step) => ({
         ...step,
@@ -495,18 +620,6 @@ export class WorkerRunner extends AgentRunner {
     return this.activeTask;
   }
 
-  private drainPendingMessages(taskId: string): string[] {
-    this.ensureOwnedTask(taskId);
-    const messages = this.pendingMessages;
-    this.pendingMessages = [];
-    return messages;
-  }
-
-  private countPendingMessages(taskId: string): number {
-    this.ensureOwnedTask(taskId);
-    return this.pendingMessages.length;
-  }
-
   private getTask(taskId: string): AgentTaskState {
     this.ensureOwnedTask(taskId);
     const task = this.store.getTask(taskId);
@@ -530,6 +643,14 @@ export class WorkerRunner extends AgentRunner {
     if (this.activeTask?.taskId !== taskId) {
       throw new Error(`Worker runner ${this.host.agentId} owns task ${this.activeTask?.taskId ?? "<none>"}, not ${taskId}.`);
     }
+  }
+
+  private restoreTask(task: AgentTaskState): void {
+    if (task.agentId !== this.host.agentId) {
+      throw new Error(`Cannot restore task ${task.taskId} to agent ${this.host.agentId}.`);
+    }
+    const stored = this.store.getTask(task.taskId) ?? this.store.addTask(task);
+    this.activeTask = stored;
   }
 
 }

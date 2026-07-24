@@ -5,10 +5,12 @@ import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestra
 import { AgentTaskStatuses } from "../../src/agent/task/types.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
+import { installTestRunScope } from "../helpers/run-persistence.js";
 
-test("AgentOrchestrator owns its lifecycle and consumes task events", async () => {
+test("AgentOrchestrator owns its lifecycle and consumes task events", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const orchestrator = new AgentOrchestrator({ eventBus });
+  installTestRunScope(t, { runId: "agent-orchestrator", eventBus });
+  const orchestrator = new AgentOrchestrator();
 
   assert.deepEqual(orchestrator.snapshot(), {
     started: false,

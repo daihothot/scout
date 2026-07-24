@@ -1,14 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  BootExecutor,
-  type BootStage,
-} from "../../src/run/boot/index.js";
+  RunStageExecutor,
+  type RunStage,
+} from "../../src/run/lifecycle/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 
-test("BootExecutor starts registered groups and terminates them in reverse dependency order", async () => {
+test("RunStageExecutor starts registered groups and terminates them in reverse dependency order", async () => {
   const activity: string[] = [];
-  const boot = new BootExecutor({ runId: "run-1", logger: noopLogger() });
+  const boot = new RunStageExecutor({ runId: "run-1", logger: noopLogger() });
   boot.registerSerial(
     stage("a", activity),
     stage("b", activity),
@@ -33,9 +33,9 @@ test("BootExecutor starts registered groups and terminates them in reverse depen
   assert.ok(boot.snapshot().stages.every((entry) => entry.status === "stopped"));
 });
 
-test("BootExecutor waits for a parallel group to settle before rolling back successful stages", async () => {
+test("RunStageExecutor waits for a parallel group to settle before rolling back successful stages", async () => {
   const activity: string[] = [];
-  const boot = new BootExecutor({ runId: "run-2", logger: noopLogger() });
+  const boot = new RunStageExecutor({ runId: "run-2", logger: noopLogger() });
   boot.registerSerial(stage("base", activity));
   boot.registerParallel(
     {
@@ -43,6 +43,9 @@ test("BootExecutor waits for a parallel group to settle before rolling back succ
       async start() {
         activity.push("start:failed");
         throw new Error("parallel failed");
+      },
+      async stop(reason) {
+        activity.push(`stop:failed:${reason}`);
       },
     },
     {
@@ -61,12 +64,13 @@ test("BootExecutor waits for a parallel group to settle before rolling back succ
   await assert.rejects(boot.startup(), /parallel failed/);
 
   assert.ok(activity.indexOf("complete:slow") < activity.indexOf("stop:slow:startup_failed"));
+  assert.ok(activity.includes("stop:failed:startup_failed"));
   assert.ok(activity.indexOf("stop:slow:startup_failed") < activity.indexOf("stop:base:startup_failed"));
   assert.equal(boot.snapshot().status, "failed");
-  assert.equal(boot.snapshot().stages.find((entry) => entry.id === "failed")?.status, "failed");
+  assert.equal(boot.snapshot().stages.find((entry) => entry.id === "failed")?.status, "stopped");
 });
 
-test("BootExecutor terminates after the active startup group settles and skips later groups", async () => {
+test("RunStageExecutor terminates after the active startup group settles and skips later groups", async () => {
   const activity: string[] = [];
   let releaseStart: (() => void) | undefined;
   const started = new Promise<void>((resolve) => {
@@ -76,7 +80,7 @@ test("BootExecutor terminates after the active startup group settles and skips l
   const running = new Promise<void>((resolve) => {
     markRunning = resolve;
   });
-  const boot = new BootExecutor({ runId: "run-3", logger: noopLogger() });
+  const boot = new RunStageExecutor({ runId: "run-3", logger: noopLogger() });
   boot.registerSerial(
     {
       id: "slow",
@@ -103,8 +107,8 @@ test("BootExecutor terminates after the active startup group settles and skips l
   assert.equal(boot.snapshot().status, "terminated");
 });
 
-test("BootExecutor rejects duplicate and late registration and shares termination", async () => {
-  const boot = new BootExecutor({ runId: "run-4", logger: noopLogger() });
+test("RunStageExecutor rejects duplicate and late registration and shares termination", async () => {
+  const boot = new RunStageExecutor({ runId: "run-4", logger: noopLogger() });
   boot.registerSerial(stage("only", []));
   assert.throws(() => boot.registerParallel(stage("only", [])), /Duplicate/);
   await boot.startup();
@@ -115,9 +119,9 @@ test("BootExecutor rejects duplicate and late registration and shares terminatio
   await first;
 });
 
-test("BootExecutor continues reverse termination after a stage fails to stop", async () => {
+test("RunStageExecutor continues reverse termination after a stage fails to stop", async () => {
   const activity: string[] = [];
-  const boot = new BootExecutor({ runId: "run-5", logger: noopLogger() });
+  const boot = new RunStageExecutor({ runId: "run-5", logger: noopLogger() });
   boot.registerSerial(
     stage("first", activity),
     {
@@ -146,7 +150,7 @@ test("BootExecutor continues reverse termination after a stage fails to stop", a
   assert.equal(boot.snapshot().stages.find((entry) => entry.id === "first")?.status, "stopped");
 });
 
-function stage(id: string, activity: string[]): BootStage {
+function stage(id: string, activity: string[]): RunStage {
   return {
     id,
     async start() {

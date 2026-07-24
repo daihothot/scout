@@ -21,6 +21,7 @@ export interface ScoutDomain {
   handleDynamicToolCall?(
     call: ScoutDomainDynamicToolCall,
   ): Promise<DynamicToolCallResponse | undefined> | DynamicToolCallResponse | undefined;
+  restore?(): Promise<void> | void;
   start?(): Promise<void>;
   stop?(): Promise<void>;
 }

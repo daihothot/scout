@@ -3,6 +3,7 @@ import type {
   AgentMessageReply,
   AgentMessageSend,
   RuntimeDisclosureEvent,
+  RestoredUserMessage,
   RuntimeInteractionPort,
   RuntimeInteractionUnsubscribe,
 } from "../protocol/port.js";
@@ -10,14 +11,14 @@ import type {
   AgentActivity,
   AgentTurnActivity,
 } from "../../agent/activity/activity-event.js";
-import type { BootSnapshot } from "../../run/boot/boot-stage.js";
+import type { RunLifecycleSnapshot } from "../../run/lifecycle/run-stage.js";
 import type { TuiStore } from "./tui-store.js";
 
 export class TuiInteractionAdapter implements RuntimeInteractionPort {
   constructor(private readonly store: TuiStore) {}
 
-  async publishBootSnapshot(snapshot: BootSnapshot): Promise<void> {
-    this.store.setBootSnapshot(snapshot);
+  async publishRunLifecycleSnapshot(snapshot: RunLifecycleSnapshot): Promise<void> {
+    this.store.setRunLifecycleSnapshot(snapshot);
   }
 
   async disclose(event: RuntimeDisclosureEvent): Promise<void> {
@@ -38,6 +39,10 @@ export class TuiInteractionAdapter implements RuntimeInteractionPort {
 
   async receiveAgentMessage(message: AgentMessageReply): Promise<void> {
     this.store.receiveAgentMessage(message);
+  }
+
+  async restoreUserMessage(message: RestoredUserMessage): Promise<void> {
+    this.store.restoreUserMessage(message);
   }
 
   sendAgentMessage(handler: (message: AgentMessageSend) => void | Promise<void>): RuntimeInteractionUnsubscribe {

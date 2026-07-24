@@ -54,15 +54,14 @@ export class CoordinatorAgent extends ScoutAgent {
           return coordinator.threadId;
         },
       },
-      eventBus: scope.eventBus,
     });
   }
 
-  sendMessage(input: SendAgentMessageInput): Result<void, string> {
+  async sendMessage(input: SendAgentMessageInput): Promise<Result<void, string>> {
     if (input.taskId) {
       return Result.err(`Coordinator agent ${this.agentId} does not own task ${input.taskId}.`);
     }
-    this.runner.queueMessage(input);
+    await this.runner.queueMessage(input);
     return Result.ok(undefined);
   }
 }

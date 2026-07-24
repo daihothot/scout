@@ -27,11 +27,14 @@ export class AgentTaskBackend {
     this.eventBus = scope.eventBus;
   }
 
-  stopAgentTask(target: string, reason = "任务已被 Coordinator 停止。"): AgentTaskState {
+  async stopAgentTask(
+    target: string,
+    reason = "任务已被 Coordinator 停止。",
+  ): Promise<AgentTaskState> {
     const resolved = this.resolveTaskTarget(target);
     const runner = resolved.agent.runner;
     if (!runner) throw new Error(`Agent ${resolved.agent.agentId} has no runner for task ${resolved.taskId}.`);
-    const task = runner.stopTask(resolved.taskId, reason);
+    const task = await runner.stopTask(resolved.taskId, reason);
     return task;
   }
 

@@ -3,7 +3,8 @@
         "Agentic",
         "Backgrounded",
         "codegraph",
-        "unsubscribers"
+        "unsubscribers",
+        "unarchived"
     ],
     "js/ts.experimental.useTsgo": false
 }

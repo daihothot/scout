@@ -18,4 +18,7 @@ export * from "./tools/agent-tools.js";
 export * from "./tools/types.js";
 export * from "./events/index.js";
 export * from "./activity/activity-event.js";
+export * from "./message/index.js";
+export * from "./human-input/index.js";
+export * from "./thread/turn-events.js";
 export * from "./telemetry/index.js";

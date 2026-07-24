@@ -1,4 +1,4 @@
-import { startRun } from "./index.js";
+import { resumeRun, startRun } from "./index.js";
 import { startScoutTui } from "../interaction/tui/run-tui.js";
 import {
   readAgentProfilesForRepo,
@@ -7,6 +7,7 @@ import {
 
 export async function runScoutTui(input: {
   cwd: string;
+  resume?: string;
 }): Promise<void> {
   const defaultModel = resolveDefaultAgentModel(readAgentProfilesForRepo(input.cwd));
   const tui = startScoutTui({
@@ -16,10 +17,16 @@ export async function runScoutTui(input: {
     reasoningEffort: defaultModel.reasoningEffort,
   });
   try {
-    const result = await startRun({
-      cwd: input.cwd,
-      interactionPort: tui.interactionPort,
-    });
+    const result = input.resume
+      ? await resumeRun({
+        cwd: input.cwd,
+        run: input.resume,
+        interactionPort: tui.interactionPort,
+      })
+      : await startRun({
+        cwd: input.cwd,
+        interactionPort: tui.interactionPort,
+      });
     tui.store.setRun({
       runId: result.runId,
       status: result.status === "passed" ? "ready" : "failed",
@@ -39,7 +46,12 @@ export async function runScoutTui(input: {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
+  const args = process.argv.slice(2);
+  if (args.length > 0 && (args[0] !== "resume" || !args[1] || args.length > 2)) {
+    throw new Error("Usage: scout | scout resume <runId|runDir>");
+  }
   await runScoutTui({
     cwd: process.cwd(),
+    resume: args[0] === "resume" ? args[1] : undefined,
   });
 }

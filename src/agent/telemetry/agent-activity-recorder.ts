@@ -1,48 +1,33 @@
 import type {
-  EventBus,
   UnsubscribeEventHandler,
 } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
+import { currentRunScope } from "../../run/run-scope.js";
 import type {
   AgentActivity,
   AgentNativeSubagentActivity,
   AgentTurnActivity,
 } from "../activity/activity-event.js";
-import type { AgentRegistry } from "../core/agent-registry.js";
 import { AgentEvents } from "../events/index.js";
 
-export interface AgentActivityRecorderOptions {
-  runId: string;
-  eventBus: EventBus;
-  registry: AgentRegistry;
-}
-
 export class AgentActivityRecorder {
-  private readonly runId: string;
-  private readonly eventBus: EventBus;
-  private readonly registry: AgentRegistry;
   private readonly activityLoggers = new Map<string, Logger>();
   private readonly nativeSubagentLoggers = new Map<string, Logger>();
   private unsubscribers: UnsubscribeEventHandler[] = [];
 
-  constructor(options: AgentActivityRecorderOptions) {
-    this.runId = options.runId;
-    this.eventBus = options.eventBus;
-    this.registry = options.registry;
-  }
-
   start(): void {
     if (this.unsubscribers.length > 0) return;
+    const eventBus = currentRunScope().eventBus;
     this.unsubscribers.push(
-      this.eventBus.subscribe<AgentActivity>(
+      eventBus.subscribe<AgentActivity>(
         AgentEvents.activity.observed,
         (event) => this.recordActivity(event.payload),
       ),
-      this.eventBus.subscribe<AgentTurnActivity>(
+      eventBus.subscribe<AgentTurnActivity>(
         AgentEvents.activity.turnObserved,
         (event) => this.recordTurn(event.payload),
       ),
-      this.eventBus.subscribe<AgentNativeSubagentActivity>(
+      eventBus.subscribe<AgentNativeSubagentActivity>(
         AgentEvents.activity.nativeSubagentObserved,
         (event) => this.recordNativeSubagentActivity(event.payload),
       ),
@@ -93,9 +78,10 @@ export class AgentActivityRecorder {
   private loggerFor(agentId: string): Logger {
     const existing = this.activityLoggers.get(agentId);
     if (existing) return existing;
-    const agent = this.registry.resolveAgent(agentId);
+    const scope = currentRunScope();
+    const agent = scope.agentRegistry.resolveAgent(agentId);
     const logger = new Logger({
-      runId: this.runId,
+      runId: scope.runId,
       logsRoot: agent.mount.logsRoot,
       fileName: "activity.log",
     });
@@ -106,9 +92,10 @@ export class AgentActivityRecorder {
   private nativeSubagentLoggerFor(agentId: string): Logger {
     const existing = this.nativeSubagentLoggers.get(agentId);
     if (existing) return existing;
-    const agent = this.registry.resolveAgent(agentId);
+    const scope = currentRunScope();
+    const agent = scope.agentRegistry.resolveAgent(agentId);
     const logger = new Logger({
-      runId: this.runId,
+      runId: scope.runId,
       logsRoot: agent.mount.logsRoot,
       fileName: "subagent.log",
     });

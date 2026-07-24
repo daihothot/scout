@@ -1,35 +1,19 @@
 import type {
-  EventBus,
   ScoutEvent,
   UnsubscribeEventHandler,
 } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
-import type { AgentRegistry } from "../core/agent-registry.js";
+import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
 import type { AgentThreadSnapshot } from "../thread/types.js";
 
-export interface AgentThreadRecorderOptions {
-  runId: string;
-  eventBus: EventBus;
-  registry: AgentRegistry;
-}
-
 export class AgentThreadRecorder {
-  private readonly runId: string;
-  private readonly eventBus: EventBus;
-  private readonly registry: AgentRegistry;
   private readonly threadLoggers = new Map<string, Logger>();
   private unsubscribe?: UnsubscribeEventHandler;
 
-  constructor(options: AgentThreadRecorderOptions) {
-    this.runId = options.runId;
-    this.eventBus = options.eventBus;
-    this.registry = options.registry;
-  }
-
   start(): void {
     if (this.unsubscribe) return;
-    this.unsubscribe = this.eventBus.subscribe<AgentThreadSnapshot>(
+    this.unsubscribe = currentRunScope().eventBus.subscribe<AgentThreadSnapshot>(
       AgentEvents.thread,
       (event) => this.record(event),
     );
@@ -73,9 +57,10 @@ export class AgentThreadRecorder {
   private loggerFor(agentId: string): Logger {
     const existing = this.threadLoggers.get(agentId);
     if (existing) return existing;
-    const agent = this.registry.resolveAgent(agentId);
+    const scope = currentRunScope();
+    const agent = scope.agentRegistry.resolveAgent(agentId);
     const logger = new Logger({
-      runId: this.runId,
+      runId: scope.runId,
       logsRoot: agent.mount.logsRoot,
       fileName: "thread.log",
       summarizer: (event) => event,

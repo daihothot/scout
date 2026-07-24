@@ -1,11 +1,9 @@
 import { event } from "../../../core/events/index.js";
 import { AgentEvents } from "../../events/catalog.js";
-import type { ScoutAgentTurnRecord } from "../../core/scout-agent.js";
 
 const coordinatorRunnerEventCatalog = {
   coordinator: {
-    messageProduced: event(),
-    turnCompleted: event(),
+    messageProduced: event<CoordinatorMessageProducedPayload>(),
   },
 } as const;
 
@@ -21,13 +19,4 @@ export interface CoordinatorMessageProducedPayload {
   text: string;
   createdAt: string;
   data?: unknown;
-}
-
-export interface CoordinatorTurnCompletedPayload {
-  agentId: string;
-  threadId?: string;
-  turnId?: string;
-  status: ScoutAgentTurnRecord["status"];
-  completedAt: string;
-  turn: ScoutAgentTurnRecord;
 }
