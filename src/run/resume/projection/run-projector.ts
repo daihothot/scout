@@ -2,7 +2,10 @@ import {
   AgentTaskStatuses,
   type AgentTaskState,
 } from "../../../agent/task/types.js";
-import type { ScoutAgentRole } from "../../../agent/thread/types.js";
+import type {
+  AgentThreadSnapshot,
+  ScoutAgentRole,
+} from "../../../agent/thread/types.js";
 import { AgentEvents } from "../../../agent/events/index.js";
 import type { AgentHumanInputState } from "../../../agent/human-input/index.js";
 import type { AgentMessage } from "../../../agent/message/types.js";
@@ -64,6 +67,7 @@ export interface ProjectedGate {
 export interface RunProjection {
   runId: string;
   checkpointSeq: number;
+  threads: AgentThreadSnapshot[];
   tasks: AgentTaskState[];
   archivedTasks: ProjectedArchivedTask[];
   messageDeliveries: AgentMessage[];
@@ -95,6 +99,7 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
   }
   const tasks = new Map<string, AgentTaskState>();
   const archivedTasks = new Map<string, ProjectedArchivedTask>();
+  const threads = new Map<string, AgentThreadSnapshot>();
   const queuedMessages = new Map<string, AgentMessage>();
   const queuedMessageSeq = new Map<string, number>();
   const recoveryMessages = new Map<string, AgentMessage>();
@@ -110,6 +115,40 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
   const coordinatorMessages: RunProjection["coordinatorMessages"] = [];
 
   for (const event of events) {
+    if (AgentEvents.thread.started.is(event)) {
+      threads.set(event.payload.agentId, structuredClone(event.payload));
+      continue;
+    }
+    if (AgentEvents.thread.resumed.is(event)) {
+      const existing = threads.get(event.payload.agentId);
+      if (!existing || existing.threadId !== event.payload.threadId) {
+        throw new Error(
+          `Thread resumed without matching start: ${event.payload.threadId}`,
+        );
+      }
+      threads.set(event.payload.agentId, {
+        agentId: existing.agentId,
+        role: existing.role,
+        phases: [...existing.phases],
+        contextBundleId: existing.contextBundleId,
+        threadId: existing.threadId,
+        createdAt: existing.createdAt,
+        status: "active",
+        startInput: structuredClone(existing.startInput),
+        startResponse: structuredClone(existing.startResponse),
+      });
+      continue;
+    }
+    if (AgentEvents.thread.closed.is(event)) {
+      const existing = threads.get(event.payload.agentId);
+      if (!existing || existing.threadId !== event.payload.threadId) {
+        throw new Error(
+          `Thread closed without matching start: ${event.payload.threadId}`,
+        );
+      }
+      threads.set(event.payload.agentId, structuredClone(event.payload));
+      continue;
+    }
     if (applyTaskJournalEvent(tasks, archivedTasks, event)) {
       if (AgentEvents.task.outcomeSubmitted.is(event)) {
         outcomes.push({
@@ -271,6 +310,7 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
   return {
     runId: created.payload.runId,
     checkpointSeq: events[events.length - 1]?.seq ?? 0,
+    threads: [...threads.values()].map((thread) => structuredClone(thread)),
     tasks: [...tasks.values()].map((task) => structuredClone(task)),
     archivedTasks: [...archivedTasks.values()].map((task) => structuredClone(task)),
     messageDeliveries: [...queuedMessages.values()].map((message) => structuredClone(message)),

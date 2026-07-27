@@ -12,7 +12,10 @@ import type {
   AgentTaskState,
   SendAgentMessageInput,
 } from "../task/types.js";
-import type { AgentThreadSnapshot, AgentThreadSpec } from "../thread/types.js";
+import type {
+  AgentThreadSnapshot,
+  AgentThreadSpec,
+} from "../thread/types.js";
 import {
   runThreadPreflight,
   type ScoutAgentThreadPreflightSnapshot,
@@ -121,7 +124,7 @@ export abstract class ScoutAgent {
 
   abstract sendMessage(input: SendAgentMessageInput): Promise<Result<void, string>>;
 
-  async start(): Promise<AgentThreadSnapshot> {
+  async startThread(): Promise<AgentThreadSnapshot> {
     if (this.thread?.status === "active") return this.thread;
     if (this.thread) {
       throw new Error(`Agent ${this.agentId} thread is closed.`);
@@ -133,6 +136,7 @@ export abstract class ScoutAgent {
       cwd: this.spec.cwd,
       approvalPolicy: this.spec.approvalPolicy,
       sandbox: this.spec.sandbox,
+      ephemeral: false,
       config: this.spec.config,
       baseInstructions: this.spec.baseInstructions,
       developerInstructions: this.spec.developerInstructions,
@@ -155,7 +159,67 @@ export abstract class ScoutAgent {
     return this.thread;
   }
 
-  async stop(reason: string): Promise<void> {
+  async resumeThread(input: {
+    thread: AgentThreadSnapshot;
+    invocationSequence: number;
+  }): Promise<AgentThreadSnapshot> {
+    if (this.thread?.status === "active") return this.thread;
+    if (this.thread) {
+      throw new Error(`Agent ${this.agentId} thread is closed.`);
+    }
+    if (input.thread.agentId !== this.agentId || input.thread.role !== this.role) {
+      throw new Error(
+        `Thread ${input.thread.threadId} does not belong to agent ${this.agentId}.`,
+      );
+    }
+    if (input.thread.startInput.ephemeral) {
+      throw new Error(`Thread ${input.thread.threadId} is ephemeral and cannot be resumed.`);
+    }
+    if (
+      !Number.isInteger(input.invocationSequence)
+      || input.invocationSequence < 0
+    ) {
+      throw new Error(`Invalid invocation sequence for agent ${this.agentId}.`);
+    }
+    const resumed = await this.appServer.resumeThread({
+      threadId: input.thread.threadId,
+      model: this.spec.model.id,
+      modelProvider: this.spec.model.provider,
+      reasoningEffort: this.spec.model.reasoningEffort,
+      cwd: this.spec.cwd,
+      approvalPolicy: this.spec.approvalPolicy,
+      sandbox: this.spec.sandbox,
+      config: this.spec.config,
+      baseInstructions: this.spec.baseInstructions,
+      developerInstructions: this.spec.developerInstructions,
+    });
+    const {
+      closedAt: _closedAt,
+      closeReason: _closeReason,
+      ...thread
+    } = input.thread;
+    this.thread = {
+      ...thread,
+      status: "active",
+    };
+    this.invocationSequence = input.invocationSequence;
+    this.registry.bindThread(this.agentId, this.thread.threadId);
+    const resumedAt = new Date().toISOString();
+    this.eventBus.publish(AgentEvents.thread.resumed, {
+      agentId: this.agentId,
+      role: this.role,
+      threadId: this.thread.threadId,
+      resumedAt,
+      resumeInput: resumed.resumeInput,
+      resumeResponse: resumed.response,
+    }, {
+      occurredAt: resumedAt,
+    });
+    await this.checkThread(this.thread);
+    return this.thread;
+  }
+
+  async stopAgent(reason: string): Promise<void> {
     try {
       await this.runner?.stop(reason);
     } finally {
@@ -252,11 +316,11 @@ export abstract class ScoutAgent {
     };
   }
 
-  async setGoal(input: {
+  async setThreadGoal(input: {
     objective: string;
     tokenBudget?: number;
   }): Promise<AppServerThreadGoalState | undefined> {
-    const thread = await this.start();
+    const thread = await this.startThread();
     try {
       const goal = await this.appServer.setThreadGoal({
         threadId: thread.threadId,

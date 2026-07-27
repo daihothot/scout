@@ -9,6 +9,11 @@ import test from "node:test";
 import { agent } from "../../src/agent/context/agent-attachments.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import {
+  ScoutAgentPhases,
+  ScoutAgentRoles,
+  type AgentThreadSnapshot,
+} from "../../src/agent/thread/types.js";
+import {
   EventSubscriptionPriorities,
   InMemoryEventBus,
 } from "../../src/core/events/index.js";
@@ -136,6 +141,55 @@ test("RunJournalWriter persists Human Input semantics and message delivery as se
       AgentEvents.message.queued.routeKey,
       AgentEvents.humanInput.responded.routeKey,
       AgentEvents.message.queued.routeKey,
+    ],
+  );
+});
+
+test("RunJournalWriter persists thread start, resume and close lifecycle facts", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const { journal } = createTestRunPersistence(t, "journal-thread", "/repo", eventBus);
+  const started = {
+    agentId: ScoutAgentRoles.Researcher,
+    role: ScoutAgentRoles.Researcher,
+    phases: [ScoutAgentPhases.Research],
+    contextBundleId: "context-1",
+    threadId: "thread-researcher",
+    createdAt: "2026-07-23T00:00:00.000Z",
+    status: "active",
+    startInput: {
+      cwd: "/repo",
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      ephemeral: false,
+    },
+    startResponse: { thread: { id: "thread-researcher" } },
+  } satisfies AgentThreadSnapshot;
+
+  await eventBus.publishAndWait(AgentEvents.thread.started, started);
+  await eventBus.publishAndWait(AgentEvents.thread.resumed, {
+    agentId: started.agentId,
+    role: started.role,
+    threadId: started.threadId,
+    resumedAt: "2026-07-23T00:01:00.000Z",
+    resumeInput: {
+      threadId: started.threadId,
+      excludeTurns: true,
+    },
+    resumeResponse: { thread: { id: started.threadId, turns: [] } },
+  });
+  await eventBus.publishAndWait(AgentEvents.thread.closed, {
+    ...started,
+    status: "closed",
+    closedAt: "2026-07-23T00:02:00.000Z",
+    closeReason: "test",
+  });
+
+  assert.deepEqual(
+    journal.readAll().slice(1).map((event) => event.key.routeKey),
+    [
+      AgentEvents.thread.started.routeKey,
+      AgentEvents.thread.resumed.routeKey,
+      AgentEvents.thread.closed.routeKey,
     ],
   );
 });

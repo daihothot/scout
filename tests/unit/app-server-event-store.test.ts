@@ -94,6 +94,38 @@ test("AppServerEventStore reduces plan, goal, item progress and final response",
   assert.equal(store.resolveTimelineEntry(latest!).thread?.id, "thread-1");
 });
 
+test("AppServerEventStore preserves context compaction items and infers lifecycle status", () => {
+  const store = new AppServerEventStore();
+
+  store.ingestNotification(notification("item/started", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    item: {
+      id: "compaction-1",
+      type: "contextCompaction",
+    },
+  }));
+
+  const startedEntry = store.timelineSince(0).at(-1);
+  assert.equal(startedEntry?.kind, "item_started");
+  assert.equal(store.resolveTimelineEntry(startedEntry!).item?.type, "contextCompaction");
+  assert.equal(store.resolveTimelineEntry(startedEntry!).item?.status, "inProgress");
+
+  store.ingestNotification(notification("item/completed", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    item: {
+      id: "compaction-1",
+      type: "contextCompaction",
+    },
+  }));
+
+  const completedEntry = store.timelineSince(startedEntry!.seq).at(-1);
+  assert.equal(completedEntry?.kind, "item_completed");
+  assert.equal(store.resolveTimelineEntry(completedEntry!).item?.type, "contextCompaction");
+  assert.equal(store.resolveTimelineEntry(completedEntry!).item?.status, "completed");
+});
+
 test("AppServerEventStore handles local server request resolution and clears pending request", () => {
   const store = new AppServerEventStore();
   const request: JsonRpcServerRequest = {

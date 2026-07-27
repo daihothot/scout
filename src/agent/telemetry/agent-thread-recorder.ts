@@ -5,7 +5,6 @@ import type {
 import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
-import type { AgentThreadSnapshot } from "../thread/types.js";
 
 export class AgentThreadRecorder {
   private readonly threadLoggers = new Map<string, Logger>();
@@ -13,7 +12,7 @@ export class AgentThreadRecorder {
 
   start(): void {
     if (this.unsubscribe) return;
-    this.unsubscribe = currentRunScope().eventBus.subscribe<AgentThreadSnapshot>(
+    this.unsubscribe = currentRunScope().eventBus.subscribe(
       AgentEvents.thread,
       (event) => this.record(event),
     );
@@ -25,13 +24,18 @@ export class AgentThreadRecorder {
     this.threadLoggers.clear();
   }
 
-  private record(event: ScoutEvent<AgentThreadSnapshot>): void {
-    const thread = event.payload;
+  private record(event: ScoutEvent): void {
     if (AgentEvents.thread.started.is(event)) {
+      const thread = event.payload;
       this.write(event, thread.agentId, thread);
       return;
     }
+    if (AgentEvents.thread.resumed.is(event)) {
+      this.write(event, event.payload.agentId, event.payload);
+      return;
+    }
     if (AgentEvents.thread.closed.is(event)) {
+      const thread = event.payload;
       this.write(event, thread.agentId, {
         threadId: thread.threadId,
         status: thread.status,
@@ -42,7 +46,7 @@ export class AgentThreadRecorder {
   }
 
   private write(
-    event: ScoutEvent<AgentThreadSnapshot>,
+    event: ScoutEvent,
     agentId: string,
     data: object,
   ): void {

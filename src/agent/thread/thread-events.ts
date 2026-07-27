@@ -1,10 +1,14 @@
 import { event } from "../../core/events/index.js";
 import { AgentEvents } from "../events/catalog.js";
-import type { AgentThreadSnapshot } from "./types.js";
+import type {
+  AgentThreadResumeRecord,
+  AgentThreadSnapshot,
+} from "./types.js";
 
 const agentThreadEventCatalog = {
   thread: {
     started: event<AgentThreadSnapshot>(),
+    resumed: event<AgentThreadResumeRecord>(),
     closed: event<AgentThreadSnapshot>(),
   },
 } as const;

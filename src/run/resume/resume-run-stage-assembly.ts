@@ -1,7 +1,6 @@
 import {
   AgentBackendStage,
   AgentTelemetryStage,
-  AgentsStage,
   DomainStage,
   InteractionStage,
   OrchestratorStage,
@@ -13,6 +12,7 @@ import {
 import type { RunScope } from "../run-scope.js";
 import {
   ResumeClientsStage,
+  RestoreAgentsStage,
   RestoreDomainStage,
   RestoreEnvironmentStage,
   RestoreTasksStage,
@@ -44,7 +44,7 @@ export class ResumeRunStageAssembly {
     executor.registerParallel(new DomainStage(), new AgentTelemetryStage());
     executor.registerSerial(new RestoreDomainStage());
     executor.registerParallel(new AgentBackendStage(), new OrchestratorStage());
-    executor.registerSerial(new AgentsStage());
+    executor.registerSerial(new RestoreAgentsStage());
     const injectResumeContextStage = new InjectResumeContextStage();
     executor.registerSerial(
       new RestoreTasksStage(),

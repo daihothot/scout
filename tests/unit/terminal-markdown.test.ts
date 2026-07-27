@@ -412,6 +412,71 @@ test("activity strip displays command labels instead of command working director
   );
 });
 
+test("activity strip presents context compaction independently from turn processing", () => {
+  const started = selectCurrentAgentActivity(tuiState({
+    activities: [{
+      seq: 2,
+      agentId: "coordinator",
+      role: "coordinator",
+      threadId: "thread-coordinator",
+      turnId: "turn-1",
+      itemId: "compaction-1",
+      type: "contextCompaction",
+      status: "inProgress",
+      label: "Context compaction",
+      updatedAt: "2026-07-10T00:00:02.000Z",
+    }],
+  }));
+  const completed = selectCurrentAgentActivity(tuiState({
+    activities: [{
+      seq: 2,
+      agentId: "coordinator",
+      role: "coordinator",
+      threadId: "thread-coordinator",
+      turnId: "turn-1",
+      itemId: "compaction-1",
+      type: "contextCompaction",
+      status: "completed",
+      label: "Context compaction",
+      updatedAt: "2026-07-10T00:00:02.000Z",
+    }],
+    turnActivities: [{
+      seq: 1,
+      agentId: "coordinator",
+      role: "coordinator",
+      threadId: "thread-coordinator",
+      turnId: "turn-1",
+      status: "inProgress",
+      updatedAt: "2026-07-10T00:00:01.000Z",
+    }],
+  }));
+  const failed = selectCurrentAgentActivity(tuiState({
+    activities: [{
+      seq: 2,
+      agentId: "coordinator",
+      role: "coordinator",
+      threadId: "thread-coordinator",
+      turnId: "turn-1",
+      itemId: "compaction-1",
+      type: "contextCompaction",
+      status: "failed",
+      label: "Context compaction",
+      updatedAt: "2026-07-10T00:00:02.000Z",
+    }],
+  }));
+
+  assert.deepEqual(
+    started && [started.processing, started.markdown, started.activity],
+    [false, false, "压缩上下文"],
+  );
+  assert.deepEqual(
+    completed && [completed.processing, completed.markdown, completed.activity],
+    [false, false, "压缩完成"],
+  );
+  assert.equal(completed?.activity.startsWith("处理中 ·"), false);
+  assert.equal(failed?.activity, "上下文压缩失败");
+});
+
 test("selected task marker is distinct from running and archived markers", () => {
   assert.equal(taskMarker("running", true), "▶");
   assert.equal(taskMarker("archived", true), "▶");

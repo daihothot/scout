@@ -2,7 +2,10 @@ import type {
   AgentDynamicToolSpec,
   AgentJsonValue,
 } from "../tools/types.js";
-import type { ThreadStartRequest } from "../../agent-server/codex/app-server-client.js";
+import type {
+  ThreadResumeRequest,
+  ThreadStartRequest,
+} from "../../agent-server/codex/app-server-client.js";
 import type { CodexModelConfig } from "../../agent-server/codex/model-config.js";
 
 export const ScoutAgentRoles = {
@@ -60,3 +63,12 @@ export type AgentThreadSnapshot = AgentThreadSnapshotBase & (
       closeReason: string;
     }
 );
+
+export interface AgentThreadResumeRecord {
+  agentId: string;
+  role: ScoutAgentRole;
+  threadId: string;
+  resumedAt: string;
+  resumeInput: ThreadResumeRequest;
+  resumeResponse: unknown;
+}

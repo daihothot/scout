@@ -136,6 +136,8 @@ function itemLabel(item: NonNullable<AppServerResolvedTimelineEntry["item"]>): s
   switch (item.type) {
     case "reasoning":
       return "Reasoning";
+    case "contextCompaction":
+      return "Context compaction";
     case "fileChange":
       return "File changes";
     case "collabAgentToolCall":
