@@ -1,16 +1,16 @@
 ---
 assetKind: scout.skill
-name: coordinator-validation
+name: domain-validation-coordinator
 description: Scout Coordinator 在当前 Validation Domain 中接收 BDD 目标、组织 Researcher 与 Validator 的 Research Pack Gate 往返、处理 BDD 定位补充并综合 Research gate 状态时使用。
 id: skills.validation.coordinator
-version: 0.2.1
+version: 0.2.2
 phase: [coordinate]
 tags: [scout, validation, bdd, coordination, workflow]
 devices: [any]
 summary: 规范 Researcher 与 Validator 的 Research Pack Gate 调度循环。
 ---
 
-# Coordinator Validation
+# Domain Validation Coordinator
 
 当 Coordinator 运行在 Validation Domain 中，需要接收验证目标、指派 Worker 或综合验证状态时使用本技能。
 
@@ -125,7 +125,7 @@ summary: 规范 Researcher 与 Validator 的 Research Pack Gate 调度循环。
 - 明细产物：由对应 Worker 和专项 Skill 所有。
 - Registry / index：Coordinator 不创建 evidence registry，也不重新编号 evidence。
 - Claim owner：Research claim 由 Researcher artifact 所有，Gate claim 由 Validator Gate 报告所有。
-- 下游引用规则：Researcher task prompt 只要求 `researcher-validation` 定义的固定十字段 handoff；Validator task prompt 只要求 `validator-validation` 定义的固定七字段 handoff。不得增加 artifact 摘要、证据正文或检查过程字段。
+- 下游引用规则：Researcher task prompt 只要求 `domain-validation-researcher` 定义的固定十字段 handoff；Validator task prompt 只要求 `domain-validation-validator` 定义的固定七字段 handoff。不得增加 artifact 摘要、证据正文或检查过程字段。
 - Ref 字段策略：引用已有 ref；不得用聊天摘要制造新的 artifact ref 或 evidence ref。
 
 ## Phase 1: Qualify and Synthesize Input

@@ -3,7 +3,7 @@ const { COVERAGE_DIMENSIONS, COVERAGE_STATES, EVIDENCE_ID_PATTERN, EVIDENCE_TEMP
 const { addIssue } = require("../shared/diagnostics.cjs");
 const { concreteRepositoryFields, repositoryFields, requireNonNoneFields, requireSectionFields } = require("../shared/fields.cjs");
 const { bulletFields, displayPath, evidenceIds, hasTemplateInstruction, isPlaceholder, markdownTable, normalized, scalar, sectionByTitle } = require("../shared/markdown.cjs");
-const { codebaseTemplatePath, researchTemplatePath, validateTemplateSections } = require("../shared/templates.cjs");
+const { codebaseTemplatePath, knowledgeTemplatePath, researchTemplatePath, validateTemplateSections } = require("../shared/templates.cjs");
 
 function validateEvidence(document, displayRoot, issues) {
   const id = scalar(document.frontMatter.evidence_id);
@@ -47,9 +47,14 @@ function validateEvidence(document, displayRoot, issues) {
     addIssue(issues, "TEMPLATE_INSTRUCTION_REMAINS", path, "completed evidence cannot retain template fill instructions.");
   }
 
-  const templatePath = config.owner === "research"
-    ? researchTemplatePath(config.template)
-    : codebaseTemplatePath(config.template);
+  let templatePath;
+  if (config.owner === "knowledge") {
+    templatePath = knowledgeTemplatePath(config.template);
+  } else if (config.owner === "codebase") {
+    templatePath = codebaseTemplatePath(config.template);
+  } else {
+    templatePath = researchTemplatePath(config.template);
+  }
   validateTemplateSections(document, templatePath, displayRoot, issues);
 
   if (kind === "CAP") validateCapabilityEvidence(document, displayRoot, issues);

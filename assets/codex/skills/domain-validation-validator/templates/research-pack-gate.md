@@ -26,7 +26,7 @@ checked_pack_digest: "<填写 Validator 第二次计算得到的 sha256 digest>"
 - Research pack：<填写本次实际检查的唯一 pack 路径>
 - Pack digest：<填写 Validator 第二次计算得到的 sha256 digest>
 - Digest 算法：`scout-directory-sha256-v1`
-- 适用 contract：<列出 Validator AGENTS、validator-validation 和生产者 Skill refs>
+- 适用 contract：<列出 Validator AGENTS、domain-validation-validator 和生产者 Skill refs>
 
 状态枚举：
 

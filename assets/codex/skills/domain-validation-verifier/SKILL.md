@@ -1,15 +1,15 @@
 ---
 assetKind: scout.skill
-name: verifier-validation
+name: domain-validation-verifier
 description: Scout Verifier 在 Validation Domain 中消费 Research handoff 和 verification manual、采集代码或运行信号、逐项形成 BDD Verification Report 时使用。
 id: skills.validation.verifier
-version: 0.1.2
+version: 0.1.3
 phase: [verify]
 tags: [scout, validation, bdd, verification, evidence, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [jarvis-codebase]
+    required: [tool-jarvis-codebase]
   shellTools:
     required: [scoutAssets, jarvis, codegraph, git]
     optional: [rg, sed, find, cat]
@@ -20,11 +20,11 @@ dependencies:
 summary: 规范 Validation Verifier 的验证点消费、信号采集和 Verification Report。
 ---
 
-# Verifier Validation
+# Domain Validation Verifier
 
 当 Verifier 已收到可信 Research handoff，需要围绕 verification points 采集证据并形成 BDD Verification Report 时使用本技能。
 
-本技能定义 Validation 验证工作流；代码库检索方法由 `jarvis-codebase` 所有。
+本技能定义 Validation 验证工作流；代码库检索方法由 `tool-jarvis-codebase` 所有。
 
 ## Skill Type
 
@@ -164,7 +164,7 @@ Partial：
 
 注意事项：
 
-- 代码检索必须遵守 `jarvis-codebase` 的 provenance、symbol 和 source evidence 规则。
+- 代码检索必须遵守 `tool-jarvis-codebase` 的 provenance、symbol 和 source evidence 规则。
 - MCP server 和 plugin 只按当前说明与授权使用。
 - 每个信号记录采集方法、目标、结果、版本、环境和 artifact ref。
 - 失败、空结果和无法执行也是验证事实，但不能记为成功证据。

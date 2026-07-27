@@ -1,9 +1,9 @@
 ---
 assetKind: scout.skill
-name: scout-internal-skill-creator
+name: meta-scout-internal-skill-creator
 description: 创建或修改 Scout Internal Skill 的统一方法论，覆盖目录创建、metadata、phase、tags、模板、profile 挂载、边界和验证规则。
 id: skills.scout.internal-skill-creator
-version: 0.2.0
+version: 0.2.2
 phase: [research, validate]
 tags: [scout, skill, asset, template, workflow, governance]
 devices: [any]
@@ -14,7 +14,7 @@ dependencies:
 summary: 用统一模板生产 Scout 内部 Skill，并保证它们能被 profile、mount 和 Agent 工作流一致使用。
 ---
 
-# Scout Internal Skill Creator
+# Meta Scout Internal Skill Creator
 
 当任务要求创建、修改、评审或规范化 `assets/codex/skills/**/SKILL.md` 时使用本技能。
 
@@ -71,7 +71,12 @@ assets/codex/skills/<skill-name>/
 命名规则：
 
 - 使用小写字母、数字和连字符。
-- 使用动词或对象加动作，表达技能用途，例如 `scout-internal-skill-creator`、`jarvis-codebase`。
+- 使用类别前缀明确 Skill 的责任边界：
+  - `domain-<domain>-<role-or-capability>`：领域工作流、角色入口或领域产物 contract。
+  - `tool-<provider>-<capability>`：工具链的操作方法、约束和证据规则。
+  - `signal-<signal>[-<acquisition>]`：信号 contract，或该信号的一种采集实现。
+  - `meta-<scope>-<capability>`：Skill、资产或治理方法。
+- Signal 采集 Skill 使用同一 Signal 名称作为前缀，例如 `signal-runtime-log-unity-pipeline-cli`；基础 Signal 不反向依赖采集实现。
 - 不使用空格、下划线、中文、版本号或一次性任务名。
 - 不用过宽泛名称，例如 `helper`、`workflow`、`tools`。
 
@@ -117,7 +122,7 @@ Dependencies 规则：
 - 没有任何依赖时，省略整个 `dependencies` 字段。
 - 某一类没有依赖时，省略该类，例如没有 plugin 依赖就不写 `plugins`。
 - `required` 或 `optional` 为空时，省略该字段。
-- `skills` 使用 `assets/codex/skills/<name>` 的目录名，例如 `jarvis-codebase`。
+- `skills` 使用 `assets/codex/skills/<name>` 的目录名，例如 `tool-jarvis-codebase`。
 - `shellTools` 使用 `assets/codex/tools/shell-tools.json` 中的 tool id，例如 `scoutAssets`、`jarvis`、`codegraph`。
 - `mcpServers` 使用 `assets/codex/mcp/servers.json` 中的 server id，例如 `scout_local_capability`。
 - `plugins` 使用 `assets/codex/plugins/**/.codex-plugin/plugin.json` 中的 plugin name，例如 `scout-local-capability-plugin`。
@@ -285,31 +290,50 @@ Output Layout 写法：
 ```markdown
 ---
 assetKind: scout.skill
-name: guru-knowledge-research
-description: Scout Researcher 使用 Guru knowledge、Behaviors、当前版本代码语义、Evidence Pack、evidence-registry 和 verification-manual.md 锁定 BDD 验证内容、证据编号与用户画像。
-id: skills.guru.knowledge-research
+name: domain-validation-research-pack
+description: Scout Researcher 在 Validation Domain 中编排知识与代码证据、构建唯一 Research Pack、Evidence Registry 和 Verification Manual 时使用。
+id: skills.validation.research-pack
 version: 0.1.0
 phase: [research]
-tags: [guru, knowledge, codegraph, codebase, evidence, research]
+tags: [scout, validation, research, pack, evidence, manual]
 devices: [any]
 dependencies:
   skills:
-    required: [jarvis-codebase]
+    required: [tool-guru-knowledge, tool-jarvis-codebase]
   shellTools:
-    required: [scoutAssets, jarvis, codegraph]
-    optional: [rg, sed, find, cat]
-summary: 基于 Guru knowledge 和当前版本代码证据形成 evidence pack 与 verification manual，不使用 synaptic。
+    required: [scoutAssets, scoutResearchArtifactCheck, scoutArtifactDigest]
+summary: 编排知识和代码 producer contracts，形成唯一 Research Pack、证据索引和验证手册。
 ---
 ```
 
-正文必须说明如何定位 knowledge、如何委派 `jarvis-codebase`、如何区分 summary / detail / registry / manual、以及哪些 claim 只能由当前版本代码证据支撑。
+正文必须说明如何编排 producer contracts、分配 evidence ids、区分明细与聚合、处理人工门禁，以及如何生成 registry、manual、digest 和 handoff；不得复制 Tool Skill 的采集方法。
 
 ## 示例：工具链 Skill
 
 ```markdown
 ---
 assetKind: scout.skill
-name: jarvis-codebase
+name: tool-guru-knowledge
+description: Scout Agent 从 Guru Knowledge 定位 Behavior、Domain、Module、Capability、Availability、API 和 Platform 文档，记录可重放来源并形成知识证据时使用。
+id: skills.guru.knowledge-research
+version: 0.1.0
+phase: [research]
+tags: [guru, knowledge, bdd, capability, evidence, source]
+devices: [any]
+dependencies:
+  shellTools:
+    required: [scoutAssets, git]
+    optional: [rg, sed, find, cat]
+summary: 只读检索 Guru Knowledge，并形成可追溯的 Capability、Availability 和 Platform 知识证据。
+---
+```
+
+正文必须说明只读来源边界、可重放 locator、knowledge repository provenance、知识明细 evidence、失败排查和禁止写回规则；不得拥有 Research Pack、唯一 BDD 决策、Registry、Manual 或人工门禁。
+
+```markdown
+---
+assetKind: scout.skill
+name: tool-jarvis-codebase
 description: Scout 使用 Jarvis codebase 管理 Guru 托管代码库路径、版本与 CodeGraph 索引，并用独立 codegraph CLI 收集源码语义证据。
 id: skills.jarvis.codebase
 version: 0.1.0
@@ -331,7 +355,7 @@ summary: 先用 jarvis codebase 解析托管代码库，再用 codegraph 和源�
 ```markdown
 ---
 assetKind: scout.skill
-name: scout-boundary-inspector
+name: tool-scout-boundary-inspector
 description: 查询当前 Scout Agent 的 mount 资产边界、工作边界、能力入口和 run 级共享记忆摘要，并整理为 Boundary Snapshot。
 id: skills.scout.boundary-inspector
 version: 0.1.0

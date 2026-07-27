@@ -8,7 +8,7 @@ status: ready
 
 ## Purpose
 
-本文件索引 `scout-internal-skill-creator` 维护的可复用模板。
+本文件索引 `meta-scout-internal-skill-creator` 维护的可复用模板。
 
 ## Template List
 

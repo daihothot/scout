@@ -8,7 +8,7 @@ status: ready
 
 ## Purpose
 
-本文件索引 `jarvis-codebase` 维护的可复用模板。
+本文件索引 `tool-jarvis-codebase` 维护的可复用模板。
 
 ## Template List
 
