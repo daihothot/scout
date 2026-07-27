@@ -38,6 +38,10 @@ export interface AppServerReasoningItem extends AppServerBaseItem {
   content?: string[];
 }
 
+export interface AppServerContextCompactionItem extends AppServerBaseItem {
+  type: "contextCompaction";
+}
+
 export interface AppServerCommandExecutionItem extends AppServerBaseItem {
   type: "commandExecution";
   command: string;
@@ -111,6 +115,7 @@ export type AppServerItem =
   | AppServerUserMessageItem
   | AppServerAgentMessageItem
   | AppServerReasoningItem
+  | AppServerContextCompactionItem
   | AppServerCommandExecutionItem
   | AppServerDynamicToolCallItem
   | AppServerMcpToolCallItem
@@ -606,6 +611,9 @@ export class AppServerEventStore {
         const item = normalizeItem(params.item);
         const itemId = item?.id;
         if (!threadId || !turnId || !item || !itemId) return;
+        if (item.type === "contextCompaction") {
+          item.status = notification.method === "item/started" ? "inProgress" : "completed";
+        }
         const turn = this.ensureTurn(threadId, turnId);
         turn.items[itemId] = cloneJson(item);
         if (!turn.itemOrder.includes(itemId)) {
@@ -982,6 +990,12 @@ function normalizeItem(value: unknown): AppServerItem | undefined {
         type,
         summary: readStringArray(raw.summary),
         content: readStringArray(raw.content),
+      };
+    case "contextCompaction":
+      return {
+        ...raw,
+        id,
+        type,
       };
     case "commandExecution":
       return {

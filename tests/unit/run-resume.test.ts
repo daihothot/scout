@@ -24,6 +24,7 @@ import {
 import {
   ScoutAgentPhases,
   ScoutAgentRoles,
+  type AgentThreadSnapshot,
   type AgentThreadSpec,
 } from "../../src/agent/thread/types.js";
 import {
@@ -64,6 +65,7 @@ import {
 import {
   InjectResumeContextStage,
   RecordResumeInterruptionsStage,
+  RestoreAgentsStage,
   RestoreDomainStage,
   RestoreEnvironmentStage,
   RestoreTasksStage,
@@ -72,7 +74,6 @@ import { SystemEvents } from "../../src/system/events/index.js";
 import {
   AgentBackendStage,
   AgentTelemetryStage,
-  AgentsStage,
   DomainStage,
   InteractionStage,
   OrchestratorStage,
@@ -151,6 +152,47 @@ test("Run projection rebuilds pending messages, human gate and interrupted turn"
     inferTaskRecoveryCheckpoint(projection, projection.tasks[0]),
     TaskRecoveryCheckpoints.WaitingForHumanInput,
   );
+});
+
+test("Run projection keeps the original thread snapshot across resume lifecycles", () => {
+  const started = {
+    agentId: ScoutAgentRoles.Researcher,
+    role: ScoutAgentRoles.Researcher,
+    phases: [ScoutAgentPhases.Research],
+    contextBundleId: "context-1",
+    threadId: "thread-researcher",
+    createdAt: "2026-07-22T00:00:00.000Z",
+    status: "active",
+    startInput: {
+      cwd: "/repo",
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      ephemeral: false,
+    },
+    startResponse: { thread: { id: "thread-researcher" } },
+  } satisfies AgentThreadSnapshot;
+  const projection = projectRun(journalEvents(
+    scoutEvent(AgentEvents.thread.started, started),
+    scoutEvent(AgentEvents.thread.closed, {
+      ...started,
+      status: "closed",
+      closedAt: "2026-07-22T00:01:00.000Z",
+      closeReason: "runtime_detached",
+    }),
+    scoutEvent(AgentEvents.thread.resumed, {
+      agentId: started.agentId,
+      role: started.role,
+      threadId: started.threadId,
+      resumedAt: "2026-07-22T00:02:00.000Z",
+      resumeInput: {
+        threadId: started.threadId,
+        excludeTurns: true,
+      },
+      resumeResponse: { thread: { id: started.threadId, turns: [] } },
+    }),
+  ));
+
+  assert.deepEqual(projection.threads, [started]);
 });
 
 test("Run projection derives an outcome checkpoint and no checkpoint without a task", () => {
@@ -673,6 +715,108 @@ test("CoordinatorRunner restores accepted delivery ids without replaying them", 
   await runner.stop("test_complete");
 });
 
+test("RestoreAgentsStage never cold-starts an Agent after thread resume fails", async (t) => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-thread-restore-failure-"));
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
+  cpSync(join(process.cwd(), "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+    recursive: true,
+  });
+  const eventBus = new InMemoryEventBus();
+  const startedRoles: string[] = [];
+  const resumedThreadIds: string[] = [];
+  const appServer = {
+    async startThread(options: { cwd: string; ephemeral?: boolean }) {
+      const role = Object.values(ScoutAgentRoles).find((candidate) =>
+        options.cwd.includes(`${candidate}/mount`)
+      ) ?? "unknown";
+      startedRoles.push(role);
+      const threadId = `new-thread-${role}`;
+      return {
+        threadId,
+        startInput: {
+          cwd: options.cwd,
+          approvalPolicy: "never",
+          sandbox: "workspace-write",
+          ephemeral: options.ephemeral ?? true,
+        },
+        response: { thread: { id: threadId } },
+      };
+    },
+    async resumeThread(options: { threadId: string }) {
+      resumedThreadIds.push(options.threadId);
+      throw new Error(`resume failed for ${options.threadId}`);
+    },
+    async request(_method: string, params: { threadId?: string }) {
+      return {
+        threadId: params.threadId,
+        servers: [],
+      };
+    },
+  } as unknown as CodexAppServerClient;
+  const scope = installTestRunScope(t, {
+    runId: "thread-restore-failure",
+    repoRoot: fixtureRoot,
+    eventBus,
+    appServer,
+    domain: new ValidationDomain(),
+  });
+  await new PrepareEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+  const task = taskState({
+    steps: [{
+      stepId: "researcher-task-0001-step-0001",
+      taskId: "researcher-task-0001",
+      status: AgentTaskStepStatuses.Running,
+      prompt: agent.turn.message("恢复原 thread"),
+      toolCalls: [],
+      startedAt: "2026-07-22T00:00:01.000Z",
+    }],
+  });
+  const thread = {
+    agentId: ScoutAgentRoles.Researcher,
+    role: ScoutAgentRoles.Researcher,
+    phases: [ScoutAgentPhases.Research],
+    contextBundleId: scope.contextBundle.contextBundleId,
+    threadId: "thread-researcher-original",
+    createdAt: "2026-07-22T00:00:00.000Z",
+    status: "active",
+    startInput: {
+      cwd: scope.environment.agents[ScoutAgentRoles.Researcher].mount.mountRoot,
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      ephemeral: false,
+    },
+    startResponse: { thread: { id: "thread-researcher-original" } },
+  } satisfies AgentThreadSnapshot;
+  await eventBus.publishAndWait(AgentEvents.thread.started, thread);
+  await eventBus.publishAndWait(AgentEvents.task.assigned, task);
+  await eventBus.publishAndWait(AgentEvents.turn.started, {
+    invocationId: "researcher-original-invocation-0001",
+    agentId: task.agentId,
+    role: task.role,
+    taskId: task.taskId,
+    threadId: thread.threadId,
+    prompt: task.steps?.[0]?.prompt ?? "",
+    startedAt: "2026-07-22T00:00:01.000Z",
+  });
+  const stage = new RestoreAgentsStage();
+
+  await assert.rejects(
+    stage.start(),
+    /resume failed for thread-researcher-original/,
+  );
+
+  assert.deepEqual(resumedThreadIds, ["thread-researcher-original"]);
+  assert.deepEqual(startedRoles.sort(), [
+    ScoutAgentRoles.Coordinator,
+    ScoutAgentRoles.Validator,
+    ScoutAgentRoles.Verifier,
+  ].sort());
+  await stage.stop("test_cleanup");
+});
+
 test("resume stages restore tasks, messages, interruptions and Validation artifacts from a Test RunScope", async (t) => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-run-resume-flow-"));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
@@ -763,6 +907,27 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     finishedAt: "2026-07-22T00:00:05.000Z",
     updatedAt: "2026-07-22T00:00:05.000Z",
   } satisfies AgentTaskState;
+  const researcherThread = {
+    agentId: ScoutAgentRoles.Researcher,
+    role: ScoutAgentRoles.Researcher,
+    phases: [ScoutAgentPhases.Research],
+    contextBundleId: initialScope.contextBundle.contextBundleId,
+    threadId: "researcher-old-thread",
+    createdAt: "2026-07-22T00:00:00.000Z",
+    status: "active",
+    startInput: {
+      cwd: initialScope.environment.agents[ScoutAgentRoles.Researcher].mount.mountRoot,
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      ephemeral: false,
+    },
+    startResponse: { thread: { id: "researcher-old-thread" } },
+  } satisfies AgentThreadSnapshot;
+  await initialEventBus.publishAndWait(
+    AgentEvents.thread.started,
+    researcherThread,
+    { occurredAt: researcherThread.createdAt },
+  );
   await initialEventBus.publishAndWait(
     AgentEvents.task.assigned,
     researcherTask,
@@ -876,6 +1041,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   });
   let threadSequence = 0;
   let turnSequence = 0;
+  const resumedThreadIds: string[] = [];
   const appServer = {
     close() {},
     async startThread(startInput: Record<string, unknown>) {
@@ -885,6 +1051,25 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
         threadId,
         startInput,
         response: { thread: { id: threadId } },
+      };
+    },
+    async resumeThread(resumeInput: {
+      threadId: string;
+      [key: string]: unknown;
+    }) {
+      resumedThreadIds.push(resumeInput.threadId);
+      return {
+        threadId: resumeInput.threadId,
+        resumeInput: {
+          ...resumeInput,
+          excludeTurns: true,
+        },
+        response: {
+          thread: {
+            id: resumeInput.threadId,
+            turns: [],
+          },
+        },
       };
     },
     async request(method: string, params: unknown) {
@@ -961,7 +1146,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   executor.registerSerial(new RestoreDomainStage());
   executor.registerParallel(new AgentBackendStage(), new OrchestratorStage());
   executor.registerSerial(
-    new AgentsStage(),
+    new RestoreAgentsStage(),
     new RestoreTasksStage(),
     injectResumeContextStage,
   );
@@ -998,6 +1183,12 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     scope.contextBundle.assetCommit.assetCommitId,
     scope.environment.agents[ScoutAgentRoles.Coordinator].assetCommit.assetCommitId,
   );
+  assert.deepEqual(resumedThreadIds, ["researcher-old-thread"]);
+  assert.equal(threadSequence, 3);
+  assert.equal(
+    scope.agentRegistry.resolveAgent(ScoutAgentRoles.Researcher).threadId,
+    "researcher-old-thread",
+  );
   assert.ok(scope.environment.rootAccess.mountRoots.every((root) =>
     root.startsWith(runRoot)
   ));
@@ -1023,6 +1214,10 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     projection.turns.find((turn) => turn.invocationId === "researcher-old-invocation")?.status,
     "interrupted",
   );
+  assert.ok(restoredEvents.some((event) =>
+    AgentEvents.thread.resumed.is(event)
+    && event.payload.threadId === "researcher-old-thread"
+  ));
   assert.ok(projection.artifacts.some((artifact) => artifact.ref === researchPackRef));
   assert.ok(projection.artifacts.some((artifact) => artifact.ref === gateRef));
   assert.equal(projection.gates[0]?.gateId, "gate-0001");

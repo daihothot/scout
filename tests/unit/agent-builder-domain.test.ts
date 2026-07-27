@@ -195,7 +195,7 @@ test("Validator turns use workspace-write with only the profile write roots", as
 
   assert.ok(validator instanceof ValidatorAgent);
   assert.equal(validator.spec.sandbox, "workspace-write");
-  await validator.start();
+  await validator.startThread();
   assert.deepEqual(validator.threadSnapshot?.startInput.config, {
     features: {
       multi_agent: true,
@@ -230,7 +230,7 @@ test("Worker turns preserve profile write-root order for sandbox application", a
   );
   const researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher);
 
-  await researcher.start();
+  await researcher.startThread();
   await researcher.runTurn({ prompt: "Inspect the Research inputs." });
 
   assert.deepEqual(appServer.turnInputs[0]?.writableRoots, [
@@ -249,7 +249,7 @@ test("WorkerAgent keeps its bound runner and reports a rejected task assignment"
   prepareAgent(fixture, ScoutAgentRoles.Researcher, researcherMount, researcherCommit);
   const builder = new AgentBuilder();
   const coordinatorAgent = builder.buildCoordinator();
-  await coordinatorAgent.start();
+  await coordinatorAgent.startThread();
   const worker = builder.buildWorker(ScoutAgentRoles.Researcher) as WorkerAgent;
   new AgentBackend().start();
   const notAssignedEvents: AgentTaskNotAssignedEventPayload[] = [];
@@ -389,7 +389,7 @@ test("ScoutAgent starts a thread, runs preflight, and binds it to registry", asy
     },
   );
 
-  const thread = await agent.start();
+  const thread = await agent.startThread();
 
   assert.equal(thread.threadId, "thread-test");
   assert.equal(thread.agentId, ScoutAgentRoles.Coordinator);
@@ -422,17 +422,18 @@ test("ScoutAgent starts a thread, runs preflight, and binds it to registry", asy
     reasoningSummary: "concise",
   });
 
-  await agent.stop("test_complete");
+  await agent.stopAgent("test_complete");
   assert.equal(agent.threadSnapshot?.status, "closed");
   assert.equal(agent.threadSnapshot?.closeReason, "test_complete");
   assert.ok(agent.threadSnapshot?.closedAt);
+  await waitFor(() => threadEvents.length === 2);
   assert.deepEqual(threadEvents.map((event) => event.key.routeKey), [
     AgentEvents.thread.started.routeKey,
     AgentEvents.thread.closed.routeKey,
   ]);
   assert.equal(threadEvents[0]?.payload.startInput.developerInstructions, agent.spec.developerInstructions);
   assert.equal(threadEvents[1]?.payload.status, "closed");
-  await assert.rejects(agent.start(), /thread is closed/);
+  await assert.rejects(agent.startThread(), /thread is closed/);
   unsubscribe();
 });
 
@@ -441,9 +442,9 @@ test("ScoutAgent returns no goal when setting a goal fails", async () => {
   const fixture = createAgentFixture("goal-failure", { appServer });
   const coordinator = new CoordinatorAgent(fixture.options);
   fixture.registry.registerAgent(coordinator);
-  await coordinator.start();
+  await coordinator.startThread();
 
-  const goal = await coordinator.setGoal({
+  const goal = await coordinator.setThreadGoal({
     objective: "g".repeat(1000),
   });
 
@@ -530,6 +531,66 @@ test("AgentBackend normalizes app-server items into Agent activity", () => {
     updatedAt: "2026-07-14T00:00:00.000Z",
   }]);
   assert.equal(JSON.stringify(activities).includes("private chain of thought"), false);
+});
+
+test("AgentBackend publishes context compaction as ordinary activity", () => {
+  const entries = [
+    {
+      seq: 7,
+      stream: "item",
+      kind: "item_started",
+      receivedAt: "2026-07-14T00:00:00.000Z",
+      threadId: "thread-coordinator",
+      turnId: "turn-1",
+      itemId: "compaction-1",
+    },
+    {
+      seq: 8,
+      stream: "item",
+      kind: "item_completed",
+      receivedAt: "2026-07-14T00:00:01.000Z",
+      threadId: "thread-coordinator",
+      turnId: "turn-1",
+      itemId: "compaction-1",
+    },
+  ] satisfies AppServerTimelineEntry[];
+  const appServer = createFakeAppServer({
+    resolveTimelineEntry: (entry) => ({
+      entry,
+      item: {
+        id: "compaction-1",
+        type: "contextCompaction",
+        status: entry.kind === "item_started" ? "inProgress" : "completed",
+      },
+    }),
+  });
+  const fixture = createAgentFixture("context-compaction-activity", {
+    appServer,
+    domain: createStaticDomain("domain-context-compaction-activity", []),
+  });
+  const coordinator = new CoordinatorAgent(fixture.options);
+  fixture.registry.registerAgent(coordinator);
+  fixture.registry.bindThread(coordinator.agentId, entries[0]!.threadId);
+  const activities: AgentActivity[] = [];
+  fixture.eventBus.subscribe<AgentActivity>(AgentEvents.activity.observed, (event) => {
+    activities.push(event.payload);
+  });
+  new AgentBackend().start();
+
+  for (const entry of entries) appServer.emitTimeline(entry);
+
+  assert.deepEqual(
+    activities.map((activity) => [
+      activity.type,
+      activity.label,
+      activity.status,
+      activity.updatedAt,
+    ]),
+    [
+      ["contextCompaction", "Context compaction", "inProgress", entries[0]!.receivedAt],
+      ["contextCompaction", "Context compaction", "completed", entries[1]!.receivedAt],
+    ],
+  );
 });
 
 test("AgentBackend publishes native subagent audit facts and concise activity", () => {
@@ -770,7 +831,7 @@ test("Worker child threads cannot inherit domain tool access from their register
   );
   const researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher);
   new AgentBackend().start();
-  await researcher.start();
+  await researcher.startThread();
 
   assert.ok(appServer.handler);
   const result = await appServer.handler({
@@ -805,7 +866,7 @@ test("Child threads cannot call Scout agent lifecycle tools", async () => {
   );
   const researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher);
   new AgentBackend().start();
-  await researcher.start();
+  await researcher.startThread();
 
   assert.ok(appServer.handler);
   const result = await appServer.handler({
@@ -850,9 +911,9 @@ test("SendMessage reports an undelivered message when the target Worker has no r
   prepareAgent(fixture, ScoutAgentRoles.Verifier, verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
-  await coordinator.start();
+  await coordinator.startThread();
   const verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
-  await verifier.start();
+  await verifier.startThread();
 
   assert.ok(appServer.handler);
   const result = await appServer.handler({
@@ -888,9 +949,9 @@ test("Worker SendMessage reaches Coordinator and Coordinator output reaches the 
   prepareAgent(fixture, ScoutAgentRoles.Verifier, verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
-  await coordinator.start();
+  await coordinator.startThread();
   const verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
-  await verifier.start();
+  await verifier.startThread();
   const interactionGateway = new InteractionGateway();
   interactionGateway.start();
 
@@ -922,7 +983,7 @@ test("Coordinator journals messages received after its runner stops without star
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("coordinator-stopped-message", { appServer });
   const coordinator = new AgentBuilder().buildCoordinator();
-  await coordinator.start();
+  await coordinator.startThread();
   await coordinator.runner.stop("test_shutdown");
   const turnCount = appServer.turnInputs.length;
   const queuedAt = "2026-07-23T00:00:00.000Z";
@@ -1004,10 +1065,10 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   prepareAgent(fixture, ScoutAgentRoles.Verifier, verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
-  await coordinator.start();
+  await coordinator.startThread();
   fixture.registry.bindThread(coordinator.agentId, "thread-coordinator");
   verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
-  await verifier.start();
+  await verifier.startThread();
   const assignment = await verifier.assignTask({
     description: "Exercise explicit lifecycle tools",
     subagentType: ScoutAgentRoles.Verifier,
@@ -1123,9 +1184,9 @@ test("ArchiveTask releases a Worker runner while preserving its thread and task 
   prepareAgent(fixture, ScoutAgentRoles.Verifier, verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
-  await coordinator.start();
+  await coordinator.startThread();
   const verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
-  await verifier.start();
+  await verifier.startThread();
   fixture.registry.bindThread(coordinator.agentId, "thread-coordinator");
   const workerThreadId = verifier.threadId;
   const firstAssignment = await verifier.assignTask({
@@ -1187,7 +1248,7 @@ test("ArchiveTask rejects non-Coordinator callers", async () => {
   prepareAgent(fixture, ScoutAgentRoles.Verifier, verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
-  await verifier.start();
+  await verifier.startThread();
 
   assert.ok(appServer.handler);
   const result = await appServer.handler({
@@ -1211,7 +1272,7 @@ test("SubmitTask rejects a Coordinator caller", async () => {
   const fixture = createAgentFixture("worker-lifecycle-tool-role", { appServer, domain });
   new AgentBackend().start();
   const coordinator = new AgentBuilder().buildCoordinator();
-  await coordinator.start();
+  await coordinator.startThread();
 
   assert.ok(appServer.handler);
   const submitResult = await appServer.handler({

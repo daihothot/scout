@@ -40,7 +40,9 @@ export function selectCurrentAgentActivity(
       && activity.turnId === latest.turnId
     )
     : undefined;
-  const processing = latest.status !== "inProgress" && turn?.status === "inProgress";
+  const processing = latest.type !== "contextCompaction"
+    && latest.status !== "inProgress"
+    && turn?.status === "inProgress";
   return itemPresentation(latest, processing, turn?.status);
 }
 
@@ -112,6 +114,12 @@ function activityText(activity: AgentActivity, status = activity.status): string
   if (activity.type === "reasoning") {
     const state = status === "inProgress" ? "思考" : "已思考";
     return detail ? `${state} · ${detail}` : state;
+  }
+  if (activity.type === "contextCompaction") {
+    if (status === "failed" || status === "blocked" || status === "cancelled") {
+      return "上下文压缩失败";
+    }
+    return status === "inProgress" ? "压缩上下文" : "压缩完成";
   }
   const completedPrefix = status === "inProgress" ? "" : "已执行 · ";
   if (activity.type === "commandExecution") return `${completedPrefix}${label}`;

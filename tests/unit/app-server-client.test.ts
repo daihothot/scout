@@ -77,6 +77,68 @@ test("CodexAppServerClient sends explicit model and reasoning configuration", as
   }
 });
 
+test("CodexAppServerClient resumes a persisted thread without returning turn history", async () => {
+  const fakeServer = writeFakeAppServer(`
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin });
+    function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+    rl.on("line", (line) => {
+      const message = JSON.parse(line);
+      if (message.method === "initialize") {
+        send({ id: message.id, result: { ok: true } });
+        return;
+      }
+      if (message.method === "thread/resume") {
+        send({ id: message.id, result: { thread: { id: message.params.threadId }, params: message.params } });
+      }
+    });
+  `);
+  const client = new CodexAppServerClient({
+    codexPath: fakeServer,
+    home: tmpdir(),
+    codexHome: tmpdir(),
+    providerName: "missing-provider",
+  });
+
+  try {
+    await client.startSession();
+    const resumed = await client.resumeThread({
+      threadId: "thread-persisted",
+      cwd: "/repo",
+      model: "gpt-5.5",
+      modelProvider: "GuruOpenAI",
+      reasoningEffort: "high",
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      config: { feature: true },
+      baseInstructions: "base",
+      developerInstructions: "developer",
+    });
+    const response = resumed.response as { params: Record<string, unknown> };
+
+    assert.equal(resumed.threadId, "thread-persisted");
+    assert.deepEqual(resumed.resumeInput, response.params);
+    assert.deepEqual(response.params, {
+      threadId: "thread-persisted",
+      excludeTurns: true,
+      model: "gpt-5.5",
+      modelProvider: "GuruOpenAI",
+      cwd: "/repo",
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      config: {
+        feature: true,
+        model_reasoning_effort: "high",
+      },
+      baseInstructions: "base",
+      developerInstructions: "developer",
+    });
+    assert.equal("dynamicTools" in response.params, false);
+  } finally {
+    client.close();
+  }
+});
+
 test("CodexAppServerClient publishes timeline after store state is reduced", async () => {
   const fakeServer = writeFakeAppServer(`
     const readline = require("node:readline");

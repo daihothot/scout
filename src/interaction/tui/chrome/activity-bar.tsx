@@ -10,15 +10,20 @@ import { terminalDisplayWidth, wrapByDisplayWidth } from "../terminal-text.js";
 
 const BREATHING_FRAMES = ["·", "◌", "○", "◉", "○", "◌"] as const;
 const PROCESS_FRAMES = ["›", "▷", "▶", "▷"] as const;
+const FOLD_FRAMES = ["▬", "▭", "▪", "·", "▪", "▭"] as const;
 const BREATHING_FRAME_MS = 120;
+const PROCESS_FRAME_MS = 90;
+const FOLD_FRAME_MS = 110;
 const BREATHING_CYCLE_MS = BREATHING_FRAMES.length * BREATHING_FRAME_MS;
+const FOLD_CYCLE_MS = FOLD_FRAMES.length * FOLD_FRAME_MS;
+const MIN_ANIMATED_WIDTH = 16;
 const TOOL_ACTIVITY_TYPES = new Set([
   "commandExecution",
   "mcpToolCall",
   "fileChange",
 ]);
 
-type ActivityAnimation = "breathing" | "process";
+type ActivityAnimation = "breathing" | "process" | "fold";
 
 export interface ActivityBarPresentation {
   lines: TerminalMarkdownSpan[][];
@@ -31,16 +36,22 @@ export function ActivityBar({ item, width, height }: {
   width: number;
   height: number;
 }) {
-  const requestedAnimation = activityAnimation(item);
+  const motionEnabled = process.env.SCOUT_TUI_MOTION !== "0" && width >= MIN_ANIMATED_WIDTH;
+  const requestedAnimation = activityAnimation(item, motionEnabled);
   const [animation, setAnimation] = useState<ActivityAnimation | undefined>(() =>
-    initialActivityAnimation(item, requestedAnimation)
+    initialActivityAnimation(item, requestedAnimation, motionEnabled)
   );
   const [frame, setFrame] = useState(0);
   const activityId = item?.activityId;
   const activityIdRef = useRef(activityId);
   const animationRef = useRef(animation);
-  const breathingStartedAtRef = useRef<number | undefined>(
-    animation === "breathing" ? Date.now() : undefined,
+  const minimumCycleRef = useRef<{
+    animation: "breathing" | "fold";
+    startedAt: number;
+  } | undefined>(
+    animation === "breathing" || animation === "fold"
+      ? { animation, startedAt: Date.now() }
+      : undefined,
   );
 
   useEffect(() => {
@@ -49,71 +60,124 @@ export function ActivityBar({ item, width, height }: {
       animationRef.current = next;
       setAnimation(next);
     };
-    const startBreathing = (next: ActivityAnimation | undefined) => {
-      breathingStartedAtRef.current = Date.now();
-      transition("breathing");
-      if (next !== "breathing") {
+    const startMinimumCycle = (
+      cycle: "breathing" | "fold",
+      next: ActivityAnimation | undefined,
+    ) => {
+      minimumCycleRef.current = { animation: cycle, startedAt: Date.now() };
+      setFrame(0);
+      transition(cycle);
+      if (next !== cycle) {
         transitionTimer = setTimeout(() => {
-          breathingStartedAtRef.current = undefined;
+          minimumCycleRef.current = undefined;
           transition(next);
-        }, BREATHING_CYCLE_MS);
+        }, cycle === "breathing" ? BREATHING_CYCLE_MS : FOLD_CYCLE_MS);
+      }
+    };
+    const finishMinimumCycle = (next: ActivityAnimation | undefined) => {
+      const cycle = minimumCycleRef.current;
+      if (!cycle || animationRef.current !== cycle.animation) {
+        minimumCycleRef.current = undefined;
+        transition(next);
+        return;
+      }
+      const completeCycle = () => {
+        minimumCycleRef.current = undefined;
+        if (cycle.animation === "fold" && next === "breathing") {
+          startMinimumCycle("breathing", "breathing");
+        } else {
+          transition(next);
+        }
+      };
+      const cycleMs = cycle.animation === "breathing" ? BREATHING_CYCLE_MS : FOLD_CYCLE_MS;
+      const remaining = Math.max(0, cycleMs - (Date.now() - cycle.startedAt));
+      if (remaining > 0) {
+        transitionTimer = setTimeout(completeCycle, remaining);
+      } else {
+        completeCycle();
       }
     };
 
+    if (!motionEnabled) {
+      minimumCycleRef.current = undefined;
+      transition(undefined);
+      return () => clearTimeout(transitionTimer);
+    }
+
     if (activityIdRef.current !== activityId) {
       activityIdRef.current = activityId;
-      setFrame(0);
-      if (shouldCompleteBreathingCycle(item, requestedAnimation)) {
-        startBreathing(requestedAnimation);
+      if (
+        requestedAnimation === "fold"
+        || (item?.type === "contextCompaction" && item.status === "completed")
+      ) {
+        startMinimumCycle("fold", requestedAnimation);
+      } else if (animationRef.current === "fold") {
+        finishMinimumCycle(requestedAnimation);
+      } else if (shouldCompleteBreathingCycle(item, requestedAnimation)) {
+        startMinimumCycle("breathing", requestedAnimation);
       } else {
-        breathingStartedAtRef.current = requestedAnimation === "breathing"
-          ? Date.now()
-          : undefined;
+        minimumCycleRef.current = undefined;
         transition(requestedAnimation);
       }
+      return () => clearTimeout(transitionTimer);
+    }
+
+    if (requestedAnimation === "fold") {
+      if (animationRef.current !== "fold") {
+        startMinimumCycle("fold", "fold");
+      }
+      return () => clearTimeout(transitionTimer);
+    }
+
+    if (animationRef.current === "fold") {
+      finishMinimumCycle(requestedAnimation);
       return () => clearTimeout(transitionTimer);
     }
 
     if (requestedAnimation === "breathing") {
       if (animationRef.current !== "breathing") {
-        setFrame(0);
-        startBreathing("breathing");
+        startMinimumCycle("breathing", "breathing");
       }
       return () => clearTimeout(transitionTimer);
     }
 
     if (animationRef.current === "breathing") {
-      const elapsed = Date.now() - (breathingStartedAtRef.current ?? Date.now());
-      const remaining = Math.max(0, BREATHING_CYCLE_MS - elapsed);
-      if (remaining > 0) {
-        transitionTimer = setTimeout(() => {
-          breathingStartedAtRef.current = undefined;
-          transition(requestedAnimation);
-        }, remaining);
-      } else {
-        breathingStartedAtRef.current = undefined;
-        transition(requestedAnimation);
-      }
+      finishMinimumCycle(requestedAnimation);
     } else {
+      minimumCycleRef.current = undefined;
       transition(requestedAnimation);
     }
     return () => clearTimeout(transitionTimer);
-  }, [activityId, item?.type, requestedAnimation]);
+  }, [activityId, item?.status, item?.type, motionEnabled, requestedAnimation]);
 
   useEffect(() => {
     setFrame(0);
     if (!animation) return;
-    const frames = animation === "breathing" ? BREATHING_FRAMES : PROCESS_FRAMES;
+    const frames = animation === "breathing"
+      ? BREATHING_FRAMES
+      : animation === "fold"
+        ? FOLD_FRAMES
+        : PROCESS_FRAMES;
+    const frameMs = animation === "breathing"
+      ? BREATHING_FRAME_MS
+      : animation === "fold"
+        ? FOLD_FRAME_MS
+        : PROCESS_FRAME_MS;
     const timer = setInterval(() => {
       setFrame((current) => (current + 1) % frames.length);
-    }, animation === "breathing" ? BREATHING_FRAME_MS : 90);
+    }, frameMs);
     return () => clearInterval(timer);
   }, [animation]);
 
   if (height === 0) return null;
   const presentation = buildActivityBarPresentation(item, width);
   const marker = activityMarker(item, animation, frame);
-  const markerColor = animation === "breathing"
+  const contextCompactionFailed = item?.type === "contextCompaction"
+    && (item.status === "failed" || item.status === "blocked" || item.status === "cancelled");
+  const markerColor = animation === "fold"
+    || (item?.type === "contextCompaction" && !contextCompactionFailed)
+    ? "gray"
+    : animation === "breathing"
     ? "white"
     : animation === "process" || item?.status === "inProgress"
       ? roleColor(item?.role)
@@ -135,7 +199,7 @@ export function ActivityBar({ item, width, height }: {
                 <Text
                   color={markerColor}
                   bold={animation === "breathing"}
-                  dimColor={!item}
+                  dimColor={!item || animation === "fold" || item?.type === "contextCompaction"}
                 >
                   {marker}
                 </Text>
@@ -203,7 +267,10 @@ export function buildActivityBarPresentation(
 
 function activityAnimation(
   item: TuiAgentActivityStripItem | undefined,
+  motionEnabled: boolean,
 ): ActivityAnimation | undefined {
+  if (!motionEnabled) return undefined;
+  if (item?.type === "contextCompaction" && item.status === "inProgress") return "fold";
   if (item?.processing) return "process";
   if (item?.status !== "inProgress") return undefined;
   if (item.type === "reasoning" || TOOL_ACTIVITY_TYPES.has(item.type)) {
@@ -215,7 +282,10 @@ function activityAnimation(
 function initialActivityAnimation(
   item: TuiAgentActivityStripItem | undefined,
   requested: ActivityAnimation | undefined,
+  motionEnabled: boolean,
 ): ActivityAnimation | undefined {
+  if (!motionEnabled) return undefined;
+  if (item?.type === "contextCompaction" && item.status === "completed") return "fold";
   return shouldCompleteBreathingCycle(item, requested) ? "breathing" : requested;
 }
 
@@ -235,7 +305,11 @@ function activityMarker(
   if (!item) return "·";
   if (animation === "breathing") return BREATHING_FRAMES[frame % BREATHING_FRAMES.length];
   if (animation === "process") return PROCESS_FRAMES[frame % PROCESS_FRAMES.length];
-  if (item.status === "failed" || item.status === "blocked") return "!";
+  if (animation === "fold") return FOLD_FRAMES[frame % FOLD_FRAMES.length];
+  if (item.status === "failed" || item.status === "blocked" || item.status === "cancelled") return "!";
+  if (item.type === "contextCompaction") {
+    return item.status === "inProgress" ? "▪" : "·";
+  }
   if (item.status === "inProgress") return "›";
   return "-";
 }

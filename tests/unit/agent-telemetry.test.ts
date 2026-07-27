@@ -301,6 +301,17 @@ test("AgentThreadRecorder writes complete startup facts and incremental close fa
   recorder.start();
 
   await eventBus.publishAndWait(AgentEvents.thread.started, started);
+  await eventBus.publishAndWait(AgentEvents.thread.resumed, {
+    agentId: started.agentId,
+    role: started.role,
+    threadId: started.threadId,
+    resumedAt: "2026-07-17T00:30:00.000Z",
+    resumeInput: {
+      threadId: started.threadId,
+      excludeTurns: true,
+    },
+    resumeResponse: { thread: { id: started.threadId, turns: [] } },
+  });
   await eventBus.publishAndWait(AgentEvents.thread.closed, {
     ...started,
     status: "closed",
@@ -311,8 +322,9 @@ test("AgentThreadRecorder writes complete startup facts and incremental close fa
 
   const threadLogPath = join(logsRoot, "thread.log");
   const text = readFileSync(threadLogPath, "utf8");
-  assert.equal(readEventCount(text), 2);
+  assert.equal(readEventCount(text), 3);
   assert.match(text, /event=agent\.thread\.started/);
+  assert.match(text, /event=agent\.thread\.resumed/);
   assert.match(text, /event=agent\.thread\.closed/);
   assert.match(text, /END_OF_FULL_INSTRUCTIONS/);
   assert.match(text, /name: "SubmitTask"/);

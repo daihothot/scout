@@ -110,6 +110,38 @@ export interface ThreadStartResponse {
   response: unknown;
 }
 
+export interface ThreadResumeOptions {
+  threadId: string;
+  cwd?: string;
+  model?: string;
+  modelProvider?: string;
+  reasoningEffort?: CodexReasoningEffort;
+  approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  config?: Record<string, unknown>;
+  baseInstructions?: string;
+  developerInstructions?: string;
+}
+
+export interface ThreadResumeRequest {
+  threadId: string;
+  excludeTurns: true;
+  cwd?: string;
+  model?: string;
+  modelProvider?: string;
+  approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
+  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  config?: Record<string, unknown>;
+  baseInstructions?: string;
+  developerInstructions?: string;
+}
+
+export interface ThreadResumeResponse {
+  threadId: string;
+  resumeInput: ThreadResumeRequest;
+  response: unknown;
+}
+
 export interface TurnStartOptions {
   threadId: string;
   prompt: string;
@@ -269,6 +301,38 @@ export class CodexAppServerClient {
     return {
       threadId: readNestedString(response, ["thread", "id"]),
       startInput,
+      response,
+    };
+  }
+
+  async resumeThread(options: ThreadResumeOptions): Promise<ThreadResumeResponse> {
+    const resumeInput: ThreadResumeRequest = cleanUndefined({
+      threadId: options.threadId,
+      excludeTurns: true as const,
+      model: options.model,
+      modelProvider: options.modelProvider,
+      cwd: options.cwd,
+      approvalPolicy: options.approvalPolicy,
+      sandbox: options.sandbox,
+      config: options.reasoningEffort === undefined
+        ? options.config
+        : {
+            ...(options.config ?? {}),
+            model_reasoning_effort: options.reasoningEffort,
+          },
+      baseInstructions: options.baseInstructions,
+      developerInstructions: options.developerInstructions,
+    });
+    const response = await this.request("thread/resume", resumeInput);
+    const threadId = readNestedString(response, ["thread", "id"]);
+    if (threadId !== options.threadId) {
+      throw new Error(
+        `Codex resumed thread ${threadId}, expected ${options.threadId}.`,
+      );
+    }
+    return {
+      threadId,
+      resumeInput,
       response,
     };
   }
