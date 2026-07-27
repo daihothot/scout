@@ -1,22 +1,22 @@
 ---
 assetKind: scout.skill
-name: validator-validation
+name: domain-validation-validator
 description: Scout Validator 对 Researcher 提交的 Guru Research pack 执行独立结构、证据语义、代码 provenance 与引用闭环检查，并生成 Research Pack Gate 报告时使用。
 id: skills.validation.validator
-version: 0.5.5
+version: 0.5.7
 phase: [validate]
 tags: [scout, validation, research, gate, evidence, audit, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [guru-knowledge-research, jarvis-codebase]
+    required: [domain-validation-research-pack, tool-guru-knowledge, tool-jarvis-codebase]
   shellTools:
     required: [scoutAssets, scoutArtifactDigest]
     optional: [rg, sed, find, cat]
 summary: 独立检查 Research pack，并形成绑定内容摘要的 Research Pack Gate。
 ---
 
-# Validator Validation
+# Domain Validation Validator
 
 当 Validator 收到 Researcher 的正式 Research handoff，需要独立检查其 Research pack 是否能够进入后续流程时使用本技能。
 
@@ -49,8 +49,9 @@ summary: 独立检查 Research pack，并形成绑定内容摘要的 Research Pa
 ## Research Pack Gate Model
 
 - 一个 run 只处理一个 BDD；Research Pack Gate 只检查当前 task 指向的一个 Research pack。
-- `guru-knowledge-research` 定义 Research pack、聚合产物、独立 evidence 和引用关系；Validator 将其作为 producer contract 读取，不执行其生产 workflow。
-- `jarvis-codebase` 定义 CodeGraph 与 source-code evidence 的 provenance、symbol 和 locator 规则；Validator 将其作为代码证据 contract 读取。
+- `domain-validation-research-pack` 定义 Research Pack、聚合产物、状态和引用关系；Validator 将其作为 Domain producer contract 读取，不执行其生产 workflow。
+- `tool-guru-knowledge` 定义 Guru Knowledge 来源、provenance，以及 Capability、Availability 和 Platform 明细 evidence contract。
+- `tool-jarvis-codebase` 定义 CodeGraph 与 source-code evidence 的 provenance、symbol 和 locator 规则；Validator 将其作为代码证据 contract 读取。
 - Validator 只读取 Researcher 正式 artifact，所有检查报告只写入 Validator 自己的 artifact root。
 - 每次 Gate 只绑定 `scout-artifact-digest` 返回的 `scout-directory-sha256-v1` digest；Research pack 内容改变后，旧 Gate 不再适用于新内容。
 - 每次检查创建一份新的 `research-pack-gate-NNNN.md`；正式 handoff 后该 Gate 记录不可修改。
@@ -107,7 +108,7 @@ blocked > insufficient_evidence > needs_fix > accepted
 
 注意事项：
 
-- pack 中应存在的产物、模板和关系以当前 `guru-knowledge-research` 为准。
+- pack 中应存在的产物、模板和关系以当前 `domain-validation-research-pack` 为准。
 - Validator 禁止写入、移动、重命名或格式化该目录中的任何文件。
 
 ### I-003: Inspection Contracts
@@ -115,7 +116,7 @@ blocked > insufficient_evidence > needs_fix > accepted
 
 描述：
 
-- 当前 mount 中的 `guru-knowledge-research`、其模板，以及 `jarvis-codebase` 的代码证据规则和模板。
+- 当前 mount 中的 `domain-validation-research-pack` 及其聚合模板、`tool-guru-knowledge` 的知识证据规则和模板，以及 `tool-jarvis-codebase` 的代码证据规则和模板。
 
 注意事项：
 
@@ -178,8 +179,9 @@ scout-artifact-digest <research-pack-dir>
 
 注意事项：
 
-- 读取 `guru-knowledge-research/SKILL.md`、`templates/template-index.md` 和本次 pack 实际涉及的模板。
-- 读取 `jarvis-codebase/SKILL.md` 及其代码证据模板，用于 Phase 3 的代码 evidence 检查。
+- 读取 `domain-validation-research-pack/SKILL.md`、`templates/template-index.md` 和本次 pack 实际涉及的模板。
+- 读取 `tool-guru-knowledge/SKILL.md` 及其知识 evidence 模板，用于 Phase 3 的 knowledge evidence 检查。
+- 读取 `tool-jarvis-codebase/SKILL.md` 及其代码证据模板，用于 Phase 3 的代码 evidence 检查。
 - 记录初始 digest、文件数量和 Researcher handoff state。
 - 独立计算的 digest algorithm 必须是 `scout-directory-sha256-v1`。
 - 上游缺少 digest、声明其它算法或声明 digest 与独立计算结果不一致时继续完成可读范围检查，并将 Gate 至少判为 `needs_fix`；不得改用上游自定义算法复算。
@@ -187,7 +189,7 @@ scout-artifact-digest <research-pack-dir>
 
 Exit：
 
-- 唯一 pack、两个 producer contracts、输出位置和初始 digest 已确认。
+- 唯一 pack、三个 producer contracts、输出位置和初始 digest 已确认。
 
 Blocked：
 

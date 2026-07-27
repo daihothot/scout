@@ -61,6 +61,6 @@ completion_state: partial
 
 ## Aggregation Notes
 
-- `E-CODE-*` artifact refs 由 `jarvis-codebase` 产出；CodeGraph 查询过程记录在对应 `E-CODE-*` 的 `Collection`。
+- `E-CODE-*` artifact refs 由 `tool-jarvis-codebase` 产出；CodeGraph 查询过程记录在对应 `E-CODE-*` 的 `Collection`。
 - 本文件只聚合 refs 和 claim mapping；它不能替代 source evidence artifacts。
 - Implementation claims 只登记在本文件中；`knowledge-evidence.md` 记录 intent / spec / behavior evidence，`verification-manual.md` 只引用 evidence ids。

@@ -1,23 +1,23 @@
 ---
 assetKind: scout.skill
-name: researcher-validation
+name: domain-validation-researcher
 description: Scout Researcher 在 Validation Domain 中接收 BDD 定位输入、调用适用研究方法、形成可追溯 Research handoff 并为 Verifier 提供稳定验证输入时使用。
 id: skills.validation.researcher
-version: 0.5.3
+version: 0.5.5
 phase: [research]
 tags: [scout, validation, bdd, research, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [guru-knowledge-research]
+    required: [domain-validation-research-pack]
 summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 handoff。
 ---
 
-# Researcher Validation
+# Domain Validation Researcher
 
 当 Researcher 在 Validation Domain 中需要把 BDD 定位输入收敛为可供下游消费的 Research handoff 时使用本技能。
 
-本技能定义 Validation Research 的角色工作流；Guru knowledge、当前版本代码证据和 Research pack 的具体方法由 `guru-knowledge-research` 所有。
+本技能定义 Validation Research 的角色工作流；Research Pack 编排由 `domain-validation-research-pack` 所有，知识与代码采集方法分别由 `tool-guru-knowledge` 和 `tool-jarvis-codebase` 所有。
 
 ## Skill Type
 
@@ -37,7 +37,7 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 不使用本技能处理：
 
 - 自行扩展到未分配的 BDD、产品、版本或来源范围。
-- 重复定义 `guru-knowledge-research` 的 evidence pack、模板或验证手册字段。
+- 重复定义 `domain-validation-research-pack` 的 evidence pack、模板或验证手册字段。
 - 执行运行时验证、判定 BDD 是否通过或执行最终 gate。
 - 直接向用户请求输入。
 
@@ -45,8 +45,8 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 
 - Coordinator 提供的是 BDD 定位输入；唯一 BDD fact 由 Researcher 使用专项研究方法确认。
 - Research artifact 负责锁定待验证功能点、来源、证据、限制和需人工确认项，不是运行时验证结论。
-- Guru knowledge 属于研究来源；当前版本 implementation claim 必须遵守专项 Skill 的代码证据规则。
-- `guru-knowledge-research` 是当前 Validation Research 的方法和产物所有者，本技能只负责进入条件和领域 handoff。
+- Guru Knowledge 与当前版本代码属于不同 producer 来源，必须分别遵守对应 Tool Skill。
+- `domain-validation-research-pack` 是当前 Validation Research 的编排和聚合产物所有者，本技能只负责进入条件和领域 handoff。
 - Research handoff 的 complete、partial 或 blocked 必须与实际专项产物状态一致。
 - 同一 run/BDD 只维护一个 `<bdd-id>-research-pack/`；Gate 修正原地写入该 pack，并以新 digest 再次 handoff。
 
@@ -62,10 +62,10 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 
 - 本技能明确授权父 Researcher 自主决定是否使用 Codex native subagent 加速当前 Research task；是否派发、派发数量以及并行或串行方式由父 Researcher 根据实际效率判断，不形成新的 Scout task，也不改变当前 task 的生命周期。
 - 只有子任务目标、输入和退出边界稳定，能够独立推进，并且预期节省的时间高于启动、等待和聚合成本时才派发。存在未解除的 `Human Confirmation Gate` 时不得派发依赖该事实的 child。
-- Knowledge 与 Code 是可选的候选拆分：Knowledge child 可只读取已选 BDD、Capability、Availability 和 Platform，且不得提取、推导或建议 Persona/Human evidence；Code child 可只负责 Source Query Target、CodeGraph 查询、源码核验和 source locator。父 Researcher 可以委派其中一个、多个或均不委派，不得为了满足形式而派发。
+- Knowledge 与 Code 是可选的 producer 拆分；具体边界、输入和返回结构分别遵守 `tool-guru-knowledge` 与 `tool-jarvis-codebase`。父 Researcher 可以委派其中一个、多个或均不委派，不得为了满足形式而派发。
 - 父 Researcher 独占 Human Confirmation Gate、Persona/Human evidence、evidence id 与 ref 分配、正式 artifact 写入、checker、digest 和 Research handoff。
 - child 独占已委派范围；父 Researcher 不得重新执行完整 knowledge scan 或 code scan，只能抽查 child 返回的关键 locator、解决冲突和验证会进入正式 claim 的最小片段。
-- Knowledge child 只按 `Source Refs`、`Candidate Evidence`、`Conflicts`、`Commands`、`Failed Commands`、`Limitations` 六段返回；Code child 只按 `Source Refs`、`Source Query Targets`、`Source Locators`、`Commands`、`Failed Commands`、`Limitations` 六段返回。每份结果不超过 4000 个中文字符，不复制来源正文，不重复 contract、背景或形成最终 Research 状态。
+- Child 输出、只读边界和 artifact 权限由对应 Tool Skill 约束；任何 child 都不能形成最终 Research 状态。
 - 每个依赖 child 结果的写入批次必须等待对应结果返回并被父 Researcher 消费；空结果、超时或 `closeAgent` 清理都不能替代正式结果。
 - 父 Researcher 决定不派发时直接自行执行，不需要记录 fallback 原因；派发失败或结果不可用时，可以收回该范围并继续，但必须先停止或释放对应 child，且不得与仍在执行的 child 重复工作。
 
@@ -118,7 +118,7 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 
 输出要求：
 
-- 正式 artifact 及字段结构由 `guru-knowledge-research` 定义。
+- 正式 artifact 及字段结构由 `domain-validation-research-pack` 定义。
 - Research handoff 必须使用下列固定十字段；英文 Markdown 标题和字段 key 保持原样，字段内容使用中文，字段不得增加、删除、改名或展开为额外摘要：
 
 ```markdown
@@ -141,7 +141,7 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 ### Artifact Relationship Rules
 
 - 摘要产物：Research handoff 只传递专项 Research pack 的状态、关键 refs、digest、问题或限制和继续入口，不复制 pack 内容。
-- 明细产物：由 `guru-knowledge-research` 及其依赖 Skill 所有。
+- 明细产物：知识和代码 evidence 分别由对应 Tool Skill 所有；聚合、Persona 和 Human evidence 由 `domain-validation-research-pack` 所有。
 - Registry / Pack state：沿用专项 Skill 生成的 evidence registry；Pack 状态由 checker 根据必需聚合 artifact 派生，本技能不创建第二套状态 artifact。
 - Claim owner：BDD、knowledge 和 implementation claim 的所有权遵守专项 Skill。
 - 下游引用规则：Verifier 从正式 handoff 获取唯一 pack ref、evidence registry ref 和 verification manual ref，再通过 registry 与 manual 解析详细 artifact refs 和 evidence refs。
@@ -174,7 +174,7 @@ Partial：
 ## Phase 2: Execute Research Method
 ---
 
-本阶段加载并执行 `guru-knowledge-research`，由它负责具体阶段、模板、命令和 evidence pack。
+本阶段加载并执行 `domain-validation-research-pack`，由它编排两个 producer Skill、Domain 模板和 Evidence Pack。
 
 注意事项：
 
@@ -241,7 +241,7 @@ Partial：
 
 ## Blocking Rules (Enforcement)
 
-- BR-001：缺少 `guru-knowledge-research` 或其 required capability 时必须停止依赖阶段。
+- BR-001：缺少 `domain-validation-research-pack` 或其 required capability 时必须停止依赖阶段。
 - BR-002：BDD 无法唯一定位时必须停止，并按 `Human Confirmation Gate` 判断是否需要上游确认。
 - BR-003：正式产物不可写或无法提交时不得报告完成。
 
@@ -270,7 +270,7 @@ Coordinator 分配 account-anon-first-launch-signin 的 Research task，并提�
 流程：
 
 1. 确认 BDD locator、版本和 task 边界。
-2. 加载 `guru-knowledge-research` 形成正式 Research pack。
+2. 加载 `domain-validation-research-pack` 形成正式 Research pack。
 3. 按实际产物状态提交 Research handoff。
 
 输出：

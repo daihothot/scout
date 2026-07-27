@@ -1,25 +1,24 @@
 ---
 assetKind: scout.skill
-name: guru-knowledge-research
-description: Scout Researcher 使用 Guru knowledge、Behaviors、当前版本代码语义、Evidence Pack、evidence-registry 和 verification-manual.md 锁定 BDD 验证内容、证据编号与用户画像。
-id: skills.guru.knowledge-research
-version: 0.10.3
+name: domain-validation-research-pack
+description: Scout Researcher 在 Validation Domain 中编排知识与代码证据、构建唯一 Research Pack、Evidence Registry 和 Verification Manual 时使用。
+id: skills.validation.research-pack
+version: 0.1.0
 phase: [research]
-tags: [guru, knowledge, codegraph, codebase, evidence, research]
+tags: [scout, validation, research, pack, evidence, manual]
 devices: [any]
 dependencies:
   skills:
-    required: [jarvis-codebase]
+    required: [tool-guru-knowledge, tool-jarvis-codebase]
   shellTools:
-    required: [scoutAssets, scoutResearchArtifactCheck, scoutArtifactDigest, jarvis, codegraph, git]
-    optional: [rg, sed, find, cat]
-summary: 基于 Guru knowledge 和当前版本代码证据形成 evidence pack 与 verification manual，不使用 synaptic。
+    required: [scoutAssets, scoutResearchArtifactCheck, scoutArtifactDigest]
+summary: 编排知识和代码 producer contracts，形成唯一 Research Pack、证据索引和验证手册。
 ---
-# Guru Knowledge Research
+# Domain Validation Research Pack
 
-当 Scout Researcher 需要从 Guru knowledge 和当前版本代码语义中锁定 BDD 验证内容、用户画像、证据编号和 verification manual 时使用本技能。
+当 Scout Researcher 需要把已确认的 Validation 目标收敛成唯一 Research Pack，并为后续 Validator 和 Verifier 提供稳定输入时使用本技能。
 
-本技能的目标是产出 **Evidence Pack + Verification Manual**：把验证内容锁定、固化、去歧义，让后续 Verifier 不漂移。Research 不判断 pass / fail，不制定 runtime 执行策略，不采集运行信号。
+本技能拥有 Research Pack 的编排、聚合、状态和 handoff contract。Guru Knowledge 与当前版本代码的具体采集方法分别由 `tool-guru-knowledge` 和 `tool-jarvis-codebase` 拥有。
 
 ## Skill Type
 
@@ -31,27 +30,29 @@ summary: 基于 Guru knowledge 和当前版本代码证据形成 evidence pack �
 
 使用本技能处理：
 
-- 从 Guru knowledge 定位 BDD 行为事实、Domain / Module / Capability、Availability 和 Platform 差异知识，并将 API 文档作为 Capability 规格来源。
-- 从当前产品当前版本代码中定位实现相关证据，记录 CodeGraph / AST symbol、文件、行号、key lines 和 reason。
+- 将上游目标收敛为唯一 BDD，并在无法唯一选择时进入人工确认 Gate。
+- 编排 `tool-guru-knowledge` 和 `tool-jarvis-codebase` 两个 producer contract。
 - 为所有证据分配稳定 evidence id。
-- 将证据整理成 research artifact files。
+- 将 producer artifacts 聚合为唯一 Research Pack。
+- 构建 `knowledge-evidence.md`、`code-evidence.md` 和 `evidence-registry.md`。
 - 生成 `verification-manual.md`，按 verification point 写清用户画像、Given / When / Then、支持证据编号和需要收集的信号。
+- 运行 Research artifact checker、计算 digest 并形成正式 Research handoff。
 
 不使用本技能处理：
 
-- 读取、整理或依赖 `synaptic`。
-- 写回、修改或迁移 Guru knowledge。
-- 生成 Guru ingestion、proposal、implementation、release note 或 canonical specification。
+- 复制 `tool-guru-knowledge` 的知识目录、检索命令、来源解释或知识明细模板。
+- 复制 `tool-jarvis-codebase` 的代码库解析、CodeGraph 命令或源码明细模板。
 - 判断 BDD 最终通过或失败。
 - 制定 Verifier 的 ReAct 策略、工具顺序或 runtime 执行方案。
-- 代替 `jarvis-codebase` 解析代码库路径、切换版本或执行 CodeGraph 检索规则。
+- 采集 runtime signal 或生成 Verification Report。
 
 ## Evidence Model
 
-knowledge 和 code 都是证据来源，不是单独事实。
+knowledge 和 code 都是 producer evidence，不是最终验证结论。
 
-- Guru knowledge 解释 intent、spec、behavior、availability、API semantics 和 platform boundary。
-- 当前版本代码证明 implementation claim。
+- `tool-guru-knowledge` 产生 Behavior 候选和 `E-CAP-*`、`E-AVAIL-001`、`E-PLATFORM-001` 知识明细证据。
+- `tool-jarvis-codebase` 产生当前版本 `E-CODE-*` 源码明细证据。
+- 本技能拥有 `E-BDD-001`、`E-KB-001`、聚合文件、registry 和 manual 的关系。
 - runtime / log / UI / test / device signal 才能证明 behavior observed claim。
 - Research 阶段只形成 candidate evidence、source-verified implementation evidence 和 verification manual。
 - Research 产物不得写 `passed`、`failed`、`verified` 作为最终业务结论。
@@ -88,74 +89,27 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 - 由人工确认闭环的事实必须登记为 `E-HUMAN-*`；knowledge 候选或 Researcher 推断不能替代用户确认。
 - task handoff 必须使用英文标题 `Research Handoff State`，在标题下用中文传递 `complete | partial | blocked` 状态、唯一 pack ref、digest、evidence registry ref、verification manual ref、问题或限制、人工确认状态和继续入口；不得复制 artifact 中的证据或验证点详情。存在待人工确认的必需事实时不得提交 handoff，artifact 为其它原因部分完成时不得在 handoff 中描述为 Research 已完成。
 
-## Repository Provenance Model
+## Pack Provenance Model
 
-- `root repository` 是 `jarvis codebase <repo> path` 返回的 managed checkout 所属仓库。
-- `source repository` 是实际拥有目标源码文件的 Git 仓库；源码位于 submodule 或嵌套仓库时，它与 root repository 不同。
-- 每个 Research pack 必须记录 knowledge repository commit、root repository branch / commit / working tree state、source repository branch / commit / working tree state、parent gitlink、CodeGraph status 和本地 provenance path。
-- 非嵌套源码的 source repository identity 与 root repository identity 相同，`gitlink_path` 和 `gitlink_commit` 写 `none`。
-- 嵌套源码必须记录 root commit 中的 `gitlink_path` / `gitlink_commit`，且 `gitlink_commit` 必须和收集证据时的 `source_commit` 对齐。
-- `E-CODE-*` 必须使用 `source_commit + source_relative_file` 作为 canonical replay locator；本地绝对路径只作为当前 run provenance。
-- 每个 `E-CODE-*` 只能记录一个 primary symbol。相关源码文件有未提交改动时，该证据不得标记为 `source_verified`。
+- `knowledge-evidence.md` 聚合 `tool-guru-knowledge` 提供的 knowledge repository provenance 和 knowledge source refs。
+- `code-evidence.md` 聚合 `tool-jarvis-codebase` 提供的 root/source repository provenance 和 `E-CODE-*` refs。
+- Domain Skill 不重新解释 producer provenance，也不把本地路径提升为 canonical locator。
+- Pack 中任何 producer evidence 失效时，相关聚合 claim、registry 和 manual refs 必须同步修正。
 
-## Native Subagent Strategy
+## Native Subagent Orchestration
 
-本技能明确授权父 Researcher 自主决定是否使用 Codex native subagent。只有子任务边界稳定、能够独立推进，并且预期节省的时间高于启动、等待和聚合成本时才派发；是否派发、派发数量以及并行或串行方式均由父 Researcher 判断。Native subagent 只负责返回候选事实和可复查来源，不直接写正式 Research pack。
+父 Researcher 自主决定是否把独立的 Knowledge 或 Code producer 工作交给 native subagent。具体委派条件、只读边界、返回结构和失败处理分别遵守 `tool-guru-knowledge` 与 `tool-jarvis-codebase`。
 
-- 父 Researcher 派发前只锁定当前 task 的唯一 BDD identity 与 ref、knowledge root、目标 repository path、版本、CodeGraph index 状态和 canonical Research pack；不得提前执行准备委派范围内的正文检索、分析或完整核验。
-- Knowledge 与 Code 是可选的候选拆分。Knowledge child 可独占已选 BDD、全部相关 Capability、唯一 Availability 和唯一 Platform 的只读提取；不得提取、推导或建议 `E-PERSONA-*`、`E-HUMAN-*` 或人工请求。Code child 可独占 Source Query Target 推导、只读 CodeGraph 查询、源码核验和 source locator 收敛。
-- 父 Researcher 可以委派其中一个、多个或均不委派；只有相互独立且并行收益明确时才并行。多个 child 必须使用相同的已确认 BDD 与版本边界，不得写正式 Research artifact，也不得相互改写范围。
-- 父 Researcher 不得重复执行 child 已覆盖的完整检索，只能抽查将进入正式 claim 的关键 locator、解决两个结果之间的冲突或补齐 child 明确披露的未覆盖范围。
-- 父 Researcher 决定不派发时直接自行执行，不需要记录 fallback 原因；派发失败或结果不可用时，可以在停止或释放对应 child 后收回该范围，不得与仍在执行的 child 重复工作。
-
-必须由父 Researcher 串行完成的工作：
+必须由父 Researcher 保留的责任：
 
 - 唯一 BDD 选择、Human Confirmation Gate 判断和人工请求。
-- `jarvis codebase` 的 supported/path/version 解析、checkout、submodule 更新和 CodeGraph index 准备。
-- evidence id 最终分配、交叉引用消歧、聚合 artifact、evidence registry、verification manual 和正式 Research pack 写入。
-- `scout-research-artifact-check`、pack digest、Scout dynamic tool 调用和正式 Research handoff。
+- 两个 producer 的共同 BDD、版本、平台和 artifact scope 对齐。
+- evidence id 分配、交叉引用消歧、聚合 artifact、registry、manual 和正式 Research Pack 写入。
+- checker、digest、Scout dynamic tool 调用和正式 Research handoff。
 
-使用 child 时，委派 prompt 必须包含只读输入范围、允许使用的命令和禁止写入的正式 artifact 路径。Knowledge child 只按 `Source Refs`、`Candidate Evidence`、`Conflicts`、`Commands`、`Failed Commands`、`Limitations` 六段返回；Code child 按 `jarvis-codebase` 定义的六段返回。每份结果不超过 4000 个中文字符，不复制来源正文，不重复 contract 或形成最终 handoff。父 Researcher 必须消费对应结果后才能写依赖该结果的 artifact。
+只有 Knowledge 与 Code 输入边界都已锁定且彼此独立时才并行。父 Researcher 不得重复执行 child 已覆盖的完整检索，只能核验进入正式 claim 的关键 locator、解决冲突或补齐明确披露的缺口。
 
-父 Researcher 按 artifact 的真实数据依赖写 canonical Research pack：依赖 child 结果的内容必须等待对应结果返回并被消费；不依赖 child 或由父 Researcher 自行完成的内容可以直接写入。不得跨依赖提前写文件；全部 artifact 稳定并完成人工事实闭环后才能执行最终 checker 和 digest。不强制固定写入批次数量或 `fileChange` 数量。
-
-提速不得以删除已经形成且仍有效的 `E-CODE-*` 为代价。Gate 修正时复用同一 canonical pack，并保留仍能支撑当前版本 claim 的代码证据；只修正失效内容、引用和聚合关系。
-
-## Knowledge Map
-
-Guru knowledge 默认根：
-
-```text
-~/.guru/knowledge/Products/GuruSdk
-```
-
-核心区域：
-
-- `index.md`：产品边界、domain 地图和维护规则。
-- `Behaviors/`：BDD / 行为事实，不等同于本次验证已通过。
-- `Domains/`：Domain、Module、Capability、Specifications、Availability、APIs 和平台差异文档。
-
-参考模板语义：
-
-- Domain / Module / Capability：用于确定归属、职责、边界和上下游。
-- Capability Specifications：使用 `~/.guru/knowledge/Templates/Capability Specifications Template.md` 和 `Platform Document Template.md` 定义的 11 个固定段落作为 research 维度来源；ResearchArtifact 不生成 canonical `Specifications.md`。
-- Availability：用于版本可用性证据。
-- API Index：只作为 `E-CAP-*` 的 `CAPSRC-*` 和“数据与接口”规格来源，不生成独立 evidence id；当前版本 API 符号由 `E-CODE-*` 证明。
-- Platform Document：用于平台差异证据；平台 `Specifications.md` 的验收场景必须连接 product 级 Behavior。
-
-Capability Specifications 的 11 个固定段落：
-
-- `系统目标`
-- `系统边界`
-- `用户角色`
-- `核心能力`
-- `关键流程`
-- `领域对象`
-- `状态变化`
-- `业务规则`
-- `数据与接口`
-- `非功能要求`
-- `验收场景`
+父 Researcher 按 artifact 的真实数据依赖写 canonical Research Pack；依赖 producer 结果的内容必须等待相应结果返回并被消费。全部 artifact 稳定并完成人工事实闭环后才能执行最终 checker 和 digest。
 
 ## Inputs
 
@@ -179,39 +133,43 @@ Capability Specifications 的 11 个固定段落：
 
 描述：
 
-- 当前 mount 可见本技能、`jarvis-codebase`、`scout-assets`、`scout-research-artifact-check`、`jarvis`、`codegraph` 和 `git`。
+- 当前 mount 可见本技能、`tool-guru-knowledge`、`tool-jarvis-codebase`、`scout-assets`、`scout-research-artifact-check` 和 `scout-artifact-digest`。
 
 注意事项：
 
 - 使用 `scout-assets` 查询当前可见能力。
-- 缺少 required skill 或 shell tool 时，记录为阻塞项并向上游报告。
+- 两个 producer Skill 各自负责检查自己的 required capabilities。
+- 缺少 Domain Skill 直接依赖或任一 producer contract 时，记录为阻塞项并向上游报告。
 
-### I-003: Knowledge Boundary
+### I-003: Producer Scope
 
 ---
 
 描述：
 
-- 当前环境允许读取 `~/.guru/knowledge/Products/GuruSdk`，或上游已提供明确 knowledge refs。
-- 目标产品是 GuruSdk，或上游明确说明其它产品边界。
+- 传给 `tool-guru-knowledge` 的产品、knowledge boundary 和知识查询目标。
+- 传给 `tool-jarvis-codebase` 的 managed repository、版本和 Source Query Targets。
 
 注意事项：
 
-- 非 GuruSdk 产品边界不能默认套用 GuruSdk knowledge。
-- knowledge ref 只能作为证据来源，不能直接写成本次验证事实。
+- 两个 producer 必须使用同一个唯一 BDD、产品版本和验证范围。
+- Domain Skill 只负责输入对齐，不复制 producer 的来源解析方法。
+- 任一 producer 返回 scope expansion candidate 时，由父 Researcher 统一判断，不能让 producer 自行扩大 Pack。
 
-### I-004: Product Version
+### I-004: Target Context
 
 ---
 
 描述：
 
-- 需要研究的当前产品版本、SDK version、branch 或 commit。
+- 当前产品版本、SDK version、branch 或 commit。
+- 当前验证目标平台及形成 Verification Manual 所需的目标上下文。
 
 注意事项：
 
 - version / branch / commit 缺失时，记录为需人工确认项。
-- 切换代码库版本或使用 `latest` 必须遵守 `jarvis-codebase` 的授权规则。
+- 目标平台缺失且影响 Platform evidence 或 Manual 必填字段时，记录为需人工确认项。
+- producer 对版本、平台和来源状态的具体处理遵守各自 Skill。
 
 ### I-005: Artifact Target
 
@@ -273,9 +231,6 @@ templates/template-index.md
 ```text
 templates/bdd-evidence.md
 templates/knowledge-evidence.md
-templates/capability-evidence.md
-templates/availability-evidence.md
-templates/platform-evidence.md
 templates/user-persona-evidence.md
 templates/human-confirmation-evidence.md
 templates/code-evidence.md
@@ -283,13 +238,21 @@ templates/evidence-registry.md
 templates/verification-manual.md
 ```
 
-代码证据模板不在本技能中定义，必须使用 `jarvis-codebase/templates/` 下的模板。
+知识和代码明细证据模板分别由 producer Skill 拥有：
+
+```text
+tool-guru-knowledge/templates/capability-evidence.md
+tool-guru-knowledge/templates/availability-evidence.md
+tool-guru-knowledge/templates/platform-evidence.md
+tool-jarvis-codebase/templates/source-code-evidence.md
+```
 
 模板读取规则：
 
 - Phase 1 必须先读取 `templates/template-index.md`，再读取其中标记为“是”的模板。
 - 进入某类条件 evidence 的收集或写入前，必须读取 `template-index.md` 中对应的条件模板。
-- Phase 4 必须读取 `jarvis-codebase/templates/template-index.md` 和 `source-code-evidence.md`。
+- Phase 3 必须读取 `tool-guru-knowledge/SKILL.md` 及其 `templates/template-index.md`。
+- Phase 4 必须读取 `tool-jarvis-codebase/templates/template-index.md` 和 `source-code-evidence.md`。
 - 不得凭记忆缩减模板章节、字段或状态规则；不适用字段使用 `none`、`irrelevant` 或 limitation 明确表达。
 - `scout-research-artifact-check` 只检查弱 Markdown 的结构、状态、provenance 和引用闭环，不判断业务事实是否正确。
 
@@ -310,18 +273,19 @@ templates/verification-manual.md
 - `E-KB-001` 只由顶层 `knowledge-evidence.md` 拥有并登记到 registry，禁止创建 `evidence/E-KB-001.md` 或其它 `E-KB-*`。
 - 除 `E-BDD-001` 和 `E-KB-001` 外，所有 research evidence 都必须是独立 evidence artifact 文件；`E-CAP-*`、`E-AVAIL-001`、`E-PLATFORM-001`、`E-PERSONA-*`、`E-HUMAN-*`、`E-CODE-*` 都不能只存在于聚合文件中。
 - `bdd-evidence.md` 同时拥有候选收敛过程和 `E-BDD-001` claim；`knowledge-evidence.md`、`evidence-registry.md` 和 `verification-manual.md` 只引用该 evidence id，不复制正文。
-- `capability-evidence.md` 是单条 `E-CAP-*` 模板；每个相关 Capability 必须有独立 artifact，并在该 artifact 内完整登记 11 个规格维度。
-- `availability-evidence.md` 和 `platform-evidence.md` 分别只生成一份 `E-AVAIL-001` 和 `E-PLATFORM-001`，跨全部相关 `E-CAP-*` 聚合版本与平台事实。
-- `templates/bdd-evidence.md` 是顶层 BDD 聚合证据模板；`capability-evidence.md`、`availability-evidence.md`、`platform-evidence.md`、`user-persona-evidence.md`、`human-confirmation-evidence.md` 是 `evidence/` 下的 evidence artifact 模板。
+- `tool-guru-knowledge/templates/capability-evidence.md` 是单条 `E-CAP-*` 模板；每个相关 Capability 必须有独立 artifact，并在该 artifact 内完整登记 11 个规格维度。
+- `tool-guru-knowledge` 的 Availability 和 Platform 模板分别只生成一份 `E-AVAIL-001` 和 `E-PLATFORM-001`，跨全部相关 `E-CAP-*` 聚合版本与平台事实。
+- `templates/bdd-evidence.md` 是顶层 BDD 聚合证据模板；`user-persona-evidence.md` 和 `human-confirmation-evidence.md` 是本 Domain Skill 拥有的条件 evidence 模板。
 - API Index 和 API 文档只登记为对应 `E-CAP-*` 的 `CAPSRC-*`，其语义写入“数据与接口”规格维度；不得生成 `E-API-*`。
 - `E-PERSONA-*` 使用 `user-persona-evidence.md` 独立表达用户画像，并通过 `Source Evidence` 引用支撑画像字段的 `E-BDD-001`、`E-KB-001`、`E-CAP-*` 或 `E-HUMAN-*`；不得把用户画像字段写入 `E-HUMAN-*`。
 - `E-HUMAN-*` 只记录一个经用户明确确认的事实、原始输入或回复定位及其适用对象，不拥有被确认事实所属的业务模板。
-- `jarvis-codebase/templates/source-code-evidence.md` 是单条代码 evidence artifact 模板；Phase 4 生成或引用 `E-CODE-*` artifact，Phase 5 再汇总进 `code-evidence.md` 和 `evidence-registry.md`。
+- `tool-guru-knowledge` 生成或返回知识明细 artifact refs，Phase 3 将它们汇总进 `knowledge-evidence.md`。
+- `tool-jarvis-codebase/templates/source-code-evidence.md` 是单条代码 evidence artifact 模板；Phase 4 生成或引用 `E-CODE-*` artifact，Phase 5 再汇总进 `code-evidence.md` 和 `evidence-registry.md`。
 - `implementation claim` 只登记在 `code-evidence.md`，不得登记在 `knowledge-evidence.md` 或 `verification-manual.md`。
 - `evidence-registry.md` 只登记索引，不定义 claim 事实。
 - `verification-manual.md` 只引用 evidence id，不定义 claim 事实。
 - `knowledge-evidence.md` 的 ref field policy：`E-BDD-001` 的 `artifact_ref` 固定为 `bdd-evidence.md`，`E-KB-001` 的 `artifact_ref` 固定为 `knowledge-evidence.md`；其它条目的 `artifact_ref` 必须指向独立 evidence artifact，来源定位保存在对应明细证据中。
-- `code-evidence.md` 的 ref field policy：`E-CODE-*` 来自 `jarvis-codebase` 产物，必须登记 `artifact_ref`。
+- `code-evidence.md` 的 ref field policy：`E-CODE-*` 来自 `tool-jarvis-codebase` 产物，必须登记 `artifact_ref`。
 - 聚合文件不复制大段来源正文或完整 evidence block；只记录摘要字段和必要 refs。
 - knowledge repository provenance 由 `knowledge-evidence.md` 所有；root / source repository provenance 由 `code-evidence.md` 所有，单条 `E-CODE-*` 仍必须保存可重放 provenance 和 CodeGraph 查询 provenance。
 
@@ -329,7 +293,7 @@ templates/verification-manual.md
 
 ---
 
-本阶段确认上游输入、当前 mount 能力、knowledge 边界和代码证据依赖是否可用。
+本阶段确认上游输入、当前 mount、两个 producer contracts 和唯一 Research Pack 目标。
 
 使用命令：
 
@@ -343,18 +307,18 @@ scout-assets list
 
 - 从上游输入中提取 product、domain、capability、platform、app version / SDK version / branch / commit、BDD scenario、user persona clue、source refs 和 issue / PR 线索。
 - `scout-assets` 输出只能证明当前 mount 能力可见，不能证明业务状态。
-- 读取本技能和 `jarvis-codebase` 的模板索引及当前阶段适用模板；模板缺失或不可读时不得自行缩减 artifact 结构。
+- 读取本技能、`tool-guru-knowledge` 和 `tool-jarvis-codebase` 的 contract 与模板索引；缺失时不得自行复制或缩减 producer 规则。
 - 只有当前任务需要确认 MCP server、plugin 或 raw manifest 时，再执行 `scout-assets mcp`、`scout-assets plugins` 或 `scout-assets raw`。
-- 缺少 required skill、tool 或 knowledge ref 时，记录为阻塞项或需人工确认项。
+- 缺少 required Domain capability 或 producer contract 时记录为阻塞项；producer 内部能力由对应 Skill 检查。
 - 初始输入明确确认了模板中的必填事实时，可以将该事实登记为 `E-HUMAN-*`；用户画像线索必须进一步整理进独立 `E-PERSONA-*`，不得直接写入人工确认证据结构。
 
 Exit：
 
-- Required capabilities、knowledge boundary、artifact target 和输入 scope 已确认。
+- Required capabilities、两个 producer scopes、artifact target 和输入 scope 已确认。
 
 Blocked：
 
-- 缺少 `jarvis-codebase`、`scoutAssets`、`scoutResearchArtifactCheck`、`scoutArtifactDigest`、`jarvis`、`codegraph`、`git` 或 artifact target 不可写时停止。
+- 缺少 `tool-guru-knowledge`、`tool-jarvis-codebase`、`scoutAssets`、`scoutResearchArtifactCheck`、`scoutArtifactDigest` 或 artifact target 不可写时停止。
 
 Partial：
 
@@ -364,20 +328,19 @@ Partial：
 
 ---
 
-本阶段把输入收敛为一个可定位的 BDD fact，再继续整理 knowledge 和代码证据。
+本阶段使用 `tool-guru-knowledge` 的候选定位模式获取可重放 Behavior 候选，由父 Researcher 收敛到唯一 BDD fact。
 
-输入处理：
+调用输入：
 
-- BDD ID：在 `~/.guru/knowledge/Products/GuruSdk/Behaviors` 中按 `<bdd-id>.md` 定位 Behavior 文件，并核对文档中的 `scenario_id`、标题、Given / When / Then 和 status。
-- Behavior 文件路径：确认路径位于 GuruSdk Behaviors 语义下，读取 frontmatter、标题、Given / When / Then、Expect 和 Status。
-- Guru SDK 场景描述：先抽取功能/领域、入口状态、触发动作、期望行为和用户画像线索，再在 `Behaviors/` 中查找候选 Behavior，并用 `Domains/` 术语和 capability 边界辅助降噪。
-- issue / PR / 用户描述：只能作为定位线索；必须进一步匹配到唯一 Behavior，不能直接替代 BDD fact。
+- 将 BDD ID、Behavior ref、场景描述、issue / PR 或用户描述整理为 `tool-guru-knowledge` 的 Knowledge Query Target。
+- 使用候选定位模式；本阶段不授权 Tool 写正式 evidence artifact。
 
 注意事项：
 
-- 记录 Behavior 文件路径、`scenario_id`、Given / When / Then、用户画像线索、匹配理由、排除候选及原因。
+- 父 Researcher 必须消费 Tool 返回的 Source Refs、Candidate Evidence、Conflicts、Failed Commands 和 Limitations。
+- 输入能够与一个完整 Behavior identity 和 scenario 唯一对应时，父 Researcher 记录 selected reason。
 - 按模板说明处理画像和范围事实：未注明 `Nice to Have，可不填写` 的事实缺失或冲突时进入人工求证，明确可不填写的字段缺失时不阻塞。
-- 多个 knowledge 候选不能合并成一个确定事实，也不能由 Researcher 自行选择。
+- 多个仍然有效的候选不能合并，也不能由 Researcher 自行选择；必须发起人工请求并停在当前 task。
 - 输出拥有 `E-BDD-001` 的 `bdd-evidence.md`；`knowledge-evidence.md` 只登记摘要行、固定 `artifact_ref: bdd-evidence.md`、source 和 locator。
 
 Exit：
@@ -386,7 +349,7 @@ Exit：
 
 Blocked：
 
-- 无法唯一定位 BDD fact 时停止；候选和需人工确认项保留在当前 task 与人工请求中，不生成空 Research pack、`evidence-registry.md` 或 `verification-manual.md`。
+- Tool 无法形成可重放候选或父 Researcher 无法唯一定位 BDD fact 时停止；候选和需人工确认项保留在当前 task 与人工请求中，不生成空 Research Pack、registry 或 manual。
 
 Partial：
 
@@ -396,61 +359,52 @@ Partial：
 
 ---
 
-本阶段在 `~/.guru/knowledge/Products/GuruSdk` 中定位相关 knowledge evidence。
+本阶段为已确认的唯一 BDD 分配知识 evidence scope，调用 `tool-guru-knowledge` 形成知识明细 evidence，再构建 `E-KB-001` 聚合。
 
-按类别收集：
+必须加载并执行：
 
-- Behavior evidence：BDD 行为文件、scenario id、Given / When / Then / Expect 摘要和 status。
-- Capability evidence：为每个相关 Capability 独立记录身份、职责、边界、上下游和来源定位。
-- Specification alignment evidence：在每个 `E-CAP-*` 内按 Capability Specifications 模板定义的 11 个固定段落记录当前研究结论和 refs。
-- Availability evidence：在唯一 `E-AVAIL-001` 中跨相关 `E-CAP-*` 聚合功能点、状态、起始版本、移除版本和 release note link。
-- API 文档来源：作为相关 `E-CAP-*` 的 `CAPSRC-*` 登记，并将共享接口语义写入“数据与接口”规格维度。
-- Platform evidence：在唯一 `E-PLATFORM-001` 中跨相关 `E-CAP-*` 聚合平台差异、共享契约、平台细节和验收场景链接。
+```text
+tool-guru-knowledge
+```
 
 注意事项：
 
-- 每条明细 knowledge evidence 必须记录 evidence id、evidence type、file path、heading / paragraph / table row locator、source status、claim supported 和 limitations。
-- knowledge evidence 只能支撑 intent / spec / behavior claim，不能单独证明当前版本实现或运行时行为。
+- 父 Researcher 提供唯一 BDD ref、产品与 knowledge boundary、目标版本、目标平台、相关 Capability scope、分配的 evidence ids 和允许写入的 artifact target。
+- `tool-guru-knowledge` 拥有知识目录解释、来源定位、11 个规格维度、Availability、Platform、API 来源、provenance 和三类明细 evidence 模板。
+- 父 Researcher 核验返回 artifact refs 与分配范围一致，不重新执行或复制 Tool 的完整知识检索。
 - `knowledge-evidence.md` 自身登记为 `E-KB-001`，只聚合 `E-BDD-001`、`E-CAP-*`、`E-AVAIL-001` 和 `E-PLATFORM-001`；不得创建独立 `E-KB-*` 或 `E-API-*` 文件。
-- 每个 `E-CAP-*` 必须包含 11 个固定规格维度的覆盖矩阵；每个维度使用 `covered | not_applicable | not_found | needs_confirmation`，并引用 `CAPSRC-*` 或说明缺口。
-- 每个 Pack 必须且只能包含一个 `E-AVAIL-001` 和一个 `E-PLATFORM-001`；两者都必须引用本次覆盖的 `E-CAP-*`。
-- 记录 Guru knowledge repository 的 branch、commit 和 working tree state；knowledge 文件 locator 仍使用 product-relative path。
+- Tool 返回的冲突、失败命令和限制必须进入相关明细 evidence 或 `knowledge-evidence.md`，不得在聚合时丢失。
 
 Exit：
 
-- `knowledge-evidence.md` 已作为 `E-KB-001` 登记 `E-BDD-001`、所有相关 `E-CAP-*`、`E-AVAIL-001` 和 `E-PLATFORM-001`；每个 `E-CAP-*` 的 11 个规格维度均已登记覆盖状态。
+- Tool 已形成所需 `E-CAP-*`、`E-AVAIL-001` 和 `E-PLATFORM-001` artifact refs；`knowledge-evidence.md` 已作为 `E-KB-001` 完整聚合它们与 `E-BDD-001`。
 
 Blocked：
 
-- knowledge 文件不可读、locator 无法定位或关键模板不存在时停止，并在相关 knowledge artifact 或 task 消息中记录缺口。
+- Tool 返回 blocked、关键 artifact 缺失、分配范围不一致或来源冲突影响必需事实时停止，并保留 producer 的原始阻塞事实。
 
 Partial：
 
-- 只缺非关键 knowledge 分类时可继续，但必须在对应 evidence limitation 中记录缺口。
+- Tool 只缺不影响当前 claim 的非关键知识时可继续，但必须在对应 evidence 和聚合 limitation 中记录缺口。
 
 ## Phase 4: Collect Current Version Code Evidence
 
 ---
 
-本阶段把 BDD fact 和 knowledge evidence 转成 `jarvis-codebase` 的 Source Query Target，并委派 `jarvis-codebase` 收集当前版本代码证据。
+本阶段把 BDD fact 和 knowledge evidence 转成 `tool-jarvis-codebase` 的 Source Query Targets，消费其当前版本源码明细 evidence，并构建代码聚合。
 
 必须加载并执行：
 
 ```text
-jarvis-codebase
+tool-jarvis-codebase
 ```
 
 注意事项：
 
-- 本技能只负责从 `bdd-evidence.md`、`knowledge-evidence.md` 和 verification point draft 推导 `jarvis-codebase` 的 `I-004 Source Query Target`。
-- `jarvis-codebase` 负责 repo 解析、版本确认、命令副作用、CodeGraph 查询、源码行号和 `E-CODE-*` artifact。
-- `E-CODE-*` 证据块必须使用 `jarvis-codebase/templates/source-code-evidence.md`。
-- CodeGraph 查询命令和结果摘要属于采集 provenance，必须记录在对应 `E-CODE-*` 的 `Collection`，不能获得独立 evidence id。
-- 本阶段把 `jarvis-codebase` 产出的 artifact refs 汇总到 `code-evidence.md`，并记录它们支持的 BDD fact、knowledge evidence 或 verification point。
-- 必须先确认 root repository，再确认每个目标文件所属的 source repository；嵌套仓库记录 gitlink path / commit，非嵌套仓库明确写 `none`。
-- 每条 `E-CODE-*` 只能包含一个 primary symbol，并记录 source repo、source commit、source-relative file、line range、signature、key lines 和目标文件 working tree state。
-- source file 有未提交修改、source commit 无法确认或 gitlink 与 source commit 不一致时，不得把 `E-CODE-*` 标记为 `source_verified`。
-- CodeGraph 或代码库能力不可用时，按 `jarvis-codebase` 规则记录阻塞项。
+- 本技能只负责从 `bdd-evidence.md`、`knowledge-evidence.md` 和 verification point draft 推导 `tool-jarvis-codebase` 的 `I-004 Source Query Target`。
+- `tool-jarvis-codebase` 拥有 repo 解析、版本确认、命令副作用、CodeGraph、源码 locator、provenance 和 `E-CODE-*` 模板。
+- 本阶段把 `tool-jarvis-codebase` 产出的 artifact refs 汇总到 `code-evidence.md`，并记录它们支持的 BDD fact、knowledge evidence 或 verification point。
+- Tool 返回的失败命令、候选缺口和 limitations 必须进入 `code-evidence.md` 或对应明细 evidence。
 
 Exit：
 
@@ -484,7 +438,7 @@ templates/evidence-registry.md
 - 通过人工求证闭环的事实必须登记独立 `E-HUMAN-*` artifact，记录确认来源和确认内容；不得把 Researcher 推断登记成人工确认。
 - 不复制证据正文；证据正文保存在对应 evidence artifact 中。
 - 不写最终验证结论，不写 pass / fail，不把 evidence id 当作 fact id。
-- `E-CODE-*` 必须引用 `jarvis-codebase/templates/` 中生成的 source code evidence artifact。
+- `E-CODE-*` 必须引用 `tool-jarvis-codebase/templates/` 中生成的 source code evidence artifact。
 
 Exit：
 
@@ -552,61 +506,54 @@ Partial：
 
 ## Evidence Rules (Enforcement)
 
-- ER-001：knowledge 和 code 都是 evidence，不是单独事实。
-- ER-002：knowledge evidence 只能支撑 intent / spec / behavior claim。
-- ER-003：current version code evidence 才能支撑 implementation claim。
+- ER-001：Knowledge 和 Code producer artifacts 都是 evidence，不是最终验证结论。
+- ER-002：`tool-guru-knowledge` 的 evidence 只能支撑 intent、spec、behavior、availability 和 platform claim。
+- ER-003：`tool-jarvis-codebase` 的 current version evidence 才能支撑 implementation claim。
 - ER-004：runtime evidence 才能支撑 behavior observed claim。
-- ER-005：source ref 必须区分 root repository 与 source repository，并记录 branch、commit、working tree state、gitlink、source-relative file、primary symbol 和行定位。
+- ER-005：每类 producer evidence 必须符合其所有者 Skill 的来源、provenance、状态和模板 contract；本技能不得放宽 producer 规则。
 - ER-006：API Index 和 API 文档只能作为 `E-CAP-*` 的 `CAPSRC-*` 及“数据与接口”规格来源；当前版本 API symbol 由 `E-CODE-*` 支撑，禁止生成 `E-API-*`。
 - ER-007：Availability evidence 不能替代当前有效业务规则。
 - ER-008：Platform evidence 只能说明平台差异或共享契约，不能替代 runtime 观察。
 - ER-009：工具命令和查询输出属于 Activity State；只有整理进 evidence registry 并和可定位来源闭环后，才能支撑 claim。
 - ER-010：Research artifact 可以在 provenance 字段记录本地 source path 或命令输出摘要；evidence locator 必须优先使用 product-relative knowledge path、source-relative code path、source commit 和 symbol 行号。
 - ER-011：本机绝对路径不得写入 canonical knowledge 或对外事实；codebase 绝对路径只允许作为本次 Scout runtime artifact provenance。
-- ER-012：每个 `E-CODE-*` 只能有一个 primary symbol；canonical replay locator 必须是 `source_commit + source_relative_file`。
-- ER-013：每个 `E-CAP-*` 的 11 个规格维度必须逐项登记覆盖状态；`covered` 必须记录具体 claim 和 `CAPSRC-*`，其它状态必须说明 gap 或 rationale。
-- ER-014：事实字段默认要求确切信息；只有模板说明中明确写出 `Nice to Have，可不填写` 的字段允许缺失。结构字段按中文填写说明由 workflow 生成或由 contract 校验。
-- ER-015：每个 Pack 只允许 `knowledge-evidence.md` 拥有 `E-KB-001`，并且必须恰有一份 `E-AVAIL-001` 和一份 `E-PLATFORM-001`。
+- ER-012：事实字段默认要求确切信息；只有模板说明中明确写出 `Nice to Have，可不填写` 的字段允许缺失。结构字段按中文填写说明由 workflow 生成或由 contract 校验。
+- ER-013：每个 Pack 只允许 `knowledge-evidence.md` 拥有 `E-KB-001`，并且必须恰有一份 `E-AVAIL-001` 和一份 `E-PLATFORM-001`。
 
 ## Failure Rules (Enforcement)
 
-- FR-001：knowledge 文件不可读、locator 不可定位、frontmatter 或表格无法解析时，必须记录 failed_commands 或 failed_reads、影响 evidence id 和 limitation。
+- FR-001：`tool-guru-knowledge` 返回失败、冲突、不可重放 locator 或不完整 artifact 时，不得把相关 knowledge aggregate 标为完成。
 - FR-002：BDD 候选多个、无候选、Given / When / Then 缺失或任一默认需要求证的事实未闭环时，不得继续写成完成态 verification point；必须记录需人工确认项。
-- FR-003：`jarvis-codebase` 失败、CodeGraph 不可用、源码 symbol 无法定位或代码证据模板无法填充时，不得生成 implementation claim。
+- FR-003：`tool-jarvis-codebase` 返回失败、不可重放 locator 或不完整 artifact 时，不得生成 implementation claim。
 - FR-004：Evidence Registry 中出现孤立 evidence id、重复 id、缺 locator 或 supports 无法闭环时，不得生成完成状态的 verification manual。
 - FR-005：artifact 写入失败、模板缺失或模板字段无法填充时，必须记录阻塞项并向上游报告。
 - FR-006：`scout-research-artifact-check` 发现状态组合、模板章节、provenance、evidence id 或 registry/manual 引用不闭环时，不得提交完成态 handoff。
 
 ## Blocking Rules (Enforcement)
 
-- BR-001：缺少 `jarvis-codebase`、`scoutAssets`、`scoutResearchArtifactCheck`、`scoutArtifactDigest`、`jarvis`、`codegraph` 或 `git` required capability 时必须停止。
+- BR-001：缺少 `tool-guru-knowledge`、`tool-jarvis-codebase`、`scoutAssets`、`scoutResearchArtifactCheck` 或 `scoutArtifactDigest` 时必须停止。
 - BR-002：无法唯一定位 BDD fact 时必须停止在 Phase 2，不得进入 Phase 3-6。
-- BR-003：目标产品不是 GuruSdk 且上游没有明确产品边界时必须停止。
+- BR-003：任一 producer 无法确认自己的产品或 repository boundary 时，父 Researcher 必须保留其阻塞事实，不得绕过。
 - BR-004：产品版本、branch 或 commit 缺失且当前任务需要 current version code evidence 时必须记录需人工确认项，不得主动选择 `latest`。
 - BR-005：当前版本代码证据无法形成 `E-CODE-*` 闭环时，不得把 knowledge evidence 写成 implementation fact。
 - BR-006：artifact target 不可写时，不得进入完成状态。
-- BR-007：source repository commit 无法确认、目标源码文件有未提交修改或 parent gitlink 与 source commit 不一致时，不得形成 `source_verified` 的 `E-CODE-*`。
 
 ## Retry Rules (Enforcement)
 
-- RR-001：只读 knowledge 搜索、`scout-assets` 查询或 CodeGraph 只读查询出现瞬时失败时最多重试一次，并记录 retry_log。
-- RR-002：涉及 `jarvis-codebase` 的有副作用命令必须遵守 `jarvis-codebase` 的授权和重试规则。
+- RR-001：producer 内部查询和副作用重试分别遵守 `tool-guru-knowledge` 与 `tool-jarvis-codebase`。
+- RR-002：`scout-assets`、checker 或 digest 的瞬时失败最多重试一次，并记录 retry log。
 - RR-003：重试不得扩大 product、domain、BDD、repo、version 或 platform 范围来规避唯一性问题。
-- RR-004：重试后仍无法唯一定位或证据仍不闭环时，必须固定为需人工确认项、阻塞项或 limitation。
+- RR-004：重试后仍无法唯一定位或 evidence 仍不闭环时，必须固定为需人工确认项、阻塞项或 limitation。
 
 ## Prohibited Rules (Enforcement)
 
 - PR-001：禁止读取、整理或依赖 `synaptic`。
-- PR-002：禁止写回、修改或迁移 Guru knowledge。
-- PR-003：禁止把 `Products/GuruSdk/Behaviors` 中 status 为 pending 或未验证的 BDD 事实写成本次验证通过。
-- PR-004：禁止把 knowledge 中的 legacy、migration、draft 或 unresolved 内容写成稳定事实，除非文档状态和上下文明确允许。
-- PR-005：禁止把 `rg` 作为 Guru managed codebase 的首选源码语义检索方式。
-- PR-006：禁止把本机绝对路径写入 canonical knowledge 或对外事实；Research artifact provenance 例外必须标明为本次 run 的本地来源。
-- PR-007：禁止把 Research 产物写成 pass / fail 结论或 runtime 执行策略。
-- PR-008：禁止创建带 `-vN` 后缀的 Research pack、复制 pack 形成隐式版本管理，或在 pack 顶层创建 `gate-followup.md` 等 contract 外文件。
-- PR-009：Research artifact 和 handoff 的 Markdown 标题必须保留模板中的英文标题；标题下的自然语言内容必须使用中文，字段 key、evidence id 和状态值保持 contract 原值。
-- PR-010：禁止把模板中的 `<填写...>` 说明写入提交的 artifact；所有填写说明必须替换为当前事实或按模板规则填写 none、irrelevant。
-- PR-011：禁止创建独立 `evidence/E-BDD-*.md`、`E-BDD-002+`、`evidence/E-KB-*.md`、`E-KB-002+`、`E-API-*`、`E-AVAIL-002+` 或 `E-PLATFORM-002+`。
+- PR-002：禁止绕过、复制或弱化 producer Skill 的采集和 evidence contract。
+- PR-003：禁止把 Research 产物写成 pass / fail 结论或 runtime 执行策略。
+- PR-004：禁止创建带 `-vN` 后缀的 Research Pack、复制 Pack 形成隐式版本管理，或在 Pack 顶层创建 contract 外文件。
+- PR-005：Research artifact 和 handoff 的 Markdown 标题必须保留模板中的英文标题；标题下的自然语言内容必须使用中文，字段 key、evidence id 和状态值保持 contract 原值。
+- PR-006：禁止把模板中的 `<填写...>` 说明写入提交的 artifact；所有填写说明必须替换为当前事实或按模板规则填写 `none`、`irrelevant`。
+- PR-007：禁止创建独立 `evidence/E-BDD-*.md`、`E-BDD-002+`、`evidence/E-KB-*.md`、`E-KB-002+`、`E-API-*`、`E-AVAIL-002+` 或 `E-PLATFORM-002+`。
 
 ## Example
 
@@ -618,8 +565,8 @@ Partial：
 
 流程：
 
-1. 收敛到唯一 Behavior，并记录匹配理由和需人工确认项。
-2. 收集 Guru knowledge evidence 和当前版本 code evidence。
+1. 使用 `tool-guru-knowledge` 的候选模式收敛到唯一 Behavior，并记录匹配理由和需人工确认项。
+2. 分别消费 `tool-guru-knowledge` 和 `tool-jarvis-codebase` 的正式 evidence artifacts。
 3. 写入 evidence registry。
 4. 使用 `templates/verification-manual.md` 生成 verification manual。
 5. 执行 `scout-research-artifact-check pack <research-pack-dir>` 检查状态、模板、provenance 和 evidence refs。
@@ -637,5 +584,5 @@ Partial：
 边界示例：
 
 - 多个 Behavior 候选：停在 Phase 2，通过当前 task 发起最小人工求证，不创建空 Research pack，也不生成 `verification-manual.md`。
-- CodeGraph 不可用：按 `jarvis-codebase` 规则记录 `code-evidence.md` 的阻塞项；不得把 `knowledge-evidence.md` 写成 implementation fact。
+- CodeGraph 不可用：按 `tool-jarvis-codebase` 规则记录 `code-evidence.md` 的阻塞项；不得把 `knowledge-evidence.md` 写成 implementation fact。
 - 默认需要求证的事实未确认：识别后立即停止当前研究并请求一次最小人工确认，不继续处理后续阶段；等待期间保持当前 task 为 `running`，不提交任何状态的 handoff，收到回复后登记 `E-HUMAN-*` 并从当前阶段继续完成同一 pack。

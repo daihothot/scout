@@ -53,19 +53,19 @@ const AGGREGATES = {
 
 const EVIDENCE_TEMPLATES = {
   CAP: {
-    owner: "research",
+    owner: "knowledge",
     template: "capability-evidence.md",
     evidenceType: "capability",
     statuses: new Set(["candidate", "ready", "blocked"]),
   },
   AVAIL: {
-    owner: "research",
+    owner: "knowledge",
     template: "availability-evidence.md",
     evidenceType: "availability",
     statuses: new Set(["candidate", "ready", "blocked"]),
   },
   PLATFORM: {
-    owner: "research",
+    owner: "knowledge",
     template: "platform-evidence.md",
     evidenceType: "platform_knowledge",
     statuses: new Set(["candidate", "ready", "blocked"]),

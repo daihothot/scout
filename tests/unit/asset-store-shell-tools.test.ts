@@ -109,10 +109,10 @@ test("AssetStore exposes mounted Skill readers to the coordinator", () => {
 test("AssetStore statically binds the Validation Domain skill for every role", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-validation-skills-");
   const expectedSkills = {
-    coordinator: "coordinator-validation",
-    researcher: "researcher-validation",
-    verifier: "verifier-validation",
-    validator: "validator-validation",
+    coordinator: "domain-validation-coordinator",
+    researcher: "domain-validation-researcher",
+    verifier: "domain-validation-verifier",
+    validator: "domain-validation-validator",
   } as const;
   const store = new AssetStore();
 
@@ -140,7 +140,7 @@ test("AssetStore exposes Research artifact checking and git tools to the researc
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-research-tools-");
   const mount = new AssetStore().materializeMount({
     repoRoot: fixtureRoot,
-    runId: "run-shell-tool-researcher-validation-test",
+    runId: "run-shell-tool-domain-validation-researcher-test",
     agentId: "researcher",
   });
   const checker = mount.shellTools.find((tool) => tool.id === "scoutResearchArtifactCheck");
@@ -152,6 +152,7 @@ test("AssetStore exposes Research artifact checking and git tools to the researc
   assert.ok(checker);
   assert.ok(digest);
   assert.ok(git);
+  assert.ok(mount.skills.includes("tool-guru-knowledge"));
   assert.equal(existsSync(wrapperPath), true);
   assert.equal(existsSync(digestWrapperPath), true);
   assert.match(execFileSync(wrapperPath, ["--smoke"], {
@@ -174,9 +175,10 @@ test("AssetStore gives the validator producer contracts, code inspection tools, 
   const digest = mount.shellTools.find((tool) => tool.id === "scoutArtifactDigest");
   const wrapperPath = join(mount.mountRoot, "bin", "scout-artifact-digest");
 
-  assert.ok(mount.skills.includes("validator-validation"));
-  assert.ok(mount.skills.includes("guru-knowledge-research"));
-  assert.ok(mount.skills.includes("jarvis-codebase"));
+  assert.ok(mount.skills.includes("domain-validation-validator"));
+  assert.ok(mount.skills.includes("domain-validation-research-pack"));
+  assert.ok(mount.skills.includes("tool-guru-knowledge"));
+  assert.ok(mount.skills.includes("tool-jarvis-codebase"));
   assert.equal(mount.shellTools.some((tool) => tool.id === "scoutResearchArtifactCheck"), false);
   assert.ok(mount.shellTools.some((tool) => tool.id === "jarvis"));
   assert.ok(mount.shellTools.some((tool) => tool.id === "codegraph"));

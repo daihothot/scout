@@ -15,8 +15,8 @@
       "maxDepth": 1,
       "customAgents": [],
       "skills": [
-        "coordinator-validation",
-        "scout-boundary-inspector"
+        "domain-validation-coordinator",
+        "tool-scout-boundary-inspector"
       ],
       "shellTools": [
         "scoutAssets",
@@ -44,10 +44,11 @@
         "scout-helper"
       ],
       "skills": [
-        "researcher-validation",
-        "guru-knowledge-research",
-        "jarvis-codebase",
-        "scout-boundary-inspector"
+        "domain-validation-researcher",
+        "domain-validation-research-pack",
+        "tool-guru-knowledge",
+        "tool-jarvis-codebase",
+        "tool-scout-boundary-inspector"
       ],
       "shellTools": [
         "scoutAssets",
@@ -88,9 +89,9 @@
         "scout-helper"
       ],
       "skills": [
-        "verifier-validation",
-        "jarvis-codebase",
-        "scout-boundary-inspector"
+        "domain-validation-verifier",
+        "tool-jarvis-codebase",
+        "tool-scout-boundary-inspector"
       ],
       "shellTools": [
         "scoutAssets",
@@ -138,10 +139,11 @@
         "scout-helper"
       ],
       "skills": [
-        "validator-validation",
-        "guru-knowledge-research",
-        "jarvis-codebase",
-        "scout-boundary-inspector"
+        "domain-validation-validator",
+        "domain-validation-research-pack",
+        "tool-guru-knowledge",
+        "tool-jarvis-codebase",
+        "tool-scout-boundary-inspector"
       ],
       "shellTools": [
         "scoutAssets",

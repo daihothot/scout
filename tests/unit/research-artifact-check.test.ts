@@ -355,10 +355,11 @@ test("scout-research-artifact-check rejects template instructions in ready artif
 
 test("Research artifact template headings remain English", () => {
   for (const relativeRoot of [
-    "assets/codex/skills/guru-knowledge-research/templates",
-    "assets/codex/skills/jarvis-codebase/templates",
-    "assets/codex/skills/validator-validation/templates",
-    "assets/codex/skills/scout-internal-skill-creator/templates",
+    "assets/codex/skills/domain-validation-research-pack/templates",
+    "assets/codex/skills/tool-guru-knowledge/templates",
+    "assets/codex/skills/tool-jarvis-codebase/templates",
+    "assets/codex/skills/domain-validation-validator/templates",
+    "assets/codex/skills/meta-scout-internal-skill-creator/templates",
   ]) {
     const templateRoot = join(repoRoot, relativeRoot);
     for (const file of readdirSync(templateRoot).filter((name) => name.endsWith(".md"))) {
@@ -374,9 +375,10 @@ test("Research artifact template headings remain English", () => {
 
 test("Artifact templates explain fillable fields in Chinese without fake examples", () => {
   for (const relativeRoot of [
-    "assets/codex/skills/guru-knowledge-research/templates",
-    "assets/codex/skills/jarvis-codebase/templates",
-    "assets/codex/skills/validator-validation/templates",
+    "assets/codex/skills/domain-validation-research-pack/templates",
+    "assets/codex/skills/tool-guru-knowledge/templates",
+    "assets/codex/skills/tool-jarvis-codebase/templates",
+    "assets/codex/skills/domain-validation-validator/templates",
   ]) {
     const templateRoot = join(repoRoot, relativeRoot);
     for (const file of readdirSync(templateRoot).filter((name) => name.endsWith(".md") && name !== "template-index.md")) {
@@ -396,7 +398,7 @@ test("Artifact templates explain fillable fields in Chinese without fake example
 test("Verification Manual template defines one reusable verification point block", () => {
   const text = readFileSync(join(
     repoRoot,
-    "assets/codex/skills/guru-knowledge-research/templates/verification-manual.md",
+    "assets/codex/skills/domain-validation-research-pack/templates/verification-manual.md",
   ), "utf8");
   assert.equal(text.match(/^### VP-\d+:/gm)?.length, 1);
   assert.match(text, /存在多个验证点时，复制完整区块/);

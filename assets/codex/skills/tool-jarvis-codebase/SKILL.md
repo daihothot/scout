@@ -1,9 +1,9 @@
 ---
 assetKind: scout.skill
-name: jarvis-codebase
+name: tool-jarvis-codebase
 description: Scout 使用 Jarvis codebase 管理 Guru 托管代码库路径、版本与 CodeGraph 索引，并用独立 codegraph CLI 收集源码语义证据。
 id: skills.jarvis.codebase
-version: 0.4.3
+version: 0.4.4
 phase: [research, verify]
 tags: [jarvis, codebase, codegraph, source, evidence]
 devices: [any]
@@ -13,7 +13,7 @@ dependencies:
     optional: [rg, sed, find, cat]
 summary: 先用 jarvis codebase 解析托管代码库，再用 codegraph 和源码行号形成可追溯代码证据。
 ---
-# Jarvis Codebase
+# Tool Jarvis Codebase
 
 当 Scout Agent 需要从 Guru 托管代码库定位当前版本源码语义、CodeGraph 符号、调用关系或代码行证据时使用本技能。
 

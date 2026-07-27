@@ -4,11 +4,15 @@ const { addIssue } = require("./diagnostics.cjs");
 const { displayPath, parseMarkdown } = require("./markdown.cjs");
 
 function researchTemplatePath(file) {
-  return join(__dirname, "..", "..", "..", "skills", "guru-knowledge-research", "templates", file);
+  return join(__dirname, "..", "..", "..", "skills", "domain-validation-research-pack", "templates", file);
+}
+
+function knowledgeTemplatePath(file) {
+  return join(__dirname, "..", "..", "..", "skills", "tool-guru-knowledge", "templates", file);
 }
 
 function codebaseTemplatePath(file) {
-  return join(__dirname, "..", "..", "..", "skills", "jarvis-codebase", "templates", file);
+  return join(__dirname, "..", "..", "..", "skills", "tool-jarvis-codebase", "templates", file);
 }
 
 function validateTemplateSections(document, templatePath, displayRoot, issues) {
@@ -28,6 +32,7 @@ function validateTemplateSections(document, templatePath, displayRoot, issues) {
 
 module.exports = {
   codebaseTemplatePath,
+  knowledgeTemplatePath,
   researchTemplatePath,
   validateTemplateSections,
 };
