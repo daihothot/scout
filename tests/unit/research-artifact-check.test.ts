@@ -24,6 +24,40 @@ test("scout-research-artifact-check accepts a replayable ready Research pack", (
   assert.match(output, /verification_point_count=1/);
 });
 
+test("scout-research-artifact-check rejects ready Manual with global human confirmation pending", () => {
+  const packRoot = createReadyResearchPack();
+  replaceInFile(
+    join(packRoot, "verification-manual.md"),
+    "- human_confirmation_needed: none",
+    "- human_confirmation_needed: 需要人工确认目标应用版本",
+  );
+
+  const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /READY_WITH_HUMAN_CONFIRMATION/);
+});
+
+test("scout-research-artifact-check rejects ready Manual with verification point human confirmation pending", () => {
+  const packRoot = createReadyResearchPack();
+  replaceInFile(
+    join(packRoot, "verification-manual.md"),
+    "#### Human Confirmation Needed\n- none",
+    "#### Human Confirmation Needed\n- 需要人工确认目标账号状态",
+  );
+
+  const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /READY_POINT_WITH_HUMAN_CONFIRMATION/);
+});
+
 test("scout-research-artifact-check derives a partial Pack state from aggregate states", () => {
   const packRoot = createReadyResearchPack();
   replaceInFile(join(packRoot, "bdd-evidence.md"), "status: ready", "status: draft");
@@ -358,8 +392,9 @@ test("Research artifact template headings remain English", () => {
     "assets/codex/skills/domain-validation-research-pack/templates",
     "assets/codex/skills/tool-guru-knowledge/templates",
     "assets/codex/skills/tool-jarvis-codebase/templates",
+    "assets/codex/skills/domain-validation-verifier/templates",
     "assets/codex/skills/domain-validation-validator/templates",
-    "assets/codex/skills/meta-scout-internal-skill-creator/templates",
+    "assets/codex/skills/internal-skill-creator/templates",
   ]) {
     const templateRoot = join(repoRoot, relativeRoot);
     for (const file of readdirSync(templateRoot).filter((name) => name.endsWith(".md"))) {
@@ -378,6 +413,7 @@ test("Artifact templates explain fillable fields in Chinese without fake example
     "assets/codex/skills/domain-validation-research-pack/templates",
     "assets/codex/skills/tool-guru-knowledge/templates",
     "assets/codex/skills/tool-jarvis-codebase/templates",
+    "assets/codex/skills/domain-validation-verifier/templates",
     "assets/codex/skills/domain-validation-validator/templates",
   ]) {
     const templateRoot = join(repoRoot, relativeRoot);
@@ -403,6 +439,25 @@ test("Verification Manual template defines one reusable verification point block
   assert.equal(text.match(/^### VP-\d+:/gm)?.length, 1);
   assert.match(text, /存在多个验证点时，复制完整区块/);
   assert.doesNotMatch(text, /^### VP-002:/m);
+});
+
+test("Verification Manual defines the Unity runtime log Signal requirement", () => {
+  const text = readFileSync(join(
+    repoRoot,
+    "assets/codex/skills/domain-validation-research-pack/templates/verification-manual.md",
+  ), "utf8");
+
+  assert.match(text, /signal_ref: signal-unity-runtime-log/);
+  for (const field of [
+    "match",
+    "non_match",
+    "required_fields",
+    "correlation",
+    "ordering",
+    "observation_window",
+  ]) {
+    assert.match(text, new RegExp(`^\\s+- ${field}:`, "m"));
+  }
 });
 
 function createReadyResearchPack(): string {
@@ -590,7 +645,14 @@ ${registrySection("Source Code Evidence", "E-CODE-001", "source-commit:Runtime/T
 - E-PERSONA-001
 - E-CODE-001
 #### Signals To Collect
-- runtime_log: related event payload
+- runtime_log: enabled
+  - signal_ref: signal-unity-runtime-log
+  - match: event_name equals documented_outcome
+  - non_match: records from a different session
+  - required_fields: event_name and session_id
+  - correlation: session_id equals the current verification session
+  - ordering: occurs after the documented trigger
+  - observation_window: current verification session
 #### Human Confirmation Needed
 - none
 #### Notes

@@ -1,20 +1,20 @@
 ---
 assetKind: scout.skill
-name: tool-scout-boundary-inspector
+name: internal-boundary-inspector
 description: 查询当前 Scout Agent 的 mount 资产边界、工作边界、能力入口和 run 级共享记忆摘要，并整理为 Boundary Snapshot。
-id: skills.scout.boundary-inspector
+id: internal-boundary-inspector
 version: 0.1.1
 phase: [research, verify, validate]
 tags: [scout, asset, boundary, memory, audit, workflow]
 devices: [any]
 dependencies:
   shellTools:
-    required: [scoutAssets, scoutMemory]
-    optional: [pwd, ls, cat, sed, rg]
+    required: [scoutAssets, scoutMemory, pwd]
+    optional: [ls, cat, sed, rg]
 summary: 用 scout-assets 与 scout-memory 查询当前 Agent 可见边界，并整理为中立的 Boundary Snapshot。
 ---
 
-# Tool Scout Boundary Inspector
+# Internal Boundary Inspector
 
 当需要查询当前 Agent 自己的 mount 资产边界、工作边界、能力入口或 run 级共享记忆摘要时使用本技能。
 
@@ -22,9 +22,9 @@ summary: 用 scout-assets 与 scout-memory 查询当前 Agent 可见边界，并
 
 ## Skill Type
 
-- type: boundary
+- type: internal
 - structure_level: compact
-- note: 本技能是 Boundary / Inspector Skill，只查询并整理当前可见边界。
+- note: 本技能属于 Internal Skill，拥有 Scout 内部边界查询与中立快照整理责任。
 
 ## Core Use
 

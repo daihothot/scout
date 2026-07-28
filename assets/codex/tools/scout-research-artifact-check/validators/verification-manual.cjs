@@ -1,5 +1,5 @@
 const { addIssue } = require("../shared/diagnostics.cjs");
-const { bulletFields, displayPath, evidenceIds, hasConcreteContent, scalar, sectionAt, sectionByTitle } = require("../shared/markdown.cjs");
+const { bulletFields, displayPath, evidenceIds, hasConcreteContent, isNone, scalar, sectionAt, sectionByTitle } = require("../shared/markdown.cjs");
 const { validateAggregateBase } = require("./aggregate-state.cjs");
 
 function validateVerificationManual(document, displayRoot, issues) {
@@ -8,6 +8,10 @@ function validateVerificationManual(document, displayRoot, issues) {
   const points = document.headings.filter((heading) => heading.level === 3 && /^VP-\d+\b/.test(heading.title));
   if (points.length === 0) {
     addIssue(issues, "VERIFICATION_POINT_MISSING", path, "At least one verification point is required.");
+  }
+  const isReadyComplete = state && state.status === "ready" && state.completionState === "complete";
+  if (isReadyComplete && !isNone(state.fields.get("human_confirmation_needed"))) {
+    addIssue(issues, "READY_WITH_HUMAN_CONFIRMATION", path, "ready + complete requires human_confirmation_needed to be none.");
   }
 
   for (const point of points) {
@@ -24,8 +28,18 @@ function validateVerificationManual(document, displayRoot, issues) {
     for (const title of ["Given", "When", "Then", "Supporting Evidence", "Signals To Collect", "Human Confirmation Needed", "Notes"]) {
       const child = sectionByTitle(pointSection, 4, title);
       if (!child) addIssue(issues, "MANUAL_SECTION_MISSING", path, `${point.title} is missing ${title}.`);
-      if (state && state.status === "ready" && ["Given", "When", "Then", "Signals To Collect"].includes(title) && (!child || !hasConcreteContent(child.text))) {
+      if (isReadyComplete && ["Given", "When", "Then", "Signals To Collect"].includes(title) && (!child || !hasConcreteContent(child.text))) {
         addIssue(issues, "MANUAL_SECTION_EMPTY", path, `${point.title} ${title} must contain concrete content for ready + complete.`);
+      }
+    }
+    const humanConfirmation = sectionByTitle(pointSection, 4, "Human Confirmation Needed");
+    if (isReadyComplete && humanConfirmation) {
+      const confirmation = humanConfirmation.bodyLines
+        .map((line) => line.replace(/^\s*-\s*/, "").trim())
+        .filter(Boolean)
+        .join(" ");
+      if (!isNone(confirmation)) {
+        addIssue(issues, "READY_POINT_WITH_HUMAN_CONFIRMATION", path, `${point.title} Human Confirmation Needed must be none for ready + complete.`);
       }
     }
     const supporting = sectionByTitle(pointSection, 4, "Supporting Evidence");
@@ -33,7 +47,7 @@ function validateVerificationManual(document, displayRoot, issues) {
     if (bddRef && !refs.has(bddRef)) {
       addIssue(issues, "BDD_REF_NOT_SUPPORTING", path, `${point.title} bdd_evidence_ref must appear in Supporting Evidence.`);
     }
-    if (state && state.status === "ready" && ![...refs].some((id) => id.startsWith("E-CODE-"))) {
+    if (isReadyComplete && ![...refs].some((id) => id.startsWith("E-CODE-"))) {
       addIssue(issues, "MANUAL_CODE_EVIDENCE_MISSING", path, `${point.title} requires E-CODE evidence for ready + complete.`);
     }
     if (personaEvidenceRef && !refs.has(personaEvidenceRef)) {

@@ -8,7 +8,7 @@ gate_id: "<填写当前 Gate ID>"
 created_at: "<填写本次检查记录的创建时间>"
 validator_task_id: "<填写当前 Validator task ID>"
 checked_pack_ref: "<填写本次实际检查的 Research pack 路径>"
-checked_pack_digest: "<填写 Validator 第二次计算得到的 sha256 digest>"
+checked_pack_digest: "sha256:<填写 Validator 第二次计算得到的 64 位十六进制 digest>"
 ---
 
 # Validator Handoff: Research Pack Gate
@@ -24,7 +24,7 @@ checked_pack_digest: "<填写 Validator 第二次计算得到的 sha256 digest>"
 - 上游 Research task：<填写上游 Researcher task ID>
 - 上游声明状态：<填写上游 handoff 声明状态>
 - Research pack：<填写本次实际检查的唯一 pack 路径>
-- Pack digest：<填写 Validator 第二次计算得到的 sha256 digest>
+- Pack digest：sha256:<填写 Validator 第二次计算得到的 64 位十六进制 digest>
 - Digest 算法：`scout-directory-sha256-v1`
 - 适用 contract：<列出 Validator AGENTS、domain-validation-validator 和生产者 Skill refs>
 

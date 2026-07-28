@@ -16,13 +16,14 @@
       "customAgents": [],
       "skills": [
         "domain-validation-coordinator",
-        "tool-scout-boundary-inspector"
+        "internal-boundary-inspector"
       ],
       "shellTools": [
         "scoutAssets",
         "scoutMemory",
         "cat",
-        "sed"
+        "sed",
+        "pwd"
       ],
       "mcpServers": [],
       "plugins": [],
@@ -46,9 +47,10 @@
       "skills": [
         "domain-validation-researcher",
         "domain-validation-research-pack",
+        "signal-unity-runtime-log",
         "tool-guru-knowledge",
         "tool-jarvis-codebase",
-        "tool-scout-boundary-inspector"
+        "internal-boundary-inspector"
       ],
       "shellTools": [
         "scoutAssets",
@@ -90,8 +92,9 @@
       ],
       "skills": [
         "domain-validation-verifier",
+        "signal-unity-runtime-log",
         "tool-jarvis-codebase",
-        "tool-scout-boundary-inspector"
+        "internal-boundary-inspector"
       ],
       "shellTools": [
         "scoutAssets",
@@ -141,9 +144,11 @@
       "skills": [
         "domain-validation-validator",
         "domain-validation-research-pack",
+        "domain-validation-verifier",
+        "signal-unity-runtime-log",
         "tool-guru-knowledge",
         "tool-jarvis-codebase",
-        "tool-scout-boundary-inspector"
+        "internal-boundary-inspector"
       ],
       "shellTools": [
         "scoutAssets",
