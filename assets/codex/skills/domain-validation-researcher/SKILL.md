@@ -1,9 +1,9 @@
 ---
 assetKind: scout.skill
 name: domain-validation-researcher
-description: Scout Researcher 在 Validation Domain 中接收 BDD 定位输入、调用适用研究方法、形成可追溯 Research handoff 并为 Verifier 提供稳定验证输入时使用。
-id: skills.validation.researcher
-version: 0.5.5
+description: Scout Researcher 在 Validation Domain 中接收 BDD 定位输入、调用适用研究方法，并形成可供 Research Pack Gate 检查的可追溯 handoff 时使用。
+id: domain-validation-researcher
+version: 0.5.6
 phase: [research]
 tags: [scout, validation, bdd, research, workflow]
 devices: [any]
@@ -144,7 +144,7 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 - 明细产物：知识和代码 evidence 分别由对应 Tool Skill 所有；聚合、Persona 和 Human evidence 由 `domain-validation-research-pack` 所有。
 - Registry / Pack state：沿用专项 Skill 生成的 evidence registry；Pack 状态由 checker 根据必需聚合 artifact 派生，本技能不创建第二套状态 artifact。
 - Claim owner：BDD、knowledge 和 implementation claim 的所有权遵守专项 Skill。
-- 下游引用规则：Verifier 从正式 handoff 获取唯一 pack ref、evidence registry ref 和 verification manual ref，再通过 registry 与 manual 解析详细 artifact refs 和 evidence refs。
+- 下游引用规则：Research Validator 先从正式 handoff 获取唯一 pack ref、digest、evidence registry ref 和 verification manual ref；只有对应 Research Pack Gate accepted 后，Coordinator 才把 Gate ref、同一 pack ref / digest 和 manual ref 交给 Verifier。
 - Ref 字段策略：本技能只传递已有 ref，不产生第二套 artifact_ref 或 evidence id。
 - 修正关系：Validator Gate 只适用于其记录的 digest；Researcher 在同一 pack ref 内修正后提交新 digest，不创建 revision pack 或 Gate follow-up artifact。
 

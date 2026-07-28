@@ -1,7 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -99,7 +109,7 @@ test("AssetStore exposes mounted Skill readers to the coordinator", () => {
   });
   const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
 
-  for (const tool of ["cat", "sed"]) {
+  for (const tool of ["cat", "sed", "pwd"]) {
     assert.ok(mount.shellTools.some((candidate) => candidate.id === tool));
     assert.ok(manifest.shellTools.some((candidate) => candidate.exposeAs === tool));
     assert.equal(existsSync(join(mount.mountRoot, "bin", tool)), true);
@@ -133,6 +143,61 @@ test("AssetStore statically binds the Validation Domain skill for every role", (
       skill,
       "SKILL.md",
     )), true);
+  }
+});
+
+test("AssetStore mounts the Unity runtime log Signal for Worker roles only", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-unity-runtime-log-signal-");
+  const store = new AssetStore();
+
+  for (const agentId of ["researcher", "verifier", "validator"]) {
+    const mount = store.materializeMount({
+      repoRoot: fixtureRoot,
+      runId: `run-unity-runtime-log-signal-${agentId}-test`,
+      agentId,
+    });
+    const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
+
+    assert.ok(mount.skills.includes("signal-unity-runtime-log"));
+    assert.ok(manifest.skills.includes("signal-unity-runtime-log"));
+    assert.equal(existsSync(join(
+      mount.mountRoot,
+      ".agents",
+      "skills",
+      "signal-unity-runtime-log",
+      "SKILL.md",
+    )), true);
+  }
+
+  const coordinatorMount = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-unity-runtime-log-signal-coordinator-test",
+    agentId: "coordinator",
+  });
+  assert.equal(coordinatorMount.skills.includes("signal-unity-runtime-log"), false);
+});
+
+test("Every Skill name and id match its directory name", () => {
+  const skillsRoot = join(repoRoot, "assets", "codex", "skills");
+  const skillNames = readdirSync(skillsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+
+  assert.ok(skillNames.length > 0);
+
+  for (const skillName of skillNames) {
+    const skillPath = join(skillsRoot, skillName, "SKILL.md");
+    assert.equal(existsSync(skillPath), true, `${skillName} must contain SKILL.md`);
+
+    const text = readFileSync(skillPath, "utf8");
+    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+    assert.ok(frontmatter, `${skillName} must contain YAML frontmatter`);
+
+    const name = /^name:\s*(\S+)\s*$/m.exec(frontmatter[1])?.[1];
+    const id = /^id:\s*(\S+)\s*$/m.exec(frontmatter[1])?.[1];
+    assert.equal(name, skillName, `${skillName} frontmatter name must match its directory`);
+    assert.equal(id, skillName, `${skillName} frontmatter id must match its directory`);
   }
 });
 
@@ -177,6 +242,7 @@ test("AssetStore gives the validator producer contracts, code inspection tools, 
 
   assert.ok(mount.skills.includes("domain-validation-validator"));
   assert.ok(mount.skills.includes("domain-validation-research-pack"));
+  assert.ok(mount.skills.includes("domain-validation-verifier"));
   assert.ok(mount.skills.includes("tool-guru-knowledge"));
   assert.ok(mount.skills.includes("tool-jarvis-codebase"));
   assert.equal(mount.shellTools.some((tool) => tool.id === "scoutResearchArtifactCheck"), false);

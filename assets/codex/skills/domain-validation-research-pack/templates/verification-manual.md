@@ -93,7 +93,14 @@ evidence_registry_ref: evidence-registry.md
 
 #### Signals To Collect
 
-- runtime_log: <填写需要采集的运行事件及关键字段；Nice to Have，可不填写>
+- runtime_log: <需要 Unity runtime log 时保留并填写以下完整区块；不需要时删除整个区块。Nice to Have，可不填写>
+  - signal_ref: signal-unity-runtime-log
+  - match: <填写可以命中目标信号的消息、事件或字段条件>
+  - non_match: <填写必须排除的相似消息、错误来源、旧 session 或字段条件>
+  - required_fields: <填写解释命中时必须保留的原始或结构化字段>
+  - correlation: <填写日志与当前 action、session、request、user 或 verification point 的关联方式>
+  - ordering: <填写目标记录之间或与其它信号的相对顺序；不要求时填写 none>
+  - observation_window: <填写观察开始、结束及记录适用的时间或生命周期边界>
 - ui_state: <填写需要记录的界面状态；Nice to Have，可不填写>
 - callback_or_event: <填写需要记录的回调或事件；Nice to Have，可不填写>
 - network: <填写需要记录的请求和响应；Nice to Have，可不填写>

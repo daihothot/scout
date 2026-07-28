@@ -19,7 +19,7 @@ status: candidate
 
 ## Claim
 
-- <填写当前版本源码能够支持的 implementation claim>
+- <填写由当前 source commit、primary symbol、signature 和 key lines 直接支持的 source symbol evidence claim>
 
 ## Repository Provenance
 
@@ -58,7 +58,7 @@ status: candidate
 
 | 行号 | 原因 |
 |---:|---|
-| <填写支撑 claim 的关键行号> | <填写这些行能够支撑 claim 的原因> |
+| <填写支撑 source symbol evidence claim 的关键行号> | <填写这些行能够支撑该源码语义的原因> |
 
 ## Collection
 
@@ -74,6 +74,6 @@ status: candidate
 
 ## Limitations
 
-- 源码 evidence 证明当前版本包含该实现；它不能证明该行为已经在运行时触发。
+- 源码 evidence 只拥有 source symbol evidence claim；业务 implementation claim 由上游 `code-evidence.md` 定义，它也不能证明该行为已经在运行时触发。
 - 每个 `E-CODE-*` 只允许一个 primary symbol；多个独立 symbol 必须拆成多个 evidence artifact。
 - `source_verified` 要求目标源码文件对 `source_commit` 保持 clean，且 `canonical_locator` 可由 `source_commit + source_relative_file` 重放。

@@ -37,12 +37,13 @@
 - 关键表述必须带有适用 contract 要求的来源、artifact ref、evidence ref、检查结果或人工确认记录。
 - ref 必须定位到稳定对象；本机绝对路径不能作为唯一定位信息。
 - 依据不足时明确记录缺口，不得把候选、推断或未执行内容写成已确认事实。
-- 每个正式输出必须披露输入 refs、收集或处理方法、未覆盖范围和限制。
+- 正式交付所引用的 artifact 或 report 必须披露输入 refs、收集或处理方法、未覆盖范围和限制。
 
 ## Completion and Handoff
 
 - 只有当前一轮工作已经满足角色和适用 Skill 的 handoff contract，才能通过正式 task 提交入口交回完整 Markdown outcome。
-- handoff 必须如实区分完整交付、部分交付、阻塞或执行失败，并说明正式 refs、剩余缺口和继续条件。
+- 领域 Skill 未定义固定 handoff 时，handoff 必须如实区分完整交付、部分交付、阻塞或执行失败，并说明正式 refs、剩余缺口和继续条件。
+- 领域 Skill 已定义固定 handoff 时，只能使用其规定字段；详细过程、事实和限制保存在 handoff 引用的 artifact 或 report 中，不得向 handoff 增加字段或复制正文。
 - 正式 handoff 使当前 task 进入可恢复的 `done`；`done` 不表示 task 已归档，也不表示全局目标已完成。
 - Coordinator 对同一 task 发来补充消息时，继续使用当前 runner 和 thread 完成后续工作；Worker 不自行释放或归档 task。
 - 普通消息、progress 或自然语言 summary 不能冒充正式 handoff，也不能改变 task 生命周期状态。

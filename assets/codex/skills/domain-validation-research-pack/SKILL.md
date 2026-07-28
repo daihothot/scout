@@ -1,15 +1,16 @@
 ---
 assetKind: scout.skill
 name: domain-validation-research-pack
-description: Scout Researcher 在 Validation Domain 中编排知识与代码证据、构建唯一 Research Pack、Evidence Registry 和 Verification Manual 时使用。
-id: skills.validation.research-pack
-version: 0.1.0
+description: Scout Researcher 在 Validation Domain 中编排知识与代码证据、构建唯一 Research Pack、Evidence Registry，并按 Signal contract 形成 Verification Manual 时使用。
+id: domain-validation-research-pack
+version: 0.2.0
 phase: [research]
 tags: [scout, validation, research, pack, evidence, manual]
 devices: [any]
 dependencies:
   skills:
     required: [tool-guru-knowledge, tool-jarvis-codebase]
+    optional: [signal-unity-runtime-log]
   shellTools:
     required: [scoutAssets, scoutResearchArtifactCheck, scoutArtifactDigest]
 summary: 编排知识和代码 producer contracts，形成唯一 Research Pack、证据索引和验证手册。
@@ -18,7 +19,7 @@ summary: 编排知识和代码 producer contracts，形成唯一 Research Pack�
 
 当 Scout Researcher 需要把已确认的 Validation 目标收敛成唯一 Research Pack，并为后续 Validator 和 Verifier 提供稳定输入时使用本技能。
 
-本技能拥有 Research Pack 的编排、聚合、状态和 handoff contract。Guru Knowledge 与当前版本代码的具体采集方法分别由 `tool-guru-knowledge` 和 `tool-jarvis-codebase` 拥有。
+本技能拥有 Research Pack 的编排、聚合、状态和 handoff contract。Guru Knowledge 与当前版本代码的具体采集方法分别由 `tool-guru-knowledge` 和 `tool-jarvis-codebase` 拥有；具体信号语义由对应 Signal Skill 拥有。
 
 ## Skill Type
 
@@ -36,6 +37,7 @@ summary: 编排知识和代码 producer contracts，形成唯一 Research Pack�
 - 将 producer artifacts 聚合为唯一 Research Pack。
 - 构建 `knowledge-evidence.md`、`code-evidence.md` 和 `evidence-registry.md`。
 - 生成 `verification-manual.md`，按 verification point 写清用户画像、Given / When / Then、支持证据编号和需要收集的信号。
+- 对 Manual 中选择的 Signal 按对应 contract 定义业务匹配要求。
 - 运行 Research artifact checker、计算 digest 并形成正式 Research handoff。
 
 不使用本技能处理：
@@ -133,12 +135,13 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 
 描述：
 
-- 当前 mount 可见本技能、`tool-guru-knowledge`、`tool-jarvis-codebase`、`scout-assets`、`scout-research-artifact-check` 和 `scout-artifact-digest`。
+- 当前 mount 可见本技能、`tool-guru-knowledge`、`tool-jarvis-codebase`、当前 Manual 实际引用的 Signal Skill、`scout-assets`、`scout-research-artifact-check` 和 `scout-artifact-digest`。
 
 注意事项：
 
 - 使用 `scout-assets` 查询当前可见能力。
 - 两个 producer Skill 各自负责检查自己的 required capabilities。
+- Signal 是条件依赖；只有 Manual 选择对应信号时才要求该 Signal Skill 可见。
 - 缺少 Domain Skill 直接依赖或任一 producer contract 时，记录为阻塞项并向上游报告。
 
 ### I-003: Producer Scope
@@ -308,6 +311,7 @@ scout-assets list
 - 从上游输入中提取 product、domain、capability、platform、app version / SDK version / branch / commit、BDD scenario、user persona clue、source refs 和 issue / PR 线索。
 - `scout-assets` 输出只能证明当前 mount 能力可见，不能证明业务状态。
 - 读取本技能、`tool-guru-knowledge` 和 `tool-jarvis-codebase` 的 contract 与模板索引；缺失时不得自行复制或缩减 producer 规则。
+- 进入 Phase 6 并选择具体 Signal 前，读取该 Signal Skill；未选择的 Signal 不构成 Phase 1 前置依赖。
 - 只有当前任务需要确认 MCP server、plugin 或 raw manifest 时，再执行 `scout-assets mcp`、`scout-assets plugins` 或 `scout-assets raw`。
 - 缺少 required Domain capability 或 producer contract 时记录为阻塞项；producer 内部能力由对应 Skill 检查。
 - 初始输入明确确认了模板中的必填事实时，可以将该事实登记为 `E-HUMAN-*`；用户画像线索必须进一步整理进独立 `E-PERSONA-*`，不得直接写入人工确认证据结构。
@@ -456,7 +460,7 @@ Partial：
 
 ---
 
-本阶段把研究结果整理成 verification manual，锁定后续 Verifier 需要验证的功能点、用户画像 evidence、Given / When / Then、supporting evidence ids 和 signals to collect。
+本阶段把研究结果整理成 verification manual，锁定后续 Verifier 需要验证的功能点、用户画像 evidence、Given / When / Then、supporting evidence ids 和 signal requirements。
 
 使用模板：
 
@@ -468,7 +472,9 @@ templates/verification-manual.md
 
 - verification point 只描述需要验证的功能点，不写 pass / fail 标准。
 - `Supporting Evidence` 只引用 evidence id，不粘贴证据正文。
-- `Signals To Collect` 只列建议采集的信号类型，不制定执行策略或成功标准。
+- `Signals To Collect` 只选择适用 Signal，并按对应 Signal Skill 定义业务匹配要求；不制定 runtime 执行策略或最终业务结论。
+- 选择 `signal-unity-runtime-log` 时必须读取其 `Signal Matching Contract`，由 Research Pack 将当前 BDD、knowledge、code evidence 或已确认输入映射为 `signal_ref`、`match`、`non_match`、`required_fields`、`correlation`、`ordering` 和 `observation_window`。
+- runtime log 的匹配要求由当前 Validation Domain 事实提供；Signal Skill 只提供结构、匹配 contract 和解释语义，不能替代这些事实来源。
 - 识别到模板中仍未闭环且未注明可不填写的事实字段时，将当前缺口放入 `Human Confirmation Needed`，立即进入人工确认 Gate 并停止后续工作；不得形成完成态 manual 或 task handoff。
 - 每个 verification point 必须通过 `persona_evidence_ref` 引用 registry 中已登记的 `E-PERSONA-*`，不得内嵌用户画像字段。
 - 人工求证完成后，`E-HUMAN-*` 的 `applies_to` 必须定位被确认的模板字段；`E-PERSONA-*` 通过 `Source Evidence` 引用支撑画像事实的人工确认证据，manual 只在该人工确认证据直接支持 verification point 时引用它。
@@ -477,12 +483,13 @@ templates/verification-manual.md
 
 Exit：
 
-- 每个 verification point 都有 `persona_evidence_ref`、Given / When / Then、supporting evidence ids 和 signals to collect；所有 refs 已通过 `scout-research-artifact-check` 检查。
+- 每个 verification point 都有 `persona_evidence_ref`、Given / When / Then、supporting evidence ids；每个已选择 Signal 都有完整 requirement，所有 refs 已通过 `scout-research-artifact-check` 检查。
 - 已准备 task handoff 使用的 verification manual ref、问题或限制、人工确认状态和继续入口；验证点详情、用户画像、supporting evidence ids 和 signals to collect 保留在正式 artifact 中。
 
 Blocked：
 
 - 缺少唯一 BDD fact、缺少当前版本 `E-CODE-*` 或 evidence registry 不闭环时，不生成完成状态的 verification manual。
+- Manual 选择的 Signal contract 不可见时停止受影响 verification point，不得自行补写信号语义。
 
 Partial：
 
@@ -497,7 +504,7 @@ Partial：
 - XR-003：不存在待人工确认的必需事实时，`partial` 状态才能用于交接已定位证据和其它缺口；不得把 `partial` 产物写成完整 verification manual。
 - XR-004：Knowledge evidence、code evidence、registry 和 manual 必须遵守 `### Artifact Relationship Rules` 中的 claim owner 和 ref field policy。
 - XR-005：最终 Research 输出必须包含闭环 evidence ids、source / locator、limitations、failed_commands、retry_log，以及已闭环人工确认记录或 `none`。
-- XR-006：verification manual 只能引用 evidence id，不得重新定义 claim、复制证据正文或制定 runtime 执行策略。
+- XR-006：verification manual 只能引用 evidence id，并定义适用 Signal 的业务匹配 requirement；不得重新定义 evidence claim、复制证据正文或制定 runtime 执行策略。
 - XR-007：完整 Research pack 必须通过 `scout-research-artifact-check`，并由 checker 派生为 `ready + complete`，才能提交标题为 `Research Handoff State`、内容为中文的 complete handoff。
 - XR-008：checker 将 Research pack 派生为 `draft + partial` 或 `blocked + blocked`，且不存在待人工确认的必需事实时，handoff 必须使用对应的 `partial` 或 `blocked`；存在待人工确认的必需事实时不得提交 handoff。
 - XR-009：task handoff 必须包含 Verification Manual ref；manual 尚未形成时必须说明停留阶段和原因。不得用 artifact 列表或复制验证点详情替代正式 ref。
@@ -519,6 +526,7 @@ Partial：
 - ER-011：本机绝对路径不得写入 canonical knowledge 或对外事实；codebase 绝对路径只允许作为本次 Scout runtime artifact provenance。
 - ER-012：事实字段默认要求确切信息；只有模板说明中明确写出 `Nice to Have，可不填写` 的字段允许缺失。结构字段按中文填写说明由 workflow 生成或由 contract 校验。
 - ER-013：每个 Pack 只允许 `knowledge-evidence.md` 拥有 `E-KB-001`，并且必须恰有一份 `E-AVAIL-001` 和一份 `E-PLATFORM-001`。
+- ER-014：Signal Skill 拥有信号结构与解释语义，Manual 拥有当前 verification point 的匹配 requirement；两者都不证明 runtime behavior 已发生。
 
 ## Failure Rules (Enforcement)
 
@@ -537,6 +545,7 @@ Partial：
 - BR-004：产品版本、branch 或 commit 缺失且当前任务需要 current version code evidence 时必须记录需人工确认项，不得主动选择 `latest`。
 - BR-005：当前版本代码证据无法形成 `E-CODE-*` 闭环时，不得把 knowledge evidence 写成 implementation fact。
 - BR-006：artifact target 不可写时，不得进入完成状态。
+- BR-007：Manual 选择的 Signal contract 不可见时，不得完成受影响 verification point。
 
 ## Retry Rules (Enforcement)
 
@@ -579,7 +588,7 @@ Partial：
 - `evidence-registry.md`：集中列出 `E-BDD-001`、`E-KB-001`、`E-CAP-*`、`E-AVAIL-001`、`E-PLATFORM-001` 和 `E-CODE-*`。
 - `verification-manual.md`：只用 BDD、`E-PERSONA-*`、其它 evidence ids 和待采集信号描述验证点。
 - task handoff：使用英文标题 `Research Handoff State`，在标题下用中文传递 pack 的 `complete | partial | blocked` 状态、唯一 pack ref、digest、evidence registry ref、verification manual ref、问题或限制、人工确认状态和继续入口；不复制 artifact 内容，存在待人工确认的必需事实时不生成 task handoff。
-- `verification-manual.md`：列出 VP-001，通过 `persona_evidence_ref` 引用独立用户画像 evidence，并包含 Given / When / Then、supporting evidence ids 和 signals to collect。
+- `verification-manual.md`：列出 VP-001，通过 `persona_evidence_ref` 引用独立用户画像 evidence，并包含 Given / When / Then、supporting evidence ids 和按 Signal contract 填写的 requirements。
 
 边界示例：
 
