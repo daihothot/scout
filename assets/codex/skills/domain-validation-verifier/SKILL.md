@@ -3,14 +3,13 @@ assetKind: scout.skill
 name: domain-validation-verifier
 description: Scout Verifier 在 accepted Research Pack Gate 后消费 verification manual、采集代码或运行信号，并逐项形成 BDD Verification Report 时使用。
 id: domain-validation-verifier
-version: 0.2.0
+version: 0.2.1
 phase: [verify]
 tags: [scout, validation, bdd, verification, evidence, workflow]
 devices: [any]
 dependencies:
   skills:
     required: [tool-jarvis-codebase]
-    optional: [signal-unity-runtime-log]
   shellTools:
     required: [scoutAssets, jarvis, codegraph, git]
     optional: [rg, sed, find, cat]
@@ -39,7 +38,7 @@ summary: 从 accepted Research Pack Gate 进入实际验证并形成 Verificatio
 
 - 核对 accepted Research Gate、Research pack、verification manual 和验证点输入。
 - 围绕每个 verification point 选择并采集可定位信号。
-- 根据目标环境和当前挂载能力为每个 Signal requirement 选择独立 Acquisition。
+- 按当前 Signal contract、目标环境和挂载能力选择适用采集实现。
 - 区分代码事实、配置事实、运行 observation、工具活动和人工确认。
 - 为每个验证点形成独立结论与 evidence refs。
 - 提交可供 Validator gate 的 Verification Report。
@@ -57,7 +56,7 @@ summary: 从 accepted Research Pack Gate 进入实际验证并形成 Verificatio
 - Verification Manual 锁定验证点、用户画像、Given / When / Then、supporting evidence 和 signals to collect，不等于运行时已验证。
 - Knowledge evidence 支撑意图和规格；当前版本代码证据支撑 implementation claim；真实运行信号支撑 observed claim。
 - 工具调用本身属于 Activity State，只有被保存为可定位 evidence ref 后才能支撑 Verification Report。
-- Signal requirement 定义要观察什么；Acquisition 定义如何采集；Verifier 拥有选择、执行和解释责任。
+- Signal requirement 定义要观察什么；Signal contract 和适用 Acquisition 定义信号及其采集边界；Verifier 拥有选择、执行和解释责任。
 - `verified` 只用于可定位 observation 直接满足该 verification point 的 requirement。
 - `not_verified` 只用于可定位 observation 直接反证目标行为；执行失败、权限失败、解析失败、超时或空结果都不能成为 `not_verified`。
 - `insufficient_evidence` 表示已取得的可定位 observation 不足以支持或反证 requirement；`blocked` 表示必要采集或解释无法执行。
@@ -169,7 +168,7 @@ Verification Report 必须记录：
 - 逐项提取 verification point、用户画像、Given / When / Then 和 signals to collect。
 - 核对 Research Gate 为 `accepted`，task 输入的 pack ref / digest 与 Gate 记录完全一致，并且 ref 确实定位当前 Research pack。
 - 对每个 Signal requirement 核对 `signal_ref`、匹配字段和对应 Signal contract。
-- 只根据目标环境、target 和当前挂载的 Acquisition Skill 选择采集实现；不得从基础 Signal 推断环境支持。
+- 只根据目标环境、target、Signal contract 和当前挂载能力选择 Acquisition，不从 Signal contract 推断环境支持。
 - 不把 Research complete 当作 Verification complete。
 - 输入不一致时记录具体 artifact、字段和影响的验证点。
 
@@ -193,9 +192,9 @@ Partial：
 注意事项：
 
 - 代码检索必须遵守 `tool-jarvis-codebase` 的 provenance、symbol 和 source evidence 规则。
-- runtime log 必须遵守 `signal-unity-runtime-log` 的统一文件格式、Signal Output Contract、匹配和解释限制，并遵守所选 Acquisition Skill 自己的操作规则。
+- 每个信号都必须遵守对应 Signal contract 和所选 Acquisition 的操作规则；contract 声明 `source_signal` 时按其要求保留来源 provenance。
 - MCP server 和 plugin 只按当前说明与授权使用。
-- 每个信号记录 `signal_ref`、`acquisition_ref`、目标、结果、版本、环境、原始 artifact ref、覆盖范围和限制。
+- 每个信号按其 contract 记录 Signal、Acquisition、原始来源、locator、版本、环境、覆盖范围和限制。
 - Acquisition 不得修改 Manual 的 `match`、`non_match`、correlation、ordering 或 observation window。
 - 失败、空结果和无法执行也是验证事实，但不能记为成功证据。
 - 失败、空结果或未执行只能导向 `insufficient_evidence` 或 `blocked`；只有直接反证 requirement 的可定位 observation 才能导向 `not_verified`。
@@ -260,7 +259,7 @@ Partial：
 - XR-001：不得跳过 verification point 输入核对直接执行泛化验证。
 - XR-002：任一验证点缺少足够证据时，不得用总体 verified 覆盖。
 - XR-003：完成态 Verification Report 必须包含逐项状态、evidence refs、provenance 和限制。
-- XR-004：每个 Signal requirement 必须由父 Verifier 选择一个适用 Acquisition；没有适用实现时只阻塞依赖该信号的范围。
+- XR-004：每个 Signal requirement 必须具有符合对应 contract 的可执行采集路径；没有适用实现时只阻塞依赖该信号的范围。
 - XR-005：没有 accepted Research Pack Gate、唯一 pack ref 和匹配 digest 时不得开始验证或写 Verification Report。
 - XR-006：Gate follow-up 必须原地修正同一 `verification-report.md`；不得创建隐式版本目录或文件。
 - XR-007：正式 handoff 必须只使用固定八字段并明确引用 canonical report。
@@ -272,7 +271,7 @@ Partial：
 - ER-002：observed claim 必须引用可重放的日志、截图、命令输出或真实环境 observation。
 - ER-003：代码 evidence 只证明当前版本实现；不能单独证明运行行为已经发生。
 - ER-004：矛盾证据必须同时保留并解释，不能只选择支持预期的一侧。
-- ER-005：Signal Skill 和 Manual requirement 不证明已经观察到行为；runtime evidence 必须包含 Acquisition provenance 和原始 artifact ref。
+- ER-005：Signal Skill 和 Manual requirement 不证明已经观察到行为；runtime evidence 必须按对应 contract 保留 Acquisition、原始来源和 provenance。
 - ER-006：`not_verified` 必须引用直接反证 requirement 的 observation；采集过程失败或 observation 缺失不是反证。
 
 ## Failure Rules (Enforcement)
@@ -286,7 +285,7 @@ Partial：
 - BR-001：缺少 accepted Research Pack Gate、匹配 pack ref / digest 或 verification manual 时必须停止。
 - BR-002：required capability 对目标验证点不可用时将该点标记 blocked。
 - BR-003：artifact target 不可写或正式 handoff 不可用时不得报告 task 完成。
-- BR-004：Manual 引用的 Signal contract 不可读，或没有支持目标环境的 Acquisition 时，依赖该信号的验证点不得继续采集。
+- BR-004：Manual 引用的 Signal contract 不可读，或没有符合 contract 且支持目标环境的采集实现时，依赖该信号的验证点不得继续采集。
 
 ## Retry Rules (Enforcement)
 
@@ -299,7 +298,7 @@ Partial：
 - PR-001：禁止修改代码或配置来使验证通过。
 - PR-002：禁止重新定义 Research claim、verification point 或成功标准。
 - PR-003：禁止代替 Validator 给出最终 gate。
-- PR-004：禁止把 Acquisition 的过滤结果当作原始日志，或在采集阶段静默改变 Signal requirement。
+- PR-004：禁止用 Acquisition 的过滤结果替代 Signal contract 要求的原始来源，或在采集阶段静默改变 Signal requirement。
 - PR-005：禁止把执行失败、空结果或未执行写成目标行为的直接反证。
 
 ## Example

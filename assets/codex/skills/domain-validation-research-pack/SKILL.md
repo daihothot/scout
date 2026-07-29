@@ -3,14 +3,13 @@ assetKind: scout.skill
 name: domain-validation-research-pack
 description: Scout Researcher 在 Validation Domain 中编排知识与代码证据、构建唯一 Research Pack、Evidence Registry，并按 Signal contract 形成 Verification Manual 时使用。
 id: domain-validation-research-pack
-version: 0.2.0
+version: 0.2.1
 phase: [research]
 tags: [scout, validation, research, pack, evidence, manual]
 devices: [any]
 dependencies:
   skills:
     required: [tool-guru-knowledge, tool-jarvis-codebase]
-    optional: [signal-unity-runtime-log]
   shellTools:
     required: [scoutAssets, scoutResearchArtifactCheck, scoutArtifactDigest]
 summary: 编排知识和代码 producer contracts，形成唯一 Research Pack、证据索引和验证手册。
@@ -473,8 +472,7 @@ templates/verification-manual.md
 - verification point 只描述需要验证的功能点，不写 pass / fail 标准。
 - `Supporting Evidence` 只引用 evidence id，不粘贴证据正文。
 - `Signals To Collect` 只选择适用 Signal，并按对应 Signal Skill 定义业务匹配要求；不制定 runtime 执行策略或最终业务结论。
-- 选择 `signal-unity-runtime-log` 时必须读取其 `Signal Matching Contract`，由 Research Pack 将当前 BDD、knowledge、code evidence 或已确认输入映射为 `signal_ref`、`match`、`non_match`、`required_fields`、`correlation`、`ordering` 和 `observation_window`。
-- runtime log 的匹配要求由当前 Validation Domain 事实提供；Signal Skill 只提供结构、匹配 contract 和解释语义，不能替代这些事实来源。
+- 每个 Signal requirement 都必须通过 `signal_ref` 读取当前挂载的 Signal contract，并将已确认事实映射为完整匹配要求；contract 声明 `source_signal` 时确认其可见，其余血缘与派生约束由 Signal contract 自己拥有。
 - 识别到模板中仍未闭环且未注明可不填写的事实字段时，将当前缺口放入 `Human Confirmation Needed`，立即进入人工确认 Gate 并停止后续工作；不得形成完成态 manual 或 task handoff。
 - 每个 verification point 必须通过 `persona_evidence_ref` 引用 registry 中已登记的 `E-PERSONA-*`，不得内嵌用户画像字段。
 - 人工求证完成后，`E-HUMAN-*` 的 `applies_to` 必须定位被确认的模板字段；`E-PERSONA-*` 通过 `Source Evidence` 引用支撑画像事实的人工确认证据，manual 只在该人工确认证据直接支持 verification point 时引用它。

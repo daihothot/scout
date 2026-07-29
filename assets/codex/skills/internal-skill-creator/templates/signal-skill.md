@@ -16,6 +16,20 @@
 - structure_level: compact
 - note: <填写该信号的稳定知识边界。>
 
+## Source Signal
+
+Derived Signal 必须保留本节并且只声明一个直接 Source Signal；直接对应原始观察输出的 Source Signal 删除整个 `Source Signal` 段。
+
+- source_signal: <填写唯一直接 Source Signal 的 Skill identity>
+
+规则：
+
+- `source_signal` 只能有一个值，不使用列表或多个字段。
+- frontmatter 的 `dependencies.skills.required` 必须包含同一个 Source Signal，用于保证 Skill 可见性。
+- Derived Signal 只消费 Source Signal output，不覆盖其记录边界、顺序、时间精度、locator 或缺失语义。
+- Derived Signal output 必须保留 source output ref、digest 和 locator。
+- 需要关联多个 Signal 时由消费方 workflow 处理，不在 Signal Skill 中声明多个 Source Signal。
+
 ## Signal Model
 
 - <填写信号是什么、由什么事实构成以及原生记录结构。>
@@ -58,5 +72,6 @@
 - contract 不包含任何具体实现的工具、命令、连接、权限或重试语义。
 - 匹配条件由消费方的已确认事实提供，Signal 不发明消费方特定内容。
 - Signal output 能够回到权威原始内容，并明确一致性字段。
+- Derived Signal 只声明一个 `source_signal`，依赖和输出 provenance 与它一致；Source Signal 不保留空的 `Source Signal` 段。
 - 观察到和未观察到信号的解释限制完整。
 - 完成态正文不残留填写说明。

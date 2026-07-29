@@ -146,35 +146,43 @@ test("AssetStore statically binds the Validation Domain skill for every role", (
   }
 });
 
-test("AssetStore mounts the Unity runtime log Signal for Worker roles only", () => {
-  const fixtureRoot = createCodexAssetFixture("scout-asset-store-unity-runtime-log-signal-");
+test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-unity-signals-");
   const store = new AssetStore();
+  const signalSkills = [
+    "signal-unity-runtime-log",
+    "signal-unity-callback-event-by-runtime-log",
+  ];
 
   for (const agentId of ["researcher", "verifier", "validator"]) {
     const mount = store.materializeMount({
       repoRoot: fixtureRoot,
-      runId: `run-unity-runtime-log-signal-${agentId}-test`,
+      runId: `run-unity-signals-${agentId}-test`,
       agentId,
     });
     const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
 
-    assert.ok(mount.skills.includes("signal-unity-runtime-log"));
-    assert.ok(manifest.skills.includes("signal-unity-runtime-log"));
-    assert.equal(existsSync(join(
-      mount.mountRoot,
-      ".agents",
-      "skills",
-      "signal-unity-runtime-log",
-      "SKILL.md",
-    )), true);
+    for (const signalSkill of signalSkills) {
+      assert.ok(mount.skills.includes(signalSkill));
+      assert.ok(manifest.skills.includes(signalSkill));
+      assert.equal(existsSync(join(
+        mount.mountRoot,
+        ".agents",
+        "skills",
+        signalSkill,
+        "SKILL.md",
+      )), true);
+    }
   }
 
   const coordinatorMount = store.materializeMount({
     repoRoot: fixtureRoot,
-    runId: "run-unity-runtime-log-signal-coordinator-test",
+    runId: "run-unity-signals-coordinator-test",
     agentId: "coordinator",
   });
-  assert.equal(coordinatorMount.skills.includes("signal-unity-runtime-log"), false);
+  for (const signalSkill of signalSkills) {
+    assert.equal(coordinatorMount.skills.includes(signalSkill), false);
+  }
 });
 
 test("Every Skill name and id match its directory name", () => {
