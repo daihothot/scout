@@ -93,21 +93,17 @@ evidence_registry_ref: evidence-registry.md
 
 #### Signals To Collect
 
-- runtime_log: <需要 Unity runtime log 时保留并填写以下完整区块；不需要时删除整个区块。Nice to Have，可不填写>
-  - signal_ref: signal-unity-runtime-log
-  - match: <填写可以命中目标信号的消息、事件或字段条件>
-  - non_match: <填写必须排除的相似消息、错误来源、旧 session 或字段条件>
-  - required_fields: <填写解释命中时必须保留的原始或结构化字段>
-  - correlation: <填写日志与当前 action、session、request、user 或 verification point 的关联方式>
-  - ordering: <填写目标记录之间或与其它信号的相对顺序；不要求时填写 none>
-  - observation_window: <填写观察开始、结束及记录适用的时间或生命周期边界>
-- ui_state: <填写需要记录的界面状态；Nice to Have，可不填写>
-- callback_or_event: <填写需要记录的回调或事件；Nice to Have，可不填写>
-- network: <填写需要记录的请求和响应；Nice to Have，可不填写>
-- local_storage: <填写需要记录的本地状态；Nice to Have，可不填写>
-- backend_state: <填写需要记录的服务端状态；Nice to Have，可不填写>
-- build_or_test: <填写需要记录的构建或测试输出；Nice to Have，可不填写>
-- screenshot_or_recording: <填写需要记录的截图或录屏；Nice to Have，可不填写>
+每个适用 Signal 都必须复制下面的完整区块；存在多个 Signal 时依次使用 `SR-002`、`SR-003` 等唯一编号。不得在 Manual 中发明未由当前 `signal_ref` contract 定义的字段或解释。
+
+##### SR-001: Signal Requirement
+
+- signal_ref: <填写当前 Signal Skill identity>
+- match: <按当前 Signal Matching Contract 填写目标记录、状态或字段条件>
+- non_match: <按当前 Signal Matching Contract 填写必须排除的相似记录、错误来源或不适用条件>
+- required_fields: <按当前 Signal Matching Contract 填写解释命中必须保留的字段和 locator>
+- correlation: <填写 Signal 与当前 action、session、request、user、对象或 verification point 的关联方式>
+- ordering: <填写目标记录之间或与其它 requirement 的相对顺序；不要求时填写 none>
+- observation_window: <填写观察开始、结束及记录适用的时间或生命周期边界>
 
 #### Human Confirmation Needed
 

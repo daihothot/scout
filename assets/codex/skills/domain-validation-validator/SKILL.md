@@ -3,14 +3,13 @@ assetKind: scout.skill
 name: domain-validation-validator
 description: Scout Validator 对 Research Pack 或 Verification Report 执行独立 contract、证据语义、provenance 与引用闭环检查，并生成对应 Gate 报告时使用。
 id: domain-validation-validator
-version: 0.6.0
+version: 0.6.1
 phase: [validate]
 tags: [scout, validation, research, gate, evidence, audit, workflow]
 devices: [any]
 dependencies:
   skills:
     required: [domain-validation-research-pack, domain-validation-verifier, tool-guru-knowledge, tool-jarvis-codebase]
-    optional: [signal-unity-runtime-log]
   shellTools:
     required: [scoutAssets, scoutArtifactDigest]
     optional: [rg, sed, find, cat]
@@ -49,7 +48,7 @@ summary: 独立形成 Research Pack Gate 或 Verification Report Gate。
 - 运行 `scout-research-artifact-check` 或继承 Researcher 的生产工具依赖。
 - 修改 Researcher artifact、补写 evidence、补全 claim 或重新编号 evidence id。
 - 收集运行时验证信号、形成或修改 Verification Report，或判定 BDD pass / fail。
-- 为上游 Worker 选择 Acquisition、采集日志或判断具体采集实现支持哪些环境。
+- 为上游 Worker 选择 Acquisition、采集信号或判断具体采集实现支持哪些环境。
 - 把上游 Worker 的自检结果直接当作独立 Gate。
 - 使用同一个 Validator task 先后执行 Research Pack Gate 和 Verification Report Gate。
 
@@ -61,7 +60,7 @@ summary: 独立形成 Research Pack Gate 或 Verification Report Gate。
 - `domain-validation-verifier` 定义 Verification Report、逐项状态和 Verifier handoff contract；Validator 将其作为 Verification producer contract 读取，不执行其采集 workflow。
 - `tool-guru-knowledge` 定义 Guru Knowledge 来源、provenance，以及 Capability、Availability 和 Platform 明细 evidence contract。
 - `tool-jarvis-codebase` 定义 CodeGraph 与 source-code evidence 的 provenance、symbol 和 locator 规则；Validator 将其作为代码证据 contract 读取。
-- `signal-unity-runtime-log` 定义 Unity runtime log 的记录与匹配语义；Validator 只在 Manual 引用它时读取并检查 requirement。
+- Manual 中每个 `signal_ref` 都指向对应 Signal contract；Validator 只读取实际引用的 contract，并按其规则检查 requirement 和 provenance。
 - Validator 只读取上游正式 artifact，所有检查报告只写入 Validator 自己的 artifact root。
 - 每次 Research Pack Gate 只绑定 `scout-artifact-digest` 返回的 `scout-directory-sha256-v1` digest；Research pack 内容改变后，旧 Gate 不再适用于新内容。
 - 每次检查创建一份新的 `research-pack-gate-NNNN.md`；正式 handoff 后该 Gate 记录不可修改。
@@ -242,7 +241,7 @@ scout-artifact-digest <research-pack-dir>
 - 读取 `domain-validation-research-pack/SKILL.md`、`templates/template-index.md` 和本次 pack 实际涉及的模板。
 - 读取 `tool-guru-knowledge/SKILL.md` 及其知识 evidence 模板，用于 Phase 3 的 knowledge evidence 检查。
 - 读取 `tool-jarvis-codebase/SKILL.md` 及其代码证据模板，用于 Phase 3 的代码 evidence 检查。
-- Manual 引用 `signal-unity-runtime-log` 时读取其 Signal contract，用于 Phase 3 的 runtime log requirement 检查。
+- 读取 Manual 中每个 `signal_ref` 对应的 Signal contract，以及该 contract 明确要求读取的来源。
 - 记录初始 digest、文件数量和 Researcher handoff state。
 - 独立计算的 digest algorithm 必须是 `scout-directory-sha256-v1`。
 - 上游缺少 digest、声明其它算法或声明 digest 与独立计算结果不一致时继续完成可读范围检查，并将 Gate 至少判为 `needs_fix`；不得改用上游自定义算法复算。
@@ -304,7 +303,7 @@ Partial：
 - source-code evidence 是否包含可重放的 source-relative file、commit、symbol name/type/signature、start/end line、key lines 与 reason。
 - symbol、行号和 key lines 是否能在声明的当前版本代码中重新定位并支持对应 implementation claim。
 - verification point 是否只引用 registry 中已登记 evidence id，不自行创造事实、运行策略或成功标准。
-- runtime log requirement 是否引用 `signal-unity-runtime-log`，并完整定义 `match`、`non_match`、`required_fields`、`correlation`、`ordering` 和 `observation_window`。
+- 每个 Signal requirement 是否引用可见 Signal contract，并完整定义 `match`、`non_match`、`required_fields`、`correlation`、`ordering` 和 `observation_window`。
 
 注意事项：
 
@@ -468,8 +467,8 @@ Partial：
 - `verified` 是否由可定位 observation 直接满足 Manual requirement。
 - `not_verified` 是否由可定位 observation 直接反证目标行为，而不是由命令失败、权限失败、解析失败、超时、空结果或未执行推导。
 - `insufficient_evidence` 是否对应 `inconclusive`，`blocked` 是否对应 `not_executed`，并准确披露缺口或阻塞。
-- 每个 runtime evidence 是否记录 Signal ref、Acquisition ref、原始 locator、版本、环境、时间、覆盖范围和限制。
-- Acquisition 输出是否保持 Manual 的 match、non-match、correlation、ordering 和 observation window，没有静默改写 requirement。
+- 每个 runtime evidence 是否按对应 Signal contract 记录 Signal、Acquisition、原始来源、locator、版本、环境、时间、覆盖范围和限制。
+- 采集与解释过程是否保持 Manual 的 match、non-match、correlation、ordering 和 observation window，没有静默改写 requirement。
 - failed commands、retry log、blocking items 和 limitations 是否与逐项状态一致。
 
 注意事项：
@@ -567,7 +566,7 @@ Partial：
 - ER-003：knowledge evidence 不能单独证明当前 implementation claim；代码 claim 必须回到声明版本的 source symbol 和 key lines。
 - ER-004：引用存在不等于支持 claim；必须核对 claim、evidence、supports、limitations 和 verification point 的关系。
 - ER-005：Gate 报告只证明指定 digest 内容的检查结果；Research Pack Gate 不证明运行时行为，Verification Report Gate 不改变 report 中的逐项状态。
-- ER-006：Signal contract 只证明 requirement 结构和解释语义可检查，不证明对应日志能够在目标环境被采集。
+- ER-006：Signal contract 只证明 requirement 结构和解释语义可检查，不证明对应信号能够在目标环境被采集。
 - ER-007：`verified` 和 `not_verified` 必须分别由直接满足或直接反证 requirement 的可定位 observation 支撑；失败、空结果和未执行不能支撑二者。
 
 ## Failure Rules (Enforcement)

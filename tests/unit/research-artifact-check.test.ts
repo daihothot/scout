@@ -441,13 +441,16 @@ test("Verification Manual template defines one reusable verification point block
   assert.doesNotMatch(text, /^### VP-002:/m);
 });
 
-test("Verification Manual defines the Unity runtime log Signal requirement", () => {
+test("Verification Manual defines one generic Signal requirement", () => {
   const text = readFileSync(join(
     repoRoot,
     "assets/codex/skills/domain-validation-research-pack/templates/verification-manual.md",
   ), "utf8");
 
-  assert.match(text, /signal_ref: signal-unity-runtime-log/);
+  assert.equal(text.match(/^##### SR-\d+: Signal Requirement/gm)?.length, 1);
+  assert.match(text, /存在多个 Signal 时依次使用 `SR-002`、`SR-003`/);
+  assert.match(text, /signal_ref: <填写当前 Signal Skill identity>/);
+  assert.doesNotMatch(text, /signal-unity-runtime-log|callback_or_event|runtime_log:/);
   for (const field of [
     "match",
     "non_match",
@@ -456,8 +459,22 @@ test("Verification Manual defines the Unity runtime log Signal requirement", () 
     "ordering",
     "observation_window",
   ]) {
-    assert.match(text, new RegExp(`^\\s+- ${field}:`, "m"));
+    assert.match(text, new RegExp(`^\\s*- ${field}:`, "m"));
   }
+});
+
+test("callback-event Signal declares one runtime-log Source Signal", () => {
+  const text = readFileSync(join(
+    repoRoot,
+    "assets/codex/skills/signal-unity-callback-event-by-runtime-log/SKILL.md",
+  ), "utf8");
+
+  assert.match(text, /^name: signal-unity-callback-event-by-runtime-log$/m);
+  assert.match(text, /^id: signal-unity-callback-event-by-runtime-log$/m);
+  assert.match(text, /^\s+required: \[signal-unity-runtime-log\]$/m);
+  assert.match(text, /^- source_signal: signal-unity-runtime-log$/m);
+  assert.equal(text.match(/^- source_signal:/gm)?.length, 1);
+  assert.doesNotMatch(text, /\bsource_signals\b/);
 });
 
 function createReadyResearchPack(): string {
@@ -645,14 +662,14 @@ ${registrySection("Source Code Evidence", "E-CODE-001", "source-commit:Runtime/T
 - E-PERSONA-001
 - E-CODE-001
 #### Signals To Collect
-- runtime_log: enabled
-  - signal_ref: signal-unity-runtime-log
-  - match: event_name equals documented_outcome
-  - non_match: records from a different session
-  - required_fields: event_name and session_id
-  - correlation: session_id equals the current verification session
-  - ordering: occurs after the documented trigger
-  - observation_window: current verification session
+##### SR-001: Signal Requirement
+- signal_ref: signal-unity-runtime-log
+- match: event_name equals documented_outcome
+- non_match: records from a different session
+- required_fields: event_name and session_id
+- correlation: session_id equals the current verification session
+- ordering: occurs after the documented trigger
+- observation_window: current verification session
 #### Human Confirmation Needed
 - none
 #### Notes
