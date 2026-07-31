@@ -49,6 +49,7 @@
         "domain-validation-research-pack",
         "signal-unity-runtime-log",
         "signal-unity-callback-event-by-runtime-log",
+        "signal-unity-local-storage",
         "tool-guru-knowledge",
         "tool-jarvis-codebase",
         "internal-boundary-inspector"
@@ -94,7 +95,10 @@
       "skills": [
         "domain-validation-verifier",
         "signal-unity-runtime-log",
+        "tool-unity-pipeline-cli",
+        "signal-unity-runtime-log-unity-pipeline-cli",
         "signal-unity-callback-event-by-runtime-log",
+        "signal-unity-local-storage",
         "tool-jarvis-codebase",
         "internal-boundary-inspector"
       ],
@@ -102,6 +106,7 @@
         "scoutAssets",
         "scoutMemory",
         "scoutJsonWrite",
+        "unity",
         "jarvis",
         "codegraph",
         "rg",
@@ -148,7 +153,10 @@
         "domain-validation-research-pack",
         "domain-validation-verifier",
         "signal-unity-runtime-log",
+        "tool-unity-pipeline-cli",
+        "signal-unity-runtime-log-unity-pipeline-cli",
         "signal-unity-callback-event-by-runtime-log",
+        "signal-unity-local-storage",
         "tool-guru-knowledge",
         "tool-jarvis-codebase",
         "internal-boundary-inspector"

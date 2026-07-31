@@ -3,10 +3,10 @@ assetKind: scout.skill
 name: signal-unity-runtime-log
 description: 定义或解释 Unity runtime log 信号、日志记录结构、匹配语义及输出契约时使用。
 id: signal-unity-runtime-log
-version: 0.1.0
+version: 0.3.0
 tags: [signal, unity, runtime, log]
 devices: [any]
-summary: 定义 Unity runtime log 的统一文件格式、记录结构、Signal 匹配契约、输出契约和解释限制。
+summary: 定义 Unity runtime log 的统一文件格式、记录结构、匹配契约和解释限制。
 ---
 
 # Unity Runtime Log Signal
@@ -27,14 +27,13 @@ summary: 定义 Unity runtime log 的统一文件格式、记录结构、Signal 
 
 - 解释 Unity runtime log 的统一文件格式、记录结构和可观察语义。
 - 规定消费方如何描述需要匹配和排除的日志。
-- 规定 Signal 输出如何引用同一份原始日志文件并核对内容一致性。
+- 规定 Signal 输出如何保留原始记录字段和物理行范围。
 - 解释日志存在、缺失、顺序、重复、关联和时间窗口能够支持什么结论。
 - 为所有消费方提供同一份实现无关的信号语义。
 
 不使用本技能处理：
 
 - 定义一次性事件名称、消息文本、主体标识、目标对象或预期结果。
-- 规定如何取得日志文件，或执行具体工具、命令、连接和重试流程。
 - 根据观察结果直接生成下游结论或消费方产物。
 
 ## Signal Model
@@ -68,7 +67,7 @@ Unity runtime log 是 Unity 运行过程中由项目、Guru SDK 模块和相关�
 - `module_domain` 的解析必须以其后的 `thread` 槽位为边界，不能用遇到第一个 `]` 即结束的规则处理 `[[GA]]` 这类值。
 - 消息中的结构化 payload 只有在格式来源明确且解析规则可定位时，才能作为匹配字段。
 - 多行 message 必须保留换行和原始顺序；stack trace 不建模为独立顶层记录。
-- 文件中没有独立 record id；`line_start`、`line_end` 和文件 digest 共同构成稳定 locator。
+- 文件中没有独立 record id；`line_start` 和 `line_end` 表示记录在当前单份日志中的物理位置。
 
 ### Match Semantics
 
@@ -108,61 +107,56 @@ runtime_log
 字段所有权：
 
 - `signal_ref` 固定为 `signal-unity-runtime-log`。
-- `match`、`non_match` 和其它约束由消费方的 matching requirement 所有，内容必须来自消费方已确认的事实。
+- `match`、`non_match` 和其它约束表达当前 matching requirement，内容必须来自已确认事实。
 - matching requirement 只定义要观察什么以及如何识别。
 - 只有 runtime log 对当前消费要求有辨识价值时才创建 requirement；未选择本 Signal 时不保留空 requirement。
 - requirement 必须具体、可关联、能够排除误命中，并具有明确的 observation window。
 
 ## Signal Output Contract
 
-Signal 输出必须引用同一份未经语义改写的原始日志文件：
+Signal 输出是从单份 Unity runtime log 中解析出的记录视图：
 
 ```text
-runtime_log
+runtime_log_record
   signal_ref
-  log_ref
-  digest
-  encoding
-  record_format
-  first_record_at
-  last_record_at
+  timestamp
+  project_name
+  level
+  module_domain
+  thread
+  message
+  line_start
+  line_end
 ```
 
 字段语义：
 
 - `signal_ref` 固定为 `signal-unity-runtime-log`。
-- `log_ref` 指向完整原始 `.log` 文件，不指向筛选结果、摘要或重新序列化文件。
-- `digest` 使用 `sha256:<hex>` 表达原始文件字节摘要，用于确认不同入口得到的是同一内容。
-- `encoding` 使用原始文件实际编码；当前统一格式为 `utf-8`。
-- `record_format` 固定为 `guru-unity-runtime-log`。
-- `first_record_at` 和 `last_record_at` 来自首尾可解析顶层记录的 `timestamp`，不等同于文件创建时间或 matching requirement 的 observation window。
+- 其余字段必须直接按本技能的 Record Semantics 从同一条原始记录解析。
+- `line_start` 和 `line_end` 是该记录在当前单份日志中的物理行范围。
+- `message` 必须保留首行正文、全部续行、换行和原始顺序。
 
 输出规则：
 
-- 原始日志文件是权威 Signal 输出。
-- `records` 是按本 Skill 的 Record Semantics 从原始文件得到的消费视图，不要求额外生成或保存独立 records 文件。
-- 任一解析记录必须保留 `line_start`、`line_end`，并能通过 `log_ref` 和 `digest` 回到同一原始内容。
+- 任一解析记录必须保留 `line_start` 和 `line_end`，并由消费方在同一来源文件上下文中解释。
 - 无法解析的物理行必须作为前一记录的续行保留；文件开头出现无法归属的物理行时必须作为格式限制披露，不能静默丢弃。
-- 过滤、摘要、字段提取或脱敏副本不能替代 `log_ref` 指向的原始文件。
+- 筛选结果、摘要、字段提取或脱敏内容不能替代原始记录。
 
 ### Contract Relationship Rules
 
 - Signal contract：本技能拥有 Unity runtime log 的统一文件格式、记录语义、输出 contract、匹配语义和解释限制。
-- Matching requirement：消费方拥有当前要求的 `match`、`non_match`、correlation、ordering 和 observation window。
-- Signal output：本技能定义原始日志引用、内容摘要和统一记录格式，不拥有消费方的匹配条件。
-- Signal record：从权威原始日志解析出的记录提供可供 requirement 判断的内容。
-- Observation result：消费方记录适用记录是否满足 matching requirement。
-- Downstream conclusion：消费方拥有观察结果与其它已确认信息的解释和结论。
+- Signal output：本技能定义从单份日志解析出的记录字段和物理行范围。
+- Signal record：从原始日志解析出的记录提供可供 requirement 判断的内容。
 
 ## Signal Contract Rules (Enforcement)
 
 - SR-001：matching requirement、Signal output、解析记录、observation result 和 downstream conclusion 是不同事实，不得互相替代。
 - SR-002：基础 Signal 不定义一次性事件名称、字段值、主体身份或预期结论。
-- SR-003：Signal output 只证明指定 digest 的原始日志可用；满足 requirement 的记录只是候选观察，不自动形成 downstream conclusion。
+- SR-003：Signal output 必须保留 Record Semantics 定义的全部记录字段以及 `line_start` 和 `line_end`。
 
 ## Interpretation Rules (Enforcement)
 
-- IR-001：Signal output 只证明 `log_ref` 与 `digest` 标识的原始日志内容可用。
+- IR-001：Signal output 只说明指定物理行能够按本技能的格式解析为记录；它不证明来源文件覆盖完整。
 - IR-002：候选命中只证明记录在声明覆盖范围内满足 matching requirement。
 - IR-003：没有匹配日志不能仅凭 Signal contract 证明目标现象未发生。
 - IR-004：从 `message` 解析出的字段必须具有明确格式来源和可定位解析规则。

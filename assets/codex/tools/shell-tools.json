@@ -71,6 +71,16 @@
       "marker": "SCOUT_ARTIFACT_DIGEST_OK"
     },
     {
+      "id": "unity",
+      "name": "unity",
+      "command": "unity",
+      "exposeAs": "unity",
+      "required": true,
+      "smokeArgs": [
+        "--version"
+      ]
+    },
+    {
       "id": "jarvis",
       "name": "jarvis",
       "command": "/Users/chengdai/.guru/guru-jarvis/scripts/jarvis",
