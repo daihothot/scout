@@ -450,7 +450,10 @@ test("Verification Manual defines one generic Signal requirement", () => {
   assert.equal(text.match(/^##### SR-\d+: Signal Requirement/gm)?.length, 1);
   assert.match(text, /存在多个 Signal 时依次使用 `SR-002`、`SR-003`/);
   assert.match(text, /signal_ref: <填写当前 Signal Skill identity>/);
-  assert.doesNotMatch(text, /signal-unity-runtime-log|callback_or_event|runtime_log:/);
+  assert.doesNotMatch(
+    text,
+    /signal-unity-runtime-log|signal-unity-callback-event-by-runtime-log|signal-unity-local-storage|callback_or_event|runtime_log:|local_storage:/,
+  );
   for (const field of [
     "match",
     "non_match",
@@ -461,6 +464,50 @@ test("Verification Manual defines one generic Signal requirement", () => {
   ]) {
     assert.match(text, new RegExp(`^\\s*- ${field}:`, "m"));
   }
+});
+
+test("Validation domain Skills do not branch on concrete Unity Signals", () => {
+  for (const skill of [
+    "domain-validation-researcher",
+    "domain-validation-research-pack",
+    "domain-validation-verifier",
+    "domain-validation-validator",
+  ]) {
+    const text = readFileSync(join(repoRoot, "assets/codex/skills", skill, "SKILL.md"), "utf8");
+    assert.doesNotMatch(
+      text,
+      /signal-unity-runtime-log|signal-unity-runtime-log-unity-pipeline-cli|signal-unity-callback-event-by-runtime-log|signal-unity-local-storage|tool-unity-pipeline-cli/,
+      `${skill} must keep concrete Signal and Acquisition selection outside the domain contract`,
+    );
+  }
+});
+
+test("runtime-log Signal owns format and line positions but no Acquisition file facts", () => {
+  const text = readFileSync(join(
+    repoRoot,
+    "assets/codex/skills/signal-unity-runtime-log/SKILL.md",
+  ), "utf8");
+
+  assert.match(text, /^name: signal-unity-runtime-log$/m);
+  assert.match(text, /^  line_start$/m);
+  assert.match(text, /^  line_end$/m);
+  assert.doesNotMatch(text, /^\s+(?:log_ref|capture_ref|acquisition_ref|digest)$/m);
+  assert.doesNotMatch(text, /export_runtime_log|unity command|DumpRecords/);
+  assert.doesNotMatch(
+    text,
+    /\bdigest\b|Acquisition|文件复制|采集时间|工具 provenance|外部采集方法|执行具体工具|连接和重试流程/,
+  );
+  assert.match(text, /无法解析的物理行必须作为前一记录的续行/);
+  assert.match(text, /没有匹配日志不能仅凭 Signal contract/);
+  assert.match(text, /禁止根据实际日志内容反向改写/);
+  assert.match(
+    text,
+    /SR-003：Signal output 必须保留 Record Semantics 定义的全部记录字段以及 `line_start` 和 `line_end`/,
+  );
+  assert.equal(
+    text.match(/指定物理行能够按本技能的格式解析为记录/g)?.length,
+    1,
+  );
 });
 
 test("callback-event Signal declares one runtime-log Source Signal", () => {
@@ -475,6 +522,141 @@ test("callback-event Signal declares one runtime-log Source Signal", () => {
   assert.match(text, /^- source_signal: signal-unity-runtime-log$/m);
   assert.equal(text.match(/^- source_signal:/gm)?.length, 1);
   assert.doesNotMatch(text, /\bsource_signals\b/);
+  assert.doesNotMatch(text, /\bsource_(?:output_ref|digest|record_locator)\b/);
+  assert.match(text, /^    line_start$/m);
+  assert.match(text, /^    line_end$/m);
+  assert.match(text, /Source Signal record 必须先按/);
+  assert.match(text, /禁止把任意 substring/);
+  assert.match(text, /禁止把事件发布解释为 handler 执行/);
+  assert.doesNotMatch(
+    text,
+    /采集、导出、传输|选择工具、命令|操作 provenance|Acquisition|失败操作或重试流程/,
+  );
+});
+
+test("Unity Pipeline runtime-log Acquisition owns raw file export without Console fallback", () => {
+  const text = readFileSync(join(
+    repoRoot,
+    "assets/codex/skills/signal-unity-runtime-log-unity-pipeline-cli/SKILL.md",
+  ), "utf8");
+
+  assert.match(text, /^name: signal-unity-runtime-log-unity-pipeline-cli$/m);
+  assert.match(text, /^id: signal-unity-runtime-log-unity-pipeline-cli$/m);
+  assert.match(
+    text,
+    /^\s+required: \[signal-unity-runtime-log, tool-unity-pipeline-cli\]$/m,
+  );
+  assert.doesNotMatch(text, /^\s+required: \[unity\]$/m);
+  assert.match(text, /export_runtime_log/);
+  assert.match(text, /copied_log_ref/);
+  assert.match(text, /line_start.*line_end|line_start` 和 `line_end`/);
+  assert.match(text, /禁止.*Console buffer|不得从 Console buffer/);
+  assert.doesNotMatch(text, /unity --version|unity .* status|unity .* list/);
+  assert.doesNotMatch(text, /--runtime(?:-path)?/);
+});
+
+test("Unity Pipeline CLI Tool owns generic invocation without Signal semantics", () => {
+  const skillRoot = join(
+    repoRoot,
+    "assets/codex/skills/tool-unity-pipeline-cli/SKILL.md",
+  );
+  const text = readFileSync(skillRoot, "utf8");
+
+  assert.match(text, /^name: tool-unity-pipeline-cli$/m);
+  assert.match(text, /^id: tool-unity-pipeline-cli$/m);
+  assert.match(text, /^devices: \[editor, desktop\]$/m);
+  assert.match(text, /^\s+required: \[unity\]$/m);
+  assert.match(text, /unity --version/);
+  assert.match(text, /unity --json --non-interactive status/);
+  assert.match(text, /unity --json --non-interactive list/);
+  assert.match(text, /--project-path/);
+  assert.match(text, /--runtime <player-exec-name>/);
+  assert.match(text, /--runtime-path <absolute-runtime-port-file>/);
+  assert.match(text, /--timeout/);
+  assert.match(text, /退出码/);
+  assert.match(text, /kind: editor/);
+  assert.match(text, /kind: desktop_player/);
+  assert.match(text, /Standalone Development Build/);
+  assert.match(text, /不支持 iOS、Android、WebGL、移动真机或设备 WebSocket target/);
+  assert.match(text, /eval "code=<C# method body>"/);
+  assert.match(text, /eval_file file=<absolute-cs-path>/);
+  assert.match(text, /public static object Execute\(\)/);
+  assert.match(text, /Eval 参数 `timeout` 使用毫秒/);
+  assert.match(text, /CLI `--timeout` 使用秒/);
+  assert.match(text, /Unity 主线程同步执行/);
+  assert.match(text, /`confirm`、`dry_run`、Undo 或 sandbox/);
+  assert.match(text, /`Assets`、`Packages`、`ProjectSettings`/);
+  assert.match(text, /EvalResponse\.success/);
+  assert.match(text, /不得自动重试/);
+  assert.match(text, /优先使用已注册.*专用 command/);
+  assert.match(text, /\[pipeline-prefix-patch\.md\]\(references\/pipeline-prefix-patch\.md\)/);
+  assert.match(text, /禁止直接修改 `PackageCache`/);
+  assert.doesNotMatch(text, /OldPrefix|NewPrefix|File\.WriteAllText|RequestScriptReload/);
+  assert.match(text, /不使用本技能处理：[\s\S]*digest/);
+  assert.doesNotMatch(
+    text,
+    /signal-unity-runtime-log|export_runtime_log|copied_log_ref|source_path|line_start|line_end/,
+  );
+});
+
+test("Unity Pipeline CLI Tool conditionally owns a guarded macOS prefix patch resource", () => {
+  const skillRoot = join(repoRoot, "assets/codex/skills/tool-unity-pipeline-cli");
+  const reference = readFileSync(
+    join(skillRoot, "references/pipeline-prefix-patch.md"),
+    "utf8",
+  );
+  const asset = readFileSync(
+    join(
+      skillRoot,
+      "assets/runtime/Assets/Skills/pipeline-prefix-patch/Editor/PipelinePrefixPatch.cs",
+    ),
+    "utf8",
+  );
+
+  assert.match(reference, /连接失败本身不是使用本 reference 的充分条件/);
+  assert.match(reference, /0\.4\.0-exp\.1/);
+  assert.match(reference, /http:\/\/\+:\{port\}/);
+  assert.match(reference, /IPAddress\.IsLoopback\(remoteAddress\)/);
+  assert.match(reference, /request\.Headers\["Origin"\]/);
+  assert.match(reference, /IsAuthorized\(request\)/);
+  assert.match(reference, /不得直接编辑 `BasePipelineServer\.cs`/);
+  assert.match(reference, /domain reload/);
+  assert.match(reference, /unity --json --non-interactive status/);
+  assert.match(reference, /unity --json --non-interactive list/);
+
+  assert.match(asset, /SupportedPackageVersion = "0\.4\.0-exp\.1"/);
+  assert.match(asset, /namespace Scout\.UnityPipeline\.PrefixPatch/);
+  assert.doesNotMatch(asset, /Guru\.Showcase/);
+  assert.match(asset, /matchingPackages\.Length != 1/);
+  assert.match(asset, /source\.Contains\(LoopbackGuard\)/);
+  assert.match(asset, /source\.Contains\(OriginGuard\)/);
+  assert.match(asset, /source\.Contains\(AuthorizationGuard\)/);
+  assert.match(asset, /source\.Contains\(BearerGuard\)/);
+  assert.match(asset, /oldPrefixCount != 1 \|\| newPrefixCount != 0/);
+  assert.match(asset, /Refused: unexpected prefix source signature/);
+  assert.match(asset, /source\.Replace\(OldPrefix, NewPrefix\)/);
+});
+
+test("local-storage Signal defines a direct snapshot Source Signal", () => {
+  const text = readFileSync(join(
+    repoRoot,
+    "assets/codex/skills/signal-unity-local-storage/SKILL.md",
+  ), "utf8");
+
+  assert.match(text, /^name: signal-unity-local-storage$/m);
+  assert.match(text, /^id: signal-unity-local-storage$/m);
+  assert.doesNotMatch(text, /^dependencies:/m);
+  assert.doesNotMatch(text, /^## Source Signal$/m);
+  assert.doesNotMatch(text, /\bsource_signal:/);
+  assert.match(text, /^  consistency_scope$/m);
+  assert.match(text, /^    - store_id$/m);
+  assert.match(text, /^      store_ref$/m);
+  assert.match(text, /^      digest$/m);
+  assert.match(text, /^      schema_version$/m);
+  assert.match(text, /^      schema_digest$/m);
+  assert.match(text, /store digest、table 和完整 primary key/);
+  assert.match(text, /当前状态与状态变化是不同观察/);
+  assert.match(text, /禁止把多个 store 拍平成一个无 store identity 的键值集合/);
 });
 
 function createReadyResearchPack(): string {

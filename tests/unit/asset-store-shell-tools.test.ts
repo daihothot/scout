@@ -152,6 +152,7 @@ test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
   const signalSkills = [
     "signal-unity-runtime-log",
     "signal-unity-callback-event-by-runtime-log",
+    "signal-unity-local-storage",
   ];
 
   for (const agentId of ["researcher", "verifier", "validator"]) {
@@ -182,6 +183,57 @@ test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
   });
   for (const signalSkill of signalSkills) {
     assert.equal(coordinatorMount.skills.includes(signalSkill), false);
+  }
+});
+
+test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition by execution and audit role", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-runtime-log-acquisition-");
+  const store = new AssetStore();
+  const toolSkill = "tool-unity-pipeline-cli";
+  const acquisitionSkill = "signal-unity-runtime-log-unity-pipeline-cli";
+
+  const verifierMount = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-runtime-log-acquisition-verifier-test",
+    agentId: "verifier",
+  });
+  assert.ok(verifierMount.skills.includes(toolSkill));
+  assert.ok(verifierMount.skills.includes(acquisitionSkill));
+  assert.ok(verifierMount.shellTools.some((tool) => tool.id === "unity"));
+  assert.equal(existsSync(join(
+    verifierMount.mountRoot,
+    ".agents",
+    "skills",
+    toolSkill,
+    "SKILL.md",
+  )), true);
+  assert.equal(existsSync(join(
+    verifierMount.mountRoot,
+    ".agents",
+    "skills",
+    acquisitionSkill,
+    "SKILL.md",
+  )), true);
+  assert.equal(existsSync(join(verifierMount.mountRoot, "bin", "unity")), true);
+
+  const validatorMount = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-runtime-log-acquisition-validator-test",
+    agentId: "validator",
+  });
+  assert.ok(validatorMount.skills.includes(toolSkill));
+  assert.ok(validatorMount.skills.includes(acquisitionSkill));
+  assert.equal(validatorMount.shellTools.some((tool) => tool.id === "unity"), false);
+
+  for (const agentId of ["coordinator", "researcher"]) {
+    const mount = store.materializeMount({
+      repoRoot: fixtureRoot,
+      runId: `run-runtime-log-acquisition-${agentId}-test`,
+      agentId,
+    });
+    assert.equal(mount.skills.includes(toolSkill), false);
+    assert.equal(mount.skills.includes(acquisitionSkill), false);
+    assert.equal(mount.shellTools.some((tool) => tool.id === "unity"), false);
   }
 });
 
