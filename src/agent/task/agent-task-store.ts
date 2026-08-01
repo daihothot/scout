@@ -1,5 +1,6 @@
 import {
   AgentTaskStatuses,
+  type AgentTaskDisposition,
   type AgentTaskState,
   type AgentTaskStatus,
 } from "./types.js";
@@ -42,6 +43,36 @@ export class AgentTaskStore {
     }
     this.tasks.set(taskId, next);
     return cloneAgentTaskState(next);
+  }
+
+  recordTaskDisposition(taskId: string, disposition: AgentTaskDisposition): AgentTaskState {
+    return this.updateTask(taskId, (task) => {
+      const steps = task.steps ?? [];
+      const stepIndex = steps.findIndex((step) => step.stepId === disposition.stepId);
+      if (stepIndex < 0) {
+        throw new Error(`Task ${taskId} has no step ${disposition.stepId} for disposition.`);
+      }
+      const step = steps[stepIndex];
+      if (!step) {
+        throw new Error(`Task ${taskId} has no step ${disposition.stepId} for disposition.`);
+      }
+      if (step.turnId && step.turnId !== disposition.turnId) {
+        throw new Error(
+          `Task step ${step.stepId} belongs to turn ${step.turnId}, not ${disposition.turnId}.`,
+        );
+      }
+      if (step.disposition) {
+        if (sameAgentTaskDisposition(step.disposition, disposition)) return task;
+        throw new Error(`Task step ${step.stepId} already has a different disposition.`);
+      }
+      return {
+        ...task,
+        steps: steps.map((candidate, index) => index === stepIndex
+          ? { ...candidate, disposition: { ...disposition } }
+          : candidate),
+        updatedAt: disposition.timestamp,
+      };
+    });
   }
 
   removeTask(taskId: string): AgentTaskState {
@@ -97,10 +128,41 @@ export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
       ...step,
       humanInputRequest: step.humanInputRequest ? { ...step.humanInputRequest } : undefined,
       humanInputResponse: step.humanInputResponse ? { ...step.humanInputResponse } : undefined,
+      disposition: step.disposition ? { ...step.disposition } : undefined,
       toolCalls: step.toolCalls.map((toolCall) => ({ ...toolCall })),
       protocolWarnings: step.protocolWarnings ? [...step.protocolWarnings] : undefined,
     })),
   };
+}
+
+export function sameAgentTaskDisposition(
+  left: AgentTaskDisposition,
+  right: AgentTaskDisposition,
+): boolean {
+  if (
+    left.kind !== right.kind
+    || left.stepId !== right.stepId
+    || left.turnId !== right.turnId
+    || left.callId !== right.callId
+  ) {
+    return false;
+  }
+  if (
+    left.kind === "handoff_submitted"
+    && right.kind === "handoff_submitted"
+  ) {
+    return left.outcome === right.outcome;
+  }
+  if (
+    left.kind === "protocol_violation"
+    && right.kind === "protocol_violation"
+  ) {
+    return left.reason === right.reason;
+  }
+  return left.kind === "waiting_for_human"
+    && right.kind === "waiting_for_human"
+    && left.requestId === right.requestId
+    && left.request === right.request;
 }
 
 function isDefined<T>(value: T | undefined): value is T {

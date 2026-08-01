@@ -47,6 +47,14 @@ test("agent dynamic tool specs expose stable namespaces and required fields", ()
     ScoutAgentRoles.Verifier,
     ScoutAgentRoles.Validator,
   ]);
+  assert.match(requestHumanInputTool.description, /必须在本轮结束前调用/);
+  assert.match(requestHumanInputTool.description, /普通回复或 SendMessage 不能替代/);
+  assert.match(requestHumanInputTool.description, /task 保持 running/);
+  assert.match(requestHumanInputTool.description, /不得重复调用或再调用 SubmitTask/);
+  assert.match(submitTaskTool.description, /必须在本轮结束前调用/);
+  assert.match(submitTaskTool.description, /漏调会使 task 保持 running/);
+  assert.match(submitTaskTool.description, /不得重复调用或再调用 RequestHumanInput/);
+  assert.match(submitTaskTool.description, /先将当前 task 置为 done，再把 Markdown outcome 投递给 Coordinator/);
 });
 
 test("agent tool parser validates and normalizes each tool payload", () => {
@@ -118,26 +126,34 @@ test("agent tool parser rejects malformed tool payloads", () => {
   }), /ArchiveTask task_id/);
 });
 
-test("AGENTS and Skills do not duplicate Dynamic Tool or Runtime protocol contracts", () => {
+test("Worker rules bind runtime controls while role rules and Skills stay transport-agnostic", () => {
   const agentRoot = join(repoRoot, "assets", "codex", "agents");
   const skillRoot = join(repoRoot, "assets", "codex", "skills");
-  const files = [
+  const workerRules = readFileSync(join(agentRoot, "worker.AGENTS.md"), "utf8");
+  for (const toolName of ["update_plan", "RequestHumanInput", "SubmitTask"]) {
+    assert.match(workerRules, new RegExp(`\\b${toolName}\\b`), toolName);
+  }
+
+  const transportAgnosticFiles = [
     join(agentRoot, "AGENTS.md"),
     ...readdirSync(agentRoot)
-      .filter((name) => name.endsWith(".AGENTS.md"))
+      .filter((name) => name.endsWith(".AGENTS.md") && name !== "worker.AGENTS.md")
       .map((name) => join(agentRoot, name)),
     ...readdirSync(skillRoot)
       .map((name) => join(skillRoot, name, "SKILL.md")),
   ];
-  for (const file of files) {
+  for (const file of transportAgnosticFiles) {
     const text = readFileSync(file, "utf8");
     assert.doesNotMatch(
       text,
       /\b(?:AssignTask|SendMessage|RequestHumanInput|RespondHumanInput|SubmitTask|ArchiveTask)\b/,
       file,
     );
+  }
+
+  for (const file of [join(agentRoot, "worker.AGENTS.md"), ...transportAgnosticFiles]) {
     assert.doesNotMatch(
-      text,
+      readFileSync(file, "utf8"),
       /attachment|tag block|<wait-for-human-request>|<human-response>/i,
       file,
     );

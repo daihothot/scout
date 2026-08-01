@@ -16,6 +16,15 @@
 - task 与当前角色不匹配时停止，并向 Coordinator 报告职责不匹配和建议角色。
 - 缺少输入、能力、权限或输出位置时，不猜测继续；按缺口类型使用下述人工输入规则或当前正式上游入口。
 
+## Runtime Control Protocol
+
+- 除了无需调用任何工作工具即可处理的简单轮次，必须在首次调用 shell、MCP 或其它动态工作工具前使用内置 `update_plan` 建立当前轮计划；自然语言计划不能替代 `update_plan`。
+- 完成或切换计划步骤时，必须先用 `update_plan` 更新步骤状态，再开始下一步骤；同一步骤内连续执行工具无需重复更新。
+- 当前轮必须等待人工确认时，在结束前调用 `RequestHumanInput`；当前轮已形成符合适用 handoff contract 的 outcome 时，在结束前调用 `SubmitTask`。
+- 每个正式工作轮必须且只能选择 `RequestHumanInput` 或 `SubmitTask` 作为 disposition；同一 step 禁止同时或重复调用这两个工具。
+- 调用 `SubmitTask` 前，除提交步骤外的计划步骤必须完成，提交步骤保持 `in_progress`；调用成功后立即用 `update_plan` 将提交步骤标为 `completed`。
+- 普通 final response、`SendMessage`、artifact 写入或已全部完成的 plan 都不能替代上述 disposition，也不会改变 task 生命周期。
+
 ## Human Input
 
 - 适用领域 Skill 判断当前工作存在必须由人工确认的输入后，立即停止当前领域工作，不继续处理后续阶段，并通过正式人工请求入口发出一次最小请求。

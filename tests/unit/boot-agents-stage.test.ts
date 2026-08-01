@@ -167,6 +167,8 @@ function createAppServer(
       threadId: params.threadId,
       servers: [],
     }),
+    threadSnapshot: () => undefined,
+    interruptTurn: async () => ({}),
   } as unknown as CodexAppServerClient;
 }
 

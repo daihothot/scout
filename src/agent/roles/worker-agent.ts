@@ -1,5 +1,4 @@
 import {
-  AgentTaskStatuses,
   type AgentTaskState,
   type AssignAgentTaskInput,
   type SendAgentMessageInput,
@@ -9,7 +8,12 @@ import { Result } from "../../core/result.js";
 import { AgentEvents } from "../events/index.js";
 import { ScoutAgent, type ScoutAgentOptions } from "../core/scout-agent.js";
 import { ScoutAgentRoles, type AgentThreadSpec } from "../thread/types.js";
-import { WorkerRunner } from "../runner/worker/worker-runner.js";
+import {
+  WorkerRunner,
+  type WorkerHumanInputDisposition,
+  type WorkerLifecycleToolCall,
+  type WorkerTaskSubmission,
+} from "../runner/worker/worker-runner.js";
 import { agent } from "../context/agent-attachments.js";
 import type { AgentMessage } from "../message/types.js";
 
@@ -58,20 +62,49 @@ export abstract class WorkerAgent extends ScoutAgent {
     return Result.ok(undefined);
   }
 
-  submitTask(outcome: string): Result<AgentTaskState, string> {
+  async submitTask(input: WorkerTaskSubmission): Promise<Result<AgentTaskState, string>> {
     const runner = this.runner;
     const task = runner?.snapshot().activeTask;
     if (!runner || !task) {
       return Result.err(`Worker agent ${this.agentId} has no active task to submit.`);
     }
-    if (task.status !== AgentTaskStatuses.Running) {
-      return Result.err(`Worker task ${task.taskId} cannot be submitted from status ${task.status}.`);
-    }
     try {
-      return Result.ok(runner.submitTask(outcome));
+      return Result.ok(await runner.submitTask(input));
     } catch (error) {
       return Result.err(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  beginHumanInput(
+    input: WorkerLifecycleToolCall & { request: string },
+  ): Result<AgentTaskState, string> {
+    const runner = this.runner;
+    if (!runner) {
+      return Result.err(`Worker agent ${this.agentId} has no active task for RequestHumanInput.`);
+    }
+    try {
+      return Result.ok(runner.beginHumanInput(input));
+    } catch (error) {
+      return Result.err(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async completeHumanInput(
+    input: WorkerHumanInputDisposition,
+  ): Promise<Result<AgentTaskState, string>> {
+    const runner = this.runner;
+    if (!runner) {
+      return Result.err(`Worker agent ${this.agentId} has no active task for RequestHumanInput.`);
+    }
+    try {
+      return Result.ok(await runner.completeHumanInput(input));
+    } catch (error) {
+      return Result.err(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  abortHumanInput(input: WorkerLifecycleToolCall & { request: string }): void {
+    this.runner?.abortHumanInput(input);
   }
 
   async archiveTask(taskId: string): Promise<AgentTaskState> {
@@ -153,6 +186,18 @@ export abstract class WorkerAgent extends ScoutAgent {
           }
           const delivered = await coordinator.sendMessage({
             message: agent.turn.task_outcome(outcome),
+          });
+          if (!delivered.ok) throw new Error(delivered.error);
+        },
+        deliverTaskProtocolFailure: async (message) => {
+          const coordinator = worker.registry.listAgents().find((candidate) =>
+            candidate.role === ScoutAgentRoles.Coordinator
+          );
+          if (!coordinator) {
+            throw new Error(`Worker agent ${worker.agentId} cannot find the Coordinator agent.`);
+          }
+          const delivered = await coordinator.sendMessage({
+            message: agent.turn.message(message),
           });
           if (!delivered.ok) throw new Error(delivered.error);
         },

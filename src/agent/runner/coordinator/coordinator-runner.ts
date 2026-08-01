@@ -199,6 +199,7 @@ export class CoordinatorRunner extends AgentRunner {
         this.resumeContext = undefined;
       },
     });
+    if (outcome.turn.status !== "completed") return;
     const text = outcome.finalResponse?.trim();
     if (!text) return;
     const produced = {

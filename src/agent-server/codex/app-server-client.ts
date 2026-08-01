@@ -153,6 +153,7 @@ export interface TurnStartOptions {
   sandbox?: "readOnly" | "workspaceWrite";
   writableRoots?: string[];
   onStatusMessage?: (message: string) => void;
+  onTurnStarted?: (turnId: string) => void;
 }
 
 export interface TurnOutput {
@@ -346,6 +347,7 @@ export class CodexAppServerClient {
     let start: TurnStartResponse;
     try {
       start = await this.startTurn(options);
+      options.onTurnStarted?.(start.turnId);
     } catch (error) {
       completion.catch(() => undefined);
       this.cancelTurnWait(
@@ -1017,7 +1019,12 @@ function readProviderConfig(providerName: string): { baseUrl?: string; envKey?: 
 
 function matchTomlBlock(text: string, blockName: string): string {
   const escaped = blockName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text.match(new RegExp(`^\\[${escaped}\\]\\n([\\s\\S]*?)(?=^\\[|\\z)`, "m"))?.[1] ?? "";
+  const header = text.match(new RegExp(`^\\[${escaped}\\]\\r?\\n`, "m"));
+  if (!header || header.index === undefined) return "";
+  const contentStart = header.index + header[0].length;
+  const rest = text.slice(contentStart);
+  const nextHeader = rest.search(/\r?\n\[/);
+  return nextHeader === -1 ? rest : rest.slice(0, nextHeader);
 }
 
 function readTomlString(text: string, key: string): string | undefined {

@@ -30,6 +30,45 @@ export interface AgentHumanInputResponse {
   body: string;
 }
 
+export const AgentTaskDispositionKinds = {
+  HandoffSubmitted: "handoff_submitted",
+  WaitingForHuman: "waiting_for_human",
+  ProtocolViolation: "protocol_violation",
+} as const;
+export type AgentTaskDispositionKind =
+  typeof AgentTaskDispositionKinds[keyof typeof AgentTaskDispositionKinds];
+
+interface AgentTaskDispositionBase {
+  stepId: string;
+  turnId: string;
+  callId: string | null;
+  timestamp: string;
+}
+
+export interface AgentTaskHandoffSubmittedDisposition extends AgentTaskDispositionBase {
+  kind: typeof AgentTaskDispositionKinds.HandoffSubmitted;
+  callId: string;
+  outcome: string;
+}
+
+export interface AgentTaskWaitingForHumanDisposition extends AgentTaskDispositionBase {
+  kind: typeof AgentTaskDispositionKinds.WaitingForHuman;
+  callId: string;
+  requestId: string;
+  request: string;
+}
+
+export interface AgentTaskProtocolViolationDisposition extends AgentTaskDispositionBase {
+  kind: typeof AgentTaskDispositionKinds.ProtocolViolation;
+  callId: string | null;
+  reason: string;
+}
+
+export type AgentTaskDisposition =
+  | AgentTaskHandoffSubmittedDisposition
+  | AgentTaskWaitingForHumanDisposition
+  | AgentTaskProtocolViolationDisposition;
+
 export interface AgentTaskStep {
   stepId: string;
   taskId: string;
@@ -43,6 +82,8 @@ export interface AgentTaskStep {
   durationMs?: number;
   humanInputRequest?: AgentHumanInputRequest;
   humanInputResponse?: AgentHumanInputResponse;
+  requiresDisposition?: boolean;
+  disposition?: AgentTaskDisposition;
   protocolWarnings?: string[];
   error?: string;
 }
@@ -73,6 +114,7 @@ export interface AgentTaskState {
   usage?: AgentTaskUsage;
   plan?: AppServerPlanState;
   planRecords?: AppServerPlanState[];
+  protocolRepairAttempts?: number;
   steps?: AgentTaskStep[];
 }
 
