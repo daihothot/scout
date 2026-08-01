@@ -29,6 +29,7 @@ const persistedEventTypes: EventType[] = [
   AgentEvents.task.stepStarted,
   AgentEvents.task.stepCompleted,
   AgentEvents.task.stepInterrupted,
+  AgentEvents.task.dispositionRecorded,
   AgentEvents.task.outcomeSubmitted,
   AgentEvents.task.done,
   AgentEvents.task.archived,

@@ -62,6 +62,10 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   assert.match(configToml, /^model = "gpt-5\.5"$/m);
   assert.match(configToml, /^model_reasoning_effort = "high"$/m);
   assert.match(configToml, /^model_reasoning_summary = "concise"$/m);
+  if (/^experimental_bearer_token\s*=/m.test(readHomeGuruProviderBlock())) {
+    assert.match(configToml, /^experimental_bearer_token = ".+"$/m);
+    assert.doesNotMatch(configToml, /^env_key\s*=/m);
+  }
 
   await stage.stop();
   await stage.stop();
@@ -104,6 +108,17 @@ test("RunAppServerStage preserves its owned client when a second start cannot in
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readHomeGuruProviderBlock(): string {
+  try {
+    const text = readFileSync(join(homedir(), ".codex", "config.toml"), "utf8");
+    return text.match(
+      /^\[model_providers\.GuruOpenAI\]\n([\s\S]*?)(?=^\[|\z)/m,
+    )?.[1] ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function noopLogger(): Logger {

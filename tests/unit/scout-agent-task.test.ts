@@ -20,6 +20,7 @@ import type {
 import {
   AgentTaskStatuses,
   AgentTaskStepStatuses,
+  AgentTaskDispositionKinds,
 } from "../../src/agent/task/types.js";
 import {
   agent,
@@ -48,7 +49,7 @@ import {
 } from "../../src/run/run-scope.js";
 import { AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE } from "../../src/agent/tools/agent-tools.js";
 
-test("WorkerRunner runs the initial turn once and keeps the result on its completed step", async (t) => {
+test("WorkerRunner runs one bounded correction turn and fails visibly when both turns omit disposition", async (t) => {
   let turnCount = 0;
   const harness = await createHarness(t, {
     taskInput: {
@@ -67,20 +68,59 @@ test("WorkerRunner runs the initial turn once and keeps the result on its comple
   await harness.runtime.runTasksToIdle();
 
   const task = harness.runtime.getTaskSnapshot("task-1");
-  assert.equal(turnCount, 1);
-  assert.equal(task?.status, AgentTaskStatuses.Running);
+  assert.equal(turnCount, 2);
+  assert.equal(task?.status, AgentTaskStatuses.Failed);
   assert.equal(Object.hasOwn(task ?? {}, "result"), false);
-  assert.equal(task?.steps?.length, 1);
+  assert.equal(task?.steps?.length, 2);
   assert.equal(task?.steps?.[0]?.status, AgentTaskStepStatuses.Completed);
   assert.equal(task?.steps?.[0]?.finalResponse, "worker response 1");
+  assert.equal(
+    task?.steps?.[0]?.disposition?.kind,
+    AgentTaskDispositionKinds.ProtocolViolation,
+  );
+  assert.equal(task?.steps?.[1]?.status, AgentTaskStepStatuses.Failed);
+  assert.equal(
+    task?.steps?.[1]?.disposition?.kind,
+    AgentTaskDispositionKinds.ProtocolViolation,
+  );
   assert.match(task?.steps?.[0]?.prompt ?? "", /当前任务信息：/);
   assert.match(task?.steps?.[0]?.prompt ?? "", /任务 ID：task-1/);
   assert.match(task?.steps?.[0]?.prompt ?? "", /Agent 角色：verifier/);
-  assert.equal(harness.terminalTasks.length, 0);
-  assert.ok(harness.events.some((event) =>
-    AgentEvents.task.stepCompleted.is(event)
-    && (event.payload as AgentTaskState).status === AgentTaskStatuses.Running
-  ));
+  assert.match(task?.steps?.[1]?.prompt ?? "", /运行时协议修正/);
+  assert.equal(harness.terminalTasks.length, 1);
+  assert.equal(harness.protocolFailures.length, 1);
+  assert.match(harness.protocolFailures[0] ?? "", /WORKER_DISPOSITION_REQUIRED/);
+});
+
+test("WorkerRunner accepts SubmitTask from its single correction turn", async (t) => {
+  let turnCount = 0;
+  const harness = await createHarness(t, {
+    taskInput: {
+      taskId: "task-1",
+      description: "Repair a missed disposition",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Verify BDD"),
+    },
+    runTurn: async (turn, runtime) => {
+      turnCount += 1;
+      if (turnCount === 2) {
+        assert.match(turn.prompt, /运行时协议修正/);
+        await submit(runtime, "## Outcome\n\nrepaired", "turn-2", "submit-2");
+      }
+      return completedTurn(`worker response ${turnCount}`, `turn-${turnCount}`);
+    },
+  });
+
+  await harness.runtime.runTasksToIdle();
+
+  const task = harness.runtime.getTaskSnapshot("task-1");
+  assert.equal(turnCount, 2);
+  assert.equal(task?.status, AgentTaskStatuses.Done);
+  assert.equal(task?.steps?.length, 2);
+  assert.equal(task?.steps?.[0]?.disposition?.kind, AgentTaskDispositionKinds.ProtocolViolation);
+  assert.equal(task?.steps?.[1]?.disposition?.kind, AgentTaskDispositionKinds.HandoffSubmitted);
+  assert.deepEqual(harness.deliveredOutcomes, ["## Outcome\n\nrepaired"]);
+  assert.deepEqual(harness.protocolFailures, []);
 });
 
 test("WorkerRunner starts another turn only after a message is queued", async (t) => {
@@ -92,9 +132,14 @@ test("WorkerRunner starts another turn only after a message is queued", async (t
       subagentType: ScoutAgentRoles.Verifier,
       prompt: agent.turn.message("Initial task prompt"),
     },
-    runTurn: async (turn) => {
+    runTurn: async (turn, runtime) => {
       turnPrompts.push(turn.prompt);
-      return completedTurn(`turn-${turnPrompts.length}`, `turn-${turnPrompts.length}`);
+      const turnId = `turn-${turnPrompts.length}`;
+      const request = `Need human input ${turnPrompts.length}.`;
+      await waitForHuman(runtime, request, turnId, `human-${turnPrompts.length}`);
+      return completedTurn(`turn-${turnPrompts.length}`, turnId, [
+        requestHumanInputToolCall(request, `human-${turnPrompts.length}`),
+      ]);
     },
   });
 
@@ -132,9 +177,13 @@ test("WorkerRunner accepts a fixed message delivery only once and rejects confli
       subagentType: ScoutAgentRoles.Verifier,
       prompt: agent.turn.message("Initial task prompt"),
     },
-    runTurn: async () => {
+    runTurn: async (_turn, runtime) => {
       turnCount += 1;
-      return completedTurn(`turn-${turnCount}`, `turn-${turnCount}`);
+      const request = `Need human input ${turnCount}.`;
+      await waitForHuman(runtime, request, `turn-${turnCount}`, `human-${turnCount}`);
+      return completedTurn(`turn-${turnCount}`, `turn-${turnCount}`, [
+        requestHumanInputToolCall(request, `human-${turnCount}`),
+      ]);
     },
   });
   await harness.runtime.runTasksToIdle();
@@ -183,11 +232,13 @@ test("WorkerRunner records RequestHumanInput without changing task status", asyn
       subagentType: ScoutAgentRoles.Verifier,
       prompt: agent.turn.message("Inspect lifecycle"),
     },
-    runTurn: async () => {
+    runTurn: async (_turn, runtime) => {
       turnCount += 1;
+      await waitForHuman(runtime, "Need human input.", "turn-1", "human-1");
       return completedTurn("waiting", "turn-1", [{
         namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
         tool: "RequestHumanInput",
+        callId: "human-1",
         arguments: {
           request: "Need human input.",
         },
@@ -218,7 +269,7 @@ test("WorkerRunner enters done from SubmitTask and resumes the same task from a 
     runTurn: async (turn, runtime) => {
       turnCount += 1;
       turnPrompts.push(turn.prompt);
-      runtime.submitTask(`## Outcome ${turnCount}`);
+      await submit(runtime, `## Outcome ${turnCount}`, `turn-${turnCount}`, `submit-${turnCount}`);
       return completedTurn(`worker response ${turnCount}`, `turn-${turnCount}`);
     },
   });
@@ -228,7 +279,12 @@ test("WorkerRunner enters done from SubmitTask and resumes the same task from a 
   assert.equal(harness.terminalTasks.length, 0);
   assert.ok(harness.events.some((event) => AgentEvents.task.done.is(event)));
   assert.deepEqual(harness.deliveredOutcomes, ["## Outcome 1"]);
-  assert.deepEqual(harness.submissionOrder.slice(-3), ["step_completed", "task_done", "outcome_delivered"]);
+  assert.deepEqual(harness.submissionOrder.slice(-4), [
+    "step_completed",
+    "outcome_submitted",
+    "task_done",
+    "outcome_delivered",
+  ]);
 
   await harness.runtime.queueMessage({
     taskId: "task-1",
@@ -296,6 +352,7 @@ test("WorkerRunner explicitly initializes and registers its single task", async 
   assert.equal(task?.taskId, "verifier-task-0001");
   assert.equal(task?.taskSequence, 1);
   assert.equal(task?.description, "First task");
+  await harness.runtime.stopAgent();
 });
 
 test("WorkerRunner rejects an untagged message without starting another step", async (t) => {
@@ -306,10 +363,12 @@ test("WorkerRunner rejects an untagged message without starting another step", a
       subagentType: ScoutAgentRoles.Verifier,
       prompt: agent.turn.message("Need human input"),
     },
-    runTurn: async () => {
+    runTurn: async (_turn, runtime) => {
+      await waitForHuman(runtime, "Need human input.", "turn-1", "human-1");
       return completedTurn("waiting", "turn-1", [{
         namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
         tool: "RequestHumanInput",
+        callId: "human-1",
         arguments: {
           request: "Need human input.",
         },
@@ -346,16 +405,18 @@ test("WorkerRunner serves an ordinary message after a request step yields", asyn
       turnCount += 1;
       turnPrompts.push(turn.prompt);
       if (turnCount === 1) {
+        await waitForHuman(runtime, "Need human input.", "turn-1", "human-1");
         return completedTurn("waiting", "turn-1", [{
           namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
           tool: "RequestHumanInput",
+          callId: "human-1",
           arguments: {
             request: "Need human input.",
           },
           success: true,
         }]);
       }
-      runtime.submitTask("## Outcome\n\ncontinued");
+      await submit(runtime, "## Outcome\n\ncontinued", "turn-2", "submit-2");
       return completedTurn("continued", "turn-2");
     },
   });
@@ -389,10 +450,12 @@ test("WorkerRunner records a human-input request on its completed step", async (
       subagentType: ScoutAgentRoles.Verifier,
       prompt: agent.turn.message("Need human input"),
     },
-    runTurn: async () => {
+    runTurn: async (_turn, runtime) => {
+      await waitForHuman(runtime, "Need human input.", "turn-1", "human-1");
       return completedTurn("waiting", "turn-1", [{
         namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
         tool: "RequestHumanInput",
+        callId: "human-1",
         arguments: {
           request: "Need human input.",
         },
@@ -426,16 +489,23 @@ test("WorkerRunner records a delayed human response on the step that consumes it
       turnCount += 1;
       turnPrompts.push(turn.prompt);
       if (turnCount <= 2) {
+        await waitForHuman(
+          runtime,
+          `Need human input ${turnCount}.`,
+          `turn-${turnCount}`,
+          `human-${turnCount}`,
+        );
         return completedTurn(`request-${turnCount}`, `turn-${turnCount}`, [{
           namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
           tool: "RequestHumanInput",
+          callId: `human-${turnCount}`,
           arguments: {
             request: `Need human input ${turnCount}.`,
           },
           success: true,
         }]);
       }
-      runtime.submitTask("## Outcome\n\nresumed");
+      await submit(runtime, "## Outcome\n\nresumed", `turn-${turnCount}`, `submit-${turnCount}`);
       return completedTurn("resumed", `turn-${turnCount}`);
     },
   });
@@ -480,8 +550,11 @@ test("WorkerRunner rejects a second SubmitTask in the same step", async (t) => {
       prompt: agent.turn.message("Submit one outcome"),
     },
     runTurn: async (_turn, runtime) => {
-      runtime.submitTask("first outcome");
-      assert.throws(() => runtime.submitTask("second outcome"), /already submitted an outcome/);
+      await submit(runtime, "first outcome", "turn-1", "submit-1");
+      await assert.rejects(
+        submit(runtime, "second outcome", "turn-1", "submit-2"),
+        /already recorded lifecycle disposition/,
+      );
       return completedTurn("submitted", "turn-1");
     },
   });
@@ -490,6 +563,128 @@ test("WorkerRunner rejects a second SubmitTask in the same step", async (t) => {
 
   assert.equal(harness.runtime.getTaskSnapshot("task-1")?.status, AgentTaskStatuses.Done);
   assert.deepEqual(harness.deliveredOutcomes, ["first outcome"]);
+});
+
+test("WorkerRunner treats the same SubmitTask call retry as idempotent", async (t) => {
+  const harness = await createHarness(t, {
+    taskInput: {
+      taskId: "task-1",
+      description: "Retry one submission",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Submit one outcome"),
+    },
+    runTurn: async (_turn, runtime) => {
+      await submit(runtime, "same outcome", "turn-1", "submit-1");
+      await submit(runtime, "same outcome", "turn-1", "submit-1");
+      return completedTurn("submitted", "turn-1");
+    },
+  });
+
+  await harness.runtime.runTasksToIdle();
+
+  assert.equal(harness.runtime.getTaskSnapshot("task-1")?.status, AgentTaskStatuses.Done);
+  assert.equal(
+    harness.events.filter((event) => AgentEvents.task.dispositionRecorded.is(event)).length,
+    1,
+  );
+  assert.deepEqual(harness.deliveredOutcomes, ["same outcome"]);
+});
+
+test("WorkerRunner rejects a lifecycle disposition from another completed turn", async (t) => {
+  const harness = await createHarness(t, {
+    taskInput: {
+      taskId: "task-1",
+      description: "Reject a stale submission",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Submit one outcome"),
+    },
+    runTurn: async (_turn, runtime) => {
+      await submit(runtime, "stale outcome", "turn-stale", "submit-stale");
+      return completedTurn("completed current turn", "turn-current");
+    },
+  });
+
+  await harness.runtime.runTasksToIdle();
+
+  const task = harness.runtime.getTaskSnapshot("task-1");
+  assert.equal(task?.status, AgentTaskStatuses.Failed);
+  assert.match(task?.error ?? "", /lifecycle disposition for turn turn-stale, not completed turn turn-current/);
+  assert.deepEqual(harness.deliveredOutcomes, []);
+  assert.equal(harness.events.some((event) => AgentEvents.task.outcomeSubmitted.is(event)), false);
+  assert.equal(harness.events.some((event) => AgentEvents.task.done.is(event)), false);
+});
+
+test("WorkerRunner rejects RequestHumanInput after SubmitTask in the same step", async (t) => {
+  const harness = await createHarness(t, {
+    taskInput: {
+      taskId: "task-1",
+      description: "Choose one lifecycle action",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Choose one action"),
+    },
+    runTurn: async (_turn, runtime) => {
+      await submit(runtime, "submitted", "turn-1", "submit-1");
+      assert.throws(
+        () => runtime.beginHumanInput({
+          request: "Need input.",
+          turnId: "turn-1",
+          callId: "human-1",
+        }),
+        /already recorded lifecycle disposition handoff_submitted/,
+      );
+      return completedTurn("submitted", "turn-1");
+    },
+  });
+
+  await harness.runtime.runTasksToIdle();
+  assert.equal(harness.runtime.getTaskSnapshot("task-1")?.status, AgentTaskStatuses.Done);
+});
+
+test("WorkerRunner rejects SubmitTask after RequestHumanInput in the same step", async (t) => {
+  const harness = await createHarness(t, {
+    taskInput: {
+      taskId: "task-1",
+      description: "Choose one lifecycle action",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Choose one action"),
+    },
+    runTurn: async (_turn, runtime) => {
+      await waitForHuman(runtime, "Need input.", "turn-1", "human-1");
+      await assert.rejects(
+        submit(runtime, "submitted", "turn-1", "submit-1"),
+        /already recorded lifecycle disposition waiting_for_human/,
+      );
+      return completedTurn("waiting", "turn-1", [
+        requestHumanInputToolCall("Need input.", "human-1"),
+      ]);
+    },
+  });
+
+  await harness.runtime.runTasksToIdle();
+  assert.equal(harness.runtime.getTaskSnapshot("task-1")?.status, AgentTaskStatuses.Running);
+});
+
+test("WorkerRunner records an interrupted app-server turn as an interrupted step", async (t) => {
+  const harness = await createHarness(t, {
+    taskInput: {
+      taskId: "task-1",
+      description: "Interrupt work",
+      subagentType: ScoutAgentRoles.Verifier,
+      prompt: agent.turn.message("Interrupt this turn"),
+    },
+    runTurn: async () => interruptedTurn("turn-1"),
+  });
+
+  await harness.runtime.runTasksToIdle();
+
+  const task = harness.runtime.getTaskSnapshot("task-1");
+  assert.equal(task?.status, AgentTaskStatuses.Running);
+  assert.equal(task?.steps?.[0]?.status, AgentTaskStepStatuses.Interrupted);
+  assert.equal(task?.steps?.length, 1);
+  assert.equal(
+    harness.events.filter((event) => AgentEvents.task.stepInterrupted.is(event)).length,
+    1,
+  );
 });
 
 test("WorkerRunner discards a submitted outcome when the turn fails", async (t) => {
@@ -501,7 +696,7 @@ test("WorkerRunner discards a submitted outcome when the turn fails", async (t) 
       prompt: agent.turn.message("Submit then fail"),
     },
     runTurn: async (_turn, runtime) => {
-      runtime.submitTask("must not be delivered");
+      await submit(runtime, "must not be delivered", "turn-1", "submit-1");
       return failedTurn("turn failed");
     },
   });
@@ -522,7 +717,7 @@ test("WorkerRunner keeps done after task outcome delivery fails", async (t) => {
       prompt: agent.turn.message("Submit an outcome"),
     },
     runTurn: async (_turn, runtime) => {
-      runtime.submitTask("undeliverable outcome");
+      await submit(runtime, "undeliverable outcome", "turn-1", "submit-1");
       return completedTurn("submitted", "turn-1");
     },
     deliverTaskOutcome: () => {
@@ -603,6 +798,7 @@ async function createHarness(t: TestContext, input: {
   events: ScoutEvent[];
   terminalTasks: AgentTaskState[];
   deliveredOutcomes: string[];
+  protocolFailures: string[];
   submissionOrder: string[];
 }> {
   const eventBus = new InMemoryEventBus();
@@ -613,6 +809,7 @@ async function createHarness(t: TestContext, input: {
   const events: ScoutEvent[] = [];
   const terminalTasks: AgentTaskState[] = [];
   const deliveredOutcomes: string[] = [];
+  const protocolFailures: string[] = [];
   const submissionOrder: string[] = [];
   for (const key of [
     AgentEvents.message.queued,
@@ -624,6 +821,10 @@ async function createHarness(t: TestContext, input: {
     AgentEvents.task.pendingMessagesDrained,
     AgentEvents.task.stepStarted,
     AgentEvents.task.stepCompleted,
+    AgentEvents.task.stepInterrupted,
+    AgentEvents.task.dispositionRecorded,
+    AgentEvents.task.outcomeSubmitted,
+    AgentEvents.task.failed,
     AgentEvents.task.terminal,
   ]) {
     eventBus.subscribe(
@@ -631,6 +832,7 @@ async function createHarness(t: TestContext, input: {
       (event) => {
         events.push(event);
         if (AgentEvents.task.stepCompleted.is(event)) submissionOrder.push("step_completed");
+        if (AgentEvents.task.outcomeSubmitted.is(event)) submissionOrder.push("outcome_submitted");
         if (AgentEvents.task.done.is(event)) submissionOrder.push("task_done");
         if (AgentEvents.task.terminal.is(event)) {
           terminalTasks.push(event.payload as AgentTaskState);
@@ -668,6 +870,10 @@ async function createHarness(t: TestContext, input: {
           deliveredOutcomes.push(outcome);
           submissionOrder.push("outcome_delivered");
         },
+        deliverTaskProtocolFailure: async (message) => {
+          protocolFailures.push(message);
+          submissionOrder.push("protocol_failure_delivered");
+        },
       },
     });
   if (input.taskInput) {
@@ -678,6 +884,7 @@ async function createHarness(t: TestContext, input: {
     events,
     terminalTasks,
     deliveredOutcomes,
+    protocolFailures,
     submissionOrder,
   };
 }
@@ -818,6 +1025,43 @@ function resolvedMessageEntry(
   };
 }
 
+async function submit(
+  runtime: WorkerRunner,
+  outcome: string,
+  turnId: string,
+  callId: string,
+): Promise<AgentTaskState> {
+  return runtime.submitTask({ outcome, turnId, callId });
+}
+
+async function waitForHuman(
+  runtime: WorkerRunner,
+  request: string,
+  turnId: string,
+  callId: string,
+): Promise<AgentTaskState> {
+  runtime.beginHumanInput({ request, turnId, callId });
+  return runtime.completeHumanInput({
+    request,
+    requestId: `${callId}-request`,
+    turnId,
+    callId,
+  });
+}
+
+function requestHumanInputToolCall(
+  request: string,
+  callId: string,
+): AgentTaskStepToolCall {
+  return {
+    namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+    tool: "RequestHumanInput",
+    callId,
+    arguments: { request },
+    success: true,
+  };
+}
+
 function completedTurn(
   finalResponse: string,
   turnId = "turn-1",
@@ -851,6 +1095,22 @@ function failedTurn(error: string): ScoutAgentTurnOutcome {
       finishedAt: new Date().toISOString(),
       status: "failed",
       error,
+    },
+  };
+}
+
+function interruptedTurn(turnId: string): ScoutAgentTurnOutcome {
+  return {
+    turn: {
+      invocationId: "invocation-interrupted",
+      agentId: "verifier",
+      role: ScoutAgentRoles.Verifier,
+      threadId: "thread-1",
+      turnId,
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      status: "interrupted",
+      error: "interrupted by runtime shutdown",
     },
   };
 }

@@ -73,7 +73,7 @@ export class AgentToolBackend {
 
     try {
       const call = parseAgentDynamicToolCall(input.tool, input.arguments);
-      const result = await this.dispatchAgentDynamicToolCall(call, caller);
+      const result = await this.dispatchAgentDynamicToolCall(call, caller, input);
       return dynamicToolSuccess(result);
     } catch (error) {
       const message = error instanceof Error ? error.stack ?? error.message : String(error);
@@ -158,6 +158,7 @@ export class AgentToolBackend {
   private async handleSubmitTaskToolCall(
     call: SubmitTaskToolCall,
     caller: ScoutAgent,
+    delivery: DynamicToolCallInput,
   ): Promise<Record<string, unknown>> {
     if (!(caller instanceof WorkerAgent)) {
       throw new Error("SubmitTask is only available to Worker agents.");
@@ -174,7 +175,15 @@ export class AgentToolBackend {
         `Worker task ${task.taskId} cannot be submitted while human request ${unresolvedRequest.requestId} is unresolved.`,
       );
     }
-    const submitted = caller.submitTask(call.outcome);
+    caller.assertOwnsActiveTurn({
+      threadId: delivery.threadId,
+      turnId: delivery.turnId,
+    });
+    const submitted = await caller.submitTask({
+      outcome: call.outcome,
+      turnId: delivery.turnId,
+      callId: delivery.callId,
+    });
     if (!submitted.ok) throw new Error(submitted.error);
     return {
       status: "accepted",
@@ -213,6 +222,7 @@ export class AgentToolBackend {
   private async handleRequestHumanInputToolCall(
     call: RequestHumanInputToolCall,
     caller: ScoutAgent,
+    delivery: DynamicToolCallInput,
   ): Promise<Record<string, unknown>> {
     if (!(caller instanceof WorkerAgent)) {
       throw new Error("RequestHumanInput is only available to Worker agents.");
@@ -221,66 +231,126 @@ export class AgentToolBackend {
     if (!task || task.status !== AgentTaskStatuses.Running) {
       throw new Error(`Worker agent ${caller.agentId} has no running task for RequestHumanInput.`);
     }
-    const coordinator = this.registry.listAgents().find((candidate) =>
-      candidate.role === ScoutAgentRoles.Coordinator
-    );
-    if (!coordinator) {
-      throw new Error(`Worker agent ${caller.agentId} cannot find the Coordinator agent.`);
-    }
-    const existing = this.humanInputStore.listForTask(task.taskId).find((request) =>
-      request.taskId === task.taskId && !request.response
-    );
-    if (existing) {
-      if (existing.body !== call.request) {
-        throw new Error(`Worker task ${task.taskId} already has unresolved human request ${existing.requestId}.`);
+    caller.assertOwnsActiveTurn({
+      threadId: delivery.threadId,
+      turnId: delivery.turnId,
+    });
+    const lifecycleCall = {
+      turnId: delivery.turnId,
+      callId: delivery.callId,
+      request: call.request,
+    };
+    const begun = caller.beginHumanInput(lifecycleCall);
+    if (!begun.ok) throw new Error(begun.error);
+    const recordedDisposition = begun.value.steps?.at(-1)?.disposition;
+    try {
+      if (recordedDisposition?.kind === "waiting_for_human") {
+        const recordedRequest = this.humanInputStore.listForTask(task.taskId).find((request) =>
+          request.requestId === recordedDisposition.requestId
+        );
+        if (!recordedRequest) {
+          throw new Error(
+            `Worker task ${task.taskId} is missing recorded human request ${recordedDisposition.requestId}.`,
+          );
+        }
+        const coordinator = this.registry.listAgents().find((candidate) =>
+          candidate.role === ScoutAgentRoles.Coordinator
+        );
+        if (!coordinator) {
+          throw new Error(`Worker agent ${caller.agentId} cannot find the Coordinator agent.`);
+        }
+        if (!recordedRequest.response) {
+          const redelivered = await coordinator.sendMessage({
+            message: recordedRequest.message.body,
+            delivery: {
+              messageId: recordedRequest.message.messageId,
+              queuedAt: recordedRequest.message.queuedAt,
+            },
+          });
+          if (!redelivered.ok) throw new Error(redelivered.error);
+        }
+        return {
+          status: recordedRequest.response ? "accepted" : "queued",
+          taskId: task.taskId,
+          agentId: coordinator.agentId,
+          requestId: recordedRequest.requestId,
+        };
       }
+
+      const coordinator = this.registry.listAgents().find((candidate) =>
+        candidate.role === ScoutAgentRoles.Coordinator
+      );
+      if (!coordinator) {
+        throw new Error(`Worker agent ${caller.agentId} cannot find the Coordinator agent.`);
+      }
+      const existing = this.humanInputStore.listForTask(task.taskId).find((request) =>
+        request.taskId === task.taskId && !request.response
+      );
+      if (existing) {
+        if (existing.body !== call.request) {
+          throw new Error(`Worker task ${task.taskId} already has unresolved human request ${existing.requestId}.`);
+        }
+        const result = await coordinator.sendMessage({
+          message: existing.message.body,
+          delivery: {
+            messageId: existing.message.messageId,
+            queuedAt: existing.message.queuedAt,
+          },
+        });
+        if (!result.ok) throw new Error(result.error);
+        const completed = await caller.completeHumanInput({
+          ...lifecycleCall,
+          requestId: existing.requestId,
+        });
+        if (!completed.ok) throw new Error(completed.error);
+        return {
+          status: "queued",
+          taskId: task.taskId,
+          agentId: coordinator.agentId,
+          requestId: existing.requestId,
+        };
+      }
+      const requestId = `${task.taskId}-human-${randomUUID()}`;
+      const requestedAt = new Date().toISOString();
+      const message = {
+        messageId: `${requestId}-request`,
+        agentId: coordinator.agentId,
+        body: attachments.compose(agent.turn.wait_for_human_request(call.request)),
+        queuedAt: requestedAt,
+      };
+      await this.eventBus.publishAndWait(AgentEvents.humanInput.requested, {
+        requestId,
+        taskId: task.taskId,
+        agentId: caller.agentId,
+        body: call.request,
+        requestedAt,
+        message,
+      }, {
+        occurredAt: requestedAt,
+      });
       const result = await coordinator.sendMessage({
-        message: existing.message.body,
+        message: message.body,
         delivery: {
-          messageId: existing.message.messageId,
-          queuedAt: existing.message.queuedAt,
+          messageId: message.messageId,
+          queuedAt: message.queuedAt,
         },
       });
       if (!result.ok) throw new Error(result.error);
+      const completed = await caller.completeHumanInput({
+        ...lifecycleCall,
+        requestId,
+      });
+      if (!completed.ok) throw new Error(completed.error);
       return {
         status: "queued",
         taskId: task.taskId,
         agentId: coordinator.agentId,
-        requestId: existing.requestId,
+        requestId,
       };
+    } catch (error) {
+      caller.abortHumanInput(lifecycleCall);
+      throw error;
     }
-    const requestId = `${task.taskId}-human-${randomUUID()}`;
-    const requestedAt = new Date().toISOString();
-    const message = {
-      messageId: `${requestId}-request`,
-      agentId: coordinator.agentId,
-      body: attachments.compose(agent.turn.wait_for_human_request(call.request)),
-      queuedAt: requestedAt,
-    };
-    await this.eventBus.publishAndWait(AgentEvents.humanInput.requested, {
-      requestId,
-      taskId: task.taskId,
-      agentId: caller.agentId,
-      body: call.request,
-      requestedAt,
-      message,
-    }, {
-      occurredAt: requestedAt,
-    });
-    const result = await coordinator.sendMessage({
-      message: message.body,
-      delivery: {
-        messageId: message.messageId,
-        queuedAt: message.queuedAt,
-      },
-    });
-    if (!result.ok) throw new Error(result.error);
-    return {
-      status: "queued",
-      taskId: task.taskId,
-      agentId: coordinator.agentId,
-      requestId,
-    };
   }
 
   private async handleRespondHumanInputToolCall(
@@ -366,6 +436,7 @@ export class AgentToolBackend {
   private async dispatchAgentDynamicToolCall(
     call: AgentDynamicToolCall,
     caller: ScoutAgent,
+    delivery: DynamicToolCallInput,
   ): Promise<Record<string, unknown>> {
     switch (call.tool) {
       case "AssignTask":
@@ -373,11 +444,11 @@ export class AgentToolBackend {
       case "SendMessage":
         return this.handleSendMessageToolCall(call);
       case "RequestHumanInput":
-        return this.handleRequestHumanInputToolCall(call, caller);
+        return this.handleRequestHumanInputToolCall(call, caller, delivery);
       case "RespondHumanInput":
         return this.handleRespondHumanInputToolCall(call, caller);
       case "SubmitTask":
-        return this.handleSubmitTaskToolCall(call, caller);
+        return this.handleSubmitTaskToolCall(call, caller, delivery);
       case "ArchiveTask":
         return this.handleArchiveTaskToolCall(call, caller);
       default:

@@ -24,6 +24,7 @@ import {
   type AgentThreadSnapshot,
   type ScoutAgentRole,
 } from "../../src/agent/thread/types.js";
+import type { AgentTurnCompletedEvent } from "../../src/agent/thread/turn-events.js";
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
@@ -240,6 +241,52 @@ test("Worker turns preserve profile write-root order for sandbox application", a
   ]);
 });
 
+for (const status of ["failed", "interrupted"] as const) {
+  test(`ScoutAgent preserves ${status} app-server turn status`, async () => {
+    const appServer = createFakeAppServer({
+      turnStatus: status,
+      turnError: `${status} by app-server`,
+    });
+    const fixture = createAgentFixture(`turn-status-${status}`, { appServer });
+    const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+    prepareAgent(
+      fixture,
+      ScoutAgentRoles.Researcher,
+      researcherMount,
+      createAssetCommit(researcherMount),
+    );
+    const researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher);
+
+    await researcher.startThread();
+    const outcome = await researcher.runTurn({ prompt: `Return ${status}.` });
+
+    assert.equal(outcome.turn.status, status);
+    assert.equal(outcome.turn.error, `${status} by app-server`);
+  });
+}
+
+test("ScoutAgent omits a null app-server turn error", async () => {
+  const appServer = createFakeAppServer({
+    turnStatus: "interrupted",
+    turnError: null,
+  });
+  const fixture = createAgentFixture("turn-null-error", { appServer });
+  const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  prepareAgent(
+    fixture,
+    ScoutAgentRoles.Researcher,
+    researcherMount,
+    createAssetCommit(researcherMount),
+  );
+  const researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher);
+
+  await researcher.startThread();
+  const outcome = await researcher.runTurn({ prompt: "Return interrupted." });
+
+  assert.equal(outcome.turn.status, "interrupted");
+  assert.equal(outcome.turn.error, undefined);
+});
+
 test("WorkerAgent keeps its bound runner and reports a rejected task assignment", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-task-not-assigned", []);
@@ -435,6 +482,123 @@ test("ScoutAgent starts a thread, runs preflight, and binds it to registry", asy
   assert.equal(threadEvents[1]?.payload.status, "closed");
   await assert.rejects(agent.startThread(), /thread is closed/);
   unsubscribe();
+});
+
+test("ScoutAgent interrupts its owned turn and seals queued work before stopping", async () => {
+  let releaseTurn: (() => void) | undefined;
+  let markTurnStarted: (() => void) | undefined;
+  const turnReleased = new Promise<void>((resolve) => {
+    releaseTurn = resolve;
+  });
+  const turnStarted = new Promise<void>((resolve) => {
+    markTurnStarted = resolve;
+  });
+  const appServer = createFakeAppServer({
+    turnStatus: "interrupted",
+    onRunTurn: async () => {
+      markTurnStarted?.();
+      await turnReleased;
+    },
+    onInterruptTurn: () => releaseTurn?.(),
+  });
+  createAgentFixture("stop-active-turn", { appServer });
+  const coordinator = new AgentBuilder().buildCoordinator();
+  await coordinator.startThread();
+  await coordinator.sendMessage({ message: agent.turn.message("first turn") });
+  await turnStarted;
+  await coordinator.sendMessage({ message: agent.turn.message("must not start") });
+
+  await coordinator.stopAgent("test_complete");
+
+  assert.deepEqual(appServer.interruptInputs, [{
+    threadId: "thread-test",
+    turnId: "turn-test",
+  }]);
+  assert.equal(appServer.turnInputs.length, 1);
+  assert.equal(coordinator.threadSnapshot?.status, "closed");
+});
+
+test("ScoutAgent cancels its turn waiter and reports an interrupt failure", async () => {
+  let rejectTurn: ((error: Error) => void) | undefined;
+  let markTurnStarted: (() => void) | undefined;
+  const turnStarted = new Promise<void>((resolve) => {
+    markTurnStarted = resolve;
+  });
+  const turnResult = new Promise<never>((_resolve, reject) => {
+    rejectTurn = reject;
+  });
+  const appServer = createFakeAppServer({
+    onRunTurn: async () => {
+      markTurnStarted?.();
+      return turnResult;
+    },
+    onInterruptTurn: () => {
+      throw new Error("interrupt transport failed");
+    },
+    onCancelTurnWait: (_threadId, error) => {
+      rejectTurn?.(error);
+    },
+  });
+  const fixture = createAgentFixture("stop-interrupt-failure", { appServer });
+  const turns: AgentTurnCompletedEvent["turn"][] = [];
+  fixture.eventBus.subscribe<AgentTurnCompletedEvent>(AgentEvents.turn.completed, (event) => {
+    turns.push(event.payload.turn);
+  });
+  const coordinator = new AgentBuilder().buildCoordinator();
+  await coordinator.startThread();
+  await coordinator.sendMessage({ message: agent.turn.message("blocked turn") });
+  await turnStarted;
+
+  await assert.rejects(
+    coordinator.stopAgent("test_complete"),
+    /interrupt transport failed/,
+  );
+
+  assert.deepEqual(appServer.cancelTurnWaitInputs, [{
+    threadId: "thread-test",
+    error: "interrupt transport failed",
+  }]);
+  await waitFor(() => turns.length === 1);
+  assert.equal(turns[0]?.status, "interrupted");
+  assert.equal(turns[0]?.turnId, "turn-test");
+  assert.equal(coordinator.threadSnapshot?.status, "closed");
+});
+
+test("ScoutAgent interrupts a turn that binds after the stop timeout", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let releaseTurnStart: (() => void) | undefined;
+  let markTurnStartPending: (() => void) | undefined;
+  const turnStartReleased = new Promise<void>((resolve) => {
+    releaseTurnStart = resolve;
+  });
+  const turnStartPending = new Promise<void>((resolve) => {
+    markTurnStartPending = resolve;
+  });
+  const appServer = createFakeAppServer({
+    turnStatus: "interrupted",
+    onBeforeTurnStarted: async () => {
+      markTurnStartPending?.();
+      await turnStartReleased;
+    },
+    onCancelTurnWait: () => releaseTurnStart?.(),
+  });
+  createAgentFixture("stop-late-turn-start", { appServer });
+  const coordinator = new AgentBuilder().buildCoordinator();
+  await coordinator.startThread();
+  await coordinator.sendMessage({ message: agent.turn.message("blocked turn") });
+  await turnStartPending;
+  await coordinator.sendMessage({ message: agent.turn.message("must not start") });
+
+  const stopped = coordinator.stopAgent("test_complete");
+  t.mock.timers.tick(5_000);
+
+  await assert.rejects(stopped, /Timed out interrupting the active turn/);
+  assert.deepEqual(appServer.interruptInputs, [{
+    threadId: "thread-test",
+    turnId: "turn-test",
+  }]);
+  assert.equal(appServer.turnInputs.length, 1);
+  assert.equal(coordinator.threadSnapshot?.status, "closed");
 });
 
 test("ScoutAgent returns no goal when setting a goal fails", async () => {
@@ -1016,14 +1180,27 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   let verifier: WorkerAgent | undefined;
   let requestSucceeded = false;
   let submitSucceeded = false;
+  let staleRequestError = "";
+  let staleSubmitError = "";
   const appServer = createFakeAppServer({
     onRunTurn: async (turn) => {
       const prompt = turn.prompt ?? "";
       if (!verifier || !appServer.handler) return;
       if (prompt.includes("<message>\nPerform lifecycle handoff.\n</message>")) {
+        const stale = await appServer.handler({
+          threadId: verifier.threadId ?? "",
+          turnId: "turn-stale-request",
+          callId: "call-stale-request",
+          namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+          tool: "RequestHumanInput",
+          arguments: {
+            request: "Must not be recorded.",
+          },
+        });
+        staleRequestError = stale.contentItems[0]?.text ?? "";
         const result = await appServer.handler({
           threadId: verifier.threadId ?? "",
-          turnId: "turn-wait-for-human-input",
+          turnId: "turn-test",
           callId: "call-wait-for-human-input",
           namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
           tool: "RequestHumanInput",
@@ -1043,9 +1220,20 @@ test("Human input tools deliver through Coordinator and update the bound task", 
         }];
       }
       if (prompt.includes("<human-response>\nUse staging account.\n</human-response>")) {
+        const stale = await appServer.handler({
+          threadId: verifier.threadId ?? "",
+          turnId: "turn-stale-submit",
+          callId: "call-stale-submit",
+          namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+          tool: "SubmitTask",
+          arguments: {
+            outcome: "Must not be submitted.",
+          },
+        });
+        staleSubmitError = stale.contentItems[0]?.text ?? "";
         const result = await appServer.handler({
           threadId: verifier.threadId ?? "",
-          turnId: "turn-submit-task",
+          turnId: "turn-test",
           callId: "call-submit-task",
           namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
           tool: "SubmitTask",
@@ -1082,6 +1270,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   await runner.runTasksToIdle();
 
   assert.equal(requestSucceeded, true);
+  assert.match(staleRequestError, /owns active app-server turn turn-test, not turn-stale-request/);
   assert.equal(runner.snapshot().activeTask?.status, AgentTaskStatuses.Running);
   assert.deepEqual(runner.snapshot().activeTask?.steps?.[0]?.humanInputRequest, {
     body: "Need target account.",
@@ -1137,6 +1326,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   await runner.runTasksToIdle();
 
   assert.equal(submitSucceeded, true);
+  assert.match(staleSubmitError, /owns active app-server turn turn-test, not turn-stale-submit/);
   assert.equal(runner.snapshot().activeTask?.status, AgentTaskStatuses.Done);
   assert.deepEqual(runner.snapshot().activeTask?.steps?.[1]?.humanInputResponse, {
     body: "Use staging account.",
@@ -1652,9 +1842,15 @@ function createFakeAppServer(options: {
   onRunTurn?: (
     turn: { prompt?: string },
   ) => AgentTaskStepToolCall[] | void | Promise<AgentTaskStepToolCall[] | void>;
+  onBeforeTurnStarted?: (turn: { prompt?: string }) => void | Promise<void>;
+  onInterruptTurn?: (input: { threadId: string; turnId: string }) => void | Promise<void>;
+  onCancelTurnWait?: (threadId: string, error: Error) => void;
   finalResponse?: string;
+  turnStatus?: "completed" | "failed" | "interrupted";
+  turnError?: unknown;
   resolveTimelineEntry?: (entry: AppServerTimelineEntry) => AppServerResolvedTimelineEntry;
   parentThreadIds?: Record<string, string | null>;
+  threadSnapshot?: (threadId: string) => AppServerThreadState | undefined;
 } = {}): CodexAppServerClient & {
   handler?: DynamicToolCallHandler;
   readonly timelineHandlerCount: number;
@@ -1670,6 +1866,8 @@ function createFakeAppServer(options: {
     modelProvider?: string;
     reasoningEffort?: string;
   }>;
+  interruptInputs: Array<{ threadId: string; turnId: string }>;
+  cancelTurnWaitInputs: Array<{ threadId: string; error: string }>;
   emitTimeline(entry: AppServerTimelineEntry): void;
 } {
   const timelineHandlers: Array<(entry: AppServerTimelineEntry) => void> = [];
@@ -1686,6 +1884,8 @@ function createFakeAppServer(options: {
       modelProvider?: string;
       reasoningEffort?: string;
     }>,
+    interruptInputs: [] as Array<{ threadId: string; turnId: string }>,
+    cancelTurnWaitInputs: [] as Array<{ threadId: string; error: string }>,
     get timelineHandlerCount(): number {
       return timelineHandlers.length;
     },
@@ -1711,6 +1911,8 @@ function createFakeAppServer(options: {
       return options.resolveTimelineEntry?.(entry) ?? { entry };
     },
     threadSnapshot(threadId: string): AppServerThreadState | undefined {
+      const snapshot = options.threadSnapshot?.(threadId);
+      if (snapshot) return snapshot;
       const parentThreadId = options.parentThreadIds?.[threadId];
       if (parentThreadId === undefined) return undefined;
       return {
@@ -1727,6 +1929,9 @@ function createFakeAppServer(options: {
         turnOrder: [],
         updatedAt: "2026-07-20T00:00:00.000Z",
       };
+    },
+    turnSnapshot(threadId: string, turnId: string) {
+      return options.threadSnapshot?.(threadId)?.turns[turnId];
     },
     startThread: async (threadInput: ThreadStartOptions) => {
       appServer.threadInputs.push(threadInput);
@@ -1772,18 +1977,46 @@ function createFakeAppServer(options: {
     setThreadGoal: async () => {
       throw new Error("ephemeral thread does not support goals");
     },
+    interruptTurn: async (input: { threadId: string; turnId: string }) => {
+      appServer.interruptInputs.push(input);
+      await options.onInterruptTurn?.(input);
+      return {};
+    },
+    cancelTurnWait: (threadId: string, error = new Error(`Turn wait cancelled for thread ${threadId}.`)) => {
+      appServer.cancelTurnWaitInputs.push({
+        threadId,
+        error: error.message,
+      });
+      options.onCancelTurnWait?.(threadId, error);
+    },
     runTurn: async (turnInput: {
       prompt?: string;
       model?: string;
       reasoningEffort?: string;
       reasoningSummary?: string;
       writableRoots?: string[];
+      onTurnStarted?: (turnId: string) => void;
     }) => {
       appServer.turnInputs.push(turnInput);
+      await options.onBeforeTurnStarted?.(turnInput);
+      turnInput.onTurnStarted?.("turn-test");
       const toolCalls = await options.onRunTurn?.(turnInput);
       return {
+        turnId: "turn-test",
         finalResponse: options.finalResponse ?? "",
         response: {},
+        turnSnapshot: options.turnStatus
+          ? {
+            id: "turn-test",
+            threadId: "thread-test",
+            status: options.turnStatus,
+            error: options.turnError,
+            items: {},
+            itemOrder: [],
+            finalResponse: options.finalResponse ?? "",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          }
+          : undefined,
         progressItems: toolCalls?.map((toolCall, index) => ({
           sequence: index + 1,
           item: {
@@ -1812,6 +2045,8 @@ function createFakeAppServer(options: {
       modelProvider?: string;
       reasoningEffort?: string;
     }>;
+    interruptInputs: Array<{ threadId: string; turnId: string }>;
+    cancelTurnWaitInputs: Array<{ threadId: string; error: string }>;
     emitTimeline(entry: AppServerTimelineEntry): void;
   };
   return appServer;

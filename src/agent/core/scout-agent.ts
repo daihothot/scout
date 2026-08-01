@@ -40,7 +40,7 @@ export interface ScoutAgentTurnRecord {
   turnId?: string;
   startedAt: string;
   finishedAt: string;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "interrupted";
   outputContract?: string;
   error?: string;
 }
@@ -67,6 +67,23 @@ export interface ScoutAgentOptions {
   dynamicTools?: AgentThreadSpec["dynamicTools"];
 }
 
+interface InFlightTurnOwnership {
+  invocationId: string;
+  threadId: string;
+  turnId?: string;
+  completed: boolean;
+  interruptRequested: boolean;
+  interruptPromise?: Promise<void>;
+  turnIdReady: Promise<string | undefined>;
+  resolveTurnId(turnId: string | undefined): void;
+}
+
+const AGENT_STOP_TIMEOUT_MS = 5_000;
+
+class AgentTurnInterruptedError extends Error {
+  override readonly name = "AgentTurnInterruptedError";
+}
+
 export abstract class ScoutAgent {
   readonly agentId: string;
   readonly spec: AgentThreadSpec;
@@ -82,6 +99,9 @@ export abstract class ScoutAgent {
   private threadPreflight?: ScoutAgentThreadPreflightSnapshot;
   private threadPreflightPromise?: Promise<void>;
   private invocationSequence = 0;
+  private inFlightTurn?: InFlightTurnOwnership;
+  private stopping = false;
+  private stopPromise?: Promise<void>;
 
   constructor(input: ScoutAgentOptions & {
     spec: AgentThreadSpec;
@@ -220,8 +240,42 @@ export abstract class ScoutAgent {
   }
 
   async stopAgent(reason: string): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
+    this.stopping = true;
+    this.stopPromise = this.stopAgentOnce(reason);
+    return this.stopPromise;
+  }
+
+  private async stopAgentOnce(reason: string): Promise<void> {
+    // Calling runner.stop() synchronously seals the loop before the current turn can roll over.
+    const runnerStop = this.stopRunner(reason);
+    void runnerStop.catch(() => undefined);
+    const errors: unknown[] = [];
     try {
-      await this.runner?.stop(reason);
+      try {
+        await withTimeout(
+          this.interruptOwnedTurn(),
+          AGENT_STOP_TIMEOUT_MS,
+          `Timed out interrupting the active turn for agent ${this.agentId}.`,
+        );
+      } catch (error) {
+        errors.push(error);
+        this.cancelOwnedTurnWait(error);
+      }
+      try {
+        await withTimeout(
+          runnerStop,
+          AGENT_STOP_TIMEOUT_MS,
+          `Timed out stopping the runner for agent ${this.agentId}.`,
+        );
+      } catch (error) {
+        errors.push(error);
+        this.cancelOwnedTurnWait(error);
+      }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) {
+        throw new AggregateError(errors, `Agent ${this.agentId} failed to stop cleanly.`);
+      }
     } finally {
       if (this.thread?.status === "active") {
         this.thread = {
@@ -235,10 +289,79 @@ export abstract class ScoutAgent {
     }
   }
 
+  private async stopRunner(reason: string): Promise<void> {
+    await this.runner?.stop(reason);
+  }
+
+  private interruptOwnedTurn(): Promise<void> {
+    const ownership = this.inFlightTurn;
+    if (!ownership) return Promise.resolve();
+    ownership.interruptRequested = true;
+    return this.ensureOwnedTurnInterrupt(ownership);
+  }
+
+  private ensureOwnedTurnInterrupt(ownership: InFlightTurnOwnership): Promise<void> {
+    ownership.interruptPromise ??= this.interruptOwnedTurnOnce(ownership);
+    return ownership.interruptPromise;
+  }
+
+  private async interruptOwnedTurnOnce(ownership: InFlightTurnOwnership): Promise<void> {
+    const turnId = ownership.turnId ?? await ownership.turnIdReady;
+    if (!turnId || ownership.completed) return;
+
+    try {
+      await this.appServer.interruptTurn({
+        threadId: ownership.threadId,
+        turnId,
+      });
+    } catch (error) {
+      const turn = this.appServer.turnSnapshot(ownership.threadId, turnId);
+      if (ownership.completed || turn?.completedAt || isTerminalTurnStatus(turn?.status)) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  assertOwnsActiveTurn(input: { threadId: string; turnId: string }): void {
+    const ownership = this.inFlightTurn;
+    if (!ownership || ownership.completed) {
+      throw new Error(
+        `Agent ${this.agentId} has no active app-server turn for lifecycle tool delivery.`,
+      );
+    }
+    if (ownership.threadId !== input.threadId) {
+      throw new Error(
+        `Agent ${this.agentId} owns thread ${ownership.threadId}, not ${input.threadId}.`,
+      );
+    }
+    if (!ownership.turnId) {
+      throw new Error(`Agent ${this.agentId} has not bound its active app-server turn yet.`);
+    }
+    if (ownership.turnId !== input.turnId) {
+      throw new Error(
+        `Agent ${this.agentId} owns active app-server turn ${ownership.turnId}, not ${input.turnId}.`,
+      );
+    }
+  }
+
+  private cancelOwnedTurnWait(error: unknown): void {
+    const ownership = this.inFlightTurn;
+    if (!ownership || ownership.completed) return;
+    const message = error instanceof Error ? error.message : String(error);
+    this.appServer.cancelTurnWait(
+      ownership.threadId,
+      new AgentTurnInterruptedError(message),
+    );
+  }
+
   async runTurn(input: ScoutAgentTurnInput): Promise<ScoutAgentTurnOutcome> {
     const thread = this.thread;
     if (!thread || thread.status !== "active") {
       throw new Error(`Agent ${this.agentId} thread is not active.`);
+    }
+    if (this.stopping) {
+      throw new Error(`Agent ${this.agentId} is stopping and cannot start another turn.`);
     }
     const invocationId = this.nextInvocationId(thread.threadId);
     const startedAt = new Date().toISOString();
@@ -256,6 +379,24 @@ export abstract class ScoutAgent {
     });
     await input.onTurnStarted?.(invocationId);
 
+    if (this.stopping) {
+      const turn = this.interruptedBeforeStartTurn({
+        invocationId,
+        thread,
+        startedAt,
+        outputContract: input.outputContract,
+      });
+      this.eventBus.publish(AgentEvents.turn.completed, {
+        taskId: activeTask?.taskId,
+        turn,
+      }, {
+        occurredAt: turn.finishedAt,
+      });
+      return { turn };
+    }
+
+    const ownership = this.claimTurnOwnership(invocationId, thread.threadId);
+
     let result: Awaited<ReturnType<CodexAppServerClient["runTurn"]>>;
     try {
       result = await this.appServer.runTurn({
@@ -268,16 +409,20 @@ export abstract class ScoutAgent {
         sandbox: input.sandbox,
         writableRoots: input.writableRoots ?? this.defaultWritableRoots(),
         onStatusMessage: input.onStatusMessage,
+        onTurnStarted: (turnId) => this.bindOwnedTurnId(ownership, turnId),
       });
     } catch (error) {
+      const turnId = ownership.turnId;
+      this.releaseTurnOwnership(ownership);
       const turn: ScoutAgentTurnRecord = {
         invocationId,
         agentId: this.agentId,
         role: this.spec.role,
         threadId: thread.threadId,
+        turnId,
         startedAt,
         finishedAt: new Date().toISOString(),
-        status: "failed",
+        status: error instanceof AgentTurnInterruptedError ? "interrupted" : "failed",
         outputContract: input.outputContract,
         error: error instanceof Error ? error.stack ?? error.message : String(error),
       };
@@ -289,7 +434,23 @@ export abstract class ScoutAgent {
       });
       return { turn };
     }
+    this.releaseTurnOwnership(ownership);
 
+    const resolvedStatus = result.turnSnapshot?.status;
+    const status: ScoutAgentTurnRecord["status"] = resolvedStatus === undefined
+      || resolvedStatus === "completed"
+      ? "completed"
+      : resolvedStatus === "interrupted"
+      ? "interrupted"
+      : "failed";
+    const snapshotError = result.turnSnapshot?.error;
+    const turnError = status === "completed"
+      ? undefined
+      : snapshotError === undefined || snapshotError === null
+      ? resolvedStatus && resolvedStatus !== status
+        ? `Unexpected app-server turn status: ${resolvedStatus}`
+        : undefined
+      : formatTurnError(snapshotError);
     const turn: ScoutAgentTurnRecord = {
       invocationId,
       agentId: this.agentId,
@@ -298,8 +459,9 @@ export abstract class ScoutAgent {
       turnId: result.turnId,
       startedAt,
       finishedAt: new Date().toISOString(),
-      status: "completed",
+      status,
       outputContract: input.outputContract,
+      error: turnError,
     };
     this.eventBus.publish(AgentEvents.turn.completed, {
       taskId: activeTask?.taskId,
@@ -313,6 +475,69 @@ export abstract class ScoutAgent {
       toolCalls: extractToolCalls(result.progressItems ?? []),
       plan: result.plan,
       goal: result.goal,
+    };
+  }
+
+  private claimTurnOwnership(
+    invocationId: string,
+    threadId: string,
+  ): InFlightTurnOwnership {
+    if (this.inFlightTurn) {
+      throw new Error(
+        `Agent ${this.agentId} already owns in-flight turn ${this.inFlightTurn.invocationId}.`,
+      );
+    }
+    let resolveTurnId: (turnId: string | undefined) => void = () => undefined;
+    const ownership: InFlightTurnOwnership = {
+      invocationId,
+      threadId,
+      completed: false,
+      interruptRequested: false,
+      turnIdReady: new Promise((resolve) => {
+        resolveTurnId = resolve;
+      }),
+      resolveTurnId: (turnId) => resolveTurnId(turnId),
+    };
+    this.inFlightTurn = ownership;
+    return ownership;
+  }
+
+  private bindOwnedTurnId(ownership: InFlightTurnOwnership, turnId: string): void {
+    if (this.inFlightTurn !== ownership || ownership.completed) return;
+    if (ownership.turnId && ownership.turnId !== turnId) {
+      throw new Error(
+        `Agent ${this.agentId} in-flight turn changed from ${ownership.turnId} to ${turnId}.`,
+      );
+    }
+    ownership.turnId = turnId;
+    ownership.resolveTurnId(turnId);
+    if (ownership.interruptRequested) {
+      void this.ensureOwnedTurnInterrupt(ownership).catch(() => undefined);
+    }
+  }
+
+  private releaseTurnOwnership(ownership: InFlightTurnOwnership): void {
+    ownership.completed = true;
+    ownership.resolveTurnId(undefined);
+    if (this.inFlightTurn === ownership) this.inFlightTurn = undefined;
+  }
+
+  private interruptedBeforeStartTurn(input: {
+    invocationId: string;
+    thread: AgentThreadSnapshot;
+    startedAt: string;
+    outputContract?: string;
+  }): ScoutAgentTurnRecord {
+    return {
+      invocationId: input.invocationId,
+      agentId: this.agentId,
+      role: this.spec.role,
+      threadId: input.thread.threadId,
+      startedAt: input.startedAt,
+      finishedAt: new Date().toISOString(),
+      status: "interrupted",
+      outputContract: input.outputContract,
+      error: "Agent stop requested before the app-server turn started.",
     };
   }
 
@@ -373,6 +598,39 @@ export abstract class ScoutAgent {
 
 function safePathSegment(value: string): string {
   return value.replaceAll(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+function isTerminalTurnStatus(status: string | undefined): boolean {
+  return status === "completed"
+    || status === "failed"
+    || status === "interrupted"
+    || status === "cancelled";
+}
+
+function formatTurnError(error: unknown): string {
+  if (error instanceof Error) return error.stack ?? error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timedOut]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function extractToolCalls(progressItems: NonNullable<Awaited<ReturnType<CodexAppServerClient["runTurn"]>>["progressItems"]>): AgentTaskStepToolCall[] {

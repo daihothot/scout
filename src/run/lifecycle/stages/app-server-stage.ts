@@ -209,6 +209,28 @@ function buildClientConfig(input: {
   const homeConfig = readHomeProviderConfig(input.model.provider);
   const mountRoots = uniqueResolved(input.mountRoots);
   const trustedRoots = uniqueResolved(input.trustedRoots);
+  const providerLines = [
+    `[model_providers.${input.model.provider}]`,
+    `name = "${escapeToml(input.model.provider)}"`,
+    `base_url = "${escapeToml(homeConfig.baseUrl ?? "https://api.openai.com/v1")}"`,
+  ];
+  if (homeConfig.experimentalBearerToken) {
+    providerLines.push(
+      `experimental_bearer_token = "${escapeToml(homeConfig.experimentalBearerToken)}"`,
+    );
+  }
+  if (homeConfig.requiresOpenaiAuth !== undefined) {
+    providerLines.push(`requires_openai_auth = ${homeConfig.requiresOpenaiAuth}`);
+  }
+  if (homeConfig.envKey) {
+    providerLines.push(`env_key = "${escapeToml(homeConfig.envKey)}"`);
+  } else if (!homeConfig.experimentalBearerToken) {
+    providerLines.push('env_key = "OPENAI_API_KEY"');
+  }
+  providerLines.push(
+    `wire_api = "${escapeToml(homeConfig.wireApi ?? "responses")}"`,
+    "",
+  );
   const lines = [
     `model = "${escapeToml(input.model.id)}"`,
     `model_provider = "${escapeToml(input.model.provider)}"`,
@@ -218,12 +240,7 @@ function buildClientConfig(input: {
     "[features]",
     "shell_snapshot = false",
     "",
-    `[model_providers.${input.model.provider}]`,
-    `name = "${escapeToml(input.model.provider)}"`,
-    `base_url = "${escapeToml(homeConfig.baseUrl ?? "https://api.openai.com/v1")}"`,
-    `env_key = "${escapeToml(homeConfig.envKey ?? "OPENAI_API_KEY")}"`,
-    'wire_api = "responses"',
-    "",
+    ...providerLines,
   ];
   for (const mountRoot of mountRoots) {
     lines.push(
@@ -280,21 +297,39 @@ function resolveProfileRoot(root: string, repoRoot: string): string {
   return resolve(repoRoot, root);
 }
 
-function readHomeProviderConfig(providerName: string): { baseUrl?: string; envKey?: string } {
+function readHomeProviderConfig(providerName: string): {
+  baseUrl?: string;
+  envKey?: string;
+  experimentalBearerToken?: string;
+  requiresOpenaiAuth?: boolean;
+  wireApi?: string;
+} {
   try {
     const text = readFileSync(join(homedir(), ".codex", "config.toml"), "utf8");
-    const escapedProvider = providerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const block = text.match(new RegExp(
-      `^\\[model_providers\\.${escapedProvider}\\]\\n([\\s\\S]*?)(?=^\\[|\\z)`,
-      "m",
-    ))?.[1] ?? "";
+    const block = readTomlTableBlock(text, `model_providers.${providerName}`);
+    const requiresOpenaiAuth = block.match(/^requires_openai_auth\s*=\s*(true|false)/m)?.[1];
     return {
       baseUrl: block.match(/^base_url\s*=\s*"([^"]*)"/m)?.[1],
       envKey: block.match(/^env_key\s*=\s*"([^"]*)"/m)?.[1],
+      experimentalBearerToken: block.match(/^experimental_bearer_token\s*=\s*"([^"]*)"/m)?.[1],
+      requiresOpenaiAuth: requiresOpenaiAuth === undefined
+        ? undefined
+        : requiresOpenaiAuth === "true",
+      wireApi: block.match(/^wire_api\s*=\s*"([^"]*)"/m)?.[1],
     };
   } catch {
     return {};
   }
+}
+
+function readTomlTableBlock(text: string, tableName: string): string {
+  const escaped = tableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const header = text.match(new RegExp(`^\\[${escaped}\\]\\r?\\n`, "m"));
+  if (!header || header.index === undefined) return "";
+  const contentStart = header.index + header[0].length;
+  const rest = text.slice(contentStart);
+  const nextHeader = rest.search(/\r?\n\[/);
+  return nextHeader === -1 ? rest : rest.slice(0, nextHeader);
 }
 
 function uniqueResolved(roots: string[]): string[] {

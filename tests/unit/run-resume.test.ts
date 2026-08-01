@@ -600,10 +600,22 @@ test("WorkerRunner injects restored context once and consumes restored messages 
     body: agent.turn.message("恢复前已消费"),
     queuedAt: "2026-07-22T00:00:00.500Z",
   };
-  const runner = new WorkerRunner({
+  let runner: WorkerRunner;
+  runner = new WorkerRunner({
     host: workerHost(async (input) => {
       prompts.push(input.prompt);
-      return completedTurn(`turn-${prompts.length}`);
+      const finalResponse = `turn-${prompts.length}`;
+      const turnId = `turn-${finalResponse}`;
+      const request = `Need input ${prompts.length}.`;
+      const callId = `human-${prompts.length}`;
+      runner.beginHumanInput({ request, turnId, callId });
+      await runner.completeHumanInput({
+        request,
+        requestId: `${callId}-request`,
+        turnId,
+        callId,
+      });
+      return completedTurn(finalResponse);
     }),
     taskSequence: 1,
     restoredTask: task,
@@ -715,6 +727,43 @@ test("CoordinatorRunner restores accepted delivery ids without replaying them", 
   await runner.stop("test_complete");
 });
 
+for (const status of ["failed", "interrupted"] as const) {
+  test(`CoordinatorRunner does not publish a partial response from a ${status} turn`, async (t) => {
+    const eventBus = new InMemoryEventBus();
+    installTestRunScope(t, {
+      runId: `coordinator-runner-${status}-turn`,
+      eventBus,
+    });
+    const producedMessages: unknown[] = [];
+    eventBus.subscribe(AgentEvents.coordinator.messageProduced, (event) => {
+      producedMessages.push(event.payload);
+    });
+    const runner = new CoordinatorRunner({
+      host: {
+        agentId: "coordinator",
+        runTurn: async () => ({
+          turn: {
+            invocationId: `coordinator-${status}-invocation`,
+            agentId: "coordinator",
+            role: ScoutAgentRoles.Coordinator,
+            threadId: "coordinator-thread",
+            turnId: `coordinator-${status}-turn`,
+            startedAt: "2026-07-22T00:00:00.000Z",
+            finishedAt: "2026-07-22T00:00:01.000Z",
+            status,
+          },
+          finalResponse: "This partial response must not be published.",
+        }),
+      },
+    });
+
+    await runner.queueMessage({ message: agent.turn.message("触发 Coordinator turn") });
+    await runner.stop("test_complete");
+
+    assert.deepEqual(producedMessages, []);
+  });
+}
+
 test("RestoreAgentsStage never cold-starts an Agent after thread resume fails", async (t) => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-thread-restore-failure-"));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
@@ -752,6 +801,12 @@ test("RestoreAgentsStage never cold-starts an Agent after thread resume fails", 
         threadId: params.threadId,
         servers: [],
       };
+    },
+    threadSnapshot() {
+      return undefined;
+    },
+    async interruptTurn() {
+      return {};
     },
   } as unknown as CodexAppServerClient;
   const scope = installTestRunScope(t, {
@@ -1454,6 +1509,7 @@ function workerHost(
     spec,
     runTurn,
     deliverTaskOutcome: async () => undefined,
+    deliverTaskProtocolFailure: async () => undefined,
   };
 }
 

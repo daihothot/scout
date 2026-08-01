@@ -31,6 +31,23 @@ export class TaskEventRecorder {
       this.write(event, rejection.agentId, rejection.activeTaskId, { ...rejection });
       return;
     }
+    if (AgentEvents.task.dispositionRecorded.is(event)) {
+      const { task, disposition } = event.payload;
+      this.write(event, task.agentId, task.taskId, { ...disposition });
+      return;
+    }
+    if (AgentEvents.task.outcomeSubmitted.is(event)) {
+      const submission = event.payload;
+      this.write(event, submission.task.agentId, submission.task.taskId, {
+        stepId: submission.stepId,
+        turnId: submission.turnId,
+        callId: submission.callId,
+        status: submission.task.status,
+        outcome: submission.outcome,
+        submittedAt: submission.submittedAt,
+      });
+      return;
+    }
     const task = event.payload as AgentTaskState;
     if (AgentEvents.task.assigned.is(event)) {
       this.write(event, task.agentId, task.taskId, {

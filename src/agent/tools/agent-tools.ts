@@ -110,7 +110,7 @@ export function buildRequestHumanInputDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
     name: "RequestHumanInput",
-    description: "仅供 Worker 请求必须由人工确认的输入。Runtime 将请求投递给 Coordinator；当前 task 保持 running，当前 step 完成后记录 humanInputRequest。一次调用应合并当前工作所需的最小问题，不得用本工具提交 task outcome。",
+    description: "仅供 Worker 在当前工作必须等待人工确认时请求输入，必须在本轮结束前调用；普通回复或 SendMessage 不能替代。一次调用应合并当前工作所需的最小问题，同一 step 不得重复调用或再调用 SubmitTask。Runtime 将请求投递给 Coordinator；当前 task 保持 running，当前 step 完成后记录 humanInputRequest。不得用本工具提交 task outcome。",
     inputSchema: objectSchema({
       request: {
         type: "string",
@@ -142,7 +142,7 @@ export function buildSubmitTaskDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
     name: "SubmitTask",
-    description: "仅供 Worker 正式交回当前一轮工作；Runtime 在当前 step 完成后将 Markdown outcome 投递给 Coordinator，投递成功后把当前 task 置为 done。",
+    description: "仅供 Worker 正式交回当前一轮工作。当前 outcome 已符合适用 handoff contract 时，必须在本轮结束前调用；普通回复、SendMessage、artifact 写入或完成 plan 都不构成提交，漏调会使 task 保持 running。同一 step 不得重复调用或再调用 RequestHumanInput。Runtime 在当前 step 完成后先将当前 task 置为 done，再把 Markdown outcome 投递给 Coordinator。",
     inputSchema: objectSchema({
       outcome: {
         type: "string",

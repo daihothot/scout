@@ -185,9 +185,18 @@ test("CodexAppServerClient publishes timeline after store state is reduced", asy
   try {
     await client.startSession();
     const thread = await client.startThread({ cwd: tmpdir() });
-    const turn = await client.runTurn({ threadId: thread.threadId, prompt: "say done", timeoutMs: 2000 });
+    let startedTurnId: string | undefined;
+    const turn = await client.runTurn({
+      threadId: thread.threadId,
+      prompt: "say done",
+      timeoutMs: 2000,
+      onTurnStarted: (turnId) => {
+        startedTurnId = turnId;
+      },
+    });
 
     assert.equal(turn.finalResponse, "done");
+    assert.equal(startedTurnId, "turn-1");
     assert.equal(turn.progressItems?.[0]?.status, "completed");
     assert.ok(timelineSnapshots.some((snapshot) =>
       snapshot.kind === "item_started" && snapshot.progressCount === 1
