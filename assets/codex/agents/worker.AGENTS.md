@@ -12,7 +12,7 @@
 ## When Assigned Task
 
 - 先确认 task id、当前角色、上游 Coordinator、目标、输入 refs、预期输出、完成条件和禁止越权边界。
-- 读取当前角色规则，并加载 profile 中适用于当前角色和 task 的领域 Skill、方法 Skill。
+- 读取当前角色规则；需要选择 Skill 时，先满足下述 `Runtime Control Protocol`，再按通用 `Skill Selection Protocol` 逐级导航当前角色及 task 适用的入口 Skill，并严格按 dependency-first `loadOrder` 读取。
 - task 与当前角色不匹配时停止，并向 Coordinator 报告职责不匹配和建议角色。
 - 缺少输入、能力、权限或输出位置时，不猜测继续；按缺口类型使用下述人工输入规则或当前正式上游入口。
 

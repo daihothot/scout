@@ -1,8 +1,14 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { AgentBuilder } from "../../src/agent/builder/agent-builder.js";
 import { AgentBackend } from "../../src/agent/backend/agent-backend.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
@@ -14,6 +20,8 @@ import type { ScoutAgentOptions } from "../../src/agent/core/scout-agent.js";
 import {
   AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
   AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
+  AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+  AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
   AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
@@ -21,6 +29,7 @@ import {
 } from "../../src/agent/tools/agent-tools.js";
 import {
   ScoutAgentRoles,
+  ScoutAgentPhases,
   type AgentThreadSnapshot,
   type ScoutAgentRole,
 } from "../../src/agent/thread/types.js";
@@ -28,7 +37,10 @@ import type { AgentTurnCompletedEvent } from "../../src/agent/thread/turn-events
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
-import type { DynamicToolCallHandler } from "../../src/agent-server/types.js";
+import type {
+  DynamicToolCallHandler,
+  DynamicToolCallResponse,
+} from "../../src/agent-server/types.js";
 import type {
   AppServerCollabAgentToolCallItem,
   AppServerResolvedTimelineEntry,
@@ -39,7 +51,11 @@ import type {
   CodexAppServerClient,
   ThreadStartOptions,
 } from "../../src/agent-server/codex/app-server-client.js";
-import type { AssetCommit, CodexMount } from "../../src/asset-store/index.js";
+import type {
+  AssetCommit,
+  CodexMount,
+  ScoutSkillCatalogEntry,
+} from "../../src/asset-store/index.js";
 import type { ScoutDomain } from "../../src/domain/index.js";
 import type { ScoutDomainDynamicToolCall } from "../../src/domain/types.js";
 import {
@@ -127,6 +143,10 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SEND_MESSAGE_TOOL_NAMESPACE && tool.name === "SendMessage"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RespondHumanInput"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_ARCHIVE_TASK_TOOL_NAMESPACE && tool.name === "ArchiveTask"));
+  assert.ok(tools.some((tool) => tool.namespace === AGENT_FIND_SKILLS_TOOL_NAMESPACE && tool.name === "FindSkills"));
+  assert.ok(tools.some((tool) =>
+    tool.namespace === AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE && tool.name === "ReadSkillResource"
+  ));
   assert.equal(tools.some((tool) => tool.name === "SubmitTask"), false);
   assert.equal(tools.some((tool) => tool.name === "RequestHumanInput"), false);
   assert.ok(tools.some((tool) => tool.namespace === "domain-a" && tool.name === "DomainProbe"));
@@ -168,6 +188,8 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   assert.ok(tools.some((tool) => tool.namespace === AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RequestHumanInput"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SUBMIT_TASK_TOOL_NAMESPACE && tool.name === "SubmitTask"));
   assert.deepEqual(tools.filter((tool) => tool.namespace !== "domain-worker").map((tool) => tool.name), [
+    "FindSkills",
+    "ReadSkillResource",
     "SendMessage",
     "RequestHumanInput",
     "SubmitTask",
@@ -1065,6 +1087,271 @@ test("Unknown threads remain unauthorized for domain dynamic tools", async () =>
   assert.match(result.contentItems[0]?.text ?? "", /Unknown dynamic tool caller thread: thread-unknown/);
 });
 
+test("Skill tools navigate family one level at a time, then read the dependency closure in order", async () => {
+  const skillEvents: ScoutEvent[] = [];
+  const responses = new Map<string, DynamicToolCallResponse>();
+  let researcher: ResearcherAgent | undefined;
+  let workflowLink = "";
+  let replacementRoot = "";
+  const appServer = createFakeAppServer({
+    onRunTurn: async () => {
+      const handler = appServer.handler;
+      if (!handler || !researcher?.threadId) throw new Error("Expected an active Skill tool caller.");
+      const call = async (
+        key: string,
+        namespace: string,
+        tool: string,
+        args: Record<string, unknown>,
+        turnId = "turn-test",
+      ): Promise<DynamicToolCallResponse> => {
+        const response = await handler({
+          threadId: researcher?.threadId ?? "",
+          turnId,
+          callId: `call-${key}`,
+          namespace,
+          tool,
+          arguments: args,
+        });
+        responses.set(key, response);
+        return response;
+      };
+
+      await call("wrong-phase", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        phase: ScoutAgentPhases.Verify,
+      });
+      await call("without-discovery", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        phase: ScoutAgentPhases.Research,
+        family: ["validation"],
+      });
+      await call("phase", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        phase: ScoutAgentPhases.Research,
+      });
+      await call("skip-level", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        phase: ScoutAgentPhases.Research,
+        family: ["validation", "research"],
+      });
+      await call("unknown-child", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        phase: ScoutAgentPhases.Research,
+        family: ["internal"],
+      });
+      await call("cross-domain", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        phase: ScoutAgentPhases.Research,
+        family: ["market"],
+      });
+      await call("restart", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        phase: ScoutAgentPhases.Research,
+      });
+      await call("validation", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        phase: ScoutAgentPhases.Research,
+        family: ["validation"],
+      });
+      await call("research", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        phase: ScoutAgentPhases.Research,
+        family: ["validation", "research"],
+      });
+      const selectedResponse = await call("selected", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        phase: ScoutAgentPhases.Research,
+        family: ["validation", "research", "workflow"],
+      });
+      const selectionId = readDynamicToolOutput(selectedResponse).selectionId;
+      assert.equal(typeof selectionId, "string");
+
+      await call("stale-turn", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: selectionId,
+        skill_id: "foundation",
+        resource: "SKILL.md",
+      }, "turn-stale");
+      await call("wrong-order", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: selectionId,
+        skill_id: "workflow",
+        resource: "SKILL.md",
+      });
+      await call("foundation", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: selectionId,
+        skill_id: "foundation",
+        resource: "SKILL.md",
+      });
+      await call("workflow", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: selectionId,
+        skill_id: "workflow",
+        resource: "SKILL.md",
+      });
+      await call("workflow-companion", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: selectionId,
+        skill_id: "workflow-companion",
+        resource: "SKILL.md",
+      });
+      await call("reference", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: selectionId,
+        skill_id: "workflow",
+        resource: "references/detail.md",
+      });
+      await call("binary", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: selectionId,
+        skill_id: "workflow",
+        resource: "references/binary.txt",
+      });
+      await call("too-large", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: selectionId,
+        skill_id: "workflow",
+        resource: "references/too-large.txt",
+      });
+      await call("traversal", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: selectionId,
+        skill_id: "workflow",
+        resource: "../outside.md",
+      });
+
+      unlinkSync(workflowLink);
+      symlinkSync(replacementRoot, workflowLink, "dir");
+      await call("replaced-root", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: selectionId,
+        skill_id: "workflow",
+        resource: "SKILL.md",
+      });
+
+      await call("rediscover", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        phase: ScoutAgentPhases.Research,
+      });
+      await call("invalidated", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: selectionId,
+        skill_id: "foundation",
+        resource: "SKILL.md",
+      });
+    },
+  });
+  const fixture = createAgentFixture("skill-tool-selection", {
+    appServer,
+    domain: createStaticDomain("validation", []),
+  });
+  fixture.eventBus.subscribe(AgentEvents.skill, (event) => {
+    skillEvents.push(event);
+  });
+  const mount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  const installed = installTestSkillCatalog(fixture.root, mount, [
+    testSkill("foundation", {
+      family: null,
+      tags: ["evidence", "producer"],
+      content: "# Foundation\n\nFOUNDATION_BODY_DO_NOT_LOG\n",
+    }),
+    testSkill("workflow", {
+      family: ["validation", "research", "workflow"],
+      tags: ["research", "workflow"],
+      requiredSkills: ["foundation"],
+      content: "# Workflow\n\nWORKFLOW_BODY_DO_NOT_LOG\n",
+      resources: {
+        "references/detail.md": "REFERENCE_BODY_DO_NOT_LOG\n",
+        "references/binary.txt": "binary\0content",
+        "references/too-large.txt": "x".repeat((256 * 1024) + 1),
+      },
+    }),
+    testSkill("workflow-companion", {
+      family: ["validation", "research", "workflow"],
+      tags: ["companion", "metadata-only"],
+      content: "# Workflow companion\n\nWORKFLOW_COMPANION_BODY_DO_NOT_LOG\n",
+    }),
+    testSkill("other-workflow", {
+      family: ["market", "research", "workflow"],
+      tags: ["research", "other"],
+      content: "# Other workflow\n",
+    }),
+    testSkill("off-phase", {
+      phase: [ScoutAgentPhases.Verify],
+      family: ["validation", "verify", "workflow"],
+      tags: ["off-phase"],
+      content: "# Off phase\n",
+    }),
+  ]);
+  workflowLink = installed.links.get("workflow") ?? "";
+  replacementRoot = installed.sources.get("other-workflow") ?? "";
+  prepareAgent(fixture, ScoutAgentRoles.Researcher, mount, createAssetCommit(mount));
+  researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher) as ResearcherAgent;
+  new AgentBackend().start();
+  await researcher.startThread();
+  await researcher.runTurn({ prompt: "Select and load the research workflow." });
+
+  assert.equal(responses.get("wrong-phase")?.success, false);
+  assert.match(readDynamicToolText(responses.get("wrong-phase")), /phase_mismatch/);
+  assert.deepEqual(readDynamicToolOutput(responses.get("without-discovery")), {
+    status: "refine_required",
+    refineRequired: true,
+    reason: "family_discovery_required",
+    scope: {
+      agentId: ScoutAgentRoles.Researcher,
+      role: ScoutAgentRoles.Researcher,
+      phase: ScoutAgentPhases.Research,
+      assetCommitId: `ac_${ScoutAgentRoles.Researcher}`,
+    },
+    family: [],
+    total: 3,
+    facets: {
+      families: [
+        { value: "market", count: 1 },
+        { value: "validation", count: 2 },
+      ],
+    },
+  });
+  const phase = readDynamicToolOutput(responses.get("phase"));
+  assert.equal(phase.status, "refine_required");
+  assert.equal(phase.total, 3);
+  assert.equal("candidates" in phase, false);
+  assert.equal(responses.get("skip-level")?.success, false);
+  assert.match(readDynamicToolText(responses.get("skip-level")), /family_navigation_mismatch/);
+  assert.equal(responses.get("unknown-child")?.success, false);
+  assert.match(readDynamicToolText(responses.get("unknown-child")), /family_navigation_mismatch/);
+  assert.deepEqual(readDynamicToolOutput(responses.get("cross-domain")).facets, {
+    families: [{ value: "research", count: 1 }],
+  });
+  assert.deepEqual(readDynamicToolOutput(responses.get("validation")).facets, {
+    families: [{ value: "research", count: 2 }],
+  });
+  assert.deepEqual(readDynamicToolOutput(responses.get("research")).facets, {
+    families: [{ value: "workflow", count: 2 }],
+  });
+
+  const selected = readDynamicToolOutput(responses.get("selected"));
+  assert.deepEqual(selected.family, ["validation", "research", "workflow"]);
+  assert.deepEqual(selected.selectedSkillIds, ["workflow", "workflow-companion"]);
+  assert.deepEqual(selected.loadOrder, ["foundation", "workflow", "workflow-companion"]);
+  const selectedSkills = selected.skills as Array<Record<string, unknown>>;
+  const foundationSkill = selectedSkills.find((skill) => skill.skillId === "foundation");
+  const companionSkill = selectedSkills.find((skill) => skill.skillId === "workflow-companion");
+  assert.ok(foundationSkill);
+  assert.equal("family" in foundationSkill, false);
+  assert.deepEqual(foundationSkill.tags, ["evidence", "producer"]);
+  assert.equal(foundationSkill.selectionReason, "required_dependency");
+  assert.ok(companionSkill);
+  assert.deepEqual(companionSkill.tags, ["companion", "metadata-only"]);
+  assert.equal(companionSkill.selectionReason, "family_match");
+  assert.match(readDynamicToolText(responses.get("stale-turn")), /owns active app-server turn turn-test/);
+  assert.match(readDynamicToolText(responses.get("wrong-order")), /load_order_violation/);
+  assert.match(readDynamicToolText(responses.get("foundation")), /FOUNDATION_BODY_DO_NOT_LOG/);
+  assert.match(readDynamicToolText(responses.get("workflow")), /WORKFLOW_BODY_DO_NOT_LOG/);
+  assert.match(readDynamicToolText(responses.get("workflow-companion")), /WORKFLOW_COMPANION_BODY_DO_NOT_LOG/);
+  assert.match(readDynamicToolText(responses.get("reference")), /REFERENCE_BODY_DO_NOT_LOG/);
+  assert.match(readDynamicToolText(responses.get("binary")), /resource_not_text/);
+  assert.match(readDynamicToolText(responses.get("too-large")), /resource_too_large/);
+  assert.match(readDynamicToolText(responses.get("traversal")), /invalid_resource_path/);
+  assert.match(readDynamicToolText(responses.get("replaced-root")), /resource_path_escape/);
+  assert.match(readDynamicToolText(responses.get("invalidated")), /unknown_selection/);
+
+  const findEvents = skillEvents.filter(AgentEvents.skill.findCompleted.is);
+  const readEvents = skillEvents.filter(AgentEvents.skill.readCompleted.is);
+  const findFailures = skillEvents.filter(AgentEvents.skill.findFailed.is);
+  const readFailures = skillEvents.filter(AgentEvents.skill.readFailed.is);
+  assert.ok(findEvents.some((event) =>
+    event.payload.status === "selected"
+    && event.payload.loadOrder?.join(",") === "foundation,workflow,workflow-companion"
+  ));
+  assert.ok(readEvents.some((event) =>
+    event.payload.skillId === "workflow"
+    && event.payload.resource === "references/detail.md"
+  ));
+  assert.ok(findFailures.some((event) => event.payload.errorCode === "phase_mismatch"));
+  assert.ok(readFailures.some((event) => event.payload.errorCode === "resource_too_large"));
+  assert.doesNotMatch(JSON.stringify(skillEvents), /BODY_DO_NOT_LOG/);
+});
+
 test("SendMessage reports an undelivered message when the target Worker has no runner", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-send-message-no-worker-runner", []);
@@ -1633,6 +1920,88 @@ function runAgentEnvironment(
   };
 }
 
+interface TestSkillFixture {
+  entry: ScoutSkillCatalogEntry;
+  content: string;
+  resources: Record<string, string>;
+}
+
+function testSkill(
+  name: string,
+  options: {
+    phase?: ScoutSkillCatalogEntry["phase"];
+    family?: string[] | null;
+    tags?: string[];
+    requiredSkills?: string[];
+    content: string;
+    resources?: Record<string, string>;
+  },
+): TestSkillFixture {
+  return {
+    entry: {
+      name,
+      description: `${name} description`,
+      summary: `${name} summary`,
+      phase: options.phase ?? [ScoutAgentPhases.Research],
+      ...(options.family === null
+        ? {}
+        : { family: options.family ?? ["validation", name] }),
+      tags: options.tags ?? [name],
+      requiredSkills: options.requiredSkills ?? [],
+      path: `.scout/skills/${name}/SKILL.md`,
+    },
+    content: options.content,
+    resources: options.resources ?? {},
+  };
+}
+
+function installTestSkillCatalog(
+  repoRoot: string,
+  mount: CodexMount,
+  skills: TestSkillFixture[],
+): {
+  links: Map<string, string>;
+  sources: Map<string, string>;
+} {
+  const links = new Map<string, string>();
+  const sources = new Map<string, string>();
+  const sourceRoot = join(repoRoot, "assets", "codex", "skills");
+  const mountedRoot = join(mount.mountRoot, ".scout", "skills");
+  mkdirSync(sourceRoot, { recursive: true });
+  mkdirSync(mountedRoot, { recursive: true });
+
+  for (const skill of skills) {
+    const source = join(sourceRoot, skill.entry.name);
+    const link = join(mountedRoot, skill.entry.name);
+    mkdirSync(source, { recursive: true });
+    writeFileSync(join(source, "SKILL.md"), skill.content, "utf8");
+    for (const [resource, content] of Object.entries(skill.resources)) {
+      const path = join(source, ...resource.split("/"));
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, content, "utf8");
+    }
+    symlinkSync(source, link, "dir");
+    links.set(skill.entry.name, link);
+    sources.set(skill.entry.name, source);
+  }
+
+  mount.agentProfile.skills = skills.map((skill) => skill.entry.name);
+  mount.skills = skills.map((skill) => skill.entry.name);
+  mount.skillCatalog = skills.map((skill) => structuredClone(skill.entry));
+  return { links, sources };
+}
+
+function readDynamicToolText(response: DynamicToolCallResponse | undefined): string {
+  if (!response) throw new Error("Expected a dynamic tool response.");
+  return response.contentItems[0]?.text ?? "";
+}
+
+function readDynamicToolOutput(
+  response: DynamicToolCallResponse | undefined,
+): Record<string, unknown> {
+  return JSON.parse(readDynamicToolText(response)) as Record<string, unknown>;
+}
+
 function createMount(root: string, role: string): CodexMount {
   const mountRoot = join(root, role, "mount");
   const artifactRoot = join(root, role, "artifacts");
@@ -1681,6 +2050,7 @@ function createMount(root: string, role: string): CodexMount {
     mcpServers: [],
     customAgents: role === ScoutAgentRoles.Coordinator ? [] : ["scout-helper"],
     skills: [],
+    skillCatalog: [],
     plugins: [],
     manifestPath: join(mountRoot, "mount-manifest.json"),
     resourceHash: "hash-test",

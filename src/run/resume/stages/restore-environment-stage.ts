@@ -83,7 +83,7 @@ export class RestoreEnvironmentStage implements RunStage {
         const sourcePath = resolve(scope.repoRoot, asset.sourcePath);
         assertInsideRoot(resolve(scope.repoRoot), sourcePath, "asset source");
         requirePath(sourcePath, `asset source ${asset.id}`);
-        const actualHash = asset.type === "plugin"
+        const actualHash = asset.type === "plugin" || asset.type === "skill"
           ? hashDirectory(sourcePath)
           : sha256File(sourcePath);
         if (actualHash !== asset.hash) {
@@ -154,6 +154,7 @@ function buildMount(assetCommit: AssetCommit): CodexMount {
     mcpServers: assetCommit.mcpServers,
     customAgents: assetCommit.customAgents,
     skills: assetCommit.skills,
+    skillCatalog: assetCommit.skillCatalog ?? [],
     plugins: assetCommit.plugins,
     manifestPath: assetCommit.manifestPath,
     resourceHash: assetCommit.resourceHash,

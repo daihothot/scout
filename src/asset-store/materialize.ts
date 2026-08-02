@@ -38,6 +38,7 @@ import {
   readAgentProfilesForRepo,
   resolveAgentProfile,
 } from "./agent-profiles.js";
+import { buildScoutSkillCatalog } from "./skill-catalog.js";
 
 export interface MaterializeOptions {
   repoRoot: string;
@@ -75,6 +76,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
   ensureDir(join(mountRoot, ".codex", "agents"));
   ensureDir(join(mountRoot, ".agents", "skills"));
   ensureDir(join(mountRoot, ".agents", "plugins"));
+  ensureDir(join(mountRoot, ".scout", "skills"));
   ensureDir(join(mountRoot, "agents"));
   ensureDir(join(mountRoot, "plugins"));
   ensureDir(join(mountRoot, "bin"));
@@ -90,6 +92,10 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     agentProfile.customAgents,
   );
   const profiledSkillPaths = filterSkills(listSkillPaths(assetsRoot), agentProfile.skills);
+  const skillCatalog = buildScoutSkillCatalog({
+    assetsRoot,
+    skillPaths: profiledSkillPaths,
+  });
   const profiledPluginPaths = filterPlugins(listPluginPaths(assetsRoot), agentProfile.plugins);
   const resourceHash = computeResourceHash({
     assetsRoot,
@@ -156,6 +162,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
 
   const customAgentNames = materializeCustomAgents(assetsRoot, mountRoot, profiledCustomAgentPaths);
   const skillNames = materializeSkills(assetsRoot, mountRoot, profiledSkillPaths);
+  writeJsonFile(join(mountRoot, ".scout", "skill-catalog.json"), skillCatalog);
   const pluginNames = materializePlugins(assetsRoot, mountRoot, profiledPluginPaths);
   const shellMaterialization = materializeShellTools(mountRoot, profiledShellTools, assetsRoot);
   writePluginMarketplace(mountRoot, pluginNames);
@@ -179,6 +186,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     shellWrappers: shellMaterialization.wrappers,
     customAgentNames,
     skillNames,
+    skillCatalog,
     pluginNames,
     workerAgentPath,
     roleAgentPaths,
@@ -204,6 +212,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     mcpServers: materializedMcpServers,
     customAgents: customAgentNames,
     skills: skillNames,
+    skillCatalog,
     plugins: pluginNames,
     manifestPath,
     resourceHash,
@@ -380,7 +389,9 @@ function computeResourceHash(input: {
       ? []
       : [`workerAgent:${CodexAssetLayout.workerAgent}:${sha256File(join(input.assetsRoot, CodexAssetLayout.workerAgent))}`]),
     `roleAgent:${input.agentId}:${roleAgentPath(input.agentId)}:${sha256File(join(input.assetsRoot, roleAgentPath(input.agentId)))}`,
-    ...input.skillPaths.map((skill) => `skill:${skill}:${sha256File(join(input.assetsRoot, skill))}`),
+    ...input.skillPaths.map((skill) =>
+      `skill:${skill}:${hashDirectory(dirname(join(input.assetsRoot, skill)))}`
+    ),
     ...input.pluginPaths.map((plugin) => `plugin:${plugin}:${hashDirectory(join(input.assetsRoot, plugin))}`),
   ];
   return sha256Text(parts.sort().join("\n"));
@@ -429,7 +440,7 @@ function materializeSkills(assetsRoot: string, mountRoot: string, skills: string
   return skills.map((skillPath) => {
     const source = join(assetsRoot, skillPath);
     const name = skillNameFromPath(skillPath);
-    safeSymlink(resolve(source, ".."), join(mountRoot, ".agents", "skills", name));
+    safeSymlink(resolve(source, ".."), join(mountRoot, ".scout", "skills", name));
     return name;
   });
 }
@@ -512,6 +523,7 @@ function buildMountManifest(input: {
   shellWrappers: Array<{ id: string; wrapperPath: string }>;
   customAgentNames: string[];
   skillNames: string[];
+  skillCatalog: MountManifest["skillCatalog"];
   pluginNames: string[];
   workerAgentPath?: string;
   roleAgentPaths: Record<string, string>;
@@ -545,6 +557,7 @@ function buildMountManifest(input: {
     ".codex/config.toml",
     ".codex/hooks.json",
     ".agents/plugins/marketplace.json",
+    ".scout/skill-catalog.json",
   ].map((path) => ({
     path,
     hash: sha256File(join(input.mountRoot, path)),
@@ -629,8 +642,8 @@ function buildMountManifest(input: {
       ...input.skillPaths.map((skillPath) => ({
         id: `codex.skill.${skillNameFromPath(skillPath)}`,
         type: "skill",
-        sourcePath: assetSourcePath(skillPath),
-        hash: sha256File(join(input.assetsRoot, skillPath)),
+        sourcePath: assetSourcePath(dirname(skillPath)),
+        hash: hashDirectory(dirname(join(input.assetsRoot, skillPath))),
       })),
       ...input.pluginPaths.map((pluginPath) => ({
         id: `codex.plugin.${basename(pluginPath)}`,
@@ -662,6 +675,7 @@ function buildMountManifest(input: {
     })),
     customAgents: input.customAgentNames,
     skills: input.skillNames,
+    skillCatalog: input.skillCatalog,
     plugins: input.pluginNames,
     ...(input.workerAgentPath ? { workerAgent: input.workerAgentPath } : {}),
     roleAgents: input.roleAgentPaths,

@@ -3,7 +3,9 @@ assetKind: scout.skill
 name: signal-unity-callback-event-by-runtime-log
 description: 定义或解释从 Unity runtime log 单一 Source Signal 派生 callback/event observation 的记录结构、匹配语义和输出契约时使用。
 id: signal-unity-callback-event-by-runtime-log
-version: 0.3.0
+version: 0.3.2
+phase: [research, verify, validate]
+family: [validation, signal, unity-callback-event]
 tags: [signal, unity, callback, event, runtime, log]
 devices: [any]
 dependencies:

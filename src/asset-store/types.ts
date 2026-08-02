@@ -1,4 +1,5 @@
 import type { CodexModelConfig } from "../agent-server/codex/model-config.js";
+import type { ScoutSkillCatalogEntry } from "./skill-catalog.js";
 
 export interface AgentProfilesFile {
   defaults: {
@@ -96,6 +97,7 @@ export interface CodexMount {
   mcpServers: MaterializedMcpServer[];
   customAgents: string[];
   skills: string[];
+  skillCatalog: ScoutSkillCatalogEntry[];
   plugins: string[];
   manifestPath: string;
   resourceHash: string;
@@ -118,6 +120,7 @@ export interface AssetCommit {
   mcpServers: MaterializedMcpServer[];
   customAgents: string[];
   skills: string[];
+  skillCatalog: ScoutSkillCatalogEntry[];
   plugins: string[];
   manifestPath: string;
   resourceHash: string;
@@ -164,6 +167,7 @@ export interface MountManifest {
   mcpServers: MaterializedMcpServer[];
   customAgents: string[];
   skills: string[];
+  skillCatalog: ScoutSkillCatalogEntry[];
   plugins: string[];
   workerAgent?: string;
   roleAgents: Record<string, string>;

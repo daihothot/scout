@@ -6,3 +6,4 @@ export * from "./preflight.js";
 export * from "./mount-macros.js";
 export * from "./mount-helpers.js";
 export * from "./types.js";
+export * from "./skill-catalog.js";

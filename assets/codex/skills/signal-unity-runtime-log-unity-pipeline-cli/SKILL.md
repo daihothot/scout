@@ -3,8 +3,10 @@ assetKind: scout.skill
 name: signal-unity-runtime-log-unity-pipeline-cli
 description: 通过 Unity Pipeline CLI 从 Unity Editor 导出并原样复制符合 signal-unity-runtime-log 格式的原始日志文件时使用。
 id: signal-unity-runtime-log-unity-pipeline-cli
-version: 0.2.0
-tags: [signal, unity, verification, shell-tool, source]
+version: 0.2.2
+phase: [verify, validate]
+family: [validation, signal, unity-runtime-log]
+tags: [signal, unity, verification, runtime, log, pipeline, cli, shell-tool, source]
 devices: [any]
 dependencies:
   skills:

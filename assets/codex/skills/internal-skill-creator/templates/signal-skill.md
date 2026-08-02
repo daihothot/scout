@@ -6,7 +6,9 @@
 
 ## Frontmatter Rules
 
-- 不添加 `phase`。
+- 必须填写 `phase`。需要 Agent 按信号族精确锁定的 Signal 入口必须声明有序 `family`，例如 `[validation, signal, unity-runtime-log]`；只作为其它入口服务层时省略 `family` 并由 required dependency 带入。
+- `phase` 只表示哪些 Agent phase 可以选择或审计本 Signal contract，不在正文引入流程阶段。
+- `tags` 只表达 Signal 的对象、介质、格式或能力特征，不参与信号族路由。
 - `type` 在正文 `Skill Type` 中固定为 `signal`。
 - `structure_level` 使用 `compact`。
 
@@ -67,7 +69,8 @@ Derived Signal 必须保留本节并且只声明一个直接 Source Signal；直
 ## Checklist
 
 - 正文不存在 Inputs、Workflow Overview、编号 Phase 或 Workflow Exit Rules。
-- frontmatter 不包含 `phase`。
+- frontmatter `phase` 覆盖实际选择或审计场景；`family` 的有无与该 Signal 是直接入口还是 dependency-only 服务层一致。
+- `tags` 是非路由特征，不改变 Signal 的稳定知识边界。
 - Signal Model、Signal Matching Contract 和 Signal Output Contract 的职责不重叠。
 - contract 不包含任何具体实现的工具、命令、连接、权限或重试语义。
 - 匹配条件由消费方的已确认事实提供，Signal 不发明消费方特定内容。

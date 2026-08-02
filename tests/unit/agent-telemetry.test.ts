@@ -13,9 +13,15 @@ import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import {
   AgentActivityRecorder,
+  AgentSkillRecorder,
   AgentThreadRecorder,
   TaskEventRecorder,
 } from "../../src/agent/telemetry/index.js";
+import type {
+  AgentSkillFindCompletedEvent,
+  AgentSkillReadCompletedEvent,
+  AgentSkillReadFailedEvent,
+} from "../../src/agent/skill/skill-events.js";
 import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
 import type { AgentTaskNotAssignedEventPayload } from "../../src/agent/task/task-events.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
@@ -120,6 +126,69 @@ test("TaskEventRecorder writes incremental task events without repeating task hi
   assert.doesNotMatch(text, /Old response that must not be repeated/);
   assert.equal(text.match(/initialPrompt:/g)?.length, 1);
   assert.match(text, /requestedDescription: "Research another BDD"/);
+  assert.equal(existsSync(join(root, "logs", "runtime.log")), false);
+  assert.equal(existsSync(join(logsRoot, "activity.log")), false);
+});
+
+test("AgentSkillRecorder writes Skill event metadata to a dedicated log", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-skill-recorder-"));
+  const logsRoot = join(root, "agents", "researcher", "logs");
+  const eventBus = new InMemoryEventBus();
+  const registry = installTestRunScope(t, {
+    runId: "run-skill-recorder",
+    eventBus,
+  }).agentRegistry;
+  registerAgent(registry, "researcher", logsRoot);
+  const recorder = new AgentSkillRecorder();
+  recorder.start();
+
+  const context = {
+    agentId: "researcher",
+    role: "researcher",
+    taskId: "researcher-task-0001",
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+  } as const;
+  await eventBus.publishAndWait(AgentEvents.skill.findCompleted, {
+    ...context,
+    callId: "call-find",
+    phase: "research",
+    family: ["validation", "researcher"],
+    availableFamilies: [],
+    status: "selected",
+    candidateIds: ["domain-validation-researcher"],
+    loadOrder: ["domain-validation-researcher"],
+  } satisfies AgentSkillFindCompletedEvent);
+  await eventBus.publishAndWait(AgentEvents.skill.readCompleted, {
+    ...context,
+    callId: "call-read",
+    selectionId: "skill-selection-1",
+    skillId: "domain-validation-researcher",
+    resource: "SKILL.md",
+    digest: "sha256:abc",
+    byteLength: 123,
+  } satisfies AgentSkillReadCompletedEvent);
+  await eventBus.publishAndWait(AgentEvents.skill.readFailed, {
+    ...context,
+    callId: "call-read-failed",
+    selectionId: "skill-selection-1",
+    skillId: "domain-validation-researcher",
+    errorCode: "load_order_violation",
+  } satisfies AgentSkillReadFailedEvent);
+  recorder.stop();
+
+  const skillLogPath = join(logsRoot, "skill.log");
+  const text = readFileSync(skillLogPath, "utf8");
+  assert.equal(readEventCount(text), 3);
+  assert.match(text, /event=agent\.skill\.find_completed/);
+  assert.match(text, /event=agent\.skill\.read_completed/);
+  assert.match(text, /event=agent\.skill\.read_failed/);
+  assert.match(text, /family:/);
+  assert.match(text, /- "validation"/);
+  assert.match(text, /digest: "sha256:abc"/);
+  assert.match(text, /errorCode: "load_order_violation"/);
+  assert.doesNotMatch(text, /tags:/);
+  assert.doesNotMatch(text, /SKILL_BODY_MUST_NOT_BE_RECORDED/);
   assert.equal(existsSync(join(root, "logs", "runtime.log")), false);
   assert.equal(existsSync(join(logsRoot, "activity.log")), false);
 });

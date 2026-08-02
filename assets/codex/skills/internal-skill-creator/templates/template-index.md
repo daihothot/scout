@@ -8,7 +8,7 @@ status: ready
 
 ## Purpose
 
-本文件负责 `internal-skill-creator` 的类型分类、模板选择和读取顺序。通用 identity、frontmatter、`Core Use`、命名、tag catalog、依赖和挂载规则由上级 `SKILL.md` 定义。
+本文件负责 `internal-skill-creator` 的类型分类、模板选择和读取顺序。通用 identity、frontmatter、`Core Use`、命名、family 路由、tag 特征 catalog、依赖和挂载规则由上级 `SKILL.md` 定义。
 
 ## Reading Order
 
@@ -40,12 +40,12 @@ status: ready
 
 ## Selection Rules
 
-- 以正文实际拥有的责任分类，不根据目录前缀、tag、profile 或当前任务名称猜测。
+- 以正文实际拥有的责任分类，不根据目录前缀、family、tag、profile 或当前任务名称猜测。
 - 每个 Skill 只选择一个主要类型模板；两个责任拥有不同生命周期、输出或失败语义时，应拆成两个 Skill。
 - 主要定义工具接入、命令操作、连接、权限、副作用、失败或重试契约时按 `tool` 分类；Internal Skill 可以使用只读工具检查内部边界，但不拥有这些工具的操作契约。
 - `signal` 是纯知识 / 纯 Contract Skill，不得包含 Inputs、Phase、Workflow 或具体操作。
 - `internal` 只用于 Scout 内部治理，包括自有资产、约定、开发边界和内部可见边界检查；它不得拥有领域 workflow、工具操作契约或 Signal contract。
-- 类型模板不得重复上级 `SKILL.md` 的通用 frontmatter、`Core Use`、tag catalog 或 profile/mount 规则。
+- 类型模板不得重复上级 `SKILL.md` 的通用 frontmatter、`Core Use`、family/tag 规则或 profile/mount 规则。
 
 ## Maintenance Rules
 

@@ -5,16 +5,21 @@ import { join } from "node:path";
 import {
   AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
   AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
+  AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+  AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
   AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
   AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
   buildArchiveTaskDynamicTool,
   buildAssignTaskDynamicTool,
+  buildFindSkillsDynamicTool,
+  buildReadSkillResourceDynamicTool,
   buildRequestHumanInputDynamicTool,
   buildRespondHumanInputDynamicTool,
   buildSendMessageDynamicTool,
   buildSubmitTaskDynamicTool,
+  assertAgentToolNamespace,
   parseAgentDynamicToolCall,
 } from "../../src/agent/tools/agent-tools.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
@@ -23,6 +28,8 @@ const repoRoot = process.cwd();
 
 test("agent dynamic tool specs expose stable namespaces and required fields", () => {
   const assignTaskTool = buildAssignTaskDynamicTool();
+  const findSkillsTool = buildFindSkillsDynamicTool();
+  const readSkillResourceTool = buildReadSkillResourceDynamicTool();
   const sendMessageTool = buildSendMessageDynamicTool();
   const requestHumanInputTool = buildRequestHumanInputDynamicTool();
   const respondHumanInputTool = buildRespondHumanInputDynamicTool();
@@ -30,12 +37,20 @@ test("agent dynamic tool specs expose stable namespaces and required fields", ()
   const archiveTaskTool = buildArchiveTaskDynamicTool();
 
   assert.equal(assignTaskTool.namespace, AGENT_ASSIGN_TASK_TOOL_NAMESPACE);
+  assert.equal(findSkillsTool.namespace, AGENT_FIND_SKILLS_TOOL_NAMESPACE);
+  assert.equal(readSkillResourceTool.namespace, AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE);
   assert.equal(sendMessageTool.namespace, AGENT_SEND_MESSAGE_TOOL_NAMESPACE);
   assert.equal(requestHumanInputTool.namespace, AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE);
   assert.equal(respondHumanInputTool.namespace, AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE);
   assert.equal(submitTaskTool.namespace, AGENT_SUBMIT_TASK_TOOL_NAMESPACE);
   assert.equal(archiveTaskTool.namespace, AGENT_ARCHIVE_TASK_TOOL_NAMESPACE);
   assert.deepEqual(readRequired(assignTaskTool.inputSchema), ["description", "subagent_type", "prompt"]);
+  assert.deepEqual(readRequired(findSkillsTool.inputSchema), ["phase"]);
+  assert.deepEqual(readRequired(readSkillResourceTool.inputSchema), ["selection_id", "skill_id", "resource"]);
+  assert.equal(readSchemaProperty(findSkillsTool.inputSchema, "family").minItems, 1);
+  assert.equal(hasSchemaProperty(findSkillsTool.inputSchema, "domain"), false);
+  assert.equal(hasSchemaProperty(findSkillsTool.inputSchema, "tags"), false);
+  assert.equal(readSchemaProperty(readSkillResourceTool.inputSchema, "resource").maxLength, 512);
   assert.deepEqual(readRequired(sendMessageTool.inputSchema), ["to", "message"]);
   assert.deepEqual(readRequired(requestHumanInputTool.inputSchema), ["request"]);
   assert.deepEqual(readRequired(respondHumanInputTool.inputSchema), ["task_id", "response"]);
@@ -55,6 +70,10 @@ test("agent dynamic tool specs expose stable namespaces and required fields", ()
   assert.match(submitTaskTool.description, /漏调会使 task 保持 running/);
   assert.match(submitTaskTool.description, /不得重复调用或再调用 RequestHumanInput/);
   assert.match(submitTaskTool.description, /先将当前 task 置为 done，再把 Markdown outcome 投递给 Coordinator/);
+  assert.match(findSkillsTool.description, /family 逐级定位/);
+  assert.match(findSkillsTool.description, /每次导航只能前进一步/);
+  assert.match(findSkillsTool.description, /tags 只作为结果特征，不参与筛选/);
+  assert.match(readSkillResourceTool.description, /不能跨 thread、turn 或 profile/);
 });
 
 test("agent tool parser validates and normalizes each tool payload", () => {
@@ -104,6 +123,24 @@ test("agent tool parser validates and normalizes each tool payload", () => {
     tool: "ArchiveTask",
     task_id: "task-1",
   });
+  assert.deepEqual(parseAgentDynamicToolCall("FindSkills", {
+    phase: "validate",
+    family: [" Validation ", " Signal ", " Unity-Runtime-Log "],
+  }), {
+    tool: "FindSkills",
+    phase: "validate",
+    family: ["validation", "signal", "unity-runtime-log"],
+  });
+  assert.deepEqual(parseAgentDynamicToolCall("ReadSkillResource", {
+    selection_id: " selection-1 ",
+    skill_id: " domain-validation-validator ",
+    resource: " templates/research-pack-gate.md ",
+  }), {
+    tool: "ReadSkillResource",
+    selection_id: "selection-1",
+    skill_id: "domain-validation-validator",
+    resource: "templates/research-pack-gate.md",
+  });
 });
 
 test("agent tool parser rejects malformed tool payloads", () => {
@@ -124,18 +161,51 @@ test("agent tool parser rejects malformed tool payloads", () => {
   assert.throws(() => parseAgentDynamicToolCall("ArchiveTask", {
     task_id: " ",
   }), /ArchiveTask task_id/);
+  assert.throws(() => parseAgentDynamicToolCall("FindSkills", {
+    phase: "deploy",
+  }), /FindSkills phase/);
+  assert.throws(() => parseAgentDynamicToolCall("FindSkills", {
+    phase: "research",
+    family: [],
+  }), /FindSkills family/);
+  assert.throws(() => parseAgentDynamicToolCall("FindSkills", {
+    phase: "research",
+    family: ["validation", "bad_family"],
+  }), /FindSkills family token/);
+  assert.throws(() => parseAgentDynamicToolCall("ReadSkillResource", {
+    selection_id: "selection-1",
+    skill_id: "domain-validation-researcher",
+    resource: " ",
+  }), /ReadSkillResource resource/);
 });
 
-test("Worker rules bind runtime controls while role rules and Skills stay transport-agnostic", () => {
+test("agent tools are hard-bound to their registered namespaces", () => {
+  assert.doesNotThrow(() =>
+    assertAgentToolNamespace(AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills")
+  );
+  assert.throws(
+    () => assertAgentToolNamespace(AGENT_SUBMIT_TASK_TOOL_NAMESPACE, "FindSkills"),
+    /must use namespace scout_agent_findskills/,
+  );
+  assert.throws(
+    () => assertAgentToolNamespace(AGENT_FIND_SKILLS_TOOL_NAMESPACE, "UnknownTool"),
+    /Unsupported agent tool/,
+  );
+});
+
+test("common rules own Skill selection transport while Worker rules own lifecycle controls", () => {
   const agentRoot = join(repoRoot, "assets", "codex", "agents");
   const skillRoot = join(repoRoot, "assets", "codex", "skills");
+  const commonRules = readFileSync(join(agentRoot, "AGENTS.md"), "utf8");
   const workerRules = readFileSync(join(agentRoot, "worker.AGENTS.md"), "utf8");
+  for (const toolName of ["FindSkills", "ReadSkillResource"]) {
+    assert.match(commonRules, new RegExp(`\\b${toolName}\\b`), toolName);
+  }
   for (const toolName of ["update_plan", "RequestHumanInput", "SubmitTask"]) {
     assert.match(workerRules, new RegExp(`\\b${toolName}\\b`), toolName);
   }
 
   const transportAgnosticFiles = [
-    join(agentRoot, "AGENTS.md"),
     ...readdirSync(agentRoot)
       .filter((name) => name.endsWith(".AGENTS.md") && name !== "worker.AGENTS.md")
       .map((name) => join(agentRoot, name)),
@@ -151,7 +221,7 @@ test("Worker rules bind runtime controls while role rules and Skills stay transp
     );
   }
 
-  for (const file of [join(agentRoot, "worker.AGENTS.md"), ...transportAgnosticFiles]) {
+  for (const file of [join(agentRoot, "AGENTS.md"), join(agentRoot, "worker.AGENTS.md"), ...transportAgnosticFiles]) {
     assert.doesNotMatch(
       readFileSync(file, "utf8"),
       /attachment|tag block|<wait-for-human-request>|<human-response>/i,
@@ -176,6 +246,11 @@ function hasSchemaProperty(schema: unknown, key: string): boolean {
   const object = readObject(schema);
   const properties = readObject(object.properties);
   return key in properties;
+}
+
+function readSchemaProperty(schema: unknown, key: string): Record<string, unknown> {
+  const object = readObject(schema);
+  return readObject(readObject(object.properties)[key]);
 }
 
 function readObject(value: unknown): Record<string, unknown> {

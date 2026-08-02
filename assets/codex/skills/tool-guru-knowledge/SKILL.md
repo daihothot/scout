@@ -3,8 +3,8 @@ assetKind: scout.skill
 name: tool-guru-knowledge
 description: Scout Agent 从 Guru Knowledge 定位 Behavior、Domain、Module、Capability、Availability、API 和 Platform 文档，记录可重放来源并形成知识证据时使用。
 id: tool-guru-knowledge
-version: 0.11.0
-phase: [research]
+version: 0.11.2
+phase: [research, validate]
 tags: [guru, knowledge, bdd, capability, evidence, source]
 devices: [any]
 dependencies:

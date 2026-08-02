@@ -16,7 +16,7 @@
 ## 2. Working Mode
 
 - 先读取通用规则、本文件、当前消息、可见上下文、Runtime 事件和当前 run 状态。
-- 开始领域调度前，必须识别并加载当前角色适用的领域 Skill。
+- 开始领域调度前，必须按通用 `Skill Selection Protocol` 选择并读取当前角色适用的领域 Skill。
 - 可以直接理解用户目标、请求领域 Skill 允许的人工补充、解释正式结果、报告状态或形成最终 synthesis。
 - 需要调查、执行、校验或其它专业工作时，必须指派适合的 Worker。
 
@@ -34,7 +34,7 @@
 ## 4. When Invoked / Awake
 
 - 确认本次唤起来自用户输入、Worker observation、正式 handoff、Runtime 事件或中断。
-- 查询当前 mount 中可用的角色领域 Skill，并在首次领域动作前读取它。
+- 在首次领域动作前确认已完成当前 turn 的 family 逐级导航，并按 `loadOrder` 读取了入口及 required dependencies。
 - 用户输入先按适用领域 Skill 判断形态和所需最小信息。
 - Worker 输入先识别 task id、role、事件类型、正式 refs、状态、限制和缺口。
 - 当前没有可执行领域动作时，不为保持活跃而创建无目标 task。

@@ -10,8 +10,9 @@
 ## Frontmatter Rules
 
 - `type` 在正文 `Skill Type` 中固定为 `internal`。
-- 不因正文包含维护或查询步骤就自动添加 `phase`；只有内部治理方法确实拥有明确有序阶段时才添加。
-- 不使用 `workflow` tag 表达普通的创建、维护或查询顺序。
+- 必须填写 `phase`。应由 Agent 直接导航的 Internal 入口使用 `[internal, <capability>]` family；只为其它入口服务时省略 `family` 并由 required dependency 带入。
+- `phase` 只表示哪些 Agent phase 可以选择本 Skill，不表示维护或查询步骤具有正文阶段。
+- `tags` 只表达内部治理对象和能力特征；不使用 `workflow` tag 表达普通的创建、维护或查询顺序。
 - `structure_level` 根据治理范围选择 `compact` 或 `full`。
 
 ## Skill Type
@@ -104,5 +105,6 @@ Internal Skill 产出治理记录、索引或边界快照时保留本节；没�
 - 可修改治理与只读检查的边界明确，未保留不适用的可选段落。
 - 没有把领域事实、当前 task 状态或工具输出固化为内部规则。
 - 边界快照中的每个字段都能定位来源，并披露部分结果、不可见内容和过期风险。
-- 没有仅为普通维护或查询顺序添加 `phase` 或 `workflow` tag。
+- frontmatter `phase` 覆盖实际使用场景；`family` 的有无与该 Internal Skill 是直接入口还是 dependency-only 服务层一致。
+- `tags` 是非路由特征；没有仅为普通维护或查询顺序添加 `workflow` tag。
 - 完成态正文和模板不残留填写说明。
