@@ -16,6 +16,7 @@ import {
 } from "../runner/worker/worker-runner.js";
 import { agent } from "../context/agent-attachments.js";
 import type { AgentMessage } from "../message/types.js";
+import { canonicalizeAgentArtifactReferences } from "../task/artifact-references.js";
 
 export abstract class WorkerAgent extends ScoutAgent {
   declare runner: WorkerRunner | undefined;
@@ -69,7 +70,13 @@ export abstract class WorkerAgent extends ScoutAgent {
       return Result.err(`Worker agent ${this.agentId} has no active task to submit.`);
     }
     try {
-      return Result.ok(await runner.submitTask(input));
+      return Result.ok(await runner.submitTask({
+        ...input,
+        outcome: canonicalizeAgentArtifactReferences(input.outcome, {
+          runRoot: this.agentMount.runRoot,
+          artifactRoot: this.agentMount.artifactRoot,
+        }),
+      }));
     } catch (error) {
       return Result.err(error instanceof Error ? error.message : String(error));
     }

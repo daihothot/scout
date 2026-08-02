@@ -21,7 +21,7 @@ export interface MountMacroValuesInput {
 export type MountMacroValues = Record<MountMacro, string | undefined>;
 
 export interface MountShellEnvironmentInput {
-  runRoot?: string;
+  runRoot: string;
   artifactRoot: string;
   assetCommitId: string;
   runId?: string;
@@ -47,7 +47,8 @@ export function resolveMountMacros(
 
 export function buildMountShellEnvironment(input: MountShellEnvironmentInput): Record<string, string> {
   return {
-    [MountMacros.RunId]: input.runId ?? (input.runRoot ? runIdFromRunRoot(input.runRoot) : ""),
+    [MountMacros.RunId]: input.runId ?? runIdFromRunRoot(input.runRoot),
+    [MountMacros.RunRoot]: input.runRoot,
     [MountMacros.ArtifactRoot]: input.artifactRoot,
     [MountMacros.AssetCommitId]: input.assetCommitId,
   };
