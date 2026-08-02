@@ -3,8 +3,9 @@ assetKind: scout.skill
 name: internal-boundary-inspector
 description: 查询当前 Scout Agent 的 mount 资产边界、工作边界、能力入口和 run 级共享记忆摘要，并整理为 Boundary Snapshot。
 id: internal-boundary-inspector
-version: 0.1.1
-phase: [research, verify, validate]
+version: 0.1.3
+phase: [coordinate, research, verify, validate]
+family: [internal, boundary-inspector]
 tags: [scout, asset, boundary, memory, audit, workflow]
 devices: [any]
 dependencies:

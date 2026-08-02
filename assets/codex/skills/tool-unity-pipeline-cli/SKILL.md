@@ -3,8 +3,9 @@ assetKind: scout.skill
 name: tool-unity-pipeline-cli
 description: 使用 Unity Pipeline CLI 定位目标 Unity Editor 或桌面 Unity Player、发现并执行 Pipeline command，并在明确约束下使用 eval 或 eval_file 执行 C# 时使用。
 id: tool-unity-pipeline-cli
-version: 0.4.0
-tags: [unity, pipeline, cli, editor, desktop, player, automation]
+version: 0.4.2
+phase: [verify, validate]
+tags: [unity, pipeline, cli, editor, desktop, player, automation, shell-tool]
 devices: [editor, desktop]
 dependencies:
   shellTools:

@@ -3,7 +3,9 @@ assetKind: scout.skill
 name: signal-unity-runtime-log
 description: 定义或解释 Unity runtime log 信号、日志记录结构、匹配语义及输出契约时使用。
 id: signal-unity-runtime-log
-version: 0.3.0
+version: 0.3.2
+phase: [research, verify, validate]
+family: [validation, signal, unity-runtime-log]
 tags: [signal, unity, runtime, log]
 devices: [any]
 summary: 定义 Unity runtime log 的统一文件格式、记录结构、匹配契约和解释限制。

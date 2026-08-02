@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   cpSync,
@@ -116,7 +117,7 @@ test("AssetStore exposes mounted Skill readers to the coordinator", () => {
   }
 });
 
-test("AssetStore statically binds the Validation Domain skill for every role", () => {
+test("AssetStore exposes profiled Validation Domain Skills outside Codex Skill discovery", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-validation-skills-");
   const expectedSkills = {
     coordinator: "domain-validation-coordinator",
@@ -138,12 +139,105 @@ test("AssetStore statically binds the Validation Domain skill for every role", (
     assert.ok(manifest.skills.includes(skill));
     assert.equal(existsSync(join(
       mount.mountRoot,
-      ".agents",
+      ".scout",
       "skills",
       skill,
       "SKILL.md",
     )), true);
+    assert.deepEqual(readdirSync(join(mount.mountRoot, ".agents", "skills")), []);
   }
+});
+
+test("AssetStore writes the profiled Skill catalog into the mount and manifest", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-skill-catalog-");
+  const mount = new AssetStore().materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-skill-catalog-test",
+    agentId: "researcher",
+  });
+  const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
+  const catalogPath = join(mount.mountRoot, ".scout", "skill-catalog.json");
+  const catalog = JSON.parse(readFileSync(catalogPath, "utf8")) as typeof mount.skillCatalog;
+
+  assert.deepEqual(catalog, mount.skillCatalog);
+  assert.deepEqual(manifest.skillCatalog, mount.skillCatalog);
+  assert.deepEqual(catalog.map((skill) => skill.name), mount.skills);
+  assert.deepEqual(readdirSync(join(mount.mountRoot, ".agents", "skills")), []);
+  const entrySkill = catalog.find((skill) => skill.name === "domain-validation-researcher");
+  const serviceSkill = catalog.find((skill) => skill.name === "domain-validation-research-pack");
+  assert.ok(entrySkill);
+  assert.deepEqual(entrySkill.family, ["validation", "workflow", "researcher"]);
+  assert.deepEqual(entrySkill.tags, ["scout", "validation", "bdd", "research", "workflow"]);
+  assert.ok(serviceSkill);
+  assert.equal(serviceSkill.family, undefined);
+  assert.deepEqual(serviceSkill.tags, [
+    "scout",
+    "validation",
+    "research",
+    "pack",
+    "evidence",
+    "manual",
+  ]);
+  assert.ok(catalog.every((skill) =>
+    skill.path === `.scout/skills/${skill.name}/SKILL.md`
+    && existsSync(join(mount.mountRoot, skill.path))
+  ));
+
+  for (const skill of catalog) {
+    assert.equal(
+      realpathSync(join(mount.mountRoot, ".scout", "skills", skill.name)),
+      realpathSync(join(fixtureRoot, "assets", "codex", "skills", skill.name)),
+    );
+  }
+
+  const catalogFile = manifest.generatedFiles.find((file) =>
+    file.path === ".scout/skill-catalog.json"
+  );
+  assert.ok(catalogFile);
+  assert.equal(
+    catalogFile.hash,
+    createHash("sha256").update(readFileSync(catalogPath, "utf8")).digest("hex"),
+  );
+});
+
+test("Skill resource hashes cover the complete profiled Skill directory", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-skill-resource-hash-");
+  const store = new AssetStore();
+  const before = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-skill-resource-hash-before-test",
+    agentId: "researcher",
+  });
+  const beforeManifest = JSON.parse(readFileSync(before.manifestPath, "utf8")) as MountManifest;
+  const skillId = "codex.skill.domain-validation-research-pack";
+  const beforeAsset = beforeManifest.assets.find((asset) => asset.id === skillId);
+  assert.ok(beforeAsset);
+  assert.equal(
+    beforeAsset.sourcePath,
+    "assets/codex/skills/domain-validation-research-pack",
+  );
+
+  const templatePath = join(
+    fixtureRoot,
+    "assets",
+    "codex",
+    "skills",
+    "domain-validation-research-pack",
+    "templates",
+    "verification-manual.md",
+  );
+  writeFileSync(templatePath, `${readFileSync(templatePath, "utf8")}\nresource hash probe\n`, "utf8");
+
+  const after = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-skill-resource-hash-after-test",
+    agentId: "researcher",
+  });
+  const afterManifest = JSON.parse(readFileSync(after.manifestPath, "utf8")) as MountManifest;
+  const afterAsset = afterManifest.assets.find((asset) => asset.id === skillId);
+  assert.ok(afterAsset);
+  assert.notEqual(after.resourceHash, before.resourceHash);
+  assert.notEqual(afterAsset.hash, beforeAsset.hash);
 });
 
 test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
@@ -168,7 +262,7 @@ test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
       assert.ok(manifest.skills.includes(signalSkill));
       assert.equal(existsSync(join(
         mount.mountRoot,
-        ".agents",
+        ".scout",
         "skills",
         signalSkill,
         "SKILL.md",
@@ -202,14 +296,14 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
   assert.ok(verifierMount.shellTools.some((tool) => tool.id === "unity"));
   assert.equal(existsSync(join(
     verifierMount.mountRoot,
-    ".agents",
+    ".scout",
     "skills",
     toolSkill,
     "SKILL.md",
   )), true);
   assert.equal(existsSync(join(
     verifierMount.mountRoot,
-    ".agents",
+    ".scout",
     "skills",
     acquisitionSkill,
     "SKILL.md",

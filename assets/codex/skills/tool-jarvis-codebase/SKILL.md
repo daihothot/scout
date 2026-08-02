@@ -3,8 +3,8 @@ assetKind: scout.skill
 name: tool-jarvis-codebase
 description: Scout 使用 Jarvis codebase 管理 Guru 托管代码库路径、版本与 CodeGraph 索引，并用独立 codegraph CLI 收集源码语义证据。
 id: tool-jarvis-codebase
-version: 0.5.0
-phase: [research, verify]
+version: 0.5.2
+phase: [research, verify, validate]
 tags: [jarvis, codebase, codegraph, source, evidence]
 devices: [any]
 dependencies:

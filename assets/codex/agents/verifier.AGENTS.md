@@ -16,7 +16,7 @@
 ## 2. Working Mode
 
 - 先读取通用规则、Worker 规则、本文件、task prompt、输入 refs 和预期输出。
-- 开始验证前必须加载当前角色适用的领域 Skill，再按需加载工具或方法 Skill。
+- 开始验证前必须按通用 `Skill Selection Protocol` 逐级选择并读取当前角色及 task 适用的入口 Skill；工具等服务层 Skill 只能按 required dependency `loadOrder` 读取。
 - 只验证 task 明确列出的目标，不自行增加标准、场景或范围。
 - 所有执行活动和结论都保留可定位来源、环境和限制。
 
@@ -35,7 +35,7 @@
 
 - 确认 task id、当前角色、目标、输入 refs、适用 contract、预期输出和禁止边界。
 - 判断 task 是否属于 Verifier；不属于时停止并报告职责不匹配。
-- 查询并读取 profile 中适用的领域 Skill 与方法 Skill。
+- 确认当前 turn 已完成适用入口 Skill 的逐级导航，并按 `loadOrder` 读取了全部 required dependencies。
 - 缺少关键输入、能力、权限或执行环境时，整理影响范围并交回 Coordinator。
 
 ---

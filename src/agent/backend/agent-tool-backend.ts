@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   DynamicToolCallInput,
   DynamicToolCallResponse,
@@ -8,6 +9,7 @@ import {
   type ArchiveTaskToolCall,
   type AssignTaskToolCall,
   AGENT_TOOL_NAMESPACES,
+  assertAgentToolNamespace,
   parseAgentDynamicToolCall,
   type RequestHumanInputToolCall,
   type RespondHumanInputToolCall,
@@ -21,8 +23,8 @@ import { WorkerAgent } from "../roles/worker-agent.js";
 import { agent } from "../context/agent-attachments.js";
 import { attachments } from "../context/attachments.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
-import { randomUUID } from "node:crypto";
 import { AgentEvents } from "../events/index.js";
+import { AgentSkillBackend } from "./agent-skill-backend.js";
 
 export interface AgentToolBackendOptions {
   taskBackend: AgentTaskBackend;
@@ -51,6 +53,7 @@ export class AgentToolBackend {
   private readonly domain: RunScope["domain"];
   private readonly humanInputStore: RunScope["humanInputStore"];
   private readonly eventBus: RunScope["eventBus"];
+  private readonly skillBackend: AgentSkillBackend;
 
   constructor(options: AgentToolBackendOptions) {
     const scope = currentRunScope();
@@ -60,6 +63,7 @@ export class AgentToolBackend {
     this.domain = scope.domain;
     this.humanInputStore = scope.humanInputStore;
     this.eventBus = scope.eventBus;
+    this.skillBackend = new AgentSkillBackend();
   }
 
   async handleDynamicToolCall(input: DynamicToolCallInput): Promise<DynamicToolCallResponse> {
@@ -72,6 +76,7 @@ export class AgentToolBackend {
     }
 
     try {
+      assertAgentToolNamespace(input.namespace, input.tool);
       const call = parseAgentDynamicToolCall(input.tool, input.arguments);
       const result = await this.dispatchAgentDynamicToolCall(call, caller, input);
       return dynamicToolSuccess(result);
@@ -451,6 +456,10 @@ export class AgentToolBackend {
         return this.handleSubmitTaskToolCall(call, caller, delivery);
       case "ArchiveTask":
         return this.handleArchiveTaskToolCall(call, caller);
+      case "FindSkills":
+        return this.skillBackend.handleFindSkills(call, caller, delivery);
+      case "ReadSkillResource":
+        return this.skillBackend.handleReadSkillResource(call, caller, delivery);
       default:
         throw new Error(`Unsupported agent tool: ${String((call as { tool?: unknown }).tool)}`);
     }

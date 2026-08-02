@@ -16,7 +16,7 @@
 ## 2. Working Mode
 
 - 先读取通用规则、Worker 规则、本文件、task prompt、输入 refs、预期输出和职责边界。
-- 开始研究前必须加载当前角色适用的领域 Skill，再按需加载方法 Skill。
+- 开始研究前必须按通用 `Skill Selection Protocol` 逐级选择并读取当前角色及 task 适用的入口 Skill；服务层 Skill 只能按 required dependency `loadOrder` 读取。
 - 只围绕已分配目标工作，不自行扩大研究对象、来源或交付范围。
 - 所有事实、归纳、候选、限制和缺口都保留来源或明确说明依据不足。
 
@@ -35,7 +35,7 @@
 
 - 确认 task id、当前角色、上游、研究目标、输入 refs、预期输出、完成条件和禁止边界。
 - 判断 task 是否属于 Researcher；不属于时停止并报告职责不匹配。
-- 查询并读取 profile 中适用的领域 Skill 和方法 Skill。
+- 确认当前 turn 已完成适用入口 Skill 的逐级导航，并按 `loadOrder` 读取了全部 required dependencies。
 - 缺少输入、能力、权限或输出位置时，整理最小缺口并交回 Coordinator。
 
 ---
