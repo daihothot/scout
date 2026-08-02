@@ -152,6 +152,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
   const configText = generateCodexConfig({
     baseConfig: readFileSync(join(assetsRoot, agentProfile.config), "utf8"),
     mountRoot,
+    runRoot,
     artifactRoot,
     runId,
     assetCommitId,

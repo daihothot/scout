@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Box, Text, useCursor, useInput } from "ink";
+import React, { useRef, useState } from "react";
+import { Box, Text, useCursor, useInput, usePaste } from "ink";
 import { parseSgrMouseEvent } from "../activity-viewport.js";
 import {
   tailByDisplayWidth,
@@ -7,6 +7,10 @@ import {
   truncateByDisplayWidth,
 } from "../terminal-text.js";
 import type { TuiWidths } from "../workspace-layout.js";
+import {
+  normalizePromptPaste,
+  reducePromptInput,
+} from "./prompt-input-state.js";
 
 const INPUT_BORDER_WIDTH = 1;
 const INPUT_PADDING_X = 1;
@@ -30,6 +34,7 @@ export function PromptInput({
   onExit: () => void;
 }) {
   const [value, setValue] = useState("");
+  const valueRef = useRef("");
   const { setCursorPosition } = useCursor();
   const inputStartX = widths.rootPaddingX
     + INPUT_BORDER_WIDTH
@@ -48,25 +53,32 @@ export function PromptInput({
     }
     : undefined);
 
+  const commitValue = (next: string) => {
+    valueRef.current = next;
+    setValue(next);
+  };
+  const applyInput = (input: string) => {
+    const transition = reducePromptInput(valueRef.current, input);
+    commitValue(transition.value);
+    for (const submitted of transition.submissions) onSubmit(submitted);
+    if (transition.exitRequested) onExit();
+  };
+
   useInput((input, key) => {
-    if (!active) return;
     if (key.return) {
-      const submitted = value.trim();
-      if (submitted === "/exit") {
-        setValue("");
-        onExit();
-        return;
-      }
-      if (submitted.length > 0) onSubmit(submitted);
-      setValue("");
+      applyInput("\r");
       return;
     }
     if (key.backspace || key.delete) {
-      setValue((current) => current.slice(0, -1));
+      applyInput("\u007f");
       return;
     }
     if (key.escape) {
-      setValue("");
+      commitValue("");
+      return;
+    }
+    if (key.ctrl && input === "u") {
+      applyInput("\u0015");
       return;
     }
     if (
@@ -74,11 +86,15 @@ export function PromptInput({
       && !key.ctrl
       && !key.meta
       && !parseSgrMouseEvent(input)
-      && !/[\u0000-\u001f\u007f]/.test(input)
     ) {
-      setValue((current) => `${current}${input}`);
+      applyInput(input);
     }
-  });
+  }, { isActive: active });
+
+  usePaste((input) => {
+    const pasted = normalizePromptPaste(input);
+    if (pasted.length > 0) commitValue(`${valueRef.current}${pasted}`);
+  }, { isActive: active });
 
   const footer = `enter send · Tab tasks · Ctrl+C quit · cwd ${cwd}`;
   return (

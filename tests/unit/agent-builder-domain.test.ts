@@ -1525,7 +1525,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
           namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
           tool: "SubmitTask",
           arguments: {
-            outcome: "## Outcome\n\n- Artifact: artifacts/result.md",
+            outcome: "## Outcome\n\n- Artifact: ${SCOUT_ARTIFACT_ROOT}/result.md",
           },
         });
         submitSucceeded = result.success;
@@ -1619,8 +1619,18 @@ test("Human input tools deliver through Coordinator and update the bound task", 
     body: "Use staging account.",
   });
   assert.ok(appServer.turnInputs.some((turn) =>
-    turn.prompt?.includes("<task-outcome>\n## Outcome\n\n- Artifact: artifacts/result.md\n</task-outcome>")
+    turn.prompt?.includes(
+      "<task-outcome>\n## Outcome\n\n- Artifact: ${SCOUT_RUN_ROOT}/verifier/artifacts/result.md\n</task-outcome>",
+    )
   ));
+  const submittedOutcome = fixture.journal.readAll().find((event) =>
+    AgentEvents.task.outcomeSubmitted.is(event)
+  );
+  assert.ok(submittedOutcome && AgentEvents.task.outcomeSubmitted.is(submittedOutcome));
+  assert.equal(
+    submittedOutcome.payload.outcome,
+    "## Outcome\n\n- Artifact: ${SCOUT_RUN_ROOT}/verifier/artifacts/result.md",
+  );
 
   const coordinatorRequest = await appServer.handler({
     threadId: "thread-coordinator",

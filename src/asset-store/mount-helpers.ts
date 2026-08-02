@@ -26,6 +26,7 @@ export interface MaterializeMcpServersOptions {
 export interface GenerateCodexConfigOptions {
   baseConfig: string;
   mountRoot: string;
+  runRoot: string;
   artifactRoot: string;
   runId: string;
   assetCommitId: string;
@@ -168,6 +169,7 @@ export function generateCodexConfig(input: GenerateCodexConfigOptions): string {
     "[shell_environment_policy.set]",
     `PATH = "${escapeToml(`${input.mountRoot}/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin`)}"`,
     ...Object.entries(buildMountShellEnvironment({
+      runRoot: input.runRoot,
       artifactRoot: input.artifactRoot,
       assetCommitId: input.assetCommitId,
       runId: input.runId,

@@ -6,6 +6,7 @@ import {
   resolveMountMacros,
   MountMacros,
 } from "../../src/asset-store/mount-macros.js";
+import { generateCodexConfig } from "../../src/asset-store/mount-helpers.js";
 
 test("mount macros build a single canonical value map", () => {
   const values = buildMountMacroValues({
@@ -46,7 +47,22 @@ test("mount shell environment exposes only shell-facing macros", () => {
     assetCommitId: "ac_3",
   }), {
     SCOUT_RUN_ID: "run-1",
+    SCOUT_RUN_ROOT: "/repo/run/run-1",
     SCOUT_ARTIFACT_ROOT: "/repo/run/run-1/agents/validator/artifacts",
     SCOUT_ASSET_COMMIT_ID: "ac_3",
   });
+});
+
+test("generated Codex config exposes the shared run root", () => {
+  const config = generateCodexConfig({
+    baseConfig: 'approval_policy = "never"',
+    mountRoot: "/repo/run/run-1/agents/validator/mount",
+    runRoot: "/repo/run/run-1",
+    artifactRoot: "/repo/run/run-1/agents/validator/artifacts",
+    runId: "run-1",
+    assetCommitId: "ac_3",
+    mcpServers: [],
+  });
+
+  assert.match(config, /SCOUT_RUN_ROOT = "\/repo\/run\/run-1"/);
 });
