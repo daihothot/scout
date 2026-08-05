@@ -4,7 +4,8 @@
         "Backgrounded",
         "codegraph",
         "unsubscribers",
-        "unarchived"
+        "unarchived",
+        "Rollouts"
     ],
     "js/ts.experimental.useTsgo": false
 }

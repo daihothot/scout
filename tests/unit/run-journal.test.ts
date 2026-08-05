@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import {
   appendFileSync,
+  existsSync,
   mkdirSync,
+  readFileSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
+import { hostname } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { agent } from "../../src/agent/context/agent-attachments.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
@@ -55,6 +60,55 @@ test("RunJournalWriter persists monotonic EventBus events and holds one runtime 
     () => RunJournal.open({ runId: journal.runId, runRoot: journal.runRoot }),
     /already attached/,
   );
+  const lockPath = join(journal.runRoot, ".run.lock");
+  const lock = JSON.parse(readFileSync(lockPath, "utf8")) as { hostId: string };
+  assert.equal(lock.hostId, hostname());
+  journal.close();
+  assert.equal(existsSync(lockPath), false);
+});
+
+test("RunJournal replaces a stale lock only when it belongs to the current host", (t) => {
+  const { journal } = createTestRunPersistence(t, "journal-stale-local-lock");
+  const lockPath = join(journal.runRoot, ".run.lock");
+  journal.close();
+  writeFileSync(lockPath, `${JSON.stringify({
+    runId: journal.runId,
+    hostId: hostname(),
+    processId: 2_147_483_647,
+    token: "stale-local-token",
+    acquiredAt: "2026-07-22T00:00:00.000Z",
+  })}\n`, "utf8");
+
+  const reopened = RunJournal.open({ runId: journal.runId, runRoot: journal.runRoot });
+  t.after(() => reopened.close());
+  const lock = JSON.parse(readFileSync(lockPath, "utf8")) as {
+    hostId: string;
+    processId: number;
+    token: string;
+  };
+  assert.equal(lock.hostId, hostname());
+  assert.equal(lock.processId, process.pid);
+  assert.notEqual(lock.token, "stale-local-token");
+});
+
+test("RunJournal preserves and rejects a foreign-host lock", (t) => {
+  const { journal } = createTestRunPersistence(t, "journal-foreign-lock");
+  const lockPath = join(journal.runRoot, ".run.lock");
+  journal.close();
+  const foreignLock = `${JSON.stringify({
+    runId: journal.runId,
+    hostId: `${hostname()}-foreign`,
+    processId: process.pid,
+    token: "foreign-token",
+    acquiredAt: "2026-07-22T00:00:00.000Z",
+  })}\n`;
+  writeFileSync(lockPath, foreignLock, "utf8");
+
+  assert.throws(
+    () => RunJournal.open({ runId: journal.runId, runRoot: journal.runRoot }),
+    /locked by host .*foreign.*current host/,
+  );
+  assert.equal(readFileSync(lockPath, "utf8"), foreignLock);
 });
 
 test("RunJournal repairs an incomplete tail before the next EventBus append", async (t) => {

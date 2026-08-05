@@ -3,9 +3,7 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import {
   dirname,
   isAbsolute,
-  relative,
   resolve,
-  sep,
   win32,
 } from "node:path";
 import type { DynamicToolCallInput } from "../../agent-server/types.js";
@@ -14,6 +12,7 @@ import {
   type ScoutSkillCatalogEntry,
 } from "../../asset-store/skill-catalog.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
+import { isPathWithin } from "../../core/path.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { AgentEvents } from "../events/index.js";
 import type {
@@ -609,12 +608,7 @@ function readSkillTextResource(
 }
 
 function assertPathInside(root: string, target: string, label: string): void {
-  const child = relative(root, target);
-  if (
-    child === ".."
-    || child.startsWith(`..${sep}`)
-    || isAbsolute(child)
-  ) {
+  if (!isPathWithin(root, target)) {
     throw new SkillToolError(
       "resource_path_escape",
       `${label} escapes its authorized Skill root.`,

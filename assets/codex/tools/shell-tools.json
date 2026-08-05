@@ -95,7 +95,7 @@
     {
       "id": "codegraph",
       "name": "codegraph",
-      "command": "/opt/homebrew/bin/codegraph",
+      "command": "/Users/chengdai/.npm-global/bin/codegraph",
       "exposeAs": "codegraph",
       "required": true,
       "smokeArgs": [

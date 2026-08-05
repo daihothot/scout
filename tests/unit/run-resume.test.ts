@@ -5,11 +5,13 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { attachments } from "../../src/agent/context/attachments.js";
 import { agent } from "../../src/agent/context/agent-attachments.js";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
@@ -764,22 +766,94 @@ for (const status of ["failed", "interrupted"] as const) {
   });
 }
 
-test("RestoreAgentsStage never cold-starts an Agent after thread resume fails", async (t) => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-thread-restore-failure-"));
-  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
-  mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(process.cwd(), "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
-    recursive: true,
-  });
-  const eventBus = new InMemoryEventBus();
+test("RestoreAgentsStage never cold-starts an Agent after thread resume fails", (t) =>
+  assertThreadRestoreFailure(t, "resume"));
+
+test("RestoreAgentsStage never cold-starts an Agent after thread settings fails", (t) =>
+  assertThreadRestoreFailure(t, "settings"));
+
+test("RestoreAgentsStage rejects a missing persisted rollout before building Agents", async (t) => {
+  const missing = await installRolloutLocatorFixture(t, "missing");
+  mkdirSync(join(
+    missing.fixtureRoot,
+    "run",
+    missing.scope.runId,
+    "codex-home",
+    ".codex",
+    "sessions",
+  ), { recursive: true });
+  await assert.rejects(
+    new RestoreAgentsStage().start(),
+    new RegExp(`No persisted Codex rollout found for thread ${missing.thread.threadId}`),
+  );
+  assert.equal(missing.scope.agentRegistry.listAgents().length, 0);
+});
+
+test("RestoreAgentsStage starts a thread that Codex never persisted", async (t) => {
   const startedRoles: string[] = [];
-  const resumedThreadIds: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
       const role = Object.values(ScoutAgentRoles).find((candidate) =>
         options.cwd.includes(`${candidate}/mount`)
       ) ?? "unknown";
       startedRoles.push(role);
+      const threadId = `new-thread-${role}`;
+      return {
+        threadId,
+        startInput: {
+          cwd: options.cwd,
+          approvalPolicy: "never" as const,
+          sandbox: "workspace-write" as const,
+          ephemeral: options.ephemeral ?? true,
+        },
+        response: { thread: { id: threadId } },
+      };
+    },
+    async request(_method: string, params: { threadId?: string }) {
+      return { threadId: params.threadId, servers: [] };
+    },
+    threadSnapshot() {
+      return undefined;
+    },
+    async interruptTurn() {
+      return {};
+    },
+  } as unknown as CodexAppServerClient;
+  const noCodexRecord = await installRolloutLocatorFixture(
+    t,
+    "not-persisted",
+    { includeTurn: false, appServer },
+  );
+  mkdirSync(join(
+    noCodexRecord.fixtureRoot,
+    "run",
+    noCodexRecord.scope.runId,
+    "codex-home",
+    ".codex",
+    "sessions",
+  ), { recursive: true });
+
+  const stage = new RestoreAgentsStage();
+  await stage.start();
+
+  assert.ok(startedRoles.includes(ScoutAgentRoles.Researcher));
+  assert.equal(
+    noCodexRecord.scope.agentRegistry.resolveAgent(ScoutAgentRoles.Researcher).threadId,
+    `new-thread-${ScoutAgentRoles.Researcher}`,
+  );
+  await stage.stop("test_cleanup");
+});
+
+test("RestoreAgentsStage resumes a persisted thread even when it has no turns", async (t) => {
+  const resumedThreadIds: string[] = [];
+  const appServer = {
+    async startThread(options: { cwd: string; ephemeral?: boolean }) {
+      if (options.cwd.includes(`${ScoutAgentRoles.Researcher}/mount`)) {
+        throw new Error("zero-turn persisted thread must not cold-start");
+      }
+      const role = Object.values(ScoutAgentRoles).find((candidate) =>
+        options.cwd.includes(`${candidate}/mount`)
+      ) ?? "unknown";
       const threadId = `new-thread-${role}`;
       return {
         threadId,
@@ -794,13 +868,22 @@ test("RestoreAgentsStage never cold-starts an Agent after thread resume fails", 
     },
     async resumeThread(options: { threadId: string }) {
       resumedThreadIds.push(options.threadId);
-      throw new Error(`resume failed for ${options.threadId}`);
+      return {
+        threadId: options.threadId,
+        resumeInput: { threadId: options.threadId, excludeTurns: true as const },
+        response: { thread: { id: options.threadId } },
+      };
+    },
+    async updateThreadSettings(options: { threadId: string }) {
+      return {
+        threadId: options.threadId,
+        updateInput: { threadId: options.threadId },
+        threadSettings: {},
+        response: {},
+      };
     },
     async request(_method: string, params: { threadId?: string }) {
-      return {
-        threadId: params.threadId,
-        servers: [],
-      };
+      return { threadId: params.threadId, servers: [] };
     },
     threadSnapshot() {
       return undefined;
@@ -809,67 +892,223 @@ test("RestoreAgentsStage never cold-starts an Agent after thread resume fails", 
       return {};
     },
   } as unknown as CodexAppServerClient;
-  const scope = installTestRunScope(t, {
-    runId: "thread-restore-failure",
-    repoRoot: fixtureRoot,
-    eventBus,
+  const zeroTurn = await installRolloutLocatorFixture(t, "zero-turn", {
+    includeTurn: false,
     appServer,
-    domain: new ValidationDomain(),
   });
-  await new PrepareEnvironmentStage({
-    preflightMount: async () => ({ status: "passed" }),
-  }).start();
-  const task = taskState({
-    steps: [{
-      stepId: "researcher-task-0001-step-0001",
-      taskId: "researcher-task-0001",
-      status: AgentTaskStepStatuses.Running,
-      prompt: agent.turn.message("恢复原 thread"),
-      toolCalls: [],
-      startedAt: "2026-07-22T00:00:01.000Z",
-    }],
+  writePersistedRollout({
+    repoRoot: zeroTurn.fixtureRoot,
+    runId: zeroTurn.scope.runId,
+    threadId: zeroTurn.thread.threadId,
   });
-  const thread = {
-    agentId: ScoutAgentRoles.Researcher,
-    role: ScoutAgentRoles.Researcher,
-    phases: [ScoutAgentPhases.Research],
-    contextBundleId: scope.contextBundle.contextBundleId,
-    threadId: "thread-researcher-original",
-    createdAt: "2026-07-22T00:00:00.000Z",
-    status: "active",
-    startInput: {
-      cwd: scope.environment.agents[ScoutAgentRoles.Researcher].mount.mountRoot,
-      approvalPolicy: "never",
-      sandbox: "workspace-write",
-      ephemeral: false,
+
+  const stage = new RestoreAgentsStage();
+  await stage.start();
+
+  assert.deepEqual(resumedThreadIds, [zeroTurn.thread.threadId]);
+  assert.equal(
+    zeroTurn.scope.agentRegistry.resolveAgentByThreadId(zeroTurn.thread.threadId)?.agentId,
+    ScoutAgentRoles.Researcher,
+  );
+  await stage.stop("test_cleanup");
+});
+
+test("RestoreAgentsStage does not require a rollout for a new zero-turn thread after an older turn", async (t) => {
+  const startedRoles: string[] = [];
+  const appServer = {
+    async startThread(options: { cwd: string; ephemeral?: boolean }) {
+      const role = Object.values(ScoutAgentRoles).find((candidate) =>
+        options.cwd.includes(`${candidate}/mount`)
+      ) ?? "unknown";
+      startedRoles.push(role);
+      const threadId = `new-thread-${role}`;
+      return {
+        threadId,
+        startInput: {
+          cwd: options.cwd,
+          approvalPolicy: "never" as const,
+          sandbox: "workspace-write" as const,
+          ephemeral: options.ephemeral ?? true,
+        },
+        response: { thread: { id: threadId } },
+      };
     },
-    startResponse: { thread: { id: "thread-researcher-original" } },
-  } satisfies AgentThreadSnapshot;
-  await eventBus.publishAndWait(AgentEvents.thread.started, thread);
-  await eventBus.publishAndWait(AgentEvents.task.assigned, task);
-  await eventBus.publishAndWait(AgentEvents.turn.started, {
-    invocationId: "researcher-original-invocation-0001",
-    agentId: task.agentId,
-    role: task.role,
-    taskId: task.taskId,
-    threadId: thread.threadId,
-    prompt: task.steps?.[0]?.prompt ?? "",
+    async request(_method: string, params: { threadId?: string }) {
+      return { threadId: params.threadId, servers: [] };
+    },
+    threadSnapshot() {
+      return undefined;
+    },
+    async interruptTurn() {
+      return {};
+    },
+  } as unknown as CodexAppServerClient;
+  const fixture = await installRolloutLocatorFixture(t, "new-zero-turn", {
+    includeTurn: false,
+    appServer,
+  });
+  const oldThread = fixture.thread;
+  writePersistedRollout({
+    repoRoot: fixture.fixtureRoot,
+    runId: fixture.scope.runId,
+    threadId: oldThread.threadId,
+  });
+  await fixture.scope.eventBus.publishAndWait(AgentEvents.turn.started, {
+    invocationId: "old-thread-invocation",
+    agentId: oldThread.agentId,
+    role: oldThread.role,
+    threadId: oldThread.threadId,
+    prompt: "历史 turn",
     startedAt: "2026-07-22T00:00:01.000Z",
   });
-  const stage = new RestoreAgentsStage();
-
-  await assert.rejects(
-    stage.start(),
-    /resume failed for thread-researcher-original/,
+  await fixture.scope.eventBus.publishAndWait(AgentEvents.thread.closed, {
+    ...oldThread,
+    status: "closed",
+    closedAt: "2026-07-22T00:00:02.000Z",
+    closeReason: "test_thread_rotation",
+  });
+  const currentThread = {
+    ...oldThread,
+    threadId: "current-zero-turn-thread",
+    createdAt: "2026-07-22T00:01:00.000Z",
+    status: "active" as const,
+    startResponse: { thread: { id: "current-zero-turn-thread" } },
+  };
+  await fixture.scope.eventBus.publishAndWait(
+    AgentEvents.thread.started,
+    currentThread,
   );
 
-  assert.deepEqual(resumedThreadIds, ["thread-researcher-original"]);
-  assert.deepEqual(startedRoles.sort(), [
-    ScoutAgentRoles.Coordinator,
-    ScoutAgentRoles.Validator,
-    ScoutAgentRoles.Verifier,
-  ].sort());
+  const stage = new RestoreAgentsStage();
+  await stage.start();
+
+  assert.ok(startedRoles.includes(ScoutAgentRoles.Researcher));
+  assert.equal(
+    fixture.scope.agentRegistry.resolveAgent(ScoutAgentRoles.Researcher).threadId,
+    `new-thread-${ScoutAgentRoles.Researcher}`,
+  );
   await stage.stop("test_cleanup");
+});
+
+test("RestoreAgentsStage rejects duplicate persisted rollouts", async (t) => {
+  const duplicate = await installRolloutLocatorFixture(t, "duplicate");
+  writePersistedRollout({
+    repoRoot: duplicate.fixtureRoot,
+    runId: duplicate.scope.runId,
+    threadId: duplicate.thread.threadId,
+    fileName: "rollout-first.jsonl",
+  });
+  writePersistedRollout({
+    repoRoot: duplicate.fixtureRoot,
+    runId: duplicate.scope.runId,
+    threadId: duplicate.thread.threadId,
+    fileName: "rollout-second.jsonl",
+  });
+
+  await assert.rejects(
+    new RestoreAgentsStage().start(),
+    new RegExp(`Multiple persisted Codex rollouts found for thread ${duplicate.thread.threadId}`),
+  );
+  assert.equal(duplicate.scope.agentRegistry.listAgents().length, 0);
+});
+
+test("RestoreAgentsStage trusts rollout session metadata instead of its file name", async (t) => {
+  const mismatched = await installRolloutLocatorFixture(t, "filename-mismatch");
+  writePersistedRollout({
+    repoRoot: mismatched.fixtureRoot,
+    runId: mismatched.scope.runId,
+    threadId: "different-thread-id",
+    fileName: `rollout-${mismatched.thread.threadId}.jsonl`,
+  });
+
+  await assert.rejects(
+    new RestoreAgentsStage().start(),
+    new RegExp(`No persisted Codex rollout found for thread ${mismatched.thread.threadId}`),
+  );
+  assert.equal(mismatched.scope.agentRegistry.listAgents().length, 0);
+});
+
+test("RestoreAgentsStage rejects a symlinked rollout that escapes Codex sessions", async (t) => {
+  const escaped = await installRolloutLocatorFixture(t, "symlink-escape");
+  const outsideRollout = join(escaped.fixtureRoot, "outside-rollout.jsonl");
+  writeFileSync(outsideRollout, `${JSON.stringify({
+    type: "session_meta",
+    payload: { id: escaped.thread.threadId },
+  })}\n`, "utf8");
+  const sessionsRoot = join(
+    escaped.fixtureRoot,
+    "run",
+    escaped.scope.runId,
+    "codex-home",
+    ".codex",
+    "sessions",
+  );
+  mkdirSync(sessionsRoot, { recursive: true });
+  symlinkSync(outsideRollout, join(sessionsRoot, "escaped-rollout.jsonl"));
+
+  await assert.rejects(
+    new RestoreAgentsStage().start(),
+    /Refusing symlink beneath Codex sessions/,
+  );
+  assert.equal(escaped.scope.agentRegistry.listAgents().length, 0);
+});
+
+test("RestoreAgentsStage rejects a symlinked directory beneath Codex sessions", async (t) => {
+  const escaped = await installRolloutLocatorFixture(t, "directory-symlink-escape");
+  const outsideDirectory = join(escaped.fixtureRoot, "outside-sessions-date");
+  mkdirSync(outsideDirectory, { recursive: true });
+  writeFileSync(join(outsideDirectory, "rollout.jsonl"), `${JSON.stringify({
+    type: "session_meta",
+    payload: { id: escaped.thread.threadId },
+  })}\n`, "utf8");
+  const sessionsRoot = join(
+    escaped.fixtureRoot,
+    "run",
+    escaped.scope.runId,
+    "codex-home",
+    ".codex",
+    "sessions",
+  );
+  mkdirSync(sessionsRoot, { recursive: true });
+  symlinkSync(outsideDirectory, join(sessionsRoot, "2026"));
+
+  await assert.rejects(
+    new RestoreAgentsStage().start(),
+    /Refusing symlink beneath Codex sessions/,
+  );
+  assert.equal(escaped.scope.agentRegistry.listAgents().length, 0);
+});
+
+test("RestoreAgentsStage rejects a codex-home symlink that escapes the run", async (t) => {
+  const escaped = await installRolloutLocatorFixture(t, "codex-home-symlink-escape");
+  const outsideCodexHome = join(escaped.fixtureRoot, "outside-codex-home");
+  const outsideRollout = join(
+    outsideCodexHome,
+    ".codex",
+    "sessions",
+    "2026",
+    "07",
+    "22",
+    "rollout.jsonl",
+  );
+  mkdirSync(dirname(outsideRollout), { recursive: true });
+  writeFileSync(outsideRollout, `${JSON.stringify({
+    type: "session_meta",
+    payload: { id: escaped.thread.threadId },
+  })}\n`, "utf8");
+  const codexHome = join(
+    escaped.fixtureRoot,
+    "run",
+    escaped.scope.runId,
+    "codex-home",
+  );
+  symlinkSync(outsideCodexHome, codexHome);
+
+  await assert.rejects(
+    new RestoreAgentsStage().start(),
+    /Codex home escapes/,
+  );
+  assert.equal(escaped.scope.agentRegistry.listAgents().length, 0);
 });
 
 test("resume stages restore tasks, messages, interruptions and Validation artifacts from a Test RunScope", async (t) => {
@@ -879,6 +1118,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   cpSync(join(process.cwd(), "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
+  makeFixtureShellToolsResolvable(fixtureRoot);
 
   const runId = "run-resume-flow";
   const runRoot = join(fixtureRoot, "run", runId);
@@ -1083,6 +1323,12 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   releaseInitialScope();
   initialJournal.close();
   assert.equal(existsSync(join(runRoot, ".run.lock")), false);
+  const researcherRolloutPath = writePersistedRollout({
+    repoRoot: fixtureRoot,
+    runId,
+    threadId: researcherThread.threadId,
+    fileName: "rollout-with-unrelated-file-name.jsonl",
+  });
 
   const resumedPrompts: string[] = [];
   let dynamicToolHandlerInstalled = false;
@@ -1097,6 +1343,9 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   let threadSequence = 0;
   let turnSequence = 0;
   const resumedThreadIds: string[] = [];
+  const resumedThreadInputs: Record<string, unknown>[] = [];
+  const updatedThreadSettings: Record<string, unknown>[] = [];
+  const researcherResumeOrder: string[] = [];
   const appServer = {
     close() {},
     async startThread(startInput: Record<string, unknown>) {
@@ -1113,6 +1362,8 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
       [key: string]: unknown;
     }) {
       resumedThreadIds.push(resumeInput.threadId);
+      resumedThreadInputs.push(resumeInput);
+      researcherResumeOrder.push("resume");
       return {
         threadId: resumeInput.threadId,
         resumeInput: {
@@ -1127,7 +1378,25 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
         },
       };
     },
+    async updateThreadSettings(settingsInput: Record<string, unknown>) {
+      updatedThreadSettings.push(settingsInput);
+      researcherResumeOrder.push("settings");
+      return {
+        threadId: settingsInput.threadId,
+        updateInput: settingsInput,
+        threadSettings: {
+          cwd: settingsInput.cwd,
+          approvalPolicy: settingsInput.approvalPolicy,
+          sandboxPolicy: settingsInput.sandboxPolicy,
+        },
+        response: {},
+      };
+    },
     async request(method: string, params: unknown) {
+      if (method === "mcpServerStatus/list"
+        && (params as { threadId?: string }).threadId === "researcher-old-thread") {
+        researcherResumeOrder.push("preflight");
+      }
       if (method === "config/read") return { layers: [] };
       if (method === "plugin/installed") {
         const names = (
@@ -1172,6 +1441,12 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   const resumedJournal = RunJournal.open({ runId, runRoot });
   const resumedManifestStore = new RunManifestStore(runRoot);
   const resumedEventBus = new InMemoryEventBus();
+  resumedEventBus.subscribe(AgentEvents.thread.resumed, (event) => {
+    if (AgentEvents.thread.resumed.is(event)
+      && event.payload.threadId === "researcher-old-thread") {
+      researcherResumeOrder.push("ready");
+    }
+  });
   const executor = new RunStageExecutor({
     runId,
     logger: noopLogger(),
@@ -1194,7 +1469,9 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     new RunJournalWriterStage(),
     new RecordResumeInterruptionsStage(),
     new RunRuntimeStage("resume"),
-    new RestoreEnvironmentStage(),
+    new RestoreEnvironmentStage({
+      preflightMount: async () => ({ status: "passed" }),
+    }),
     new InteractionStage(),
   );
   executor.registerParallel(new DomainStage(), new AgentTelemetryStage());
@@ -1239,9 +1516,45 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     scope.environment.agents[ScoutAgentRoles.Coordinator].assetCommit.assetCommitId,
   );
   assert.deepEqual(resumedThreadIds, ["researcher-old-thread"]);
+  const restoredResearcherMount = scope.environment.agents[
+    ScoutAgentRoles.Researcher
+  ].mount;
+  const researcherAgent = scope.agentRegistry.resolveAgent(
+    ScoutAgentRoles.Researcher,
+  );
+  assert.deepEqual(resumedThreadInputs, [{
+    threadId: "researcher-old-thread",
+    path: researcherRolloutPath,
+    model: "gpt-5.5",
+    modelProvider: "GuruOpenAI",
+    reasoningEffort: "high",
+    cwd: restoredResearcherMount.mountRoot,
+    runtimeWorkspaceRoots: [restoredResearcherMount.mountRoot],
+    approvalPolicy: "never",
+    sandbox: "workspace-write",
+    config: researcherAgent.spec.config,
+    baseInstructions: researcherAgent.spec.baseInstructions,
+    developerInstructions: researcherAgent.spec.developerInstructions,
+  }]);
+  assert.deepEqual(updatedThreadSettings, [{
+    threadId: "researcher-old-thread",
+    cwd: restoredResearcherMount.mountRoot,
+    approvalPolicy: "never",
+    sandboxPolicy: {
+      type: "workspaceWrite",
+      writableRoots: [...new Set([
+        ...restoredResearcherMount.writableRoots,
+        restoredResearcherMount.artifactRoot,
+      ])],
+      networkAccess: false,
+    },
+  }]);
+  assert.deepEqual(researcherResumeOrder.slice(0, 2), ["resume", "settings"]);
+  assert.ok(researcherResumeOrder.indexOf("ready") > 1);
+  assert.ok(researcherResumeOrder.indexOf("preflight") > 1);
   assert.equal(threadSequence, 3);
   assert.equal(
-    scope.agentRegistry.resolveAgent(ScoutAgentRoles.Researcher).threadId,
+    researcherAgent.threadId,
     "researcher-old-thread",
   );
   assert.ok(scope.environment.rootAccess.mountRoots.every((root) =>
@@ -1333,6 +1646,7 @@ test("ValidationDomain records artifacts after an accepted task outcome event", 
   cpSync(join(process.cwd(), "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
+  makeFixtureShellToolsResolvable(fixtureRoot);
   const runId = "validation-artifact-event";
   const eventBus = new InMemoryEventBus();
   const scope = installTestRunScope(t, {
@@ -1431,6 +1745,245 @@ function buildPlannedResumePacket(
     ...input,
     resumeActions: planResumeActions(input),
   });
+}
+
+function writePersistedRollout(input: {
+  repoRoot: string;
+  runId: string;
+  threadId: string;
+  fileName?: string;
+}): string {
+  const relativePath = join(
+    "sessions",
+    "2026",
+    "07",
+    "22",
+    input.fileName ?? `rollout-${input.threadId}.jsonl`,
+  );
+  const codexHome = join(
+    input.repoRoot,
+    "run",
+    input.runId,
+    "codex-home",
+    ".codex",
+  );
+  const path = join(codexHome, relativePath);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify({
+    type: "session_meta",
+    payload: { id: input.threadId },
+  })}\n`, "utf8");
+  return relativePath;
+}
+
+async function assertThreadRestoreFailure(
+  t: Parameters<typeof installTestRunScope>[0],
+  failurePoint: "resume" | "settings",
+): Promise<void> {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-thread-restore-failure-"));
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
+  cpSync(join(process.cwd(), "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+    recursive: true,
+  });
+  makeFixtureShellToolsResolvable(fixtureRoot);
+  const eventBus = new InMemoryEventBus();
+  const startedRoles: string[] = [];
+  const resumedThreadIds: string[] = [];
+  const settingsThreadIds: string[] = [];
+  const appServer = {
+    async startThread(options: { cwd: string; ephemeral?: boolean }) {
+      const role = Object.values(ScoutAgentRoles).find((candidate) =>
+        options.cwd.includes(`${candidate}/mount`)
+      ) ?? "unknown";
+      startedRoles.push(role);
+      const threadId = `new-thread-${role}`;
+      return {
+        threadId,
+        startInput: {
+          cwd: options.cwd,
+          approvalPolicy: "never",
+          sandbox: "workspace-write",
+          ephemeral: options.ephemeral ?? true,
+        },
+        response: { thread: { id: threadId } },
+      };
+    },
+    async resumeThread(options: { threadId: string }) {
+      resumedThreadIds.push(options.threadId);
+      if (failurePoint === "resume") {
+        throw new Error(`resume failed for ${options.threadId}`);
+      }
+      return {
+        threadId: options.threadId,
+        resumeInput: {
+          threadId: options.threadId,
+          excludeTurns: true as const,
+        },
+        response: { thread: { id: options.threadId } },
+      };
+    },
+    async updateThreadSettings(options: { threadId: string }) {
+      settingsThreadIds.push(options.threadId);
+      throw new Error(`settings failed for ${options.threadId}`);
+    },
+    async request(_method: string, params: { threadId?: string }) {
+      return {
+        threadId: params.threadId,
+        servers: [],
+      };
+    },
+    threadSnapshot() {
+      return undefined;
+    },
+    async interruptTurn() {
+      return {};
+    },
+  } as unknown as CodexAppServerClient;
+  const scope = installTestRunScope(t, {
+    runId: "thread-restore-failure",
+    repoRoot: fixtureRoot,
+    eventBus,
+    appServer,
+    domain: new ValidationDomain(),
+  });
+  await new PrepareEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+  const task = taskState({
+    steps: [{
+      stepId: "researcher-task-0001-step-0001",
+      taskId: "researcher-task-0001",
+      status: AgentTaskStepStatuses.Running,
+      prompt: agent.turn.message("恢复原 thread"),
+      toolCalls: [],
+      startedAt: "2026-07-22T00:00:01.000Z",
+    }],
+  });
+  const thread = {
+    agentId: ScoutAgentRoles.Researcher,
+    role: ScoutAgentRoles.Researcher,
+    phases: [ScoutAgentPhases.Research],
+    contextBundleId: scope.contextBundle.contextBundleId,
+    threadId: "thread-researcher-original",
+    createdAt: "2026-07-22T00:00:00.000Z",
+    status: "active",
+    startInput: {
+      cwd: scope.environment.agents[ScoutAgentRoles.Researcher].mount.mountRoot,
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      ephemeral: false,
+    },
+    startResponse: { thread: { id: "thread-researcher-original" } },
+  } satisfies AgentThreadSnapshot;
+  await eventBus.publishAndWait(AgentEvents.thread.started, thread);
+  await eventBus.publishAndWait(AgentEvents.task.assigned, task);
+  await eventBus.publishAndWait(AgentEvents.turn.started, {
+    invocationId: "researcher-original-invocation-0001",
+    agentId: task.agentId,
+    role: task.role,
+    taskId: task.taskId,
+    threadId: thread.threadId,
+    prompt: task.steps?.[0]?.prompt ?? "",
+    startedAt: "2026-07-22T00:00:01.000Z",
+  });
+  writePersistedRollout({
+    repoRoot: fixtureRoot,
+    runId: scope.runId,
+    threadId: thread.threadId,
+  });
+  const stage = new RestoreAgentsStage();
+
+  await assert.rejects(
+    stage.start(),
+    new RegExp(`${failurePoint} failed for thread-researcher-original`),
+  );
+
+  assert.deepEqual(resumedThreadIds, ["thread-researcher-original"]);
+  assert.deepEqual(
+    settingsThreadIds,
+    failurePoint === "settings" ? ["thread-researcher-original"] : [],
+  );
+  assert.equal(
+    scope.agentRegistry.resolveAgentByThreadId("thread-researcher-original"),
+    undefined,
+  );
+  assert.deepEqual(startedRoles.sort(), [
+    ScoutAgentRoles.Coordinator,
+    ScoutAgentRoles.Validator,
+    ScoutAgentRoles.Verifier,
+  ].sort());
+  await stage.stop("test_cleanup");
+}
+
+async function installRolloutLocatorFixture(
+  t: Parameters<typeof installTestRunScope>[0],
+  suffix: string,
+  options: { includeTurn?: boolean; appServer?: CodexAppServerClient } = {},
+): Promise<{
+  fixtureRoot: string;
+  scope: RunScope;
+  thread: AgentThreadSnapshot;
+}> {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), `scout-rollout-${suffix}-`));
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
+  cpSync(join(process.cwd(), "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+    recursive: true,
+  });
+  makeFixtureShellToolsResolvable(fixtureRoot);
+  const eventBus = new InMemoryEventBus();
+  const scope = installTestRunScope(t, {
+    runId: `rollout-${suffix}`,
+    repoRoot: fixtureRoot,
+    eventBus,
+    appServer: options.appServer ?? ({} as CodexAppServerClient),
+    domain: new ValidationDomain(),
+  });
+  await new PrepareEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+  const thread = {
+    agentId: ScoutAgentRoles.Researcher,
+    role: ScoutAgentRoles.Researcher,
+    phases: [ScoutAgentPhases.Research],
+    contextBundleId: scope.contextBundle.contextBundleId,
+    threadId: `thread-${suffix}`,
+    createdAt: "2026-07-22T00:00:00.000Z",
+    status: "active",
+    startInput: {
+      cwd: scope.environment.agents[ScoutAgentRoles.Researcher].mount.mountRoot,
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      ephemeral: false,
+    },
+    startResponse: { thread: { id: `thread-${suffix}` } },
+  } satisfies AgentThreadSnapshot;
+  await eventBus.publishAndWait(AgentEvents.thread.started, thread);
+  if (options.includeTurn !== false) {
+    await eventBus.publishAndWait(AgentEvents.turn.started, {
+      invocationId: `${thread.threadId}-invocation-0001`,
+      agentId: thread.agentId,
+      role: thread.role,
+      threadId: thread.threadId,
+      prompt: "persist this thread",
+      startedAt: "2026-07-22T00:00:01.000Z",
+    });
+  }
+  return { fixtureRoot, scope, thread };
+}
+
+function makeFixtureShellToolsResolvable(repoRoot: string): void {
+  const path = join(repoRoot, "assets", "codex", "tools", "shell-tools.json");
+  const registry = JSON.parse(readFileSync(path, "utf8")) as {
+    tools: Array<{ id: string; command: string }>;
+  };
+  for (const tool of registry.tools) {
+    if (["codegraph", "jarvis", "unity"].includes(tool.id)) {
+      tool.command = process.execPath;
+    }
+  }
+  writeFileSync(path, `${JSON.stringify(registry, null, 2)}\n`, "utf8");
 }
 
 function scoutEvent<TPayload>(

@@ -45,6 +45,13 @@ export interface MaterializeOptions {
   runId?: string;
   agentId: string;
   parentAssetCommitId?: string;
+  persistedIdentity?: {
+    assetCommitId: string;
+    parentAssetCommitId: string | undefined;
+    mountId: string;
+    resourceHash: string;
+    allowLegacyResourceIdentityMigration?: boolean;
+  };
   cleanRunRoot?: boolean;
 }
 
@@ -59,6 +66,61 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
   const logsRoot = join(agentRoot, "logs");
   const agentProfile = resolveAgentProfile(readAgentProfilesForRepo(repoRoot), agentId);
   const mountRoot = join(agentRoot, "mount");
+
+  const mcpServers = readJsonFile<McpServersFile>(join(assetsRoot, CodexAssetLayout.mcpServers));
+  const shellTools = readJsonFile<ShellToolsFile>(join(assetsRoot, CodexAssetLayout.shellTools));
+  const shellToolsRegistryHash = sha256File(join(assetsRoot, CodexAssetLayout.shellTools));
+  assertAssetFileExists(assetsRoot, agentProfile.config, `config for agent ${agentId}`);
+  const profiledMcpServers = filterMcpServers(mcpServers, agentProfile.mcpServers);
+  const profiledShellTools = filterShellTools(shellTools.tools, agentProfile.shellTools ?? []);
+  const profiledCustomAgentPaths = filterCustomAgents(
+    listCustomAgentPaths(assetsRoot),
+    agentProfile.customAgents,
+  );
+  const profiledSkillPaths = filterSkills(listSkillPaths(assetsRoot), agentProfile.skills);
+  const skillCatalog = buildScoutSkillCatalog({
+    assetsRoot,
+    skillPaths: profiledSkillPaths,
+  });
+  const profiledPluginPaths = filterPlugins(listPluginPaths(assetsRoot), agentProfile.plugins);
+  const computedResourceHash = computeResourceHash({
+    assetsRoot,
+    agentId,
+    agentProfile,
+    mcpServers: profiledMcpServers,
+    shellTools: profiledShellTools,
+    customAgentPaths: profiledCustomAgentPaths,
+    skillPaths: profiledSkillPaths,
+    pluginPaths: profiledPluginPaths,
+  });
+  if (
+    options.persistedIdentity
+    && !options.persistedIdentity.allowLegacyResourceIdentityMigration
+    && options.persistedIdentity.resourceHash !== computedResourceHash
+  ) {
+    throw new Error(
+      `Persisted resource identity does not match current assets for ${agentId}:`
+      + ` persisted=${options.persistedIdentity.resourceHash}`
+      + ` portable=${computedResourceHash}.`,
+    );
+  }
+  const assetCommitHash = sha256Text([
+    `agent:${agentId}`,
+    `agentProfile:${JSON.stringify(agentProfile)}`,
+    `resource:${computedResourceHash}`,
+    `run:${runId}`,
+  ].join("\n"));
+  const mountHash = sha256Text(`assetCommit:${assetCommitHash}`);
+  const assetCommitId = options.persistedIdentity?.assetCommitId
+    ?? `ac_${assetCommitHash.slice(0, 16)}`;
+  const parentAssetCommitId = options.persistedIdentity
+    ? options.persistedIdentity.parentAssetCommitId
+    : options.parentAssetCommitId;
+  const mountId = options.persistedIdentity?.mountId
+    ?? `m_${mountHash.slice(0, 16)}`;
+  const resourceHash = options.persistedIdentity?.allowLegacyResourceIdentityMigration
+    ? computedResourceHash
+    : options.persistedIdentity?.resourceHash ?? computedResourceHash;
 
   if (options.cleanRunRoot ?? true) {
     ensureDir(runRoot);
@@ -82,40 +144,6 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
   ensureDir(join(mountRoot, "bin"));
   ensureDir(join(mountRoot, "mcp"));
 
-  const mcpServers = readJsonFile<McpServersFile>(join(assetsRoot, CodexAssetLayout.mcpServers));
-  const shellTools = readJsonFile<ShellToolsFile>(join(assetsRoot, CodexAssetLayout.shellTools));
-  assertAssetFileExists(assetsRoot, agentProfile.config, `config for agent ${agentId}`);
-  const profiledMcpServers = filterMcpServers(mcpServers, agentProfile.mcpServers);
-  const profiledShellTools = filterShellTools(shellTools.tools, agentProfile.shellTools ?? []);
-  const profiledCustomAgentPaths = filterCustomAgents(
-    listCustomAgentPaths(assetsRoot),
-    agentProfile.customAgents,
-  );
-  const profiledSkillPaths = filterSkills(listSkillPaths(assetsRoot), agentProfile.skills);
-  const skillCatalog = buildScoutSkillCatalog({
-    assetsRoot,
-    skillPaths: profiledSkillPaths,
-  });
-  const profiledPluginPaths = filterPlugins(listPluginPaths(assetsRoot), agentProfile.plugins);
-  const resourceHash = computeResourceHash({
-    assetsRoot,
-    agentId,
-    agentProfile,
-    mcpServers: profiledMcpServers,
-    shellTools: profiledShellTools,
-    customAgentPaths: profiledCustomAgentPaths,
-    skillPaths: profiledSkillPaths,
-    pluginPaths: profiledPluginPaths,
-  });
-  const assetCommitHash = sha256Text([
-    `agent:${agentId}`,
-    `agentProfile:${JSON.stringify(agentProfile)}`,
-    `resource:${resourceHash}`,
-    `run:${runId}`,
-  ].join("\n"));
-  const mountHash = sha256Text(`assetCommit:${assetCommitHash}`);
-  const mountId = `m_${mountHash.slice(0, 16)}`;
-  const assetCommitId = `ac_${assetCommitHash.slice(0, 16)}`;
   const materializedMcpServers = materializeMcpServers({
     mountRoot,
     mcpServers: profiledMcpServers,
@@ -172,7 +200,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     agentId,
     agentProfile,
     assetCommitId,
-    parentAssetCommitId: options.parentAssetCommitId,
+    parentAssetCommitId,
     mountId,
     mountRoot,
     trustedRoots,
@@ -180,7 +208,9 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     resourceHash,
     assetsRoot,
     mcpServers: materializedMcpServers,
+    mcpServerContracts: profiledMcpServers,
     shellTools: shellMaterialization.shellTools,
+    shellToolContracts: profiledShellTools,
     customAgentPaths: profiledCustomAgentPaths,
     skillPaths: profiledSkillPaths,
     pluginPaths: profiledPluginPaths,
@@ -192,6 +222,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     workerAgentPath,
     roleAgentPaths,
     issues: shellMaterialization.issues,
+    shellToolsRegistryHash,
   });
   const manifestPath = join(mountRoot, "mount-manifest.json");
   writeJsonFile(manifestPath, mountManifest);
@@ -200,7 +231,7 @@ export function materializeCodexMount(options: MaterializeOptions): CodexMount {
     agentId,
     agentProfile,
     assetCommitId,
-    parentAssetCommitId: options.parentAssetCommitId,
+    parentAssetCommitId,
     mountId,
     mountRoot,
     runRoot,
@@ -382,7 +413,6 @@ function computeResourceHash(input: {
     `config:${input.agentProfile.config}:${sha256File(join(input.assetsRoot, input.agentProfile.config))}`,
     `mcpServers:${sha256File(join(input.assetsRoot, CodexAssetLayout.mcpServers))}`,
     ...computeMcpServerResourceHashParts(input.assetsRoot, input.mcpServers),
-    `shell:${sha256File(join(input.assetsRoot, CodexAssetLayout.shellTools))}`,
     ...computeShellToolResourceHashParts(input.assetsRoot, input.shellTools),
     ...input.customAgentPaths.map((path) => `customAgent:${path}:${sha256File(join(input.assetsRoot, path))}`),
     ...hashVendorDirectories(input.assetsRoot),
@@ -410,14 +440,18 @@ function hashVendorDirectories(assetsRoot: string): string[] {
 function computeMcpServerResourceHashParts(assetsRoot: string, mcpServers: McpServersFile): string[] {
   const parts: string[] = [];
   for (const [name, server] of Object.entries(mcpServers.servers)) {
-    for (const arg of server.args ?? []) {
-      if (!arg.startsWith("assets/")) continue;
-      const path = resolveAssetArg(arg, assetsRoot);
-      parts.push(`mcpServer:${name}:${arg}:${sha256File(path)}`);
+    const appendResource = (kind: "command" | "arg", assetPath: string) => {
+      if (!assetPath.startsWith("assets/")) return;
+      const path = resolveRequiredAssetFile(assetPath, assetsRoot);
+      parts.push(`mcpServer${kind === "command" ? "Command" : ""}:${name}:${assetPath}:${sha256File(path)}`);
       const vendorRoot = join(dirname(path), "vendor");
       if (existsSync(vendorRoot)) {
         parts.push(`mcpServerVendor:${name}:${relative(assetsRoot, vendorRoot)}:${hashDirectory(vendorRoot)}`);
       }
+    };
+    appendResource("command", server.command);
+    for (const arg of server.args ?? []) {
+      appendResource("arg", arg);
     }
   }
   return parts;
@@ -432,9 +466,16 @@ function computeShellToolResourceHashParts(assetsRoot: string, shellTools: Shell
 
 function hashOptionalAssetFile(prefix: string, assetPath: string, assetsRoot: string): string[] {
   if (!assetPath.startsWith("assets/")) return [];
-  const resolvedPath = resolveAssetArg(assetPath, assetsRoot);
-  if (!existsSync(resolvedPath)) return [];
+  const resolvedPath = resolveRequiredAssetFile(assetPath, assetsRoot);
   return [`${prefix}:${assetPath}:${sha256File(resolvedPath)}`];
+}
+
+function resolveRequiredAssetFile(assetPath: string, assetsRoot: string): string {
+  const resolvedPath = resolveAssetArg(assetPath, assetsRoot);
+  if (!existsSync(resolvedPath)) {
+    throw new Error(`Asset-local resource is missing: ${assetPath}`);
+  }
+  return resolvedPath;
 }
 
 function materializeSkills(assetsRoot: string, mountRoot: string, skills: string[]): string[] {
@@ -517,7 +558,9 @@ function buildMountManifest(input: {
   resourceHash: string;
   assetsRoot: string;
   mcpServers: MaterializedMcpServer[];
+  mcpServerContracts: McpServersFile;
   shellTools: ShellToolContract[];
+  shellToolContracts: ShellToolContract[];
   customAgentPaths: string[];
   skillPaths: string[];
   pluginPaths: string[];
@@ -528,6 +571,7 @@ function buildMountManifest(input: {
   pluginNames: string[];
   workerAgentPath?: string;
   roleAgentPaths: Record<string, string>;
+  shellToolsRegistryHash: string;
 }): MountManifest {
   const linkedFiles = [
     {
@@ -577,7 +621,58 @@ function buildMountManifest(input: {
     });
   }
 
+  const shellToolAssets = input.shellToolContracts.flatMap((tool) => {
+    const assets: MountManifest["assets"] = [];
+    const appendAsset = (kind: "command" | "arg", assetPath: string, index?: number) => {
+      if (!assetPath.startsWith("assets/")) return;
+      const sourcePath = resolveRequiredAssetFile(assetPath, input.assetsRoot);
+      assets.push({
+        id: `codex.shell_tool.${tool.id}.${kind}${index === undefined ? "" : `.${index}`}`,
+        type: "shell_tool_resource",
+        sourcePath: assetPath,
+        hash: sha256File(sourcePath),
+      });
+    };
+    appendAsset("command", tool.command);
+    for (const [index, arg] of (tool.args ?? []).entries()) {
+      appendAsset("arg", arg, index);
+    }
+    return assets;
+  });
+
+  const mcpServerAssets = Object.entries(input.mcpServerContracts.servers).flatMap(
+    ([name, server]) => {
+      const assets: MountManifest["assets"] = [];
+      const appendAsset = (kind: "command" | "arg", assetPath: string, index?: number) => {
+        if (!assetPath.startsWith("assets/")) return;
+        const sourcePath = resolveRequiredAssetFile(assetPath, input.assetsRoot);
+        const idSuffix = `${kind}${index === undefined ? "" : `.${index}`}`;
+        assets.push({
+          id: `codex.mcp_server.${name}.${idSuffix}`,
+          type: "mcp_server_resource",
+          sourcePath: assetPath,
+          hash: sha256File(sourcePath),
+        });
+        const vendorRoot = join(dirname(sourcePath), "vendor");
+        if (existsSync(vendorRoot)) {
+          assets.push({
+            id: `codex.mcp_server.${name}.${idSuffix}.vendor`,
+            type: "mcp_server_vendor",
+            sourcePath: relative(resolve(input.assetsRoot, "..", ".."), vendorRoot),
+            hash: hashDirectory(vendorRoot),
+          });
+        }
+      };
+      appendAsset("command", server.command);
+      for (const [index, arg] of (server.args ?? []).entries()) {
+        appendAsset("arg", arg, index);
+      }
+      return assets;
+    },
+  );
+
   return {
+    resourceInventoryVersion: 1,
     agentId: input.agentId,
     assetCommitId: input.assetCommitId,
     parentAssetCommitId: input.parentAssetCommitId,
@@ -638,8 +733,10 @@ function buildMountManifest(input: {
         id: "codex.shell_tools",
         type: "shell_tool_contract",
         sourcePath: assetSourcePath(CodexAssetLayout.shellTools),
-        hash: sha256File(join(input.assetsRoot, CodexAssetLayout.shellTools)),
+        hash: input.shellToolsRegistryHash,
       },
+      ...shellToolAssets,
+      ...mcpServerAssets,
       ...input.skillPaths.map((skillPath) => ({
         id: `codex.skill.${skillNameFromPath(skillPath)}`,
         type: "skill",

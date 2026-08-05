@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import type {
   EventKey,
   ScoutEvent,
@@ -19,6 +20,7 @@ import type { RunJournalEvent } from "./journal-events.js";
 
 interface RunLockRecord {
   runId: string;
+  hostId: string;
   processId: number;
   token: string;
   acquiredAt: string;
@@ -193,8 +195,10 @@ function isPersistedEventKey(value: unknown): value is EventKey {
 function acquireRunLock(runId: string, runRoot: string): string {
   const lockPath = join(runRoot, ".run.lock");
   const token = randomUUID();
+  const hostId = hostname();
   const record: RunLockRecord = {
     runId,
+    hostId,
     processId: process.pid,
     token,
     acquiredAt: new Date().toISOString(),
@@ -212,8 +216,16 @@ function acquireRunLock(runId: string, runRoot: string): string {
     } catch (error) {
       if (!isAlreadyExists(error)) throw error;
       const existing = readLockRecord(lockPath);
+      if (existing && existing.hostId !== hostId) {
+        throw new Error(
+          `Run ${runId} is locked by host ${existing.hostId ?? "unknown"}`
+          + ` process ${existing.processId ?? "unknown"}; current host is ${hostId}.`,
+        );
+      }
       if (existing && isProcessAlive(existing.processId)) {
-        throw new Error(`Run ${runId} is already attached to process ${existing.processId}.`);
+        throw new Error(
+          `Run ${runId} is already attached to process ${existing.processId} on host ${hostId}.`,
+        );
       }
       unlinkSync(lockPath);
     }

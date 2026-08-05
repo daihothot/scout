@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import readline from "node:readline";
 import {
   AppServerEventStore,
@@ -71,6 +71,7 @@ export interface CodexAppServerOptions {
   home: string;
   codexHome: string;
   providerName?: string;
+  providerApiKey?: string;
   logPrefix?: string;
   stderrLogPath?: string;
   transportLogPath?: string;
@@ -112,7 +113,9 @@ export interface ThreadStartResponse {
 
 export interface ThreadResumeOptions {
   threadId: string;
+  path?: string;
   cwd?: string;
+  runtimeWorkspaceRoots?: string[];
   model?: string;
   modelProvider?: string;
   reasoningEffort?: CodexReasoningEffort;
@@ -126,7 +129,9 @@ export interface ThreadResumeOptions {
 export interface ThreadResumeRequest {
   threadId: string;
   excludeTurns: true;
+  path?: string;
   cwd?: string;
+  runtimeWorkspaceRoots?: string[];
   model?: string;
   modelProvider?: string;
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
@@ -139,6 +144,41 @@ export interface ThreadResumeRequest {
 export interface ThreadResumeResponse {
   threadId: string;
   resumeInput: ThreadResumeRequest;
+  response: unknown;
+}
+
+export type ThreadSandboxPolicy =
+  | {
+      type: "readOnly";
+      networkAccess?: boolean;
+    }
+  | {
+      type: "workspaceWrite";
+      writableRoots: string[];
+      networkAccess?: boolean;
+      excludeSlashTmp?: boolean;
+      excludeTmpdirEnvVar?: boolean;
+    };
+
+export interface ThreadSettingsUpdateOptions {
+  threadId: string;
+  cwd?: string;
+  approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
+  sandboxPolicy?: ThreadSandboxPolicy;
+  timeoutMs?: number;
+}
+
+export interface ThreadSettingsUpdateRequest {
+  threadId: string;
+  cwd?: string;
+  approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
+  sandboxPolicy?: ThreadSandboxPolicy;
+}
+
+export interface ThreadSettingsUpdateResponse {
+  threadId: string;
+  updateInput: ThreadSettingsUpdateRequest;
+  threadSettings: Record<string, unknown>;
   response: unknown;
 }
 
@@ -210,12 +250,15 @@ export class CodexAppServerClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly turnWaiters = new Map<string, TurnWaiter>();
+  private readonly settingsUpdateTails = new Map<string, Promise<void>>();
+  private readonly settingsUpdateWaiters = new Set<(error: Error) => void>();
   private readonly messageHandlers = new Set<AppServerMessageHandler>();
   private readonly notificationHandlers = new Set<AppServerNotificationHandler>();
   private readonly serverRequestHandlers = new Set<AppServerRequestHandler>();
   private readonly timelineHandlers = new Set<AppServerTimelineHandler>();
   private readonly eventStore = new AppServerEventStore();
   private readonly logPrefix: string;
+  private readonly codexHome: string;
   private readonly stderrLogPath?: string;
   private readonly transportLogPath?: string;
   private onDynamicToolCall?: DynamicToolCallHandler;
@@ -229,7 +272,9 @@ export class CodexAppServerClient {
       HOME: options.home,
       CODEX_HOME: options.codexHome,
     };
-    if (provider.envKey && process.env[provider.envKey]) {
+    if (options.providerApiKey) {
+      env.CODEX_API_KEY = options.providerApiKey;
+    } else if (provider.envKey && process.env[provider.envKey]) {
       env.CODEX_API_KEY = process.env[provider.envKey];
     }
     if (provider.baseUrl) {
@@ -237,6 +282,7 @@ export class CodexAppServerClient {
     }
 
     this.logPrefix = options.logPrefix ?? "scout app-server";
+    this.codexHome = resolve(options.codexHome);
     this.stderrLogPath = options.stderrLogPath;
     this.transportLogPath = options.transportLogPath;
     if (this.stderrLogPath) mkdirSync(dirname(this.stderrLogPath), { recursive: true });
@@ -310,9 +356,11 @@ export class CodexAppServerClient {
     const resumeInput: ThreadResumeRequest = cleanUndefined({
       threadId: options.threadId,
       excludeTurns: true as const,
+      path: options.path,
       model: options.model,
       modelProvider: options.modelProvider,
       cwd: options.cwd,
+      runtimeWorkspaceRoots: options.runtimeWorkspaceRoots,
       approvalPolicy: options.approvalPolicy,
       sandbox: options.sandbox,
       config: options.reasoningEffort === undefined
@@ -325,17 +373,284 @@ export class CodexAppServerClient {
       developerInstructions: options.developerInstructions,
     });
     const response = await this.request("thread/resume", resumeInput);
-    const threadId = readNestedString(response, ["thread", "id"]);
+    const responseObject = readObject(response);
+    const thread = readObject(responseObject.thread);
+    const threadId = readString(thread, "id");
     if (threadId !== options.threadId) {
       throw new Error(
         `Codex resumed thread ${threadId}, expected ${options.threadId}.`,
       );
+    }
+    const assertResponseString = (key: string, expected: string | undefined): void => {
+      if (expected === undefined) return;
+      const actual = readString(responseObject, key);
+      if (actual !== expected) {
+        throw new Error(
+          `Codex resumed thread ${threadId} with ${key} ${actual}, expected ${expected}.`,
+        );
+      }
+    };
+    assertResponseString("cwd", options.cwd);
+    assertResponseString("model", options.model);
+    assertResponseString("modelProvider", options.modelProvider);
+    assertResponseString("approvalPolicy", options.approvalPolicy);
+    if (options.runtimeWorkspaceRoots !== undefined) {
+      const actualRoots = responseObject.runtimeWorkspaceRoots;
+      if (!Array.isArray(actualRoots)
+        || actualRoots.some((root) => typeof root !== "string")
+        || actualRoots.length !== options.runtimeWorkspaceRoots.length
+        || options.runtimeWorkspaceRoots.some((root) => !actualRoots.includes(root))) {
+        throw new Error(
+          `Codex resumed thread ${threadId} with unexpected runtime workspace roots.`,
+        );
+      }
+    }
+    if (options.sandbox !== undefined) {
+      const sandbox = readObject(responseObject.sandbox);
+      const expectedSandboxType = options.sandbox === "read-only"
+        ? "readOnly"
+        : options.sandbox === "workspace-write"
+        ? "workspaceWrite"
+        : "dangerFullAccess";
+      const actualSandboxType = readString(sandbox, "type");
+      if (actualSandboxType !== expectedSandboxType) {
+        throw new Error(
+          `Codex resumed thread ${threadId} with sandbox ${actualSandboxType}, expected ${expectedSandboxType}.`,
+        );
+      }
+    }
+    if (options.path !== undefined) {
+      const actualPath = readString(thread, "path");
+      const expectedPath = isAbsolute(options.path)
+        ? resolve(options.path)
+        : resolve(this.codexHome, options.path);
+      const normalizedActualPath = isAbsolute(actualPath)
+        ? resolve(actualPath)
+        : resolve(this.codexHome, actualPath);
+      if (normalizedActualPath !== expectedPath) {
+        throw new Error(
+          `Codex resumed thread ${threadId} from ${actualPath}, expected ${expectedPath}.`,
+        );
+      }
     }
     return {
       threadId,
       resumeInput,
       response,
     };
+  }
+
+  async updateThreadSettings(
+    options: ThreadSettingsUpdateOptions,
+  ): Promise<ThreadSettingsUpdateResponse> {
+    const previous = this.settingsUpdateTails.get(options.threadId) ?? Promise.resolve();
+    const operation = previous.then(() => this.updateThreadSettingsOnce(options));
+    const tail = operation.then(() => undefined, () => undefined);
+    this.settingsUpdateTails.set(options.threadId, tail);
+    try {
+      return await operation;
+    } finally {
+      if (this.settingsUpdateTails.get(options.threadId) === tail) {
+        this.settingsUpdateTails.delete(options.threadId);
+      }
+    }
+  }
+
+  private async updateThreadSettingsOnce(
+    options: ThreadSettingsUpdateOptions,
+  ): Promise<ThreadSettingsUpdateResponse> {
+    const updateInput: ThreadSettingsUpdateRequest = cleanUndefined({
+      threadId: options.threadId,
+      cwd: options.cwd,
+      approvalPolicy: options.approvalPolicy,
+      sandboxPolicy: options.sandboxPolicy,
+    });
+    const assertStringSetting = (
+      threadSettings: Record<string, unknown>,
+      key: "cwd" | "approvalPolicy",
+      expected: string | undefined,
+      label: string,
+    ): void => {
+      if (expected === undefined) return;
+      const actual = threadSettings[key];
+      if (typeof actual !== "string" || actual !== expected) {
+        throw new Error(
+          `Codex updated thread ${options.threadId} ${label} to ${String(actual)}, expected ${expected}.`,
+        );
+      }
+    };
+    const assertBooleanSetting = (
+      policy: Record<string, unknown>,
+      key: "networkAccess" | "excludeSlashTmp" | "excludeTmpdirEnvVar",
+      expected: boolean | undefined,
+      label: string,
+    ): void => {
+      if (expected === undefined) return;
+      const actual = policy[key];
+      if (typeof actual !== "boolean" || actual !== expected) {
+        throw new Error(
+          `Codex updated thread ${options.threadId} ${label} to ${String(actual)}, expected ${String(expected)}.`,
+        );
+      }
+    };
+    const assertSandboxPolicy = (
+      threadSettings: Record<string, unknown>,
+      expectedPolicy: ThreadSandboxPolicy,
+    ): void => {
+      const rawPolicy = threadSettings.sandboxPolicy;
+      if (typeof rawPolicy !== "object" || rawPolicy === null || Array.isArray(rawPolicy)) {
+        throw new Error(
+          `Codex updated thread ${options.threadId} with an invalid sandbox policy.`,
+        );
+      }
+      const actualPolicy = rawPolicy as Record<string, unknown>;
+      const actualType = actualPolicy.type;
+      if (typeof actualType !== "string") {
+        throw new Error(
+          `Codex updated thread ${options.threadId} with an invalid sandbox policy type.`,
+        );
+      }
+      if (actualType !== expectedPolicy.type) {
+        throw new Error(
+          `Codex updated thread ${options.threadId} sandbox policy to ${actualType}, expected ${expectedPolicy.type}.`,
+        );
+      }
+
+      if (expectedPolicy.type === "workspaceWrite") {
+        const actualRoots = actualPolicy.writableRoots;
+        if (!Array.isArray(actualRoots)
+          || actualRoots.some((root) => typeof root !== "string")) {
+          throw new Error(
+            `Codex updated thread ${options.threadId} with unexpected sandbox writable roots.`,
+          );
+        }
+        const confirmedCwd = threadSettings.cwd;
+        if (typeof confirmedCwd !== "string") {
+          throw new Error(
+            `Codex updated thread ${options.threadId} with an invalid sandbox cwd.`,
+          );
+        }
+        const isCoveredByCwd = (root: string): boolean => {
+          const relativeRoot = relative(confirmedCwd, root);
+          return relativeRoot === ""
+            || (!isAbsolute(relativeRoot)
+              && relativeRoot !== ".."
+              && !relativeRoot.startsWith(`..${sep}`));
+        };
+        const expectedRoots = [...new Set(
+          expectedPolicy.writableRoots.filter((root) => !isCoveredByCwd(root)),
+        )];
+        const confirmedRoots = [...new Set(
+          (actualRoots as string[]).filter((root) => !isCoveredByCwd(root)),
+        )];
+        if (confirmedRoots.length !== expectedRoots.length
+          || expectedRoots.some((root) => !confirmedRoots.includes(root))) {
+          throw new Error(
+            `Codex updated thread ${options.threadId} with unexpected sandbox writable roots.`,
+          );
+        }
+      }
+
+      assertBooleanSetting(
+        actualPolicy,
+        "networkAccess",
+        expectedPolicy.networkAccess,
+        "sandbox networkAccess",
+      );
+      if (expectedPolicy.type === "workspaceWrite") {
+        assertBooleanSetting(
+          actualPolicy,
+          "excludeSlashTmp",
+          expectedPolicy.excludeSlashTmp,
+          "sandbox excludeSlashTmp",
+        );
+        assertBooleanSetting(
+          actualPolicy,
+          "excludeTmpdirEnvVar",
+          expectedPolicy.excludeTmpdirEnvVar,
+          "sandbox excludeTmpdirEnvVar",
+        );
+      }
+    };
+    const validateThreadSettings = (threadSettings: Record<string, unknown>): void => {
+      assertStringSetting(threadSettings, "cwd", updateInput.cwd, "cwd");
+      assertStringSetting(
+        threadSettings,
+        "approvalPolicy",
+        updateInput.approvalPolicy,
+        "approval policy",
+      );
+      if (updateInput.sandboxPolicy !== undefined) {
+        assertSandboxPolicy(threadSettings, updateInput.sandboxPolicy);
+      }
+    };
+    const timeoutMs = options.timeoutMs ?? 5000;
+    let disposeNotification: (() => void) | undefined;
+    let updateTimeout: NodeJS.Timeout | undefined;
+    let responseReceived = false;
+    let settingsNotificationReceived = false;
+    const settingsUpdated = new Promise<Record<string, unknown>>((resolve, reject) => {
+      disposeNotification = this.onNotification((notification) => {
+        if (notification.method !== "thread/settings/updated") return;
+        if (typeof notification.params !== "object"
+          || notification.params === null
+          || Array.isArray(notification.params)) return;
+        const params = notification.params as Record<string, unknown>;
+        if (params.threadId !== options.threadId) return;
+        try {
+          const threadSettings = readObject(params.threadSettings);
+          validateThreadSettings(threadSettings);
+          settingsNotificationReceived = true;
+          resolve(threadSettings);
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      });
+    });
+    const responseReceivedPromise = this.request(
+      "thread/settings/update",
+      updateInput,
+    ).then((value) => {
+      readObject(value);
+      responseReceived = true;
+      return value;
+    });
+    const timedOut = new Promise<never>((_, reject) => {
+      updateTimeout = setTimeout(() => {
+        const waitingFor = responseReceived && !settingsNotificationReceived
+          ? "thread/settings/updated"
+          : "thread/settings/update response";
+        reject(new Error(
+          `Timed out waiting for ${waitingFor} on thread ${options.threadId} after ${timeoutMs}ms.`,
+        ));
+      }, timeoutMs);
+    });
+    let cancelWait: ((error: Error) => void) | undefined;
+    const cancelled = new Promise<never>((_, reject) => {
+      cancelWait = reject;
+      this.settingsUpdateWaiters.add(reject);
+    });
+
+    try {
+      const [response, threadSettings] = await Promise.race([
+        Promise.all([
+          responseReceivedPromise,
+          settingsUpdated,
+        ]),
+        timedOut,
+        cancelled,
+      ]);
+      return {
+        threadId: options.threadId,
+        updateInput,
+        threadSettings,
+        response,
+      };
+    } finally {
+      disposeNotification?.();
+      if (updateTimeout) clearTimeout(updateTimeout);
+      if (cancelWait) this.settingsUpdateWaiters.delete(cancelWait);
+    }
   }
 
   async runTurn(options: TurnStartOptions): Promise<TurnOutput> {
@@ -836,6 +1151,9 @@ export class CodexAppServerClient {
       waiter.reject(error);
     }
     this.turnWaiters.clear();
+
+    for (const reject of this.settingsUpdateWaiters) reject(error);
+    this.settingsUpdateWaiters.clear();
   }
 
   private handleDisconnect(message: string): void {

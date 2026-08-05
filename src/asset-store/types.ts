@@ -130,6 +130,7 @@ export interface AssetCommit {
 }
 
 export interface MountManifest {
+  resourceInventoryVersion?: 1;
   agentId: string;
   assetCommitId: string;
   parentAssetCommitId?: string;

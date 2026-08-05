@@ -1,5 +1,5 @@
-import { existsSync, statSync } from "node:fs";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { statSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { ScoutAgentRoles, type ScoutAgentRole } from "../../agent/thread/types.js";
 import { InMemoryEventBus } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
@@ -34,12 +34,13 @@ export async function resumeRun(
   const runRoot = resolveRunRoot(options.cwd, options.run);
   const manifestStore = new RunManifestStore(runRoot);
   const manifest = manifestStore.read();
-  const canonicalRunRoot = resolve(manifest.repoRoot, "run", manifest.runId);
-  if (basename(runRoot) !== manifest.runId || resolve(runRoot) !== canonicalRunRoot) {
+  const runDirectory = dirname(runRoot);
+  if (basename(runRoot) !== manifest.runId || basename(runDirectory) !== "run") {
     throw new Error(
-      `Run directory ${runRoot} does not match manifest root ${canonicalRunRoot}.`,
+      `Run directory ${runRoot} must be <ScoutRoot>/run/${manifest.runId}.`,
     );
   }
+  const repoRoot = dirname(runDirectory);
   const interactionPort = options.interactionPort ?? new NoopRuntimeInteractionPort();
   const logger = new Logger({
     runId: manifest.runId,
@@ -54,7 +55,7 @@ export async function resumeRun(
   });
   const runScope = new RunScope({
     runId: manifest.runId,
-    repoRoot: manifest.repoRoot,
+    repoRoot,
     logger,
     eventBus,
     interactionPort,
@@ -93,6 +94,7 @@ export async function resumeRun(
     });
     scope.manifestStore.update((current) => ({
       ...current,
+      repoRoot: scope.repoRoot,
       runtime: {
         status: "ready",
         mode: "resume",
@@ -125,10 +127,33 @@ export async function resumeRun(
 
 function resolveRunRoot(cwd: string, run: string): string {
   const direct = isAbsolute(run) ? resolve(run) : resolve(cwd, run);
-  if (existsSync(direct) && statSync(direct).isDirectory()) return direct;
-  const byId = resolve(cwd, "run", run);
-  if (existsSync(byId) && statSync(byId).isDirectory()) return byId;
+  const candidates = isAbsolute(run) || run.includes("/") || run.includes("\\")
+    ? [direct]
+    : [resolve(cwd, "run", run), direct];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (!isDirectory(candidate) || !isRunManifest(candidate)) continue;
+    return candidate;
+  }
   throw new Error(`Scout run directory does not exist: ${run}`);
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function isRunManifest(path: string): boolean {
+  try {
+    return statSync(join(path, "run.json")).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function toRunSummary(environment: RunEnvironment): ScoutRunSummary {

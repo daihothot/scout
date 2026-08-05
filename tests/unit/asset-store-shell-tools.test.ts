@@ -443,10 +443,266 @@ test("AssetStore resolves asset-local shell tool commands against the repo root"
   }).trim(), "ASSET_LOCAL_TOOL_OK");
 });
 
+test("Shell tool registry changes do not change new asset identity", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-shell-tool-registry-hash-");
+  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const firstToolPath = join(fixtureRoot, "device-tools", "first-tool");
+  const secondToolPath = join(fixtureRoot, "device-tools", "second-tool");
+  mkdirSync(join(fixtureRoot, "device-tools"), { recursive: true });
+  writeExecutable(firstToolPath, "FIRST_TOOL_OK");
+  writeExecutable(secondToolPath, "SECOND_TOOL_OK");
+  writeShellTools(assetsRoot, {
+    tools: [{
+      id: "deviceTool",
+      name: "first-device-tool",
+      command: firstToolPath,
+      exposeAs: "device-tool",
+      required: true,
+    }],
+  });
+  updateCoordinatorShellTools(assetsRoot, ["deviceTool"]);
+
+  const store = new AssetStore();
+  const before = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-shell-tool-registry-hash-test",
+    agentId: "coordinator",
+  });
+  writeShellTools(assetsRoot, {
+    tools: [{
+      id: "deviceTool",
+      name: "second-device-tool",
+      command: secondToolPath,
+      exposeAs: "device-tool",
+      required: true,
+    }],
+  });
+  const after = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-shell-tool-registry-hash-test",
+    agentId: "coordinator",
+  });
+
+  assert.equal(after.resourceHash, before.resourceHash);
+  assert.equal(after.assetCommitId, before.assetCommitId);
+  assert.equal(after.mountId, before.mountId);
+  assert.equal(execFileSync(join(after.mountRoot, "bin", "device-tool"), [], {
+    cwd: after.mountRoot,
+    encoding: "utf8",
+  }).trim(), "SECOND_TOOL_OK");
+});
+
+test("Asset-local shell tool scripts remain part of the resource hash", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-shell-tool-script-hash-");
+  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const toolPath = join(assetsRoot, "tools", "asset-local-hashed-tool");
+  writeExecutable(toolPath, "BEFORE_TOOL_OK");
+  writeShellTools(assetsRoot, {
+    tools: [{
+      id: "assetLocalHashedTool",
+      name: "asset-local-hashed-tool",
+      command: "assets/codex/tools/asset-local-hashed-tool",
+      exposeAs: "asset-local-hashed-tool",
+      required: true,
+    }],
+  });
+  updateCoordinatorShellTools(assetsRoot, ["assetLocalHashedTool"]);
+
+  const store = new AssetStore();
+  const before = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-shell-tool-script-hash-test",
+    agentId: "coordinator",
+  });
+  writeExecutable(toolPath, "AFTER_TOOL_OK");
+  const after = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-shell-tool-script-hash-test",
+    agentId: "coordinator",
+  });
+
+  assert.notEqual(after.resourceHash, before.resourceHash);
+  assert.notEqual(after.assetCommitId, before.assetCommitId);
+  assert.notEqual(after.mountId, before.mountId);
+  const manifest = JSON.parse(readFileSync(after.manifestPath, "utf8")) as MountManifest;
+  assert.ok(manifest.assets.some((asset) =>
+    asset.id === "codex.shell_tool.assetLocalHashedTool.command"
+    && asset.type === "shell_tool_resource"
+    && asset.sourcePath === "assets/codex/tools/asset-local-hashed-tool"
+    && asset.hash === sha256FileForTest(toolPath)
+  ));
+});
+
+test("AssetStore rematerializes current paths while preserving portable persisted identity", () => {
+  const sourceRoot = createCodexAssetFixture("scout-persisted-mount-source-");
+  const targetRoot = createCodexAssetFixture("scout-persisted-mount-target-");
+  const runId = "run-persisted-mount-identity-test";
+  const source = new AssetStore().materializeMount({
+    repoRoot: sourceRoot,
+    runId,
+    agentId: "coordinator",
+  });
+  const persistedIdentity = {
+    assetCommitId: source.assetCommitId,
+    parentAssetCommitId: source.parentAssetCommitId,
+    mountId: source.mountId,
+    resourceHash: source.resourceHash,
+  };
+  const target = new AssetStore().materializeMount({
+    repoRoot: targetRoot,
+    runId,
+    agentId: "coordinator",
+    persistedIdentity: {
+      assetCommitId: source.assetCommitId,
+      parentAssetCommitId: source.parentAssetCommitId,
+      mountId: source.mountId,
+      resourceHash: source.resourceHash,
+    },
+  });
+  const manifest = JSON.parse(readFileSync(target.manifestPath, "utf8")) as MountManifest;
+  const config = readFileSync(join(target.mountRoot, ".codex", "config.toml"), "utf8");
+
+  assert.equal(target.assetCommitId, persistedIdentity.assetCommitId);
+  assert.equal(target.parentAssetCommitId, persistedIdentity.parentAssetCommitId);
+  assert.equal(target.mountId, persistedIdentity.mountId);
+  assert.equal(target.resourceHash, persistedIdentity.resourceHash);
+  assert.equal(manifest.assetCommitId, persistedIdentity.assetCommitId);
+  assert.equal(manifest.parentAssetCommitId, persistedIdentity.parentAssetCommitId);
+  assert.equal(manifest.mountId, persistedIdentity.mountId);
+  assert.equal(manifest.resourceHash, persistedIdentity.resourceHash);
+  assert.ok(target.mountRoot.startsWith(targetRoot));
+  assert.ok(config.includes(targetRoot));
+  assert.equal(config.includes(sourceRoot), false);
+  assert.equal(
+    realpathSync(join(target.mountRoot, "AGENTS.md")),
+    realpathSync(join(targetRoot, "assets", "codex", "agents", "AGENTS.md")),
+  );
+});
+
+test("AssetStore migrates verifiable legacy identity without hashing device shell paths", () => {
+  const fixtureRoot = createMinimalLegacyShellFixture();
+  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const registryPath = join(assetsRoot, "tools", "shell-tools.json");
+  const toolPath = join(assetsRoot, "tools", "asset-local-tool");
+  const originalRegistryHash = sha256FileForTest(registryPath);
+  const legacyResourceHash = computeMinimalLegacyResourceHash({
+    assetsRoot,
+    registryHash: originalRegistryHash,
+    toolPath,
+  });
+  const persistedIdentity = {
+    assetCommitId: "ac_legacy_identity",
+    parentAssetCommitId: undefined,
+    mountId: "m_legacy_identity",
+    resourceHash: legacyResourceHash,
+  };
+  const store = new AssetStore();
+  const original = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-legacy-resource-identity",
+    agentId: "coordinator",
+    persistedIdentity: {
+      ...persistedIdentity,
+      allowLegacyResourceIdentityMigration: true,
+    },
+  });
+  assert.notEqual(original.resourceHash, legacyResourceHash);
+
+  writeMinimalLegacyShellRegistry(assetsRoot, "node");
+  const relocated = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-legacy-resource-identity",
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedIdentity: {
+      ...persistedIdentity,
+      allowLegacyResourceIdentityMigration: true,
+    },
+  });
+  const relocatedManifest = JSON.parse(
+    readFileSync(relocated.manifestPath, "utf8"),
+  ) as MountManifest;
+  assert.equal(relocated.resourceHash, original.resourceHash);
+  assert.equal(relocatedManifest.resourceInventoryVersion, 1);
+  assert.equal(
+    relocatedManifest.assets.find((asset) => asset.id === "codex.shell_tools")?.hash,
+    sha256FileForTest(registryPath),
+  );
+
+  const persistedManifestText = readFileSync(relocated.manifestPath, "utf8");
+  writeExecutable(toolPath, "ASSET_LOCAL_TOOL_CHANGED");
+  assert.throws(() => store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-legacy-resource-identity",
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedIdentity,
+  }), /Persisted resource identity does not match current assets for coordinator/);
+  assert.equal(readFileSync(original.manifestPath, "utf8"), persistedManifestText);
+});
+
+test("AssetStore permits one explicit migration for an unreconstructable legacy hash", () => {
+  const fixtureRoot = createMinimalLegacyShellFixture();
+  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const toolPath = join(assetsRoot, "tools", "asset-local-tool");
+  const persistedIdentity = {
+    assetCommitId: "ac_unreconstructable_legacy",
+    parentAssetCommitId: undefined,
+    mountId: "m_unreconstructable_legacy",
+    resourceHash: "unreconstructable-legacy-resource-hash",
+  };
+  const store = new AssetStore();
+
+  assert.throws(() => store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-unreconstructable-legacy-resource-identity",
+    agentId: "coordinator",
+    persistedIdentity,
+  }), /Persisted resource identity does not match current assets for coordinator/);
+
+  const migrated = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-unreconstructable-legacy-resource-identity",
+    agentId: "coordinator",
+    persistedIdentity: {
+      ...persistedIdentity,
+      allowLegacyResourceIdentityMigration: true,
+    },
+  });
+  const migratedManifest = JSON.parse(
+    readFileSync(migrated.manifestPath, "utf8"),
+  ) as MountManifest;
+  assert.equal(migrated.assetCommitId, persistedIdentity.assetCommitId);
+  assert.equal(migrated.mountId, persistedIdentity.mountId);
+  assert.notEqual(migrated.resourceHash, persistedIdentity.resourceHash);
+  assert.equal(migratedManifest.resourceInventoryVersion, 1);
+  assert.ok(migratedManifest.assets.some((asset) =>
+    asset.type === "shell_tool_resource"
+    && asset.sourcePath === "assets/codex/tools/asset-local-tool"
+  ));
+
+  writeExecutable(toolPath, "ASSET_LOCAL_TOOL_CHANGED_AFTER_MIGRATION");
+  assert.throws(() => store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-unreconstructable-legacy-resource-identity",
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedIdentity: {
+      assetCommitId: migrated.assetCommitId,
+      parentAssetCommitId: migrated.parentAssetCommitId,
+      mountId: migrated.mountId,
+      resourceHash: migrated.resourceHash,
+    },
+  }), /Persisted resource identity does not match current assets for coordinator/);
+});
+
 test("AssetStore resolves asset-local MCP commands against the repo root", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-mcp-command-");
   const assetsRoot = join(fixtureRoot, "assets", "codex");
   const commandPath = join(assetsRoot, "tools", "asset-local-mcp");
+  const vendorPath = join(assetsRoot, "tools", "vendor", "dependency.cjs");
+  mkdirSync(join(assetsRoot, "tools", "vendor"), { recursive: true });
+  writeFileSync(vendorPath, "module.exports = 'before';\n", "utf8");
   writeExecutable(commandPath, "ASSET_LOCAL_MCP_OK");
   writeMcpServers(assetsRoot, {
     servers: {
@@ -457,7 +713,8 @@ test("AssetStore resolves asset-local MCP commands against the repo root", () =>
   });
   updateCoordinatorMcpServers(assetsRoot, ["assetLocal"]);
 
-  const mount = new AssetStore().materializeMount({
+  const store = new AssetStore();
+  const mount = store.materializeMount({
     repoRoot: fixtureRoot,
     runId: "run-asset-local-mcp-command-test",
     agentId: "coordinator",
@@ -470,6 +727,89 @@ test("AssetStore resolves asset-local MCP commands against the repo root", () =>
     cwd: mount.mountRoot,
     encoding: "utf8",
   }).trim(), "ASSET_LOCAL_MCP_OK");
+  const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
+  assert.ok(manifest.assets.some((asset) =>
+    asset.id === "codex.mcp_server.assetLocal.command"
+    && asset.type === "mcp_server_resource"
+    && asset.sourcePath === "assets/codex/tools/asset-local-mcp"
+    && asset.hash === sha256FileForTest(commandPath)
+  ));
+  assert.ok(manifest.assets.some((asset) =>
+    asset.id === "codex.mcp_server.assetLocal.command.vendor"
+    && asset.type === "mcp_server_vendor"
+    && asset.sourcePath === "assets/codex/tools/vendor"
+  ));
+
+  writeExecutable(commandPath, "ASSET_LOCAL_MCP_CHANGED");
+  assert.throws(() => store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-asset-local-mcp-command-test",
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedIdentity: {
+      assetCommitId: mount.assetCommitId,
+      parentAssetCommitId: mount.parentAssetCommitId,
+      mountId: mount.mountId,
+      resourceHash: mount.resourceHash,
+    },
+  }), /Persisted resource identity does not match current assets for coordinator/);
+  const changed = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-asset-local-mcp-command-changed-test",
+    agentId: "coordinator",
+  });
+  assert.notEqual(changed.resourceHash, mount.resourceHash);
+
+  writeFileSync(vendorPath, "module.exports = 'after';\n", "utf8");
+  assert.throws(() => store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-asset-local-mcp-command-changed-test",
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedIdentity: {
+      assetCommitId: changed.assetCommitId,
+      parentAssetCommitId: changed.parentAssetCommitId,
+      mountId: changed.mountId,
+      resourceHash: changed.resourceHash,
+    },
+  }), /Persisted resource identity does not match current assets for coordinator/);
+});
+
+test("Asset-local shell and MCP references fail closed when missing", () => {
+  const shellFixtureRoot = createCodexAssetFixture("scout-missing-shell-resource-");
+  const shellAssetsRoot = join(shellFixtureRoot, "assets", "codex");
+  writeShellTools(shellAssetsRoot, {
+    tools: [{
+      id: "missingAssetTool",
+      name: "missing-asset-tool",
+      command: "assets/codex/tools/missing-asset-tool",
+      exposeAs: "missing-asset-tool",
+      required: true,
+    }],
+  });
+  updateCoordinatorShellTools(shellAssetsRoot, ["missingAssetTool"]);
+  assert.throws(() => new AssetStore().materializeMount({
+    repoRoot: shellFixtureRoot,
+    runId: "run-missing-shell-resource",
+    agentId: "coordinator",
+  }), /Asset-local resource is missing: assets\/codex\/tools\/missing-asset-tool/);
+
+  const mcpFixtureRoot = createCodexAssetFixture("scout-missing-mcp-resource-");
+  const mcpAssetsRoot = join(mcpFixtureRoot, "assets", "codex");
+  writeMcpServers(mcpAssetsRoot, {
+    servers: {
+      missingAsset: {
+        command: "node",
+        args: ["assets/codex/mcp/missing-server.cjs"],
+      },
+    },
+  });
+  updateCoordinatorMcpServers(mcpAssetsRoot, ["missingAsset"]);
+  assert.throws(() => new AssetStore().materializeMount({
+    repoRoot: mcpFixtureRoot,
+    runId: "run-missing-mcp-resource",
+    agentId: "coordinator",
+  }), /Asset-local resource is missing: assets\/codex\/mcp\/missing-server\.cjs/);
 });
 
 test("scout-memory reports run-level codex memory files without reading sqlite content", () => {
@@ -516,6 +856,119 @@ test("scout-memory reports run-level codex memory files without reading sqlite c
   ]);
   assert.ok(list.files.every((file) => file.readable));
 });
+
+function createMinimalLegacyShellFixture(): string {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-legacy-resource-identity-"));
+  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  mkdirSync(join(assetsRoot, "agents"), { recursive: true });
+  mkdirSync(join(assetsRoot, "config"), { recursive: true });
+  mkdirSync(join(assetsRoot, "mcp"), { recursive: true });
+  mkdirSync(join(assetsRoot, "tools"), { recursive: true });
+  writeFileSync(join(assetsRoot, "agents", "AGENTS.md"), "# Agents\n", "utf8");
+  writeFileSync(
+    join(assetsRoot, "agents", "coordinator.AGENTS.md"),
+    "# Coordinator\n",
+    "utf8",
+  );
+  const profiles: AgentProfilesFile = {
+    defaults: {
+      model: {
+        id: "test-model",
+        provider: "TestProvider",
+        reasoningEffort: "high",
+        reasoningSummary: "concise",
+      },
+    },
+    profiles: {
+      coordinator: {
+        config: "config/base.config.toml",
+        multiAgent: false,
+        maxThreads: 1,
+        maxDepth: 0,
+        customAgents: [],
+        skills: [],
+        shellTools: ["assetTool", "deviceTool"],
+        mcpServers: [],
+        plugins: [],
+        trustedRoots: [],
+        writableRoots: [],
+      },
+    },
+  };
+  writeFileSync(
+    join(assetsRoot, "agents", "agent-profiles.json"),
+    `${JSON.stringify(profiles, null, 2)}\n`,
+    "utf8",
+  );
+  writeFileSync(join(assetsRoot, "config", "base.config.toml"), "", "utf8");
+  writeFileSync(join(assetsRoot, "mcp", "servers.json"), "{\n  \"servers\": {}\n}\n", "utf8");
+  writeExecutable(join(assetsRoot, "tools", "asset-local-tool"), "ASSET_LOCAL_TOOL_OK");
+  writeMinimalLegacyShellRegistry(assetsRoot, process.execPath);
+  return fixtureRoot;
+}
+
+function writeMinimalLegacyShellRegistry(assetsRoot: string, deviceCommand: string): void {
+  writeShellTools(assetsRoot, {
+    tools: [
+      {
+        id: "assetTool",
+        name: "asset-tool",
+        command: "assets/codex/tools/asset-local-tool",
+        exposeAs: "asset-tool",
+        required: true,
+      },
+      {
+        id: "deviceTool",
+        name: "device-tool",
+        command: deviceCommand,
+        exposeAs: "device-tool",
+        required: true,
+      },
+    ],
+  });
+}
+
+function computeMinimalLegacyResourceHash(input: {
+  assetsRoot: string;
+  registryHash: string;
+  toolPath: string;
+}): string {
+  const profile = {
+    config: "config/base.config.toml",
+    multiAgent: false,
+    maxThreads: 1,
+    maxDepth: 0,
+    customAgents: [],
+    model: {
+      id: "test-model",
+      provider: "TestProvider",
+      reasoningEffort: "high",
+      reasoningSummary: "concise",
+    },
+    skills: [],
+    shellTools: ["assetTool", "deviceTool"],
+    mcpServers: [],
+    plugins: [],
+    trustedRoots: [],
+    writableRoots: [],
+  };
+  const parts = [
+    "agent:coordinator",
+    `agentProfile:${JSON.stringify(profile)}`,
+    `agents:${sha256FileForTest(join(input.assetsRoot, "agents", "AGENTS.md"))}`,
+    `agentProfiles:${sha256FileForTest(join(input.assetsRoot, "agents", "agent-profiles.json"))}`,
+    `config:config/base.config.toml:${sha256FileForTest(join(input.assetsRoot, "config", "base.config.toml"))}`,
+    `mcpServers:${sha256FileForTest(join(input.assetsRoot, "mcp", "servers.json"))}`,
+    `shell:${input.registryHash}`,
+    `shellToolCommand:assetTool:assets/codex/tools/asset-local-tool:${sha256FileForTest(input.toolPath)}`,
+    `roleAgent:coordinator:agents/coordinator.AGENTS.md:${sha256FileForTest(join(input.assetsRoot, "agents", "coordinator.AGENTS.md"))}`,
+  ];
+  return createHash("sha256").update(parts.sort().join("\n")).digest("hex");
+}
+
+function sha256FileForTest(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
 
 function createCodexAssetFixture(prefix: string): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));

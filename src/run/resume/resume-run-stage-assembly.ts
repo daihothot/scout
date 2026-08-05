@@ -35,10 +35,10 @@ export class ResumeRunStageAssembly {
     executor.registerSerial(
       runScopeStage,
       new RunJournalWriterStage(),
+      new ResumeClientsStage(),
+      new RestoreEnvironmentStage(),
       new RecordResumeInterruptionsStage(),
       new RunRuntimeStage("resume"),
-      new RestoreEnvironmentStage(),
-      new ResumeClientsStage(),
       new InteractionStage(),
     );
     executor.registerParallel(new DomainStage(), new AgentTelemetryStage());

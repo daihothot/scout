@@ -1,5 +1,14 @@
 export interface AgentServerPreflightReport {
   status: "passed" | "failed";
+  rootAccess?: {
+    status: "passed" | "failed";
+    roots: Array<{
+      path: string;
+      access: "trusted" | "writable";
+      status: "passed" | "failed";
+      error?: string;
+    }>;
+  };
   configLayers?: unknown[];
   skillsList?: unknown;
   pluginList?: unknown;

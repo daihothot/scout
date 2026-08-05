@@ -325,7 +325,7 @@ test("AgentActivityRecorder writes complete native subagent facts to a dedicated
   assert.equal(existsSync(join(root, "logs", "runtime.log")), false);
 });
 
-test("AgentThreadRecorder writes complete startup facts and incremental close facts", async (t) => {
+test("AgentThreadRecorder summarizes thread instruction and tool bodies", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-thread-recorder-"));
   const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
@@ -335,7 +335,10 @@ test("AgentThreadRecorder writes complete startup facts and incremental close fa
   }).agentRegistry;
   registerAgent(registry, "researcher", logsRoot);
   const recorder = new AgentThreadRecorder();
+  const baseInstructions = `${"base-instruction ".repeat(300)}END_OF_BASE_INSTRUCTIONS`;
   const developerInstructions = `${"complete-instruction ".repeat(300)}END_OF_FULL_INSTRUCTIONS`;
+  const resumedBaseInstructions = `${"resume-base-instruction ".repeat(300)}END_OF_RESUME_BASE_INSTRUCTIONS`;
+  const resumedDeveloperInstructions = `${"resume-instruction ".repeat(300)}END_OF_RESUME_INSTRUCTIONS`;
   const started: AgentThreadSnapshot = {
     agentId: "researcher",
     role: "researcher",
@@ -345,42 +348,77 @@ test("AgentThreadRecorder writes complete startup facts and incremental close fa
     createdAt: "2026-07-17T00:00:00.000Z",
     status: "active",
     startInput: {
-      cwd: "/run/agents/researcher/mount",
+      cwd: "/source-device/run/run-thread-recorder/agents/researcher/mount",
       model: "gpt-5.5",
       modelProvider: "GuruOpenAI",
       approvalPolicy: "never",
       sandbox: "workspace-write",
       ephemeral: true,
+      baseInstructions,
       developerInstructions,
       dynamicTools: [{
         namespace: "agent.submit-task",
         name: "SubmitTask",
-        description: "Submit the current task.",
+        description: "FULL_TOOL_DESCRIPTION_MUST_NOT_BE_RECORDED",
         inputSchema: {
           type: "object",
           properties: {
-            outcome: { type: "string" },
+            FULL_TOOL_SCHEMA_MUST_NOT_BE_RECORDED: { type: "string" },
           },
-          required: ["outcome"],
+          required: ["FULL_TOOL_SCHEMA_MUST_NOT_BE_RECORDED"],
         },
       }],
     },
-    startResponse: { thread: { id: "thread-researcher" } },
+    startResponse: {
+      thread: {
+        id: "thread-researcher",
+        preview: "START_RESPONSE_PREVIEW_MUST_NOT_BE_RECORDED",
+        turns: [{ body: "START_RESPONSE_TURN_MUST_NOT_BE_RECORDED" }],
+      },
+      cwd: "/source-device/run/run-thread-recorder/agents/researcher/mount",
+    },
   };
-  recorder.start();
-
-  await eventBus.publishAndWait(AgentEvents.thread.started, started);
-  await eventBus.publishAndWait(AgentEvents.thread.resumed, {
+  const startedBeforeRecording = structuredClone(started);
+  const resumed = {
     agentId: started.agentId,
     role: started.role,
     threadId: started.threadId,
     resumedAt: "2026-07-17T00:30:00.000Z",
     resumeInput: {
       threadId: started.threadId,
-      excludeTurns: true,
+      excludeTurns: true as const,
+      baseInstructions: resumedBaseInstructions,
+      developerInstructions: resumedDeveloperInstructions,
     },
-    resumeResponse: { thread: { id: started.threadId, turns: [] } },
-  });
+    resumeResponse: {
+      thread: {
+        id: started.threadId,
+        path: "/run/codex-home/.codex/sessions/rollout.jsonl",
+        cwd: "/source-device/run/run-thread-recorder/agents/researcher/mount",
+        preview: "RESUME_RESPONSE_PREVIEW_MUST_NOT_BE_RECORDED",
+        turns: [{ body: "RESUME_RESPONSE_TURN_MUST_NOT_BE_RECORDED" }],
+      },
+      cwd: "/source-device/run/run-thread-recorder/agents/researcher/mount",
+      runtimeWorkspaceRoots: [
+        "/source-device/run/run-thread-recorder/agents/researcher/mount",
+      ],
+      instructionSources: [
+        "/source-device/run/run-thread-recorder/agents/researcher/mount/AGENTS.md",
+      ],
+      model: "gpt-5.5",
+      modelProvider: "GuruOpenAI",
+      approvalPolicy: "never",
+      sandbox: {
+        type: "workspaceWrite",
+        writableRoots: ["WRITABLE_ROOT_BODY_MUST_NOT_BE_RECORDED"],
+      },
+    },
+  };
+  const resumedBeforeRecording = structuredClone(resumed);
+  recorder.start();
+
+  await eventBus.publishAndWait(AgentEvents.thread.started, started);
+  await eventBus.publishAndWait(AgentEvents.thread.resumed, resumed);
   await eventBus.publishAndWait(AgentEvents.thread.closed, {
     ...started,
     status: "closed",
@@ -389,17 +427,84 @@ test("AgentThreadRecorder writes complete startup facts and incremental close fa
   });
   recorder.stop();
 
+  assert.deepEqual(started, startedBeforeRecording);
+  assert.deepEqual(resumed, resumedBeforeRecording);
+
   const threadLogPath = join(logsRoot, "thread.log");
   const text = readFileSync(threadLogPath, "utf8");
   assert.equal(readEventCount(text), 3);
   assert.match(text, /event=agent\.thread\.started/);
   assert.match(text, /event=agent\.thread\.resumed/);
   assert.match(text, /event=agent\.thread\.closed/);
-  assert.match(text, /END_OF_FULL_INSTRUCTIONS/);
+  assert.match(text, /- "AGENTS\.md"/);
+  assert.match(text, /- "agents\/worker\.AGENTS\.md"/);
+  assert.match(text, /- "agents\/researcher\.AGENTS\.md"/);
+  assert.match(text, /namespace: "agent\.submit-task"/);
   assert.match(text, /name: "SubmitTask"/);
+  assert.match(text, /path: "sessions\/rollout\.jsonl"/);
+  assert.match(text, /cwd: "\$\{SCOUT_MOUNT_ROOT\}"/);
+  assert.match(text, /- "\$\{SCOUT_MOUNT_ROOT\}"/);
+  assert.match(text, /- "\$\{SCOUT_MOUNT_ROOT\}\/AGENTS\.md"/);
+  assert.doesNotMatch(text, /source-device/);
+  assert.doesNotMatch(text, /\/run\/run-thread-recorder/);
+  assert.match(text, /runtimeWorkspaceRoots:/);
+  assert.match(text, /type: "workspaceWrite"/);
   assert.match(text, /closeReason: "run_exit"/);
-  assert.equal(text.match(/developerInstructions:/g)?.length, 1);
+  assert.equal(text.match(/developerInstructions:/g)?.length, 2);
+  assert.equal(text.match(/hasBaseInstructions: true/g)?.length, 2);
+  assert.doesNotMatch(text, /hasInlineDeveloperInstructions/);
+  assert.doesNotMatch(text, /END_OF_BASE_INSTRUCTIONS/);
+  assert.doesNotMatch(text, /END_OF_RESUME_BASE_INSTRUCTIONS/);
+  assert.doesNotMatch(text, /END_OF_FULL_INSTRUCTIONS/);
+  assert.doesNotMatch(text, /END_OF_RESUME_INSTRUCTIONS/);
+  assert.doesNotMatch(text, /FULL_TOOL_DESCRIPTION_MUST_NOT_BE_RECORDED/);
+  assert.doesNotMatch(text, /FULL_TOOL_SCHEMA_MUST_NOT_BE_RECORDED/);
+  assert.doesNotMatch(text, /START_RESPONSE_PREVIEW_MUST_NOT_BE_RECORDED/);
+  assert.doesNotMatch(text, /START_RESPONSE_TURN_MUST_NOT_BE_RECORDED/);
+  assert.doesNotMatch(text, /RESUME_RESPONSE_PREVIEW_MUST_NOT_BE_RECORDED/);
+  assert.doesNotMatch(text, /RESUME_RESPONSE_TURN_MUST_NOT_BE_RECORDED/);
+  assert.doesNotMatch(text, /WRITABLE_ROOT_BODY_MUST_NOT_BE_RECORDED/);
   assert.doesNotMatch(text, /threadPreflight/);
+});
+
+test("AgentThreadRecorder marks coordinator inline instructions separately from assets", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-coordinator-thread-recorder-"));
+  const logsRoot = join(root, "agents", "coordinator", "logs");
+  const eventBus = new InMemoryEventBus();
+  const registry = installTestRunScope(t, {
+    runId: "run-coordinator-thread-recorder",
+    eventBus,
+  }).agentRegistry;
+  registerAgent(registry, "coordinator", logsRoot);
+  const recorder = new AgentThreadRecorder();
+  const started: AgentThreadSnapshot = {
+    agentId: "coordinator",
+    role: "coordinator",
+    phases: ["coordinate"],
+    contextBundleId: "cb-coordinator-thread-recorder",
+    threadId: "thread-coordinator",
+    createdAt: "2026-07-17T00:00:00.000Z",
+    status: "active",
+    startInput: {
+      cwd: "/run/agents/coordinator/mount",
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      ephemeral: false,
+      developerInstructions: "COORDINATOR_INLINE_BODY_MUST_NOT_BE_RECORDED",
+    },
+    startResponse: { thread: { id: "thread-coordinator" } },
+  };
+  recorder.start();
+
+  await eventBus.publishAndWait(AgentEvents.thread.started, started);
+  recorder.stop();
+
+  const text = readFileSync(join(logsRoot, "thread.log"), "utf8");
+  assert.match(text, /- "AGENTS\.md"/);
+  assert.match(text, /- "agents\/coordinator\.AGENTS\.md"/);
+  assert.match(text, /hasInlineDeveloperInstructions: true/);
+  assert.doesNotMatch(text, /worker\.AGENTS\.md/);
+  assert.doesNotMatch(text, /COORDINATOR_INLINE_BODY_MUST_NOT_BE_RECORDED/);
 });
 
 function registerAgent(

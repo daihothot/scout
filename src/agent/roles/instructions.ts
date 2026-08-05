@@ -7,6 +7,21 @@ const AGENTS_DIR = "agents";
 const COMMON_INSTRUCTIONS_FILE = "AGENTS.md";
 const WORKER_INSTRUCTIONS_FILE = "worker.AGENTS.md";
 
+export function roleAgentInstructionAssetPaths(role: ScoutAgentRole): string[] {
+  return [
+    COMMON_INSTRUCTIONS_FILE,
+    `${AGENTS_DIR}/${roleInstructionFile(role)}`,
+  ];
+}
+
+export function workerRoleInstructionAssetPaths(role: ScoutAgentRole): string[] {
+  return [
+    COMMON_INSTRUCTIONS_FILE,
+    `${AGENTS_DIR}/${WORKER_INSTRUCTIONS_FILE}`,
+    `${AGENTS_DIR}/${roleInstructionFile(role)}`,
+  ];
+}
+
 export function readRoleAgentInstructions(
   options: ScoutAgentOptions,
   role: ScoutAgentRole,
@@ -37,5 +52,9 @@ function readCommonInstructions(options: ScoutAgentOptions): string {
 }
 
 function readRoleInstructions(options: ScoutAgentOptions, role: ScoutAgentRole): string {
-  return readFileSync(join(options.agentMount.mountRoot, AGENTS_DIR, `${role}.AGENTS.md`), "utf8");
+  return readFileSync(join(options.agentMount.mountRoot, AGENTS_DIR, roleInstructionFile(role)), "utf8");
+}
+
+function roleInstructionFile(role: ScoutAgentRole): string {
+  return `${role}.AGENTS.md`;
 }

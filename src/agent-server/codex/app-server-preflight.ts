@@ -1,12 +1,89 @@
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { accessSync, constants, statSync } from "node:fs";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { promisify } from "node:util";
 import type { CodexMount } from "../../asset-store/types.js";
 import { buildMountShellEnvironment } from "../../asset-store/mount-macros.js";
+import { isPathWithin } from "../../core/path.js";
 import type { CodexAppServerClient } from "./app-server-client.js";
 import type { AgentServerPreflightReport } from "../types.js";
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Keep the runtime RPC responses available to the gate, but persist only a
+ * portable diagnostic projection. Codex catalog responses contain descriptions,
+ * interfaces, source paths, and other device-local payloads that are not facts
+ * needed to resume a Scout run.
+ */
+export function summarizeAgentServerPreflight(
+  report: AgentServerPreflightReport,
+  mount: Pick<CodexMount, "runRoot" | "mountRoot" | "artifactRoot">,
+): AgentServerPreflightReport {
+  const summary: AgentServerPreflightReport = {
+    status: report.status,
+  };
+  if (report.rootAccess) {
+    summary.rootAccess = {
+      status: report.rootAccess.status,
+      roots: report.rootAccess.roots.map((root) => ({
+        path: portablePreflightPath(root.path, mount),
+        access: root.access,
+        status: root.status,
+        ...(root.error ? { error: summarizeError(root.error) } : {}),
+      })),
+    };
+  }
+  if (report.configLayers) {
+    summary.configLayers = summarizeConfigLayers(report.configLayers, mount);
+  }
+  if (report.skillsList !== undefined) {
+    summary.skillsList = summarizeSkillsList(report.skillsList, mount);
+  }
+  if (report.pluginList !== undefined) {
+    summary.pluginList = summarizePluginList(report.pluginList);
+  }
+  if (report.pluginInstalled !== undefined) {
+    summary.pluginInstalled = summarizePluginStates(report.pluginInstalled);
+  }
+  if (report.pluginInstall !== undefined) {
+    summary.pluginInstall = summarizePluginInstall(report.pluginInstall);
+  }
+  if (report.pluginInstalledAfterInstall !== undefined) {
+    summary.pluginInstalledAfterInstall = summarizePluginStates(
+      report.pluginInstalledAfterInstall,
+    );
+  }
+  if (report.pluginGate) {
+    summary.pluginGate = {
+      marketplacePath: portablePreflightPath(report.pluginGate.marketplacePath, mount),
+      plugins: report.pluginGate.plugins.map((plugin) => ({ ...plugin })),
+      status: report.pluginGate.status,
+    };
+  }
+  if (report.hooksList !== undefined) {
+    summary.hooksList = summarizeHooksList(report.hooksList, mount);
+  }
+  if (report.shellSmoke) {
+    summary.shellSmoke = report.shellSmoke.map((item) => ({
+      command: item.command,
+      status: item.status,
+      ...(item.status === "failed" && item.stdout ? { stdout: summarizeError(item.stdout) } : {}),
+      ...(item.status === "failed" && item.stderr ? { stderr: summarizeError(item.stderr) } : {}),
+      ...(item.error ? { error: summarizeError(item.error) } : {}),
+    }));
+  }
+  if (report.error) summary.error = summarizeError(report.error);
+  return summary;
+}
 
 export async function preflightCodexAppServerMount(input: {
   mount: CodexMount;
@@ -18,11 +95,12 @@ export async function preflightCodexAppServerMount(input: {
   };
 
   try {
+    result.rootAccess = inspectRootAccess(mount);
     const configRead = await appServer.request("config/read", {
       cwd: mount.mountRoot,
       includeLayers: true,
     });
-    result.configLayers = readConfigLayers(configRead);
+    result.configLayers = readConfigLayers(configRead).map(redactConfigLayer);
     result.skillsList = await appServer.request("skills/list", {
       cwds: [mount.mountRoot],
       forceReload: true,
@@ -112,14 +190,67 @@ async function smokeShellTools(mount: CodexMount): Promise<AgentServerPreflightR
 }
 
 function preflightPassed(result: AgentServerPreflightReport): boolean {
+  if (result.rootAccess?.status !== "passed") return false;
   if (result.shellSmoke?.some((item) => item.status !== "passed")) return false;
   if (result.pluginGate && result.pluginGate.status !== "passed") return false;
   return true;
 }
 
+function inspectRootAccess(mount: CodexMount): NonNullable<AgentServerPreflightReport["rootAccess"]> {
+  const writableRoots = new Set([
+    ...mount.writableRoots,
+    ...mount.mcpServers.flatMap((server) => server.writableRoots),
+  ]);
+  const roots = [...new Set([
+    ...mount.trustedRoots,
+    ...mount.mcpServers.flatMap((server) => server.trustedRoots),
+    ...writableRoots,
+  ])].map((path) => {
+    const access = writableRoots.has(path) ? "writable" as const : "trusted" as const;
+    try {
+      if (!statSync(path).isDirectory()) {
+        throw new Error("path is not a directory");
+      }
+      accessSync(
+        path,
+        constants.R_OK | (access === "writable" ? constants.W_OK : 0),
+      );
+      return { path, access, status: "passed" as const };
+    } catch (error) {
+      return {
+        path,
+        access,
+        status: "failed" as const,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
+  return {
+    status: roots.every((root) => root.status === "passed") ? "passed" : "failed",
+    roots,
+  };
+}
+
 function readConfigLayers(response: unknown): unknown[] {
   const root = readObjectOrUndefined(response);
   return readArrayOrUndefined(root?.layers) ?? [];
+}
+
+function redactConfigLayer(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactConfigLayer);
+  const object = readObjectOrUndefined(value);
+  if (!object) return value;
+  return Object.fromEntries(Object.entries(object).map(([key, entry]) => {
+    const normalized = key.toLowerCase();
+    const sensitive = normalized.includes("secret")
+      || normalized.includes("token")
+      || normalized.includes("password")
+      || normalized.includes("credential")
+      || normalized.includes("apikey")
+      || normalized.includes("api_key")
+      || normalized === "authorization";
+    return [key, sensitive ? "[redacted]" : redactConfigLayer(entry)];
+  }));
 }
 
 function buildPluginGate(input: {
@@ -181,4 +312,199 @@ function readArrayOrUndefined(value: unknown): unknown[] | undefined {
 
 function readBoolean(object: Record<string, unknown> | undefined, key: string): boolean {
   return typeof object?.[key] === "boolean" ? object[key] : false;
+}
+
+function portablePreflightPath(
+  path: string,
+  mount: Pick<CodexMount, "runRoot" | "mountRoot" | "artifactRoot">,
+): string {
+  const normalizedPath = resolve(path);
+  const roots: Array<[string, string]> = [
+    [mount.mountRoot, "${SCOUT_MOUNT_ROOT}"],
+    [mount.artifactRoot, "${SCOUT_ARTIFACT_ROOT}"],
+    [mount.runRoot, "${SCOUT_RUN_ROOT}"],
+    [dirname(mount.runRoot), "${SCOUT_REPO_ROOT}"],
+  ];
+  roots.sort(([left], [right]) => right.length - left.length);
+  for (const [root, macro] of roots) {
+    if (!isPathWithin(root, normalizedPath)) continue;
+    const child = relative(resolve(root), normalizedPath);
+    return child.length === 0
+      ? macro
+      : `${macro}/${child.split(sep).join("/")}`;
+  }
+  // External profile roots are intentionally represented by a stable label,
+  // rather than carrying a source-device absolute path into the run artifact.
+  return basename(normalizedPath) || "<root>";
+}
+
+function summarizeConfigLayers(
+  layers: unknown[],
+  mount: Pick<CodexMount, "runRoot" | "mountRoot" | "artifactRoot">,
+): unknown[] {
+  return layers.map((layer) => {
+    const object = readObjectOrUndefined(layer);
+    if (!object) return { kind: typeof layer };
+    const name = readObjectOrUndefined(object.name);
+    const config = readObjectOrUndefined(object.config);
+    return {
+      ...(name ? {
+        name: {
+          ...(typeof name.type === "string" ? { type: name.type } : {}),
+          ...(typeof name.dotCodexFolder === "string"
+            ? { dotCodexFolder: portablePreflightPath(name.dotCodexFolder, mount) }
+            : {}),
+          ...(typeof name.file === "string"
+            ? { file: portablePreflightPath(name.file, mount) }
+            : {}),
+        },
+      } : {}),
+      ...(typeof object.version === "string" ? { version: object.version } : {}),
+      configKeys: config ? Object.keys(config).sort() : [],
+    };
+  });
+}
+
+function summarizeSkillsList(
+  response: unknown,
+  mount: Pick<CodexMount, "runRoot" | "mountRoot" | "artifactRoot">,
+): unknown {
+  const root = readObjectOrUndefined(response);
+  const data = readArrayOrUndefined(root?.data) ?? [];
+  let totalSkills = 0;
+  const entries = data.map((entry) => {
+    const object = readObjectOrUndefined(entry);
+    const skills = readArrayOrUndefined(object?.skills) ?? [];
+    totalSkills += skills.length;
+    return {
+      ...(typeof object?.cwd === "string"
+        ? { cwd: portablePreflightPath(object.cwd, mount) }
+        : {}),
+      skillCount: skills.length,
+      skills: skills.flatMap((skill) => {
+        const value = readObjectOrUndefined(skill);
+        return typeof value?.name === "string"
+          ? [{
+              name: value.name,
+              ...(typeof value.scope === "string" ? { scope: value.scope } : {}),
+              ...(typeof value.enabled === "boolean" ? { enabled: value.enabled } : {}),
+            }]
+          : [];
+      }),
+      errors: summarizeMessages(object?.errors),
+    };
+  });
+  return {
+    data: entries,
+    totalSkills,
+    errors: summarizeMessages(root?.errors),
+  };
+}
+
+function summarizePluginList(response: unknown): unknown {
+  const root = readObjectOrUndefined(response);
+  const marketplaces = readArrayOrUndefined(root?.marketplaces) ?? [];
+  const summaries = marketplaces.map((marketplace) => {
+    const value = readObjectOrUndefined(marketplace);
+    const plugins = readArrayOrUndefined(value?.plugins) ?? [];
+    return {
+      ...(typeof value?.name === "string" ? { name: value.name } : {}),
+      pluginCount: plugins.length,
+      plugins: plugins.flatMap((plugin) => summarizePluginEntry(plugin)),
+    };
+  });
+  const plugins = summaries.flatMap((marketplace) => marketplace.plugins);
+  return {
+    marketplaces: summaries,
+    marketplaceCount: summaries.length,
+    pluginCount: plugins.length,
+    installedCount: plugins.filter((plugin) => plugin.installed).length,
+    enabledCount: plugins.filter((plugin) => plugin.enabled).length,
+    marketplaceLoadErrors: summarizeMessages(root?.marketplaceLoadErrors),
+  };
+}
+
+function summarizePluginStates(response: unknown): unknown {
+  const root = readObjectOrUndefined(response);
+  const entries = [
+    ...(readArrayOrUndefined(root?.plugins) ?? []),
+    ...(readArrayOrUndefined(root?.data) ?? []),
+    ...(Array.isArray(response) ? response : []),
+  ].flatMap((entry) => summarizePluginEntry(entry));
+  return {
+    plugins: entries,
+    pluginCount: entries.length,
+    installedCount: entries.filter((plugin) => plugin.installed).length,
+    enabledCount: entries.filter((plugin) => plugin.enabled).length,
+    errors: summarizeMessages(root?.errors),
+  };
+}
+
+function summarizePluginInstall(response: unknown): unknown {
+  const entries = Array.isArray(response) ? response : [response];
+  return entries.flatMap((entry) => {
+    const value = readObjectOrUndefined(entry);
+    if (!value) return [];
+    return [{
+      ...(typeof value.pluginName === "string" ? { pluginName: value.pluginName } : {}),
+      ...(typeof value.status === "string" ? { status: value.status } : {}),
+      ...(typeof value.error === "string" ? { error: summarizeError(value.error) } : {}),
+    }];
+  });
+}
+
+function summarizePluginEntry(value: unknown): Array<{
+  id?: string;
+  name: string;
+  installed: boolean;
+  enabled: boolean;
+}> {
+  const object = readObjectOrUndefined(value);
+  if (!object || typeof object.name !== "string") return [];
+  return [{
+    ...(typeof object.id === "string" ? { id: object.id } : {}),
+    name: object.name,
+    installed: readBoolean(object, "installed"),
+    enabled: readBoolean(object, "enabled"),
+  }];
+}
+
+function summarizeHooksList(
+  response: unknown,
+  mount: Pick<CodexMount, "runRoot" | "mountRoot" | "artifactRoot">,
+): unknown {
+  const root = readObjectOrUndefined(response);
+  const data = readArrayOrUndefined(root?.data) ?? [];
+  return {
+    data: data.map((entry) => {
+      const object = readObjectOrUndefined(entry);
+      const hooks = readArrayOrUndefined(object?.hooks) ?? [];
+      return {
+        ...(typeof object?.cwd === "string"
+          ? { cwd: portablePreflightPath(object.cwd, mount) }
+          : {}),
+        hookCount: hooks.length,
+        warnings: summarizeMessages(object?.warnings),
+        errors: summarizeMessages(object?.errors),
+      };
+    }),
+    warnings: summarizeMessages(root?.warnings),
+    errors: summarizeMessages(root?.errors),
+  };
+}
+
+function summarizeMessages(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (typeof entry === "string") return [summarizeError(entry)];
+    const object = readObjectOrUndefined(entry);
+    if (!object) return [];
+    const message = object.message ?? object.error ?? object.code;
+    return typeof message === "string" ? [summarizeError(message)] : [];
+  });
+}
+
+function summarizeError(value: string): string {
+  const firstLine = value.split(/\r?\n/, 1)[0] ?? value;
+  return firstLine.length > 500 ? `${firstLine.slice(0, 497)}...` : firstLine;
 }
