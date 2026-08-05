@@ -1,4 +1,10 @@
-import { mkdirSync, readFileSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import {
@@ -75,16 +81,20 @@ export class RunAppServerStage implements RunStage {
     const isolatedHome = join(runRoot, "codex-home");
     const isolatedCodexHome = join(isolatedHome, ".codex");
     mkdirSync(isolatedCodexHome, { recursive: true });
+    const providerConfig = readHomeProviderConfig(defaultModel.provider);
+    rebindTargetCodexAuth(isolatedCodexHome, providerConfig.authPath);
     const configToml = buildClientConfig({
       mountRoots: rootPlan.mountRoots,
       trustedRoots: rootPlan.trustedRoots,
       model: defaultModel,
+      providerConfig,
     });
     const clientOptions = {
       isolatedHome,
       isolatedCodexHome,
       configToml,
       providerName: defaultModel.provider,
+      providerApiKey: providerConfig.experimentalBearerToken,
       logPrefix: `scout ${scope.runId} app-server`,
       stderrLogPath: join(logsRoot, "app-server.log"),
       transportLogPath: process.env.SCOUT_APP_SERVER_TRACE === "1"
@@ -205,27 +215,24 @@ function buildClientConfig(input: {
   mountRoots: string[];
   trustedRoots: string[];
   model: CodexModelConfig;
+  providerConfig: ReturnType<typeof readHomeProviderConfig>;
 }): string {
-  const homeConfig = readHomeProviderConfig(input.model.provider);
+  const homeConfig = input.providerConfig;
   const mountRoots = uniqueResolved(input.mountRoots);
   const trustedRoots = uniqueResolved(input.trustedRoots);
   const providerLines = [
     `[model_providers.${input.model.provider}]`,
     `name = "${escapeToml(input.model.provider)}"`,
-    `base_url = "${escapeToml(homeConfig.baseUrl ?? "https://api.openai.com/v1")}"`,
+    `base_url = "${escapeToml(homeConfig.baseUrl)}"`,
   ];
-  if (homeConfig.experimentalBearerToken) {
-    providerLines.push(
-      `experimental_bearer_token = "${escapeToml(homeConfig.experimentalBearerToken)}"`,
-    );
-  }
   if (homeConfig.requiresOpenaiAuth !== undefined) {
     providerLines.push(`requires_openai_auth = ${homeConfig.requiresOpenaiAuth}`);
   }
-  if (homeConfig.envKey) {
-    providerLines.push(`env_key = "${escapeToml(homeConfig.envKey)}"`);
-  } else if (!homeConfig.experimentalBearerToken) {
-    providerLines.push('env_key = "OPENAI_API_KEY"');
+  const providerEnvKey = homeConfig.experimentalBearerToken
+    ? "CODEX_API_KEY"
+    : homeConfig.envKey;
+  if (providerEnvKey) {
+    providerLines.push(`env_key = "${escapeToml(providerEnvKey)}"`);
   }
   providerLines.push(
     `wire_api = "${escapeToml(homeConfig.wireApi ?? "responses")}"`,
@@ -298,28 +305,136 @@ function resolveProfileRoot(root: string, repoRoot: string): string {
 }
 
 function readHomeProviderConfig(providerName: string): {
-  baseUrl?: string;
+  baseUrl: string;
   envKey?: string;
   experimentalBearerToken?: string;
   requiresOpenaiAuth?: boolean;
   wireApi?: string;
+  authPath?: string;
 } {
+  const codexHome = join(homedir(), ".codex");
+  const configPath = join(codexHome, "config.toml");
+  let text: string;
   try {
-    const text = readFileSync(join(homedir(), ".codex", "config.toml"), "utf8");
-    const block = readTomlTableBlock(text, `model_providers.${providerName}`);
-    const requiresOpenaiAuth = block.match(/^requires_openai_auth\s*=\s*(true|false)/m)?.[1];
-    return {
-      baseUrl: block.match(/^base_url\s*=\s*"([^"]*)"/m)?.[1],
-      envKey: block.match(/^env_key\s*=\s*"([^"]*)"/m)?.[1],
-      experimentalBearerToken: block.match(/^experimental_bearer_token\s*=\s*"([^"]*)"/m)?.[1],
-      requiresOpenaiAuth: requiresOpenaiAuth === undefined
-        ? undefined
-        : requiresOpenaiAuth === "true",
-      wireApi: block.match(/^wire_api\s*=\s*"([^"]*)"/m)?.[1],
-    };
-  } catch {
-    return {};
+    text = readFileSync(configPath, "utf8");
+  } catch (error) {
+    throw new Error(
+      `Cannot read Codex config for model provider "${providerName}" at ${configPath}.`,
+      { cause: error },
+    );
   }
+
+  const block = readTomlTableBlock(text, `model_providers.${providerName}`);
+  if (block.trim().length === 0) {
+    throw new Error(
+      `Codex model provider "${providerName}" is not configured in ${configPath}.`,
+    );
+  }
+
+  const baseUrl = block.match(/^base_url\s*=\s*"([^"]*)"/m)?.[1]?.trim();
+  if (!baseUrl) {
+    throw new Error(
+      `Codex model provider "${providerName}" must define a non-empty base_url.`,
+    );
+  }
+  let parsedBaseUrl: URL;
+  try {
+    parsedBaseUrl = new URL(baseUrl);
+  } catch {
+    throw new Error(
+      `Codex model provider "${providerName}" has an invalid base_url.`,
+    );
+  }
+  if (parsedBaseUrl.protocol !== "http:" && parsedBaseUrl.protocol !== "https:") {
+    throw new Error(
+      `Codex model provider "${providerName}" base_url must use http or https.`,
+    );
+  }
+
+  const envKeyMatch = block.match(/^env_key\s*=\s*"([^"]*)"/m);
+  const envKey = envKeyMatch?.[1]?.trim();
+  if (envKeyMatch && (!envKey || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(envKey))) {
+    throw new Error(
+      `Codex model provider "${providerName}" has an invalid env_key.`,
+    );
+  }
+  const bearerTokenMatch = block.match(
+    /^experimental_bearer_token\s*=\s*"([^"]*)"/m,
+  );
+  const experimentalBearerToken = bearerTokenMatch?.[1];
+  if (bearerTokenMatch && !experimentalBearerToken?.trim()) {
+    throw new Error(
+      `Codex model provider "${providerName}" has an empty experimental_bearer_token.`,
+    );
+  }
+  const requiresOpenaiAuthAssignment = /^requires_openai_auth\s*=/m.test(block);
+  const requiresOpenaiAuthValue = block.match(
+    /^requires_openai_auth\s*=\s*(true|false)\s*(?:#.*)?$/m,
+  )?.[1];
+  if (requiresOpenaiAuthAssignment && requiresOpenaiAuthValue === undefined) {
+    throw new Error(
+      `Codex model provider "${providerName}" has an invalid requires_openai_auth value.`,
+    );
+  }
+  const requiresOpenaiAuth = requiresOpenaiAuthValue === undefined
+    ? undefined
+    : requiresOpenaiAuthValue === "true";
+
+  const hasConfiguredEnvironmentCredential = envKey !== undefined
+    && Boolean(process.env[envKey]?.trim());
+  const authPath = join(codexHome, "auth.json");
+  const hasCodexAuth = requiresOpenaiAuth === true && (() => {
+    try {
+      const auth = JSON.parse(
+        readFileSync(authPath, "utf8"),
+      ) as unknown;
+      if (typeof auth !== "object" || auth === null || Array.isArray(auth)) return false;
+      const authRecord = auth as Record<string, unknown>;
+      if (typeof authRecord.OPENAI_API_KEY === "string"
+        && authRecord.OPENAI_API_KEY.trim().length > 0) {
+        return true;
+      }
+      const tokens = authRecord.tokens;
+      return typeof tokens === "object"
+        && tokens !== null
+        && !Array.isArray(tokens)
+        && typeof (tokens as Record<string, unknown>).access_token === "string"
+        && ((tokens as Record<string, unknown>).access_token as string).trim().length > 0;
+    } catch {
+      return false;
+    }
+  })();
+  if (!experimentalBearerToken?.trim()
+    && !hasConfiguredEnvironmentCredential
+    && !hasCodexAuth) {
+    throw new Error(
+      `Codex model provider "${providerName}" has no usable authentication. Configure a non-empty experimental_bearer_token, set the environment variable named by env_key, or provide usable Codex auth when requires_openai_auth is true.`,
+    );
+  }
+
+  return {
+    baseUrl,
+    envKey,
+    experimentalBearerToken,
+    requiresOpenaiAuth,
+    wireApi: block.match(/^wire_api\s*=\s*"([^"]*)"/m)?.[1],
+    authPath: !experimentalBearerToken?.trim()
+        && !hasConfiguredEnvironmentCredential
+        && hasCodexAuth
+      ? authPath
+      : undefined,
+  };
+}
+
+function rebindTargetCodexAuth(isolatedCodexHome: string, targetAuthPath?: string): void {
+  const isolatedAuthPath = join(isolatedCodexHome, "auth.json");
+  try {
+    lstatSync(isolatedAuthPath);
+    rmSync(isolatedAuthPath, { force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (targetAuthPath) symlinkSync(targetAuthPath, isolatedAuthPath);
 }
 
 function readTomlTableBlock(text: string, tableName: string): string {

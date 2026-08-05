@@ -182,6 +182,7 @@ export abstract class ScoutAgent {
   async resumeThread(input: {
     thread: AgentThreadSnapshot;
     invocationSequence: number;
+    rolloutPath: string;
   }): Promise<AgentThreadSnapshot> {
     if (this.thread?.status === "active") return this.thread;
     if (this.thread) {
@@ -203,15 +204,32 @@ export abstract class ScoutAgent {
     }
     const resumed = await this.appServer.resumeThread({
       threadId: input.thread.threadId,
+      path: input.rolloutPath,
       model: this.spec.model.id,
       modelProvider: this.spec.model.provider,
       reasoningEffort: this.spec.model.reasoningEffort,
       cwd: this.spec.cwd,
+      runtimeWorkspaceRoots: [this.spec.cwd],
       approvalPolicy: this.spec.approvalPolicy,
       sandbox: this.spec.sandbox,
       config: this.spec.config,
       baseInstructions: this.spec.baseInstructions,
       developerInstructions: this.spec.developerInstructions,
+    });
+    await this.appServer.updateThreadSettings({
+      threadId: input.thread.threadId,
+      cwd: this.spec.cwd,
+      approvalPolicy: this.spec.approvalPolicy,
+      sandboxPolicy: this.spec.sandbox === "read-only"
+        ? {
+          type: "readOnly",
+          networkAccess: false,
+        }
+        : {
+          type: "workspaceWrite",
+          writableRoots: this.defaultWritableRoots(),
+          networkAccess: false,
+        },
     });
     const {
       closedAt: _closedAt,

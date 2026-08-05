@@ -1,5 +1,8 @@
-import { join, relative, resolve } from "node:path";
-import { preflightCodexAppServerMount } from "../../../agent-server/codex/app-server-preflight.js";
+import { join, relative } from "node:path";
+import {
+  preflightCodexAppServerMount,
+  summarizeAgentServerPreflight,
+} from "../../../agent-server/codex/app-server-preflight.js";
 import type { AgentServerPreflightReport } from "../../../agent-server/types.js";
 import {
   AssetStore,
@@ -14,8 +17,9 @@ import { currentRunScope } from "../../run-scope.js";
 import {
   buildRunContextBundle,
   type RunAgentEnvironment,
-  type RunRootAccess,
 } from "../../types.js";
+import { buildRunRootAccess } from "../../root-access.js";
+import type { RunRootAccess } from "../../types.js";
 import type { RunAgentManifestEntry } from "../../persistence/index.js";
 import type { RunStage } from "../../lifecycle/run-stage.js";
 
@@ -77,7 +81,7 @@ export class PrepareEnvironmentStage implements RunStage {
       });
       const preflight = await preflightMount(mount);
       const preflightPath = join(mount.artifactRoot, "app-server-preflight.json");
-      writeJsonFile(preflightPath, preflight);
+      writeJsonFile(preflightPath, summarizeAgentServerPreflight(preflight, mount));
 
       const preflightStatus = mount.issues.some((issue) => issue.severity === "error")
         ? "failed"
@@ -101,7 +105,7 @@ export class PrepareEnvironmentStage implements RunStage {
     }
 
     this.preparedAgents = requirePreparedAgents(agents, agentRoles);
-    this.preparedRootAccess = collectRunRootAccess(assetStore, this.preparedAgents);
+    this.preparedRootAccess = buildRunRootAccess(assetStore, this.preparedAgents);
     const environment = {
       agents: this.preparedAgents,
       rootAccess: this.preparedRootAccess,
@@ -146,22 +150,6 @@ export class PrepareEnvironmentStage implements RunStage {
   }
 }
 
-function collectRunRootAccess(
-  assetStore: AssetStore,
-  agents: Record<ScoutAgentRole, RunAgentEnvironment>,
-): RunRootAccess {
-  const preparedAgents = Object.values(agents);
-  return {
-    mountRoots: uniqueResolved(preparedAgents.map((agent) => agent.mount.mountRoot)),
-    trustedRoots: uniqueResolved(preparedAgents.flatMap((agent) =>
-      assetStore.trustedRootsForMount(agent.mount)
-    )),
-    writableRoots: uniqueResolved(preparedAgents.flatMap((agent) =>
-      assetStore.writableRootsForMount(agent.mount)
-    )),
-  };
-}
-
 function requirePreparedAgents(
   agents: Partial<Record<ScoutAgentRole, RunAgentEnvironment>>,
   roles: readonly ScoutAgentRole[],
@@ -173,8 +161,4 @@ function requirePreparedAgents(
     result[role] = agent;
   }
   return result as Record<ScoutAgentRole, RunAgentEnvironment>;
-}
-
-function uniqueResolved(values: string[]): string[] {
-  return [...new Set(values.map((value) => resolve(value)))].sort();
 }
