@@ -3,14 +3,14 @@ import type {
   CodexModelConfig,
   CodexReasoningEffort,
   CodexReasoningSummary,
-} from "../agent-server/codex/model-config.js";
-import { readJsonFile } from "../core/fs.js";
+} from "../../agent-server/codex/model-config.js";
+import { readJsonFile } from "../../core/fs.js";
 import { CodexAssetLayout } from "./asset-layout.js";
 import type {
   AgentProfile,
   AgentProfileDefinition,
   AgentProfilesFile,
-} from "./types.js";
+} from "../types.js";
 
 const reasoningEfforts = new Set<CodexReasoningEffort>([
   "none",

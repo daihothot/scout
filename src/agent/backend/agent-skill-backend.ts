@@ -10,7 +10,7 @@ import type { DynamicToolCallInput } from "../../agent-server/types.js";
 import {
   resolveSkillDependencyLoadOrder,
   type ScoutSkillCatalogEntry,
-} from "../../asset-store/skill-catalog.js";
+} from "../../asset-store/assets/skill-catalog.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import { isPathWithin } from "../../core/path.js";
 import type { ScoutAgent } from "../core/scout-agent.js";

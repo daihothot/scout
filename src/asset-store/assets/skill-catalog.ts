@@ -3,7 +3,7 @@ import { basename, dirname, join, posix } from "node:path";
 import {
   ScoutAgentPhases,
   type ScoutAgentPhase,
-} from "../agent/thread/types.js";
+} from "../../agent/thread/types.js";
 
 export interface ScoutSkillCatalogEntry {
   name: string;

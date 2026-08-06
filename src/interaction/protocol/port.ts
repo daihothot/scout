@@ -4,6 +4,7 @@ import type {
 } from "../../agent/activity/activity-event.js";
 import type { ScoutEvent } from "../../core/events/index.js";
 import type { RunLifecycleSnapshot } from "../../run/lifecycle/run-stage.js";
+import type { ScoutAgentRole } from "../../agent/thread/types.js";
 
 export type RuntimeDisclosureLevel = "debug" | "info" | "warn" | "error";
 
@@ -32,10 +33,36 @@ export interface RestoredUserMessage {
   createdAt: string;
 }
 
+export type MountRestoreRoleDecision = "pending" | "reused" | "rebuild" | "failed";
+export type MountRestoreStep =
+  | "verify"
+  | "wipe"
+  | "layout"
+  | "config"
+  | "skills"
+  | "plugins"
+  | "shell"
+  | "preflight";
+
+export interface MountRestoreProgress {
+  phase: "verify" | "rebuild" | "done" | "failed";
+  activeRole?: ScoutAgentRole;
+  activeStep?: MountRestoreStep;
+  roles: Array<{
+    role: ScoutAgentRole;
+    decision: MountRestoreRoleDecision;
+    step?: MountRestoreStep;
+    reason?: string;
+  }>;
+  completedUnits: number;
+  totalUnits: number;
+}
+
 export type RuntimeInteractionUnsubscribe = () => void;
 
 export interface RuntimeInteractionPort {
   publishRunLifecycleSnapshot(snapshot: RunLifecycleSnapshot): Promise<void>;
+  publishMountRestoreProgress(progress: MountRestoreProgress): Promise<void>;
   disclose(event: RuntimeDisclosureEvent): Promise<void>;
   publishAgentActivity(activity: AgentActivity): Promise<void>;
   publishAgentTurnActivity(activity: AgentTurnActivity): Promise<void>;
@@ -48,6 +75,10 @@ export interface RuntimeInteractionPort {
 
 export class NoopRuntimeInteractionPort implements RuntimeInteractionPort {
   async publishRunLifecycleSnapshot(): Promise<void> {
+    // no-op
+  }
+
+  async publishMountRestoreProgress(_progress: MountRestoreProgress): Promise<void> {
     // no-op
   }
 

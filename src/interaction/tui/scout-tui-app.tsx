@@ -51,7 +51,11 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
   const showLifecycleProgress = Boolean(
     state.lifecycle && state.runtime.status !== "ready",
   );
-  const topChromeRows = resolveTopChromeRows(compact, showLifecycleProgress);
+  const topChromeRows = resolveTopChromeRows(
+    compact,
+    showLifecycleProgress,
+    state.runtime.status !== "ready" ? state.mountRestore : undefined,
+  );
   const promptRows = inputReady ? PROMPT_INPUT_ROWS : 0;
   const availableWorkspaceRows = Math.max(1, appHeight - topChromeRows - promptRows);
   const chatItems = useMemo(() => selectChatItems(state), [state]);

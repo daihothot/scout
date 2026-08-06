@@ -5,7 +5,8 @@
         "codegraph",
         "unsubscribers",
         "unarchived",
-        "Rollouts"
+        "Rollouts",
+        "Materializer"
     ],
     "js/ts.experimental.useTsgo": false
 }

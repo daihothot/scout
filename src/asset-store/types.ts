@@ -1,5 +1,5 @@
 import type { CodexModelConfig } from "../agent-server/codex/model-config.js";
-import type { ScoutSkillCatalogEntry } from "./skill-catalog.js";
+import type { ScoutSkillCatalogEntry } from "./assets/skill-catalog.js";
 
 export interface AgentProfilesFile {
   defaults: {
@@ -101,6 +101,28 @@ export interface CodexMount {
   plugins: string[];
   manifestPath: string;
   resourceHash: string;
+}
+
+export type MountPreparationDecision = "reused" | "rebuild";
+
+export interface MountPreparationInspection {
+  decision: MountPreparationDecision;
+  reason?: string;
+}
+
+/** Materialization phases owned by the asset store. */
+export type MountMaterializationStep =
+  | "wipe"
+  | "layout"
+  | "config"
+  | "skills"
+  | "plugins"
+  | "shell";
+
+export interface MountPreparationResult {
+  mount: CodexMount;
+  decision: MountPreparationDecision;
+  reason?: string;
 }
 
 export interface AssetCommit {

@@ -5,8 +5,8 @@ import {
   buildMountShellEnvironment,
   resolveMountMacros,
   MountMacros,
-} from "../../src/asset-store/mount-macros.js";
-import { generateCodexConfig } from "../../src/asset-store/mount-helpers.js";
+} from "../../src/asset-store/mount/macros.js";
+import { generateCodexConfig } from "../../src/asset-store/mount/helpers.js";
 
 test("mount macros build a single canonical value map", () => {
   const values = buildMountMacroValues({

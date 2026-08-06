@@ -1,4 +1,4 @@
-import type { CodexMount } from "./types.js";
+import type { CodexMount } from "../types.js";
 
 export function collectMountTrustedRoots(mount: CodexMount): string[] {
   return uniqueStrings([
