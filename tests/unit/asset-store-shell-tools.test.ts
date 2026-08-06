@@ -14,9 +14,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
   AssetStore,
+  inspectCodexMount,
+  materializeCodexMount,
+  prepareCodexMount,
   type AgentProfilesFile,
   type McpServersFile,
   type MountManifest,
@@ -81,6 +84,308 @@ test("AssetStore reports unresolved shell tools as issues and excludes them from
     },
   ]);
   assert.deepEqual(manifest.issues, mount.issues);
+});
+
+test("AssetStore rejects asset-local paths that escape the assets root", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-asset-path-boundary-");
+  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  writeShellTools(assetsRoot, {
+    tools: [{
+      id: "escapingAsset",
+      name: "escaping-asset",
+      command: "node",
+      args: ["assets/codex/../../outside.cjs"],
+      exposeAs: "escaping-asset",
+      required: true,
+    }],
+  });
+  updateCoordinatorShellTools(assetsRoot, ["escapingAsset"]);
+
+  assert.throws(
+    () => new AssetStore().inspectMount({
+      repoRoot: fixtureRoot,
+      runId: "run-asset-path-boundary",
+      agentId: "coordinator",
+    }),
+    /Asset-local path escapes assets root/,
+  );
+});
+
+test("AssetStore rejects shell and MCP names that are not single path segments", () => {
+  const shellFixture = createCodexAssetFixture("scout-asset-store-shell-name-boundary-");
+  const shellAssetsRoot = join(shellFixture, "assets", "codex");
+  writeShellTools(shellAssetsRoot, {
+    tools: [{
+      id: "escapingName",
+      name: "escaping-name",
+      command: "node",
+      exposeAs: "../escaping-name",
+      required: true,
+    }],
+  });
+  updateCoordinatorShellTools(shellAssetsRoot, ["escapingName"]);
+  assert.throws(
+    () => new AssetStore().inspectMount({
+      repoRoot: shellFixture,
+      runId: "run-shell-name-boundary",
+      agentId: "coordinator",
+    }),
+    /Invalid shell tool exposeAs/,
+  );
+
+  const mcpFixture = createCodexAssetFixture("scout-asset-store-mcp-name-boundary-");
+  const mcpAssetsRoot = join(mcpFixture, "assets", "codex");
+  writeMcpServers(mcpAssetsRoot, {
+    servers: {
+      "../escaping-server": { command: "node" },
+    },
+  });
+  updateCoordinatorMcpServers(mcpAssetsRoot, ["../escaping-server"]);
+  assert.throws(
+    () => new AssetStore().inspectMount({
+      repoRoot: mcpFixture,
+      runId: "run-mcp-name-boundary",
+      agentId: "coordinator",
+    }),
+    /Invalid MCP server name/,
+  );
+});
+
+test("AssetStore rejects dot agent ids before materializing a mount", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-agent-id-boundary-");
+  const store = new AssetStore();
+
+  for (const [agentId, runId] of [
+    [".", "run-dot-agent-id"],
+    ["..", "run-parent-agent-id"],
+  ] as const) {
+    assert.throws(
+      () => store.materializeMount({
+        repoRoot: fixtureRoot,
+        runId,
+        agentId,
+      }),
+      /Invalid agentId/,
+    );
+    assert.equal(existsSync(join(fixtureRoot, "run", runId)), false);
+  }
+});
+
+test("AssetStore rejects run ids that escape the run directory", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-run-id-boundary-");
+  const store = new AssetStore();
+  const escapedRunName = `${basename(fixtureRoot)}-escaped`;
+
+  for (const runId of [`../${escapedRunName}`, `../../${escapedRunName}`] as const) {
+    assert.throws(
+      () => store.materializeMount({
+        repoRoot: fixtureRoot,
+        runId,
+        agentId: "coordinator",
+      }),
+      /Invalid runId/,
+    );
+  }
+  assert.equal(existsSync(join(fixtureRoot, escapedRunName)), false);
+  assert.equal(existsSync(join(fixtureRoot, "..", escapedRunName)), false);
+});
+
+test("AssetStore reuses a valid mount without touching mountRoot", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-mount-reuse-");
+  const store = new AssetStore();
+  const initial = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-mount-reuse",
+    agentId: "coordinator",
+  });
+  const sentinelPath = join(initial.mountRoot, "sentinel.txt");
+  writeFileSync(sentinelPath, "preserve\n", "utf8");
+
+  const prepared = store.prepareMount({
+    repoRoot: fixtureRoot,
+    runId: "run-mount-reuse",
+    agentId: "coordinator",
+    persistedIdentity: {
+      assetCommitId: initial.assetCommitId,
+      parentAssetCommitId: initial.parentAssetCommitId,
+      mountId: initial.mountId,
+      resourceHash: initial.resourceHash,
+    },
+  });
+
+  assert.equal(prepared.decision, "reused");
+  assert.equal(prepared.mount.mountRoot, initial.mountRoot);
+  assert.equal(readFileSync(sentinelPath, "utf8"), "preserve\n");
+});
+
+test("materialize facade preserves the inspect-to-prepare reuse handoff", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-mount-facade-reuse-");
+  const initial = materializeCodexMount({
+    repoRoot: fixtureRoot,
+    runId: "run-mount-facade-reuse",
+    agentId: "coordinator",
+  });
+  const sentinelPath = join(initial.mountRoot, "sentinel.txt");
+  writeFileSync(sentinelPath, "preserve\n", "utf8");
+  const options = {
+    repoRoot: fixtureRoot,
+    runId: "run-mount-facade-reuse",
+    agentId: "coordinator",
+    persistedIdentity: {
+      assetCommitId: initial.assetCommitId,
+      parentAssetCommitId: initial.parentAssetCommitId,
+      mountId: initial.mountId,
+      resourceHash: initial.resourceHash,
+    },
+  };
+
+  assert.deepEqual(inspectCodexMount(options), { decision: "reused", reason: undefined });
+  const prepared = prepareCodexMount(options);
+
+  assert.equal(prepared.decision, "reused");
+  assert.equal(prepared.mount.mountRoot, initial.mountRoot);
+  assert.equal(readFileSync(sentinelPath, "utf8"), "preserve\n");
+});
+
+test("AssetStore rebuilds only a damaged mount and preserves its identity", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-mount-rebuild-");
+  const store = new AssetStore();
+  const initial = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-mount-rebuild",
+    agentId: "coordinator",
+  });
+  writeFileSync(join(initial.mountRoot, ".codex", "config.toml"), "damaged\n", "utf8");
+
+  const prepared = store.prepareMount({
+    repoRoot: fixtureRoot,
+    runId: "run-mount-rebuild",
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedIdentity: {
+      assetCommitId: initial.assetCommitId,
+      parentAssetCommitId: initial.parentAssetCommitId,
+      mountId: initial.mountId,
+      resourceHash: initial.resourceHash,
+    },
+  });
+
+  assert.equal(prepared.decision, "rebuild");
+  assert.equal(prepared.mount.assetCommitId, initial.assetCommitId);
+  assert.equal(prepared.mount.mountId, initial.mountId);
+  assert.match(readFileSync(join(initial.mountRoot, ".codex", "config.toml"), "utf8"), /SCOUT_RUN_ROOT/);
+});
+
+test("AssetStore rebuilds when persisted mount inventory loses a profiled skill", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-inventory-");
+  const store = new AssetStore();
+  const initial = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-mount-inventory",
+    agentId: "coordinator",
+  });
+  const manifest = JSON.parse(readFileSync(initial.manifestPath, "utf8")) as MountManifest;
+  manifest.skills = [];
+  writeFileSync(initial.manifestPath, JSON.stringify(manifest, null, 2) + "\\n", "utf8");
+
+  const prepared = store.prepareMount({
+    repoRoot: fixtureRoot,
+    runId: "run-mount-inventory",
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedManifest: manifest,
+    persistedIdentity: {
+      assetCommitId: initial.assetCommitId,
+      parentAssetCommitId: initial.parentAssetCommitId,
+      mountId: initial.mountId,
+      resourceHash: initial.resourceHash,
+    },
+  });
+
+  assert.equal(prepared.decision, "rebuild");
+  const rebuilt = JSON.parse(readFileSync(prepared.mount.manifestPath, "utf8")) as MountManifest;
+  assert.deepEqual(rebuilt.skills, initial.skills);
+});
+
+for (const mutation of [
+  {
+    name: "asset hash",
+    apply(asset: MountManifest["assets"][number]): void {
+      asset.hash = "tampered-asset-hash";
+    },
+  },
+  {
+    name: "asset type",
+    apply(asset: MountManifest["assets"][number]): void {
+      asset.type = "tampered_asset_type";
+    },
+  },
+  {
+    name: "asset id",
+    apply(asset: MountManifest["assets"][number]): void {
+      asset.id = "tampered.asset.id";
+    },
+  },
+] as const) {
+  test(`AssetStore rebuilds when persisted ${mutation.name} changes`, () => {
+    const fixtureRoot = createCodexAssetFixture(`scout-asset-store-${mutation.name.replace(" ", "-")}-`);
+    const store = new AssetStore();
+    const initial = store.materializeMount({
+      repoRoot: fixtureRoot,
+      runId: `run-mount-${mutation.name.replace(" ", "-")}`,
+      agentId: "coordinator",
+    });
+    const manifest = JSON.parse(readFileSync(initial.manifestPath, "utf8")) as MountManifest;
+    const asset = manifest.assets.find((candidate) => candidate.id !== "codex.shell_tools");
+    assert.ok(asset);
+    mutation.apply(asset);
+
+    const prepared = store.prepareMount({
+      repoRoot: fixtureRoot,
+      runId: `run-mount-${mutation.name.replace(" ", "-")}`,
+      agentId: "coordinator",
+      cleanRunRoot: false,
+      persistedManifest: manifest,
+      persistedIdentity: {
+        assetCommitId: initial.assetCommitId,
+        parentAssetCommitId: initial.parentAssetCommitId,
+        mountId: initial.mountId,
+        resourceHash: initial.resourceHash,
+      },
+    });
+
+    assert.equal(prepared.decision, "rebuild");
+  });
+}
+
+test("AssetStore ignores only the shell-tools registry hash when reusing a mount", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-shell-registry-reuse-");
+  const store = new AssetStore();
+  const initial = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-shell-registry-reuse",
+    agentId: "coordinator",
+  });
+  const manifest = JSON.parse(readFileSync(initial.manifestPath, "utf8")) as MountManifest;
+  const registry = manifest.assets.find((asset) => asset.id === "codex.shell_tools");
+  assert.ok(registry);
+  registry.hash = "device-specific-registry-hash";
+
+  const prepared = store.prepareMount({
+    repoRoot: fixtureRoot,
+    runId: "run-shell-registry-reuse",
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedManifest: manifest,
+    persistedIdentity: {
+      assetCommitId: initial.assetCommitId,
+      parentAssetCommitId: initial.parentAssetCommitId,
+      mountId: initial.mountId,
+      resourceHash: initial.resourceHash,
+    },
+  });
+
+  assert.equal(prepared.decision, "reused");
 });
 
 test("AssetStore exposes scout-memory for all agent mounts", () => {
@@ -492,6 +797,62 @@ test("Shell tool registry changes do not change new asset identity", () => {
   }).trim(), "SECOND_TOOL_OK");
 });
 
+test("AssetStore rebuilds a reused mount when a shell contract binding changes", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-shell-tool-reuse-binding-");
+  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const firstToolPath = join(fixtureRoot, "device-tools", "first-tool");
+  const secondToolPath = join(fixtureRoot, "device-tools", "second-tool");
+  mkdirSync(join(fixtureRoot, "device-tools"), { recursive: true });
+  writeExecutable(firstToolPath, "FIRST_TOOL_OK");
+  writeExecutable(secondToolPath, "SECOND_TOOL_OK");
+  writeShellTools(assetsRoot, {
+    tools: [{
+      id: "deviceTool",
+      name: "device-tool",
+      command: firstToolPath,
+      exposeAs: "device-tool",
+      required: true,
+    }],
+  });
+  updateCoordinatorShellTools(assetsRoot, ["deviceTool"]);
+  const store = new AssetStore();
+  const initial = store.materializeMount({
+    repoRoot: fixtureRoot,
+    runId: "run-shell-tool-reuse-binding",
+    agentId: "coordinator",
+  });
+
+  writeShellTools(assetsRoot, {
+    tools: [{
+      id: "deviceTool",
+      name: "device-tool",
+      command: secondToolPath,
+      exposeAs: "device-tool",
+      required: true,
+    }],
+  });
+  const manifest = JSON.parse(readFileSync(initial.manifestPath, "utf8")) as MountManifest;
+  const prepared = store.prepareMount({
+    repoRoot: fixtureRoot,
+    runId: "run-shell-tool-reuse-binding",
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedManifest: manifest,
+    persistedIdentity: {
+      assetCommitId: initial.assetCommitId,
+      parentAssetCommitId: initial.parentAssetCommitId,
+      mountId: initial.mountId,
+      resourceHash: initial.resourceHash,
+    },
+  });
+
+  assert.equal(prepared.decision, "rebuild");
+  assert.equal(execFileSync(join(prepared.mount.mountRoot, "bin", "device-tool"), [], {
+    cwd: prepared.mount.mountRoot,
+    encoding: "utf8",
+  }).trim(), "SECOND_TOOL_OK");
+});
+
 test("Asset-local shell tool scripts remain part of the resource hash", () => {
   const fixtureRoot = createCodexAssetFixture("scout-shell-tool-script-hash-");
   const assetsRoot = join(fixtureRoot, "assets", "codex");
@@ -577,6 +938,58 @@ test("AssetStore rematerializes current paths while preserving portable persiste
     realpathSync(join(target.mountRoot, "AGENTS.md")),
     realpathSync(join(targetRoot, "assets", "codex", "agents", "AGENTS.md")),
   );
+});
+
+test("AssetStore rebuilds a copied run once, then reuses the current mount", () => {
+  const sourceRoot = createCodexAssetFixture("scout-copied-run-source-");
+  const targetRoot = createCodexAssetFixture("scout-copied-run-target-");
+  const runId = "run-copied-mount-reuse-test";
+  const sourceStore = new AssetStore();
+  const source = sourceStore.materializeMount({
+    repoRoot: sourceRoot,
+    runId,
+    agentId: "coordinator",
+  });
+  const sourceManifest = JSON.parse(readFileSync(source.manifestPath, "utf8")) as MountManifest;
+  mkdirSync(join(targetRoot, "run"), { recursive: true });
+  cpSync(join(sourceRoot, "run", runId), join(targetRoot, "run", runId), { recursive: true });
+
+  const identity = {
+    assetCommitId: source.assetCommitId,
+    parentAssetCommitId: source.parentAssetCommitId,
+    mountId: source.mountId,
+    resourceHash: source.resourceHash,
+  };
+  const targetStore = new AssetStore();
+  const relocated = targetStore.prepareMount({
+    repoRoot: targetRoot,
+    runId,
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedManifest: sourceManifest,
+    persistedIdentity: identity,
+  });
+  assert.equal(relocated.decision, "rebuild");
+  assert.equal(relocated.mount.assetCommitId, identity.assetCommitId);
+  assert.equal(relocated.mount.mountId, identity.mountId);
+  const relocatedConfig = readFileSync(join(relocated.mount.mountRoot, ".codex", "config.toml"), "utf8");
+  assert.ok(relocatedConfig.includes(targetRoot));
+  assert.equal(relocatedConfig.includes(sourceRoot), false);
+
+  const currentManifest = JSON.parse(readFileSync(relocated.mount.manifestPath, "utf8")) as MountManifest;
+  const reused = targetStore.prepareMount({
+    repoRoot: targetRoot,
+    runId,
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedManifest: currentManifest,
+    persistedIdentity: {
+      ...identity,
+      resourceHash: relocated.mount.resourceHash,
+    },
+  });
+  assert.equal(reused.decision, "reused");
+  assert.equal(reused.mount.mountRoot, relocated.mount.mountRoot);
 });
 
 test("AssetStore migrates verifiable legacy identity without hashing device shell paths", () => {

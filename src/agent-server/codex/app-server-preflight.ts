@@ -11,7 +11,7 @@ import {
 } from "node:path";
 import { promisify } from "node:util";
 import type { CodexMount } from "../../asset-store/types.js";
-import { buildMountShellEnvironment } from "../../asset-store/mount-macros.js";
+import { buildMountShellEnvironment } from "../../asset-store/mount/macros.js";
 import { isPathWithin } from "../../core/path.js";
 import type { CodexAppServerClient } from "./app-server-client.js";
 import type { AgentServerPreflightReport } from "../types.js";

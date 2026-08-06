@@ -1,0 +1,281 @@
+import { readFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
+import {
+  ensureDir,
+  recreateDir,
+  safeSymlink,
+  sha256File,
+  writeJsonFile,
+  writeTextFile,
+} from "../../core/fs.js";
+import type {
+  CodexMount,
+  MountManifest,
+  ShellToolContract,
+} from "../types.js";
+import { CodexAssetLayout, roleAgentPath } from "../assets/asset-layout.js";
+import {
+  buildMountDynamicValues,
+  generateCodexConfig,
+  materializeMcpServers,
+  materializeShellTools,
+  writePluginMarketplace,
+} from "./helpers.js";
+import {
+  assertAssetFileExists,
+  customAgentNameFromPath,
+  resolveAssetRelativePath,
+  skillNameFromPath,
+  type MaterializeOptions,
+  type MountContext,
+} from "./context-builder.js";
+import { MountManifestBuilder } from "./manifest-builder.js";
+
+export class MountMaterializer {
+  constructor(private readonly context: MountContext) {}
+
+  buildReusableMount(manifest: MountManifest): CodexMount {
+    const { context } = this;
+    const shellToolsById = new Map(context.profiledShellTools.map((tool) => [tool.id, tool] as const));
+    return {
+      agentId: context.agentId,
+      agentProfile: context.agentProfile,
+      assetCommitId: context.assetCommitId,
+      parentAssetCommitId: context.parentAssetCommitId,
+      mountId: context.mountId,
+      mountRoot: context.mountRoot,
+      runRoot: context.runRoot,
+      artifactRoot: context.artifactRoot,
+      logsRoot: context.logsRoot,
+      issues: manifest.issues,
+      trustedRoots: context.trustedRoots,
+      writableRoots: context.writableRoots,
+      shellTools: manifest.shellTools
+        .map((tool) => shellToolsById.get(tool.id))
+        .filter((tool): tool is ShellToolContract => Boolean(tool)),
+      mcpServers: manifest.mcpServers.map((server) => ({
+        ...server,
+        wrapperPath: join(context.mountRoot, "mcp", server.name),
+      })),
+      customAgents: manifest.customAgents,
+      skills: manifest.skills,
+      skillCatalog: manifest.skillCatalog,
+      plugins: manifest.plugins,
+      manifestPath: join(context.mountRoot, "mount-manifest.json"),
+      resourceHash: context.resourceHash,
+    };
+  }
+
+  materialize(options: MaterializeOptions): CodexMount {
+    const context = this.context;
+    const {
+      repoRoot,
+      assetsRoot,
+      runId,
+      runRoot,
+      agentId,
+      agentRoot,
+      artifactRoot,
+      logsRoot,
+      mountRoot,
+      agentProfile,
+      profiledMcpServers,
+      profiledShellTools,
+      profiledCustomAgentPaths,
+      profiledSkillPaths,
+      profiledPluginPaths,
+      skillCatalog,
+      resourceHash: computedResourceHash,
+      assetCommitId,
+      parentAssetCommitId,
+      mountId,
+      trustedRoots,
+      writableRoots,
+    } = context;
+    const shellToolsRegistryHash = sha256File(join(assetsRoot, CodexAssetLayout.shellTools));
+    if (
+      options.persistedIdentity
+      && !options.persistedIdentity.allowLegacyResourceIdentityMigration
+      && options.persistedIdentity.resourceHash !== computedResourceHash
+    ) {
+      throw new Error(
+        `Persisted resource identity does not match current assets for ${agentId}:`
+        + ` persisted=${options.persistedIdentity.resourceHash}`
+        + ` portable=${computedResourceHash}.`,
+      );
+    }
+    const resourceHash = options.persistedIdentity?.allowLegacyResourceIdentityMigration
+      ? computedResourceHash
+      : options.persistedIdentity?.resourceHash ?? computedResourceHash;
+
+    ensureDir(runRoot);
+    ensureDir(join(runRoot, "agents"));
+    if (options.cleanRunRoot ?? true) recreateDir(agentRoot);
+    else ensureDir(agentRoot);
+    recreateDir(mountRoot);
+    options.onMaterializationStep?.("wipe");
+    ensureDir(artifactRoot);
+    ensureDir(logsRoot);
+    ensureDir(join(mountRoot, ".codex"));
+    ensureDir(join(mountRoot, ".codex", "agents"));
+    ensureDir(join(mountRoot, ".agents", "skills"));
+    ensureDir(join(mountRoot, ".agents", "plugins"));
+    ensureDir(join(mountRoot, ".scout", "skills"));
+    ensureDir(join(mountRoot, "agents"));
+    ensureDir(join(mountRoot, "plugins"));
+    ensureDir(join(mountRoot, "bin"));
+    ensureDir(join(mountRoot, "mcp"));
+
+    const materializedMcpServers = materializeMcpServers({
+      mountRoot,
+      mcpServers: profiledMcpServers,
+      assetsRoot,
+      dynamicValues: buildMountDynamicValues({
+        repoRoot,
+        runRoot,
+        mountRoot,
+        artifactRoot,
+        assetCommitId,
+      }),
+    });
+    safeSymlink(join(assetsRoot, CodexAssetLayout.agentsMd), join(mountRoot, "AGENTS.md"));
+    const workerAgentPath = agentId === "coordinator"
+      ? undefined
+      : materializeWorkerAgent(assetsRoot, mountRoot);
+    const roleAgentPaths = materializeRoleAgent(assetsRoot, mountRoot, agentId);
+    options.onMaterializationStep?.("layout");
+
+    const configText = generateCodexConfig({
+      baseConfig: readFileSync(join(assetsRoot, agentProfile.config), "utf8"),
+      mountRoot,
+      runRoot,
+      artifactRoot,
+      runId,
+      assetCommitId,
+      mcpServers: materializedMcpServers,
+    });
+    writeTextFile(join(mountRoot, ".codex", "config.toml"), configText);
+    writeTextFile(join(mountRoot, ".codex", "hooks.json"), "{\n  \"hooks\": []\n}\n");
+    options.onMaterializationStep?.("config");
+
+    const customAgentNames = materializeCustomAgents(assetsRoot, mountRoot, profiledCustomAgentPaths);
+    const skillNames = materializeSkills(assetsRoot, mountRoot, profiledSkillPaths);
+    writeJsonFile(join(mountRoot, ".scout", "skill-catalog.json"), skillCatalog);
+    options.onMaterializationStep?.("skills");
+    const pluginNames = materializePlugins(assetsRoot, mountRoot, profiledPluginPaths);
+    options.onMaterializationStep?.("plugins");
+    const shellMaterialization = materializeShellTools(mountRoot, profiledShellTools, assetsRoot);
+    writePluginMarketplace(mountRoot, pluginNames);
+    options.onMaterializationStep?.("shell");
+
+    const manifestBuilder = new MountManifestBuilder({
+      agentId,
+      agentProfile,
+      assetsRoot,
+      mcpServerContracts: profiledMcpServers,
+      shellToolContracts: profiledShellTools,
+      customAgentPaths: profiledCustomAgentPaths,
+      skillPaths: profiledSkillPaths,
+      pluginPaths: profiledPluginPaths,
+      workerAgentPath,
+      roleAgentPaths,
+      shellToolsRegistryHash,
+    });
+    const mountManifest = manifestBuilder.build({
+      assetCommitId,
+      parentAssetCommitId,
+      mountId,
+      mountRoot,
+      trustedRoots,
+      writableRoots,
+      issues: shellMaterialization.issues,
+      resourceHash,
+      mcpServers: materializedMcpServers,
+      shellTools: shellMaterialization.shellTools,
+      shellWrappers: shellMaterialization.wrappers,
+      customAgentNames,
+      skillNames,
+      skillCatalog,
+      pluginNames,
+    });
+    const manifestPath = join(mountRoot, "mount-manifest.json");
+    writeJsonFile(manifestPath, mountManifest);
+
+    return {
+      agentId,
+      agentProfile,
+      assetCommitId,
+      parentAssetCommitId,
+      mountId,
+      mountRoot,
+      runRoot,
+      artifactRoot,
+      logsRoot,
+      issues: shellMaterialization.issues,
+      trustedRoots,
+      writableRoots,
+      shellTools: shellMaterialization.shellTools,
+      mcpServers: materializedMcpServers,
+      customAgents: customAgentNames,
+      skills: skillNames,
+      skillCatalog,
+      plugins: pluginNames,
+      manifestPath,
+      resourceHash,
+    };
+  }
+}
+
+function materializeSkills(assetsRoot: string, mountRoot: string, skills: string[]): string[] {
+  return skills.map((skillPath) => {
+    const source = resolveAssetRelativePath(skillPath, assetsRoot);
+    const name = skillNameFromPath(skillPath);
+    safeSymlink(resolve(source, ".."), join(mountRoot, ".scout", "skills", name));
+    return name;
+  });
+}
+
+function materializeCustomAgents(
+  assetsRoot: string,
+  mountRoot: string,
+  customAgents: string[],
+): string[] {
+  return customAgents.map((customAgentPath) => {
+    const name = customAgentNameFromPath(customAgentPath);
+    safeSymlink(
+      resolveAssetRelativePath(customAgentPath, assetsRoot),
+      join(mountRoot, ".codex", "agents", `${name}.toml`),
+    );
+    return name;
+  });
+}
+
+function materializePlugins(assetsRoot: string, mountRoot: string, plugins: string[]): string[] {
+  return plugins.map((pluginPath) => {
+    const source = resolveAssetRelativePath(pluginPath, assetsRoot);
+    const name = basename(source);
+    safeSymlink(source, join(mountRoot, "plugins", name));
+    return name;
+  });
+}
+
+function materializeWorkerAgent(assetsRoot: string, mountRoot: string): string {
+  const targetPath = join("agents", "worker.AGENTS.md");
+  safeSymlink(
+    resolveAssetRelativePath(CodexAssetLayout.workerAgent, assetsRoot),
+    join(mountRoot, targetPath),
+  );
+  return targetPath;
+}
+
+function materializeRoleAgent(
+  assetsRoot: string,
+  mountRoot: string,
+  role: string,
+): Record<string, string> {
+  const agentPath = roleAgentPath(role);
+  assertAssetFileExists(assetsRoot, agentPath, `AGENTS instructions for agent role ${role}`);
+  const targetPath = join("agents", `${role}.AGENTS.md`);
+  safeSymlink(resolveAssetRelativePath(agentPath, assetsRoot), join(mountRoot, targetPath));
+  return { [role]: targetPath };
+}

@@ -69,6 +69,7 @@ import {
 import type {
   AgentMessageReply,
   AgentMessageSend,
+  MountRestoreProgress,
   RuntimeDisclosureEvent,
   RuntimeInteractionPort,
   RuntimeInteractionUnsubscribe,
@@ -2103,6 +2104,10 @@ class CapturingInteractionPort implements RuntimeInteractionPort {
   readonly agentMessages: AgentMessageReply[] = [];
 
   async publishRunLifecycleSnapshot(_snapshot: RunLifecycleSnapshot): Promise<void> {
+    return undefined;
+  }
+
+  async publishMountRestoreProgress(_progress: MountRestoreProgress): Promise<void> {
     return undefined;
   }
 

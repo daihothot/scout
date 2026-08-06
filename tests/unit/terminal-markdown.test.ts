@@ -1,10 +1,24 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { stripVTControlCharacters } from "node:util";
+import React from "react";
+import { renderToString } from "ink";
 import {
   buildActivityBarPresentation,
   resolveActivityBarRows,
 } from "../../src/interaction/tui/chrome/activity-bar.js";
-import { buildRunLifecycleProgressPresentation } from "../../src/interaction/tui/chrome/top-chrome.js";
+import {
+  buildMountRestoreProgressPresentation,
+  buildMountRestoreStatusPresentation,
+  buildRunLifecycleProgressPresentation,
+  resolveTopChromeRows,
+  TopChrome,
+} from "../../src/interaction/tui/chrome/top-chrome.js";
+import {
+  buildSegmentedProgressTrack,
+  buildSubprocessProgressPresentation,
+  subprocessProgressStatusText,
+} from "../../src/interaction/tui/chrome/subprocess-progress-bar.js";
 import { buildChatVisualRows } from "../../src/interaction/tui/panels/chat-panel.js";
 import { buildCoordinatorMessageRows } from "../../src/interaction/tui/rows/coordinator-message-row.js";
 import { taskMarker } from "../../src/interaction/tui/markers.js";
@@ -139,12 +153,259 @@ test("Run lifecycle progress scales its fill and caps its width", () => {
 
   for (const width of [20, 40, 80]) {
     const presentation = buildRunLifecycleProgressPresentation(snapshot, width);
-    const expectedWidth = Math.min(width, 42);
+    const expectedWidth = width === 20 ? 20 : width === 40 ? 38 : 53;
     assert.equal(
       terminalDisplayWidth(`${presentation.filled}${presentation.remaining}`),
       expectedWidth,
     );
     assert.equal(presentation.width, expectedWidth);
+    assert.match(`${presentation.filled}${presentation.remaining}`, /██▉██/);
+    assert.equal(`${presentation.filled}${presentation.remaining}`.includes(" "), false);
+  }
+});
+
+test("Segmented progress preserves a visible gap at the fill boundary", () => {
+  const presentation = buildSegmentedProgressTrack({
+    completedUnits: 1,
+    totalUnits: 2,
+    width: 12,
+    maxWidth: 12,
+    filledCell: "█",
+    remainingCell: "█",
+    cellWidth: 2,
+    separator: "▉",
+  });
+
+  assert.equal(presentation.width, 11);
+  assert.equal(presentation.filled, "██▉██▉");
+  assert.equal(presentation.remaining, "██▉██");
+  assert.equal(
+    terminalDisplayWidth(`${presentation.filled}${presentation.remaining}`),
+    presentation.width,
+  );
+
+  const narrow = buildSegmentedProgressTrack({
+    completedUnits: 0,
+    totalUnits: 0,
+    width: 1,
+    maxWidth: 42,
+    filledCell: "█",
+    remainingCell: "█",
+    cellWidth: 2,
+  });
+  assert.deepEqual(narrow, { width: 1, filled: "", remaining: "█" });
+});
+
+test("Subprocess progress accepts module-independent content and units", () => {
+  const content = {
+    marker: "▷",
+    label: "workspace",
+    detail: "indexing",
+    units: "2/5",
+  };
+  const presentation = buildSubprocessProgressPresentation({
+    completedUnits: 2,
+    totalUnits: 5,
+    content,
+    width: 40,
+    maxBarWidth: 12,
+  });
+
+  assert.equal(presentation.width, 12);
+  assert.equal(presentation.filled, "▪".repeat(5));
+  assert.equal(presentation.remaining, "▫".repeat(7));
+  assert.deepEqual(presentation.content, content);
+  assert.equal(subprocessProgressStatusText(content), "▷ workspace  indexing  2/5");
+  assert.equal(subprocessProgressStatusText(content, true), "workspace▷indexing 2/5");
+});
+
+test("Mount restore maps into generic subprocess content and stable chrome rows", () => {
+  const progress = {
+    phase: "rebuild" as const,
+    activeRole: "validator" as const,
+    activeStep: "config" as const,
+    roles: [
+      { role: "coordinator" as const, decision: "reused" as const },
+      { role: "researcher" as const, decision: "reused" as const },
+      { role: "verifier" as const, decision: "rebuild" as const, step: "config" as const },
+      { role: "validator" as const, decision: "rebuild" as const, step: "config" as const },
+    ],
+    completedUnits: 8,
+    totalUnits: 14,
+  };
+  const presentation = buildMountRestoreProgressPresentation(progress, 80, 2);
+
+  assert.equal(presentation.width, 53);
+  assert.deepEqual(presentation.content, {
+    marker: "▶",
+    label: "validator",
+    detail: "config",
+    units: "8/14",
+  });
+  assert.equal(presentation.filled, "▪".repeat(30));
+  assert.equal(presentation.remaining, "▫".repeat(23));
+  const preflight = buildMountRestoreProgressPresentation({
+    ...progress,
+    activeStep: "preflight",
+  }, 80, 0);
+  assert.deepEqual(preflight.content, {
+    marker: "›",
+    label: "validator",
+    detail: "preflight",
+    units: "8/14",
+  });
+  assert.equal(buildMountRestoreProgressPresentation({
+    ...progress,
+    activeStep: "verify",
+  }, 80, 0).content.detail, undefined);
+  assert.deepEqual(
+    buildMountRestoreStatusPresentation({
+      ...progress,
+      activeStep: "preflight",
+    }),
+    {
+      marker: "*",
+      label: "Preparing Scout runtime",
+      detail: "Mount · preflight · validator",
+      color: "yellow",
+    },
+  );
+  assert.deepEqual(
+    buildMountRestoreStatusPresentation({
+      ...progress,
+      phase: "failed",
+      activeStep: "preflight",
+      roles: progress.roles.map((role) => role.role === "validator"
+        ? { ...role, decision: "failed" as const }
+        : role),
+    }),
+    {
+      marker: "!",
+      label: "Mount restore failed",
+      detail: "validator preflight",
+      color: "red",
+    },
+  );
+  assert.deepEqual(buildMountRestoreStatusPresentation({
+    phase: "verify",
+    roles: progress.roles.map((role) => ({
+      role: role.role,
+      decision: "reused" as const,
+    })),
+    completedUnits: 4,
+    totalUnits: 4,
+  }), {
+    marker: "*",
+    label: "Preparing Scout runtime",
+    detail: "Mount · verifying · 4/4 reusable",
+    color: "yellow",
+  });
+  assert.equal(resolveTopChromeRows(false, true, progress), 27);
+  assert.equal(resolveTopChromeRows(true, true, progress), 14);
+  assert.equal(resolveTopChromeRows(false, true, { ...progress, phase: "verify" }), 21);
+  assert.equal(resolveTopChromeRows(false, false), 17);
+  assert.equal(resolveTopChromeRows(true, false), 12);
+
+  const compactText = subprocessProgressStatusText({
+    marker: "▷",
+    label: "validator",
+    detail: "config",
+    units: "8/14",
+  }, true);
+  const compactLifecycle = buildRunLifecycleProgressPresentation({
+    runId: "run-boot",
+    status: "starting",
+    completedStages: 4,
+    totalStages: 9,
+    stages: [],
+  }, 40, compactText);
+  assert.ok(compactLifecycle.width <= 16);
+  assert.ok(
+    terminalDisplayWidth(
+      `${compactLifecycle.filled}${compactLifecycle.remaining}  ${compactText}`,
+    ) <= 40,
+  );
+});
+
+test("Top chrome matches the full mount layout at normal and boundary widths", () => {
+  const mountRestore = {
+    phase: "rebuild" as const,
+    activeRole: "researcher" as const,
+    activeStep: "preflight" as const,
+    roles: [
+      { role: "coordinator" as const, decision: "reused" as const },
+      { role: "researcher" as const, decision: "rebuild" as const, step: "preflight" as const },
+      { role: "verifier" as const, decision: "pending" as const },
+      { role: "validator" as const, decision: "pending" as const },
+    ],
+    completedUnits: 11,
+    totalUnits: 24,
+  };
+  const state = tuiState({
+    runtime: {
+      cwd: "/Users/chengdai/Documents/DevopsProjects/scout",
+      version: "0.1.0",
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+      runId: "run-20260806T090308",
+      status: "preparing",
+    },
+    lifecycle: {
+      runId: "run-20260806T090308",
+      status: "starting",
+      completedStages: 4,
+      totalStages: 9,
+      stages: [],
+    },
+    mountRestore,
+  });
+  const previousMotion = process.env.SCOUT_TUI_MOTION;
+  process.env.SCOUT_TUI_MOTION = "0";
+  try {
+    for (const { terminalWidth, contentWidth, runTail } of [
+      { terminalWidth: 100, contentWidth: 96, runTail: "6T090308" },
+      { terminalWidth: 68, contentWidth: 64, runTail: "308" },
+    ]) {
+      const output = stripVTControlCharacters(renderToString(
+        React.createElement(TopChrome, {
+          state,
+          activeTasks: 0,
+          compact: false,
+          width: contentWidth,
+        }),
+        { columns: terminalWidth },
+      ));
+      const lines = output.split("\n");
+      const cardLine = lines.find((line) => line.includes("status: preparing"));
+      assert.ok(cardLine);
+      assert.ok(cardLine.includes(
+        `status: preparing  run: ${runTail}  model: gpt-5.5  reasoning: high`,
+      ));
+      const activityLine = lines.find((line) => line.includes("activity: 0 items"));
+      assert.ok(activityLine?.includes("activity: 0 items  tasks: 0  dir: "));
+      const cardTitleIndex = lines.findIndex((line) => line.includes("validation runtime"));
+      assert.ok(cardTitleIndex >= 0);
+      assert.match(lines[cardTitleIndex + 1] ?? "", /^│ +│$/);
+      assert.equal(lines[cardTitleIndex + 2], cardLine);
+      assert.match(lines[cardTitleIndex + 3] ?? "", /^│ +│$/);
+      assert.equal(lines[cardTitleIndex + 4], activityLine);
+
+      const statusIndex = lines.findIndex((line) => line.includes("Preparing Scout runtime"));
+      assert.ok(statusIndex >= 0);
+      assert.equal(lines[statusIndex + 1], "");
+      assert.equal(lines[statusIndex + 2], "  Mount · preflight · researcher");
+      assert.equal(lines[statusIndex + 3], "");
+      assert.match(lines[statusIndex + 4] ?? "", /^  ██▉██/);
+      assert.equal(lines[statusIndex + 5], "");
+      assert.equal(lines[statusIndex + 6], "");
+      assert.match(lines[statusIndex + 7] ?? "", /^› researcher  preflight  11\/24/);
+      assert.equal(lines[statusIndex + 8], "");
+      assert.match(lines[statusIndex + 9] ?? "", /^  ▪▪/);
+      assert.equal(lines[statusIndex + 9]?.includes(" ", 2), false);
+    }
+  } finally {
+    if (previousMotion === undefined) delete process.env.SCOUT_TUI_MOTION;
+    else process.env.SCOUT_TUI_MOTION = previousMotion;
   }
 });
 

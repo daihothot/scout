@@ -10,7 +10,13 @@ import type { RunLifecycleSnapshot } from "../../run/lifecycle/run-stage.js";
 import type {
   AgentMessageReply,
   AgentMessageSend,
+  MountRestoreProgress,
   RuntimeDisclosureEvent,
+} from "../protocol/port.js";
+export type {
+  MountRestoreProgress,
+  MountRestoreRoleDecision,
+  MountRestoreStep,
 } from "../protocol/port.js";
 
 export type TuiLogKind = "disclosure" | "agent" | "input" | "system";
@@ -54,6 +60,7 @@ export interface TuiRuntimeInfo {
 export interface TuiState {
   runtime: TuiRuntimeInfo;
   lifecycle?: RunLifecycleSnapshot;
+  mountRestore?: MountRestoreProgress;
   logs: TuiLogEntry[];
   tasks: TuiTaskSummary[];
   activities: AgentActivity[];
@@ -80,6 +87,7 @@ export class TuiStore {
   private readonly turnActivityMap = new Map<string, AgentTurnActivity>();
   private readonly logs: TuiLogEntry[] = [];
   private lifecycle?: RunLifecycleSnapshot;
+  private mountRestore?: MountRestoreProgress;
   private runtime: TuiRuntimeInfo;
   private sequence = 0;
 
@@ -99,6 +107,9 @@ export class TuiStore {
       lifecycle: this.lifecycle
         ? cloneRunLifecycleSnapshot(this.lifecycle)
         : undefined,
+      mountRestore: this.mountRestore
+        ? cloneMountRestoreProgress(this.mountRestore)
+        : undefined,
       logs: [...this.logs],
       tasks: [...this.taskMap.values()],
       activities: [...this.activityMap.values()],
@@ -110,6 +121,17 @@ export class TuiStore {
     runId?: string;
     status: TuiRunStatus;
   }): void {
+    const runChanged = input.runId !== undefined
+      && input.runId !== this.runtime.runId;
+    const preserveMountFailure = !runChanged && this.mountRestore?.phase === "failed";
+    if (
+      runChanged
+      || input.status === "ready"
+      || input.status === "stopping"
+      || (input.status === "failed" && !preserveMountFailure)
+    ) {
+      this.mountRestore = undefined;
+    }
     this.runtime = {
       ...this.runtime,
       runId: input.runId ?? this.runtime.runId,
@@ -119,12 +141,38 @@ export class TuiStore {
   }
 
   setRunLifecycleSnapshot(snapshot: RunLifecycleSnapshot): void {
+    const mountStageCompleted = snapshot.stages.some((stage) =>
+      (stage.id === "environment" || stage.id === "restore_environment")
+      && (stage.status === "completed" || stage.status === "stopping" || stage.status === "stopped")
+    );
+    const mountStageFailed = snapshot.stages.some((stage) =>
+      (stage.id === "environment" || stage.id === "restore_environment")
+      && stage.status === "failed"
+    );
+    const preserveMountFailure = this.mountRestore?.phase === "failed";
+    const discardNonFailureMountState = snapshot.status === "ready"
+      || snapshot.status === "terminating"
+      || snapshot.status === "terminated"
+      || (mountStageFailed && !preserveMountFailure)
+      || (snapshot.status === "failed" && !preserveMountFailure);
+    if (
+      (this.runtime.runId && this.runtime.runId !== snapshot.runId)
+      || (mountStageCompleted && !preserveMountFailure)
+      || discardNonFailureMountState
+    ) {
+      this.mountRestore = undefined;
+    }
     this.lifecycle = cloneRunLifecycleSnapshot(snapshot);
     this.runtime = {
       ...this.runtime,
       runId: snapshot.runId,
       status: tuiStatusForRunLifecycle(snapshot),
     };
+    this.emit();
+  }
+
+  setMountRestoreProgress(progress: MountRestoreProgress): void {
+    this.mountRestore = cloneMountRestoreProgress(progress);
     this.emit();
   }
 
@@ -325,5 +373,12 @@ function cloneRunLifecycleSnapshot(
   return {
     ...snapshot,
     stages: snapshot.stages.map((stage) => ({ ...stage })),
+  };
+}
+
+function cloneMountRestoreProgress(progress: MountRestoreProgress): MountRestoreProgress {
+  return {
+    ...progress,
+    roles: progress.roles.map((role) => ({ ...role })),
   };
 }

@@ -1,18 +1,18 @@
 import { chmodSync, existsSync, readFileSync } from "node:fs";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
-import { writeJsonFile, writeTextFile } from "../core/fs.js";
+import { delimiter, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { writeJsonFile, writeTextFile } from "../../core/fs.js";
 import type {
   MaterializedMcpServer,
   McpServersFile,
   MountMaterializationIssue,
   ShellToolContract,
-} from "./types.js";
+} from "../types.js";
 import {
   buildMountMacroValues,
   buildMountShellEnvironment,
   resolveMountMacros,
   type MountMacroValuesInput,
-} from "./mount-macros.js";
+} from "./macros.js";
 
 export type MountDynamicValuesInput = MountMacroValuesInput;
 
@@ -39,6 +39,7 @@ export function buildMountDynamicValues(input: MountDynamicValuesInput): Record<
 
 export function materializeMcpServers(options: MaterializeMcpServersOptions): MaterializedMcpServer[] {
   return Object.entries(options.mcpServers.servers).flatMap(([name, server]) => {
+    assertMountPathSegment(name, "MCP server name");
     const wrapperPath = join(options.mountRoot, "mcp", name);
     const dynamicValues = options.dynamicValues;
     const command = resolveCommand(resolveDynamicValue(server.command, dynamicValues), options.assetsRoot);
@@ -123,6 +124,7 @@ export function materializeShellTools(
   const issues: MountMaterializationIssue[] = [];
 
   for (const tool of tools) {
+    assertMountPathSegment(tool.exposeAs, `shell tool exposeAs for ${tool.id}`);
     const wrapperPath = join(mountRoot, "bin", tool.exposeAs);
     const command = resolveShellToolCommand(tool, assetsRoot);
     if (!command) {
@@ -231,18 +233,18 @@ function resolveDynamicRecord(
   );
 }
 
-function resolveCommand(command: string, assetsRoot: string): string {
+export function resolveCommand(command: string, assetsRoot: string): string {
   if (command === "node") return process.execPath;
-  if (command.startsWith("assets/")) return join(resolve(assetsRoot, "..", ".."), command);
+  if (command.startsWith("assets/")) return resolveAssetLocalPath(command, assetsRoot);
   if (existsSync(command)) return command;
   return resolveExecutableFromPath(command) ?? command;
 }
 
-function resolveShellToolCommand(tool: ShellToolContract, assetsRoot: string): string | undefined {
+export function resolveShellToolCommand(tool: ShellToolContract, assetsRoot: string): string | undefined {
   const command = tool.command;
   if (command === "node") return process.execPath;
   if (command.startsWith("assets/")) {
-    const assetPath = join(resolve(assetsRoot, "..", ".."), command);
+    const assetPath = resolveAssetLocalPath(command, assetsRoot);
     return existsSync(assetPath) ? assetPath : undefined;
   }
   if (existsSync(command)) return command;
@@ -250,8 +252,27 @@ function resolveShellToolCommand(tool: ShellToolContract, assetsRoot: string): s
   return resolveExecutableFromPath(command);
 }
 
-function resolveAssetArg(arg: string, assetsRoot: string): string {
-  return arg.startsWith("assets/") ? join(resolve(assetsRoot, "..", ".."), arg) : arg;
+export function resolveAssetArg(arg: string, assetsRoot: string): string {
+  return arg.startsWith("assets/") ? resolveAssetLocalPath(arg, assetsRoot) : arg;
+}
+
+export function resolveAssetLocalPath(assetPath: string, assetsRoot: string): string {
+  const repoRoot = resolve(assetsRoot, "..", "..");
+  const resolvedPath = resolve(repoRoot, assetPath);
+  const relativePath = relative(resolve(assetsRoot), resolvedPath);
+  if (
+    relativePath.length > 0
+    && (isAbsolute(relativePath) || relativePath === ".." || relativePath.startsWith(".." + sep))
+  ) {
+    throw new Error(`Asset-local path escapes assets root: ${assetPath}`);
+  }
+  return resolvedPath;
+}
+
+export function assertMountPathSegment(value: string, label: string): void {
+  if (value === "." || value === ".." || !/^[A-Za-z0-9._-]+$/.test(value)) {
+    throw new Error(`Invalid ${label}: ${value}`);
+  }
 }
 
 function resolveExecutableFromPath(command: string): string | undefined {

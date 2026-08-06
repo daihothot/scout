@@ -3,7 +3,7 @@ import { startScoutTui } from "../interaction/tui/run-tui.js";
 import {
   readAgentProfilesForRepo,
   resolveDefaultAgentModel,
-} from "../asset-store/agent-profiles.js";
+} from "../asset-store/assets/agent-profiles.js";
 
 export async function runScoutTui(input: {
   cwd: string;

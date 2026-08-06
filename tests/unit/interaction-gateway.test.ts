@@ -8,6 +8,7 @@ import { InteractionGateway } from "../../src/interaction/index.js";
 import type {
   AgentMessageReply,
   AgentMessageSend,
+  MountRestoreProgress,
   RuntimeDisclosureEvent,
   RuntimeInteractionPort,
   RuntimeInteractionUnsubscribe,
@@ -250,6 +251,10 @@ class TestInteractionPort implements RuntimeInteractionPort {
   readonly taskEvents: ScoutEvent[] = [];
 
   async publishRunLifecycleSnapshot(_snapshot: RunLifecycleSnapshot): Promise<void> {
+    return undefined;
+  }
+
+  async publishMountRestoreProgress(_progress: MountRestoreProgress): Promise<void> {
     return undefined;
   }
 

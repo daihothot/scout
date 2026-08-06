@@ -6,10 +6,12 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -20,7 +22,11 @@ import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import type { MountManifest } from "../../src/asset-store/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
-import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
+import {
+  NoopRuntimeInteractionPort,
+  type MountRestoreProgress,
+  type RuntimeInteractionPort,
+} from "../../src/interaction/protocol/port.js";
 import { PrepareEnvironmentStage } from "../../src/run/startup/index.js";
 import {
   ResumeClientsStage,
@@ -30,6 +36,8 @@ import {
   installRunScope,
   RunScope,
 } from "../../src/run/run-scope.js";
+import type { RunJournal } from "../../src/run/journal/index.js";
+import type { RunManifestStore } from "../../src/run/persistence/index.js";
 import {
   createTestRunPersistence,
   installTestRunScope,
@@ -94,27 +102,85 @@ test("PrepareEnvironmentStage materializes, preflights, and commits every agent 
   }
 });
 
-test("PrepareEnvironmentStage preserves failed preflight artifacts and rejects startup", async (t) => {
-  const fixtureRoot = createFixture("scout-boot-environment-failed-");
-  const runtime = installEnvironmentScope(t, fixtureRoot, "boot-environment-failed");
+test("PrepareEnvironmentStage reports six rebuild units per role", async (t) => {
+  const fixtureRoot = createFixture("scout-boot-environment-progress-");
+  const interactionPort = new CapturingMountProgressPort();
+  const runtime = installEnvironmentScope(t, fixtureRoot, "boot-environment-progress", interactionPort);
   t.after(runtime.release);
   const stage = new PrepareEnvironmentStage({
-    preflightMount: async () => ({ status: "failed" }),
+    preflightMount: async () => ({ status: "passed" }),
+  });
+
+  await stage.start();
+
+  const snapshots = interactionPort.progress;
+  assert.ok(snapshots.some((snapshot) => snapshot.phase === "rebuild"));
+  assert.ok(snapshots.some((snapshot) => snapshot.activeStep === "layout"));
+  assert.ok(snapshots.some((snapshot) => snapshot.activeStep === "plugins"));
+  assert.ok(snapshots.some((snapshot) => snapshot.activeStep === "shell"));
+  assert.ok(snapshots.some((snapshot) => snapshot.activeStep === "preflight"));
+  const rebuildingSnapshots = snapshots.filter((snapshot) => snapshot.phase === "rebuild");
+  assert.ok(rebuildingSnapshots.every((snapshot) =>
+    snapshot.totalUnits === Object.values(ScoutAgentRoles).length * 6
+  ));
+  const final = snapshots.at(-1);
+  assert.ok(final);
+  assert.equal(final.phase, "done");
+  assert.equal(final.totalUnits, Object.values(ScoutAgentRoles).length * 6);
+  assert.equal(final.completedUnits, final.totalUnits);
+  for (let index = 1; index < snapshots.length; index += 1) {
+    assert.ok(snapshots[index]!.completedUnits >= snapshots[index - 1]!.completedUnits);
+  }
+});
+
+test("PrepareEnvironmentStage collects every role before reporting a failed preflight", async (t) => {
+  const fixtureRoot = createFixture("scout-boot-environment-failed-");
+  const interactionPort = new CapturingMountProgressPort();
+  const runtime = installEnvironmentScope(
+    t,
+    fixtureRoot,
+    "boot-environment-failed",
+    interactionPort,
+  );
+  t.after(runtime.release);
+  const preflightedAgents: string[] = [];
+  const stage = new PrepareEnvironmentStage({
+    preflightMount: async (mount) => {
+      preflightedAgents.push(mount.agentId);
+      return mount.agentId === ScoutAgentRoles.Coordinator
+        ? { status: "failed" }
+        : { status: "passed" };
+    },
   });
 
   await assert.rejects(stage.start(), /preflight failed/);
 
+  const roles = Object.values(ScoutAgentRoles);
+  assert.deepEqual(preflightedAgents.sort(), [...roles].sort());
   assert.equal(stage.prepared, true);
-  assert.ok(Object.values(stage.agents).every((agent) =>
-    agent.assetCommit.status === "preflight_failed"
-  ));
   assert.ok(Object.values(stage.agents).every((agent) =>
     existsSync(agent.preflightPath) && existsSync(agent.assetCommitPath)
   ));
+  assert.equal(stage.agents[ScoutAgentRoles.Coordinator].assetCommit.status, "preflight_failed");
+  assert.ok(Object.values(stage.agents)
+    .filter((agent) => agent.role !== ScoutAgentRoles.Coordinator)
+    .every((agent) => agent.assetCommit.status === "preflight_passed"));
   assert.equal(runtime.scope.hasEnvironment, true);
-  assert.ok(Object.values(runtime.scope.environment.agents).every((agent) =>
-    agent.assetCommit.status === "preflight_failed"
-  ));
+  const failed = interactionPort.progress.filter((snapshot) => snapshot.phase === "failed").at(-1);
+  assert.ok(failed);
+  assert.equal(failed.activeRole, ScoutAgentRoles.Coordinator);
+  assert.equal(failed.activeStep, "preflight");
+  for (const role of roles) {
+    assert.ok(existsSync(join(
+      fixtureRoot,
+      "run",
+      "boot-environment-failed",
+      "agents",
+      role,
+      "artifacts",
+      "asset-commit.json",
+    )));
+  }
 });
 
 test("RestoreEnvironmentStage rejects source asset drift", async (t) => {
@@ -230,6 +296,26 @@ test("RestoreEnvironmentStage rejects a symlinked Agent root before rebuilding a
   assert.ok(existsSync(prepared.coordinatorSentinel));
 });
 
+test("PrepareEnvironmentStage rejects a symlinked run ancestor before materializing", async (t) => {
+  const fixtureRoot = createLinkedAssetsFixture(t, "scout-boot-run-ancestor-symlink-");
+  const runId = "boot-run-ancestor-symlink";
+  const runtime = installEnvironmentScope(t, fixtureRoot, runId);
+  t.after(runtime.release);
+  const runRoot = join(fixtureRoot, "run", runId);
+  const outsideAgents = join(fixtureRoot, "outside-agents");
+  mkdirSync(outsideAgents, { recursive: true });
+  mkdirSync(runRoot, { recursive: true });
+  symlinkSync(outsideAgents, join(runRoot, "agents"), "dir");
+
+  await assert.rejects(
+    new PrepareEnvironmentStage({
+      preflightMount: async () => ({ status: "passed" }),
+    }).start(),
+    /Refusing symlinked startup run component/,
+  );
+  assert.deepEqual(readdirSync(outsideAgents), []);
+});
+
 for (const ref of [
   ["mountManifestRef", "mount manifest"],
   ["assetCommitRef", "asset commit"],
@@ -314,6 +400,105 @@ test("RestoreEnvironmentStage permits the ScoutRoot assets symlink", async (t) =
   assert.equal(lstatSync(join(fixtureRoot, "assets")).isSymbolicLink(), true);
   assert.equal(realpathSync(join(fixtureRoot, "assets")), realpathSync(join(repoRoot, "assets")));
   assert.equal(resumed.hasEnvironment, true);
+});
+
+test("RestoreEnvironmentStage rebuilds only damaged roles and is idempotent", async (t) => {
+  const fixtureRoot = createLinkedAssetsFixture(t, "scout-restore-mixed-");
+  const runId = "restore-mixed";
+  const initial = installEnvironmentScope(t, fixtureRoot, runId);
+  let initialReleased = false;
+  t.after(() => {
+    if (!initialReleased) initial.release();
+  });
+  await new PrepareEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+
+  const roles = Object.values(ScoutAgentRoles);
+  const sentinels = new Map<string, string>();
+  const mountTimes = new Map<string, number>();
+  for (const role of roles) {
+    const mountRoot = initial.scope.environment.agents[role].mount.mountRoot;
+    const sentinel = join(mountRoot, "reuse-sentinel.txt");
+    writeFileSync(sentinel, role, "utf8");
+    sentinels.set(role, sentinel);
+    mountTimes.set(role, statSync(mountRoot).mtimeMs);
+  }
+  const damagedRole = ScoutAgentRoles.Validator;
+  const damagedConfig = join(
+    initial.scope.environment.agents[damagedRole].mount.mountRoot,
+    ".codex",
+    "config.toml",
+  );
+  writeFileSync(damagedConfig, `${readFileSync(damagedConfig, "utf8")}# damaged\n`, "utf8");
+
+  const journal = initial.scope.journal;
+  const manifestStore = initial.scope.manifestStore;
+  initial.release();
+  initialReleased = true;
+
+  const firstProgressPort = new CapturingMountProgressPort();
+  const firstResume = installExistingEnvironmentScope(
+    fixtureRoot,
+    runId,
+    journal,
+    manifestStore,
+    firstProgressPort,
+  );
+  let firstReleased = false;
+  t.after(() => {
+    if (!firstReleased) firstResume.release();
+  });
+  await new RestoreEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+
+  const firstFinal = firstProgressPort.progress.at(-1);
+  assert.ok(firstFinal);
+  assert.equal(firstFinal.phase, "done");
+  assert.equal(firstFinal.totalUnits, 9);
+  assert.equal(firstFinal.completedUnits, 9);
+  assert.deepEqual(
+    firstFinal.roles.map((role) => [role.role, role.decision]),
+    roles.map((role) => [role, role === damagedRole ? "rebuild" : "reused"]),
+  );
+  assert.ok(firstProgressPort.progress.some((snapshot) =>
+    snapshot.phase === "rebuild"
+    && snapshot.totalUnits === 9
+    && snapshot.completedUnits === 3
+  ));
+  for (const role of roles.filter((role) => role !== damagedRole)) {
+    assert.equal(readFileSync(sentinels.get(role)!, "utf8"), role);
+    assert.equal(statSync(firstResume.scope.environment.agents[role].mount.mountRoot).mtimeMs, mountTimes.get(role));
+  }
+  assert.equal(existsSync(sentinels.get(damagedRole)!), false);
+  firstResume.release();
+  firstReleased = true;
+
+  const secondProgressPort = new CapturingMountProgressPort();
+  const secondResume = installExistingEnvironmentScope(
+    fixtureRoot,
+    runId,
+    journal,
+    manifestStore,
+    secondProgressPort,
+  );
+  let secondReleased = false;
+  t.after(() => {
+    if (!secondReleased) secondResume.release();
+  });
+  await new RestoreEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+  const secondFinal = secondProgressPort.progress.at(-1);
+  assert.ok(secondFinal);
+  assert.equal(secondFinal.phase, "done");
+  assert.equal(secondFinal.totalUnits, roles.length);
+  assert.equal(secondFinal.completedUnits, roles.length);
+  assert.ok(secondProgressPort.progress.every((snapshot) => snapshot.phase !== "rebuild"));
+  assert.ok(secondFinal.roles.every((role) => role.decision === "reused"));
+  secondResume.release();
+  secondReleased = true;
 });
 
 test("RestoreEnvironmentStage upgrades an old resource inventory once and then rejects script drift", async (t) => {
@@ -541,6 +726,7 @@ function installEnvironmentScope(
   t: import("node:test").TestContext,
   repoRoot: string,
   runId: string,
+  interactionPort: RuntimeInteractionPort = new NoopRuntimeInteractionPort(),
 ): {
   scope: RunScope;
   appServer: CodexAppServerClient;
@@ -552,7 +738,7 @@ function installEnvironmentScope(
     repoRoot,
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
-    interactionPort: new NoopRuntimeInteractionPort(),
+    interactionPort,
     domain: {
       domainId: "test",
       name: "test",
@@ -571,6 +757,53 @@ function installEnvironmentScope(
       releaseScope();
     },
   };
+}
+
+function installExistingEnvironmentScope(
+  repoRoot: string,
+  runId: string,
+  journal: RunJournal,
+  manifestStore: RunManifestStore,
+  interactionPort: RuntimeInteractionPort,
+): {
+  scope: RunScope;
+  appServer: CodexAppServerClient;
+  release(): void;
+} {
+  const appServer = {} as CodexAppServerClient;
+  const scope = new RunScope({
+    runId,
+    repoRoot,
+    logger: noopLogger(),
+    eventBus: new InMemoryEventBus(),
+    interactionPort,
+    domain: {
+      domainId: "test",
+      name: "test",
+      dynamicToolsForRole: () => [],
+    },
+    journal,
+    manifestStore,
+    terminate: async () => undefined,
+  });
+  scope.setAppServer(appServer);
+  const releaseScope = installRunScope(scope);
+  return {
+    scope,
+    appServer,
+    release() {
+      scope.clearAppServer(appServer);
+      releaseScope();
+    },
+  };
+}
+
+class CapturingMountProgressPort extends NoopRuntimeInteractionPort {
+  readonly progress: MountRestoreProgress[] = [];
+
+  override async publishMountRestoreProgress(progress: MountRestoreProgress): Promise<void> {
+    this.progress.push(structuredClone(progress));
+  }
 }
 
 function noopLogger(): Logger {

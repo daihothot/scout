@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type {
   AgentMessageSend,
+  MountRestoreProgress,
 } from "../../src/interaction/protocol/port.js";
 import type {
   AgentActivity,
@@ -70,6 +71,93 @@ test("TuiStore projects Run lifecycle snapshots into runtime state", () => {
 
   store.setRunLifecycleSnapshot(lifecycleSnapshot({ status: "failed", completedStages: 1 }));
   assert.equal(store.snapshot().runtime.status, "failed");
+});
+
+test("TuiStore projects and clones mount restore progress", () => {
+  const store = createStore();
+  const progress: MountRestoreProgress = {
+    phase: "rebuild",
+    activeRole: ScoutAgentRoles.Validator,
+    activeStep: "config",
+    roles: [
+      { role: ScoutAgentRoles.Coordinator, decision: "reused" },
+      { role: ScoutAgentRoles.Validator, decision: "rebuild", step: "config" },
+    ],
+    completedUnits: 7,
+    totalUnits: 8,
+  };
+
+  store.setMountRestoreProgress(progress);
+  progress.roles[0]!.decision = "failed";
+  const snapshot = store.snapshot();
+
+  assert.equal(snapshot.mountRestore?.phase, "rebuild");
+  assert.equal(snapshot.mountRestore?.roles[0]?.decision, "reused");
+  assert.equal(snapshot.mountRestore?.completedUnits, 7);
+});
+
+test("TuiStore clears completed mount progress when the mount stage advances", () => {
+  const store = createStore();
+  store.setMountRestoreProgress({
+    phase: "done",
+    roles: [{ role: ScoutAgentRoles.Coordinator, decision: "reused" }],
+    completedUnits: 1,
+    totalUnits: 1,
+  });
+
+  store.setRunLifecycleSnapshot(lifecycleSnapshot({
+    stages: [{ id: "environment", status: "completed" }],
+  }));
+
+  assert.equal(store.snapshot().mountRestore, undefined);
+});
+
+test("TuiStore keeps a mount failure visible through stopped lifecycle snapshots", () => {
+  const store = createStore();
+  store.setMountRestoreProgress({
+    phase: "failed",
+    activeRole: ScoutAgentRoles.Validator,
+    activeStep: "preflight",
+    roles: [{
+      role: ScoutAgentRoles.Validator,
+      decision: "failed",
+      step: "preflight",
+      reason: "app-server unavailable",
+    }],
+    completedUnits: 5,
+    totalUnits: 6,
+  });
+
+  store.setRunLifecycleSnapshot(lifecycleSnapshot({
+    status: "failed",
+    stages: [{ id: "restore_environment", status: "stopped" }],
+  }));
+
+  assert.equal(store.snapshot().mountRestore?.phase, "failed");
+  store.setRun({ status: "stopping" });
+  assert.equal(store.snapshot().mountRestore, undefined);
+});
+
+test("TuiStore clears mount state immediately when switching runs", () => {
+  const store = createStore();
+  store.setRun({ runId: "run-old", status: "preparing" });
+  store.setMountRestoreProgress({
+    phase: "failed",
+    activeRole: ScoutAgentRoles.Validator,
+    activeStep: "preflight",
+    roles: [{
+      role: ScoutAgentRoles.Validator,
+      decision: "failed",
+      step: "preflight",
+    }],
+    completedUnits: 5,
+    totalUnits: 6,
+  });
+
+  store.setRun({ runId: "run-new", status: "preparing" });
+
+  assert.equal(store.snapshot().runtime.runId, "run-new");
+  assert.equal(store.snapshot().mountRestore, undefined);
 });
 
 test("TuiStore tracks runtime metadata", () => {

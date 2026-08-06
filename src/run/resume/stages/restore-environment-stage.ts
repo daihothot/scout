@@ -18,9 +18,11 @@ import {
   AssetStore,
   type AssetCommit,
   type CodexMount,
+  type MaterializeOptions,
   type MountManifest,
+  resolveAssetLocalPath,
 } from "../../../asset-store/index.js";
-import { CodexAssetLayout } from "../../../asset-store/asset-layout.js";
+import { CodexAssetLayout } from "../../../asset-store/assets/asset-layout.js";
 import {
   type ScoutAgentRole,
   ScoutAgentRoles,
@@ -39,6 +41,21 @@ import {
   type RunAgentEnvironment,
 } from "../../types.js";
 import { buildRunRootAccess } from "../../root-access.js";
+import type {
+  MountRestoreProgress,
+} from "../../../interaction/protocol/port.js";
+import {
+  applyMountMaterializationStep,
+  applyMountPreflightStep,
+  applyMountPreparationDecision,
+  beginMountPreflightStep,
+  completeMountRole,
+  createMountRestoreProgress,
+  discloseMountRestoreFailure,
+  failMountRole,
+  finishMountRestore,
+  planMountRestore,
+} from "../../mount-restore-progress.js";
 
 export interface RestoreEnvironmentStageOptions {
   assetStore?: AssetStore;
@@ -85,6 +102,8 @@ export class RestoreEnvironmentStage implements RunStage {
       })
     );
     const restoredAgents: Partial<Record<ScoutAgentRole, RunAgentEnvironment>> = {};
+    const progress = createMountRestoreProgress(Object.values(ScoutAgentRoles));
+    await publishMountProgress(progress);
     const persistedAgents: Array<{
       role: ScoutAgentRole;
       mountManifestPath: string;
@@ -97,96 +116,151 @@ export class RestoreEnvironmentStage implements RunStage {
     }> = [];
 
     for (const role of Object.values(ScoutAgentRoles)) {
-      const entry = manifestAgents[role];
-      if (!entry) throw new Error(`Run ${manifest.runId} has no persisted index for ${role}.`);
-      const agentRoot = join(agentsRoot, role);
-      const mountRoot = join(agentRoot, "mount");
-      const artifactRoot = join(agentRoot, "artifacts");
-      requireContainedPath({
-        root: runRoot,
-        rootReal: runRootReal,
-        path: agentRoot,
-        label: `${role} agent root`,
-        kind: "directory",
-      });
-      requireContainedPath({
-        root: runRoot,
-        rootReal: runRootReal,
-        path: join(agentRoot, "logs"),
-        label: `${role} logs root`,
-        kind: "directory",
-      });
-      const mountManifestPath = resolveRunRef(runRoot, entry.mountManifestRef, "mount manifest");
-      const assetCommitPath = resolveRunRef(runRoot, entry.assetCommitRef, "asset commit");
-      const preflightPath = resolveRunRef(runRoot, entry.preflightRef, "preflight report");
-      requireCanonicalRunRef(
-        mountManifestPath,
-        join(mountRoot, "mount-manifest.json"),
-        `${role} mount manifest`,
-      );
-      requireCanonicalRunRef(
-        assetCommitPath,
-        join(artifactRoot, "asset-commit.json"),
-        `${role} asset commit`,
-      );
-      requireCanonicalRunRef(
-        preflightPath,
-        join(artifactRoot, "app-server-preflight.json"),
-        `${role} preflight report`,
-      );
-      requireContainedPath({
-        root: runRoot,
-        rootReal: runRootReal,
-        path: mountManifestPath,
-        label: `${role} mount manifest`,
-        kind: "file",
-      });
-      requireContainedPath({
-        root: runRoot,
-        rootReal: runRootReal,
-        path: assetCommitPath,
-        label: `${role} asset commit`,
-        kind: "file",
-      });
-      requireContainedPath({
-        root: runRoot,
-        rootReal: runRootReal,
-        path: preflightPath,
-        label: `${role} preflight report`,
-        kind: "file",
-      });
+      try {
+        const entry = manifestAgents[role];
+        if (!entry) throw new Error(`Run ${manifest.runId} has no persisted index for ${role}.`);
+        const agentRoot = join(agentsRoot, role);
+        const mountRoot = join(agentRoot, "mount");
+        const artifactRoot = join(agentRoot, "artifacts");
+        requireContainedPath({
+          root: runRoot,
+          rootReal: runRootReal,
+          path: agentRoot,
+          label: `${role} agent root`,
+          kind: "directory",
+        });
+        requireContainedPath({
+          root: runRoot,
+          rootReal: runRootReal,
+          path: join(agentRoot, "logs"),
+          label: `${role} logs root`,
+          kind: "directory",
+        });
+        const mountManifestPath = resolveRunRef(runRoot, entry.mountManifestRef, "mount manifest");
+        const assetCommitPath = resolveRunRef(runRoot, entry.assetCommitRef, "asset commit");
+        const preflightPath = resolveRunRef(runRoot, entry.preflightRef, "preflight report");
+        requireCanonicalRunRef(
+          mountManifestPath,
+          join(mountRoot, "mount-manifest.json"),
+          `${role} mount manifest`,
+        );
+        requireCanonicalRunRef(
+          assetCommitPath,
+          join(artifactRoot, "asset-commit.json"),
+          `${role} asset commit`,
+        );
+        requireCanonicalRunRef(
+          preflightPath,
+          join(artifactRoot, "app-server-preflight.json"),
+          `${role} preflight report`,
+        );
+        requireContainedPath({
+          root: runRoot,
+          rootReal: runRootReal,
+          path: mountManifestPath,
+          label: `${role} mount manifest`,
+          kind: "file",
+        });
+        requireContainedPath({
+          root: runRoot,
+          rootReal: runRootReal,
+          path: assetCommitPath,
+          label: `${role} asset commit`,
+          kind: "file",
+        });
+        requireContainedPath({
+          root: runRoot,
+          rootReal: runRootReal,
+          path: preflightPath,
+          label: `${role} preflight report`,
+          kind: "file",
+        });
 
-      const persistedMountManifest = readJsonFile<MountManifest>(mountManifestPath);
-      const persistedAssetCommit = readJsonFile<AssetCommit>(assetCommitPath);
-      const persistedPreflight = readJsonFile<AgentServerPreflightReport>(preflightPath);
-      assertPersistedIdentity({
-        role,
-        entry,
-        mountManifest: persistedMountManifest,
-        assetCommit: persistedAssetCommit,
-      });
-      if (
-        persistedAssetCommit.status !== "preflight_passed"
-        || persistedPreflight.status !== "passed"
-      ) {
-        throw new Error(`Run environment for ${role} did not pass its persisted preflight.`);
+        const persistedMountManifest = readJsonFile<MountManifest>(mountManifestPath);
+        const persistedAssetCommit = readJsonFile<AssetCommit>(assetCommitPath);
+        const persistedPreflight = readJsonFile<AgentServerPreflightReport>(preflightPath);
+        assertPersistedIdentity({
+          role,
+          entry,
+          mountManifest: persistedMountManifest,
+          assetCommit: persistedAssetCommit,
+        });
+        const allowLegacyResourceIdentityMigration = isLegacyResourceInventory(
+          persistedMountManifest,
+        );
+        if (allowLegacyResourceIdentityMigration) {
+          assertPersistedAssets(scope.repoRoot, role, persistedMountManifest);
+        }
+
+        persistedAgents.push({
+          role,
+          mountManifestPath,
+          assetCommitPath,
+          preflightPath,
+          mountManifest: persistedMountManifest,
+          assetCommit: persistedAssetCommit,
+          preflight: persistedPreflight,
+          allowLegacyResourceIdentityMigration,
+        });
+      } catch (error) {
+        failMountRole(progress, role, "verify", errorText(error));
+        await publishMountProgress(progress);
+        await discloseMountRestoreFailure(scope.interactionPort, role, "verify", errorText(error));
+        throw error;
       }
-      assertPersistedAssets(scope.repoRoot, role, persistedMountManifest);
-      const allowLegacyResourceIdentityMigration = isLegacyResourceInventory(
-        persistedMountManifest,
-      );
-
-      persistedAgents.push({
-        role,
-        mountManifestPath,
-        assetCommitPath,
-        preflightPath,
-        mountManifest: persistedMountManifest,
-        assetCommit: persistedAssetCommit,
-        preflight: persistedPreflight,
-        allowLegacyResourceIdentityMigration,
-      });
     }
+
+    const preparationOptions = new Map<ScoutAgentRole, MaterializeOptions>();
+    const decisions = new Map<ScoutAgentRole, {
+      decision: "reused" | "rebuild";
+      reason?: string;
+    }>();
+    for (const persisted of persistedAgents) {
+      const {
+        role,
+        allowLegacyResourceIdentityMigration,
+      } = persisted;
+      const options: MaterializeOptions = {
+        repoRoot: scope.repoRoot,
+        runId: scope.runId,
+        agentId: role,
+        persistedManifest: persisted.mountManifest,
+        cleanRunRoot: false,
+        persistedIdentity: {
+          assetCommitId: persisted.assetCommit.assetCommitId,
+          parentAssetCommitId: persisted.assetCommit.parentAssetCommitId,
+          mountId: persisted.assetCommit.mountId,
+          resourceHash: persisted.assetCommit.resourceHash,
+          allowLegacyResourceIdentityMigration,
+        },
+        onPreparationDecision: (nextDecision, reason) => {
+          const plannedDecision = decisions.get(role)?.decision;
+          if (plannedDecision !== nextDecision) {
+            throw new Error(
+              "Mount preparation changed after verification for " + role
+              + ": planned=" + plannedDecision + " actual=" + nextDecision,
+            );
+          }
+          applyMountPreparationDecision(progress, role, nextDecision, reason, true);
+          void publishMountProgress(progress).catch(() => undefined);
+        },
+        onMaterializationStep: (step) => {
+          applyMountMaterializationStep(progress, role, step);
+          void publishMountProgress(progress).catch(() => undefined);
+        },
+      };
+      preparationOptions.set(role, options);
+      try {
+        decisions.set(role, assetStore.inspectMount(options));
+      } catch (error) {
+        failMountRole(progress, role, "verify", errorText(error));
+        await publishMountProgress(progress);
+        await discloseMountRestoreFailure(scope.interactionPort, role, "verify", errorText(error));
+        throw error;
+      }
+    }
+    planMountRestore(progress, decisions);
+    await publishMountProgress(progress);
 
     const restorePersistedMetadata = () => {
       for (const persisted of persistedAgents) {
@@ -207,39 +281,78 @@ export class RestoreEnvironmentStage implements RunStage {
           assetCommit: persistedAssetCommit,
           allowLegacyResourceIdentityMigration,
         } = persisted;
-        const mount = assetStore.materializeMount({
-          repoRoot: scope.repoRoot,
-          runId: scope.runId,
-          agentId: role,
-          cleanRunRoot: false,
-          persistedIdentity: {
-            assetCommitId: persistedAssetCommit.assetCommitId,
-            parentAssetCommitId: persistedAssetCommit.parentAssetCommitId,
-            mountId: persistedAssetCommit.mountId,
-            resourceHash: persistedAssetCommit.resourceHash,
-            allowLegacyResourceIdentityMigration,
-          },
-        });
-        if (resolve(mount.manifestPath) !== mountManifestPath) {
-          throw new Error(`Current mount manifest path does not match run index for ${role}.`);
+        if (progress.phase !== "failed") {
+          progress.activeRole = role;
+          progress.activeStep = "verify";
         }
-        const preflight = await preflightMount(mount);
-        const preflightStatus = mount.issues.some((issue) => issue.severity === "error")
-          ? "failed"
-          : preflight.status;
-        const assetCommit = assetStore.buildCommit({
-          mount,
-          preflightStatus,
-          preflightPath,
-        });
-        restoredAgents[role] = {
-          role,
-          mount,
-          preflight,
-          preflightPath,
-          assetCommit,
-          assetCommitPath,
-        };
+        await publishMountProgress(progress);
+        let mount: CodexMount;
+        let decision: "reused" | "rebuild";
+        try {
+          const preparation = assetStore.prepareMount(preparationOptions.get(role)!);
+          mount = preparation.mount;
+          decision = preparation.decision;
+        } catch (error) {
+          const failureStep = progress.activeStep === "verify"
+            ? "verify"
+            : progress.activeStep ?? "wipe";
+          failMountRole(
+            progress,
+            role,
+            failureStep,
+            errorText(error),
+          );
+          await publishMountProgress(progress);
+          await discloseMountRestoreFailure(scope.interactionPort, role, failureStep, errorText(error));
+          throw error;
+        }
+        if (decision === "rebuild") {
+          beginMountPreflightStep(progress, role);
+          await publishMountProgress(progress);
+        }
+        try {
+          if (resolve(mount.manifestPath) !== mountManifestPath) {
+            throw new Error(`Current mount manifest path does not match run index for ${role}.`);
+          }
+          const preflight = await preflightMount(mount);
+          const preflightStatus = mount.issues.some((issue) => issue.severity === "error")
+            ? "failed"
+            : preflight.status;
+          const assetCommit = assetStore.buildCommit({
+            mount,
+            preflightStatus,
+            preflightPath,
+          });
+          if (preflightStatus !== "passed" || assetCommit.status !== "preflight_passed") {
+            failMountRole(progress, role, "preflight", preflight.error);
+            await publishMountProgress(progress);
+            await discloseMountRestoreFailure(
+              scope.interactionPort,
+              role,
+              "preflight",
+              preflight.error ?? "preflight failed",
+            );
+          } else if (decision === "rebuild") {
+            applyMountPreflightStep(progress, role);
+            completeMountRole(progress, role);
+            await publishMountProgress(progress);
+          }
+          restoredAgents[role] = {
+            role,
+            mount,
+            preflight,
+            preflightPath,
+            assetCommit,
+            assetCommitPath,
+          };
+        } catch (error) {
+          if (progress.phase !== "failed") {
+            failMountRole(progress, role, "preflight", errorText(error));
+            await publishMountProgress(progress);
+            await discloseMountRestoreFailure(scope.interactionPort, role, "preflight", errorText(error));
+          }
+          throw error;
+        }
       }
 
       agents = requireRestoredAgents(restoredAgents);
@@ -332,7 +445,20 @@ export class RestoreEnvironmentStage implements RunStage {
         assetCommit: agents[ScoutAgentRoles.Coordinator].assetCommit,
       }),
     });
+    finishMountRestore(progress);
+    await publishMountProgress(progress);
   }
+}
+
+async function publishMountProgress(progress: MountRestoreProgress): Promise<void> {
+  await currentRunScope().interactionPort.publishMountRestoreProgress({
+    ...progress,
+    roles: progress.roles.map((role) => ({ ...role })),
+  });
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function assertPersistedIdentity(input: {
@@ -367,10 +493,11 @@ function assertPersistedAssets(
   role: ScoutAgentRole,
   mountManifest: MountManifest,
 ): void {
+  const assetsRoot = join(resolve(repoRoot), "assets", "codex");
   for (const asset of mountManifest.assets) {
     if (isCanonicalShellToolsRegistryAsset(asset)) continue;
-    const sourcePath = resolve(repoRoot, asset.sourcePath);
-    assertInsideRoot(resolve(repoRoot), sourcePath, "asset source");
+    const sourcePath = resolveAssetLocalPath(asset.sourcePath, assetsRoot);
+    assertInsideRoot(assetsRoot, sourcePath, "asset source");
     requirePath(sourcePath, `asset source ${asset.id}`);
     const actualHash = asset.type === "plugin"
       || asset.type === "skill"

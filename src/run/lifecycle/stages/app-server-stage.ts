@@ -15,12 +15,12 @@ import {
   resolveDefaultAgentModel,
   readAgentProfilesForRepo,
   resolveAgentProfile,
-} from "../../../asset-store/agent-profiles.js";
-import { CodexAssetLayout } from "../../../asset-store/asset-layout.js";
+} from "../../../asset-store/assets/agent-profiles.js";
+import { CodexAssetLayout } from "../../../asset-store/assets/asset-layout.js";
 import {
   buildMountMacroValues,
   resolveMountMacros,
-} from "../../../asset-store/mount-macros.js";
+} from "../../../asset-store/mount/macros.js";
 import type { McpServersFile } from "../../../asset-store/types.js";
 import {
   ScoutAgentRoles,
