@@ -4,8 +4,8 @@ import { terminalDisplayWidth } from "../terminal-text.js";
 import type { SubprocessProgressText } from "../../protocol/port.js";
 
 const DEFAULT_MAX_BAR_WIDTH = 42;
-const FILLED_TRACK = "▪";
-const REMAINING_TRACK = "▫";
+const FILLED_TRACK = "▬";
+const REMAINING_TRACK = "▭";
 const TRACK_SEPARATOR = "";
 
 /** Ink color accepted by progress tracks and status markers. */
