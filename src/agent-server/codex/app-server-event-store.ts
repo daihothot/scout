@@ -1,3 +1,9 @@
+/**
+ * Reduces Codex app-server messages into immutable thread, turn, item, request,
+ * and bounded timeline projections. The store owns in-memory observation state
+ * and defensive copies; it does not persist rollout files or decide which
+ * notifications a lifecycle stage should subscribe to.
+ */
 import type {
   JsonRpcMessage,
   JsonRpcNotification,
@@ -5,6 +11,7 @@ import type {
   JsonRpcServerRequest,
 } from "./app-server-client.js";
 
+/** Status values carried by Codex item notifications, including future values. */
 export type AppServerItemStatus =
   | "inProgress"
   | "completed"
@@ -14,34 +21,40 @@ export type AppServerItemStatus =
   | "pending"
   | string;
 
+/** Common identity and status fields shared by normalized app-server items. */
 export interface AppServerBaseItem {
   id: string;
   type: string;
   status?: AppServerItemStatus;
 }
 
+/** A user-authored message item retained in a turn projection. */
 export interface AppServerUserMessageItem extends AppServerBaseItem {
   type: "userMessage";
   content: unknown[];
   clientId?: string | null;
 }
 
+/** A completed or streaming assistant message used to derive final response text. */
 export interface AppServerAgentMessageItem extends AppServerBaseItem {
   type: "agentMessage";
   text: string;
   phase?: string | null;
 }
 
+/** A reasoning item whose summary parts are accumulated across delta notifications. */
 export interface AppServerReasoningItem extends AppServerBaseItem {
   type: "reasoning";
   summary?: string[];
   content?: string[];
 }
 
+/** A context-compaction lifecycle marker with no provider-specific payload retained. */
 export interface AppServerContextCompactionItem extends AppServerBaseItem {
   type: "contextCompaction";
 }
 
+/** A shell command execution and its completion diagnostics. */
 export interface AppServerCommandExecutionItem extends AppServerBaseItem {
   type: "commandExecution";
   command: string;
@@ -53,6 +66,7 @@ export interface AppServerCommandExecutionItem extends AppServerBaseItem {
   durationMs?: number | null;
 }
 
+/** A Scout dynamic-tool call, including provider status and returned content. */
 export interface AppServerDynamicToolCallItem extends AppServerBaseItem {
   type: "dynamicToolCall";
   namespace?: string | null;
@@ -64,6 +78,7 @@ export interface AppServerDynamicToolCallItem extends AppServerBaseItem {
   durationMs?: number | null;
 }
 
+/** An MCP tool call with server/tool identity and raw result or error payload. */
 export interface AppServerMcpToolCallItem extends AppServerBaseItem {
   type: "mcpToolCall";
   server: string;
@@ -75,17 +90,20 @@ export interface AppServerMcpToolCallItem extends AppServerBaseItem {
   durationMs?: number | null;
 }
 
+/** A file-change item emitted by Codex during a turn. */
 export interface AppServerFileChangeItem extends AppServerBaseItem {
   type: "fileChange";
   changes?: unknown[];
   status?: AppServerItemStatus;
 }
 
+/** Current status text for one native collaboration agent thread. */
 export interface AppServerCollabAgentState {
   status: string;
   message: string | null;
 }
 
+/** A native collaboration tool call linking sender and receiver threads. */
 export interface AppServerCollabAgentToolCallItem extends AppServerBaseItem {
   type: "collabAgentToolCall";
   tool: string;
@@ -98,6 +116,7 @@ export interface AppServerCollabAgentToolCallItem extends AppServerBaseItem {
   agentsStates: Record<string, AppServerCollabAgentState>;
 }
 
+/** A provider activity marker for a sub-agent thread. */
 export interface AppServerSubAgentActivityItem extends AppServerBaseItem {
   type: "subAgentActivity";
   kind: string;
@@ -105,12 +124,14 @@ export interface AppServerSubAgentActivityItem extends AppServerBaseItem {
   agentPath: string;
 }
 
+/** Forward-compatible envelope for an item type Scout does not normalize yet. */
 export interface AppServerUnknownItem extends AppServerBaseItem {
   type: "unknown";
   rawType: string;
   raw: Record<string, unknown>;
 }
 
+/** Union of all normalized item shapes stored in a turn. */
 export type AppServerItem =
   | AppServerUserMessageItem
   | AppServerAgentMessageItem
@@ -124,18 +145,21 @@ export type AppServerItem =
   | AppServerSubAgentActivityItem
   | AppServerUnknownItem;
 
+/** Item subset that can be rendered as active command/tool progress. */
 export type AppServerProgressSourceItem =
   | AppServerCommandExecutionItem
   | AppServerDynamicToolCallItem
   | AppServerMcpToolCallItem
   | AppServerCollabAgentToolCallItem;
 
+/** One provider plan step and its unmodified raw representation. */
 export interface AppServerPlanStep {
   step: string;
   status: "pending" | "inProgress" | "completed" | string;
   raw: Record<string, unknown>;
 }
 
+/** Reduced goal state associated with one thread. */
 export interface AppServerThreadGoalState {
   threadId: string;
   objective: string;
@@ -148,6 +172,7 @@ export interface AppServerThreadGoalState {
   raw: Record<string, unknown>;
 }
 
+/** Uniform progress projection derived from command and tool items. */
 export interface AppServerProgressItem {
   itemId: string;
   threadId: string;
@@ -160,6 +185,7 @@ export interface AppServerProgressItem {
   updatedAt: string;
 }
 
+/** Mutable-in-store projection of one Codex turn. */
 export interface AppServerTurnState {
   id: string;
   threadId: string;
@@ -172,6 +198,7 @@ export interface AppServerTurnState {
   updatedAt: string;
 }
 
+/** Latest plan explanation and ordered steps for a thread. */
 export interface AppServerPlanState {
   turnId?: string;
   explanation: string;
@@ -179,6 +206,7 @@ export interface AppServerPlanState {
   updatedAt?: string;
 }
 
+/** Reduced state for one thread, including turn order and latest metadata. */
 export interface AppServerThreadState {
   id: string;
   meta?: Record<string, unknown>;
@@ -191,6 +219,7 @@ export interface AppServerThreadState {
   updatedAt: string;
 }
 
+/** Server request retained until Scout sends a resolution. */
 export interface AppServerPendingRequestState {
   id: string;
   method: string;
@@ -200,6 +229,7 @@ export interface AppServerPendingRequestState {
   resolution?: AppServerRequestResolutionState;
 }
 
+/** Result or error recorded when a server request is answered. */
 export interface AppServerRequestResolutionState {
   status: "success" | "error";
   result?: unknown;
@@ -209,6 +239,7 @@ export interface AppServerRequestResolutionState {
   };
 }
 
+/** Stable stream labels used to filter and render reduced timeline entries. */
 export const AppServerTimelineStreams = {
   Lifecycle: "lifecycle",
   State: "state",
@@ -216,8 +247,10 @@ export const AppServerTimelineStreams = {
   Item: "item",
   Request: "request",
 } as const;
+/** Allowed timeline stream labels; values remain provider-facing strings. */
 export type AppServerTimelineStream = typeof AppServerTimelineStreams[keyof typeof AppServerTimelineStreams];
 
+/** Bounded, sequence-numbered event index entry without the full payload body. */
 export interface AppServerTimelineEntry {
   seq: number;
   receivedAt: string;
@@ -229,6 +262,7 @@ export interface AppServerTimelineEntry {
   requestId?: string;
 }
 
+/** Deep-copied store state used by persistence and UI consumers. */
 export interface AppServerEventStoreSnapshot {
   threads: Record<string, AppServerThreadState>;
   threadOrder: string[];
@@ -239,6 +273,7 @@ export interface AppServerEventStoreSnapshot {
   droppedTimelineCount: number;
 }
 
+/** Timeline entry joined with the projections it references at read time. */
 export interface AppServerResolvedTimelineEntry {
   entry: AppServerTimelineEntry;
   thread?: AppServerThreadState;
@@ -252,6 +287,11 @@ export interface AppServerResolvedTimelineEntry {
   tokenUsage?: unknown;
 }
 
+/**
+ * Maintains the current in-memory projection of a Codex app-server stream.
+ * Ingestion is the only mutation boundary; all public reads return copies or
+ * derived values, so consumers cannot mutate the reducer's state accidentally.
+ */
 export class AppServerEventStore {
   private readonly threads = new Map<string, AppServerThreadState>();
   private readonly threadOrder: string[] = [];
@@ -266,6 +306,7 @@ export class AppServerEventStore {
     this.timelineLimit = options.timelineLimit ?? 1000;
   }
 
+  /** Routes one decoded protocol message to the request, response, or notification reducer. */
   ingestMessage(message: JsonRpcMessage): void {
     if (isServerRequest(message)) {
       this.ingestServerRequest(message);
@@ -278,12 +319,14 @@ export class AppServerEventStore {
     this.ingestNotification(message);
   }
 
+  /** Applies a notification and appends its compact timeline index entry. */
   ingestNotification(notification: JsonRpcNotification): void {
     const receivedAt = nowIso();
     this.applyNotification(notification);
     this.appendNotificationTimeline(notification, receivedAt);
   }
 
+  /** Records a server request as pending and indexes its thread/turn identity. */
   ingestServerRequest(request: JsonRpcServerRequest): void {
     const receivedAt = nowIso();
     const requestState = {
@@ -305,11 +348,13 @@ export class AppServerEventStore {
     });
   }
 
+  /** Intentionally ignores client-response payloads because request callers consume them directly. */
   ingestResponse(_response: JsonRpcResponse): void {
     // JSON-RPC responses are transport acknowledgements for client requests, not app-server timeline events.
     // The request caller consumes the response directly, so emitting a timeline entry only creates empty logs.
   }
 
+  /** Marks a pending server request resolved and appends a request timeline entry. */
   resolveServerRequest(input: {
     id: string | number;
     status: AppServerRequestResolutionState["status"];
@@ -340,6 +385,7 @@ export class AppServerEventStore {
     this.pendingRequests.delete(requestId);
   }
 
+  /** Appends a lifecycle disconnect marker without fabricating thread completion state. */
   markDisconnected(message: string): void {
     this.appendTimeline({
       stream: AppServerTimelineStreams.Lifecycle,
@@ -348,6 +394,7 @@ export class AppServerEventStore {
     });
   }
 
+  /** Returns a deep-copied snapshot suitable for artifact persistence or rendering. */
   snapshot(): AppServerEventStoreSnapshot {
     const threads = Object.fromEntries(
       [...this.threads.entries()].map(([id, state]) => [id, cloneJson(state)]),
@@ -366,10 +413,12 @@ export class AppServerEventStore {
     };
   }
 
+  /** Returns the latest sequence assigned to the bounded timeline. */
   currentSeq(): number {
     return this.timelineSeq;
   }
 
+  /** Reads compact timeline entries after a sequence with optional stream filters. */
   timelineSince(seq: number, filter: {
     threadId?: string;
     stream?: AppServerTimelineStream;
@@ -386,6 +435,7 @@ export class AppServerEventStore {
     return entries;
   }
 
+  /** Resolves an index entry against current thread, turn, item, request, and plan projections. */
   resolveTimelineEntry(entry: AppServerTimelineEntry): AppServerResolvedTimelineEntry {
     const thread = entry.threadId ? this.threadSnapshot(entry.threadId) : undefined;
     const turn = entry.threadId && entry.turnId ? this.turnSnapshot(entry.threadId, entry.turnId) : undefined;
@@ -419,16 +469,19 @@ export class AppServerEventStore {
     };
   }
 
+  /** Returns a defensive copy of one thread projection, or undefined when unseen. */
   threadSnapshot(threadId: string): AppServerThreadState | undefined {
     const thread = this.threads.get(threadId);
     return thread ? cloneJson(thread) : undefined;
   }
 
+  /** Returns a defensive copy of one turn projection, or undefined when unseen. */
   turnSnapshot(threadId: string, turnId: string): AppServerTurnState | undefined {
     const turn = this.threads.get(threadId)?.turns[turnId];
     return turn ? cloneJson(turn) : undefined;
   }
 
+  /** Returns a defensive copy of one normalized item. */
   itemSnapshot(input: {
     threadId: string;
     turnId: string;
@@ -438,16 +491,19 @@ export class AppServerEventStore {
     return item ? cloneJson(item) : undefined;
   }
 
+  /** Returns a pending server request only while it awaits a response. */
   pendingRequestSnapshot(requestId: string): AppServerPendingRequestState | undefined {
     const request = this.pendingRequests.get(requestId);
     return request ? cloneJson(request) : undefined;
   }
 
+  /** Returns the resolved or pending request record retained by the store. */
   requestSnapshot(requestId: string): AppServerPendingRequestState | undefined {
     const request = this.requests.get(requestId);
     return request ? cloneJson(request) : undefined;
   }
 
+  /** Derives command/tool progress projections, optionally limited to active items. */
   progressItems(input: {
     threadId?: string;
     turnId?: string;
@@ -475,6 +531,7 @@ export class AppServerEventStore {
     return items;
   }
 
+  /** Derives one command/tool progress projection by item identity. */
   progressItem(input: {
     threadId: string;
     turnId: string;
@@ -491,6 +548,7 @@ export class AppServerEventStore {
     });
   }
 
+  /** Returns the latest accumulated assistant text for a turn. */
   finalResponse(threadId: string, turnId: string): string {
     return this.threads.get(threadId)?.turns[turnId]?.finalResponse ?? "";
   }

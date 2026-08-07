@@ -7,6 +7,7 @@ import {
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
 
+/** Builds all role agents, starts their threads, and stops them in role order. */
 export class AgentsStage implements RunStage {
   readonly id = "agents";
   private stopped = false;

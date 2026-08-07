@@ -1,3 +1,4 @@
+/** Lifecycle contracts, executor, and stage implementations for one run. */
 export * from "./run-stage.js";
 export * from "./run-stage-executor.js";
 export * from "./stages/agent-backend-stage.js";

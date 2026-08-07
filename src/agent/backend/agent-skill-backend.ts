@@ -45,6 +45,11 @@ interface SkillSelection extends SkillDiscovery {
 const MAX_SKILL_RESOURCE_BYTES = 256 * 1024;
 const MAX_SKILL_RESOURCE_PATH_LENGTH = 512;
 
+/**
+ * Enforces the two-step Skill protocol for one agent turn. Catalog authority
+ * comes from the mounted profile; this backend only reads authorized text and
+ * publishes outcomes, never installs or mutates Skills.
+ */
 export class AgentSkillBackend {
   private readonly eventBus: RunScope["eventBus"];
   private readonly repoRoot: RunScope["repoRoot"];

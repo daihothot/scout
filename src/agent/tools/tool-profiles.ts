@@ -10,10 +10,12 @@ import {
   buildSubmitTaskDynamicTool,
 } from "./agent-tools.js";
 
+/** Selects the role-specific subset of built-in agent tools. */
 export interface BuildAgentDynamicToolsOptions {
   orchestrationTools?: boolean;
 }
 
+/** Builds deterministic tool definitions for Coordinator or Worker threads. */
 export function buildAgentDynamicTools(options: BuildAgentDynamicToolsOptions = {}): AgentDynamicToolSpec[] {
   const skillTools = [
     buildFindSkillsDynamicTool(),

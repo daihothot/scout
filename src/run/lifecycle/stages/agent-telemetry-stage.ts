@@ -7,6 +7,7 @@ import {
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
 
+/** Installs and reverses the event recorders that persist agent telemetry. */
 export class AgentTelemetryStage implements RunStage {
   readonly id = "agent_telemetry";
   private taskRecorder?: TaskEventRecorder;

@@ -2,6 +2,7 @@ import { RunEvents } from "../../events/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
 
+/** Emits creation identity and writes the initial run manifest. */
 export class InitializeRunStage implements RunStage {
   readonly id = "initialize_run";
 

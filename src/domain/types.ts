@@ -5,6 +5,7 @@ import type {
   DynamicToolCallResponse,
 } from "../agent-server/types.js";
 
+/** Dynamic-tool invocation forwarded from an agent server into a domain backend. */
 export interface ScoutDomainDynamicToolCall {
   input: DynamicToolCallInput;
   caller: {
@@ -14,6 +15,7 @@ export interface ScoutDomainDynamicToolCall {
   };
 }
 
+/** Lifecycle and tool surface owned by a Scout domain implementation. */
 export interface ScoutDomain {
   readonly domainId: string;
   readonly name: string;

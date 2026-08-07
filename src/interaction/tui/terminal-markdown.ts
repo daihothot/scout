@@ -5,6 +5,7 @@ import {
 } from "marked";
 import { terminalDisplayWidth } from "./terminal-text.js";
 
+/** Style flags carried from markdown inline tokens to terminal spans. */
 export interface TerminalMarkdownStyle {
   bold?: boolean;
   italic?: boolean;
@@ -15,16 +16,19 @@ export interface TerminalMarkdownStyle {
   inverse?: boolean;
 }
 
+/** One display fragment with optional terminal styling. */
 export interface TerminalMarkdownSpan {
   text: string;
   style?: TerminalMarkdownStyle;
 }
 
+/** One wrapped markdown output row, including its semantic block kind. */
 export interface TerminalMarkdownLine {
   kind: "text" | "heading" | "code" | "quote" | "rule" | "blank";
   spans: TerminalMarkdownSpan[];
 }
 
+/** Parses markdown into width-bounded, styled rows for Ink rendering. */
 export function buildTerminalMarkdownLines(
   source: string,
   width: number,

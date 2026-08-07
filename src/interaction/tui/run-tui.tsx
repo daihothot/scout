@@ -4,6 +4,7 @@ import { ScoutTuiApp } from "./scout-tui-app.js";
 import { TuiInteractionAdapter } from "./tui-interaction-adapter.js";
 import { TuiStore } from "./tui-store.js";
 
+/** Handles the TUI store, interaction port, and renderer lifetime. */
 export interface ScoutTuiRuntime {
   store: TuiStore;
   interactionPort: TuiInteractionAdapter;
@@ -11,6 +12,7 @@ export interface ScoutTuiRuntime {
   waitUntilExit(): Promise<void>;
 }
 
+/** Inputs needed to construct the terminal runtime around a run. */
 export interface StartScoutTuiOptions {
   cwd: string;
   version: string;
@@ -18,6 +20,7 @@ export interface StartScoutTuiOptions {
   reasoningEffort: string;
 }
 
+/** Creates the TUI runtime and starts its Ink renderer. */
 export function startScoutTui(options: StartScoutTuiOptions): ScoutTuiRuntime {
   const store = new TuiStore(options);
   const interactionPort = new TuiInteractionAdapter(store);

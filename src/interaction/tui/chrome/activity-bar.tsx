@@ -25,12 +25,14 @@ const TOOL_ACTIVITY_TYPES = new Set([
 
 type ActivityAnimation = "breathing" | "process" | "fold";
 
+/** Render-ready markdown lines plus the fixed prefix width used by the activity strip. */
 export interface ActivityBarPresentation {
   lines: TerminalMarkdownSpan[][];
   prefixWidth: number;
   taskRef: string;
 }
 
+/** Renders the current agent activity with optional lifecycle animation and width-safe wrapping. */
 export function ActivityBar({ item, width, height }: {
   item?: TuiAgentActivityStripItem;
   width: number;
@@ -236,6 +238,7 @@ export function ActivityBar({ item, width, height }: {
   );
 }
 
+/** Returns the number of rows the activity strip will occupy at the given width. */
 export function resolveActivityBarRows(
   item: TuiAgentActivityStripItem | undefined,
   width: number,
@@ -243,6 +246,7 @@ export function resolveActivityBarRows(
   return buildActivityBarPresentation(item, width).lines.length;
 }
 
+/** Converts an activity item into wrapped terminal spans without changing activity content. */
 export function buildActivityBarPresentation(
   item: TuiAgentActivityStripItem | undefined,
   width: number,

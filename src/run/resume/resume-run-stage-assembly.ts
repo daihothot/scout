@@ -20,11 +20,20 @@ import {
   RecordResumeInterruptionsStage,
 } from "./stages/index.js";
 
+/**
+ * Defines the resume lifecycle graph and its ordering constraints.
+ *
+ * Serial groups protect dependencies such as scope, environment, and task
+ * restoration; independent domain/backend services are registered in parallel.
+ * The assembly owns registration only, while each stage owns its resources and
+ * restoration policy.
+ */
 export class ResumeRunStageAssembly {
   readonly executor: RunStageExecutor;
   readonly runScopeStage: RunScopeStage;
   readonly injectResumeContextStage: InjectResumeContextStage;
 
+  /** Registers the complete resume graph and retains the post-start activation stage. */
   constructor(input: {
     executor: RunStageExecutor;
     runScope: RunScope;

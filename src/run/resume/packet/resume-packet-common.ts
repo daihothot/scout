@@ -6,8 +6,14 @@ import {
 } from "../projection/task-recovery.js";
 import type { RunProjection } from "../projection/run-projector.js";
 
+/** Maximum UTF-8 size of an individual free-form value kept in a packet. */
 const MAX_TEXT_BYTES = 2 * 1024;
 
+/**
+ * Immutable inputs shared by the coordinator and worker packet builders.
+ * Recovery stages own action planning and supply the projection checkpoint;
+ * packet rendering only presents those facts for the selected agent.
+ */
 export interface ResumePacketInput {
   projection: RunProjection;
   agentId: string;
@@ -16,6 +22,11 @@ export interface ResumePacketInput {
   resumeActions: ResumeAction[];
 }
 
+/**
+ * Wire-safe rendering of a planned recovery action. The discriminant mirrors
+ * the internal action plan while the instruction gives the resumed agent the
+ * intended boundary; it is not an authorization to execute the action here.
+ */
 export type ResumePacketAction =
   | {
     type: typeof ResumeActionTypes.ResumeTask;
@@ -43,6 +54,11 @@ export type ResumePacketAction =
     instruction: string;
   };
 
+/**
+ * Role-facing recovery context injected into an agent thread. Optional task
+ * sections distinguish coordinator and worker views, while the journal and
+ * runtime remain the authoritative sources of state.
+ */
 export interface ResumePacket {
   identity: {
     run_id: string;
@@ -62,6 +78,7 @@ export interface ResumePacket {
   pending_messages: Array<Record<string, unknown>>;
 }
 
+/** Renders the stable run, checkpoint, role, and asset identity for a packet. */
 export function renderIdentity(
   input: ResumePacketInput,
 ): ResumePacket["identity"] {
@@ -74,6 +91,7 @@ export function renderIdentity(
   };
 }
 
+/** Reduces an artifact to its durable reference and verification metadata. */
 export function renderArtifact(
   artifact: RunProjection["artifacts"][number],
 ): Record<string, unknown> {
@@ -89,6 +107,10 @@ export function renderArtifact(
   };
 }
 
+/**
+ * Converts an internal action discriminant into the packet schema without
+ * dropping the task or message identifier required by the resumed agent.
+ */
 export function renderResumeAction(action: ResumeAction): ResumePacketAction {
   switch (action.type) {
     case ResumeActionTypes.ResumeTask:
@@ -124,6 +146,10 @@ export function renderResumeAction(action: ResumeAction): ResumePacketAction {
   }
 }
 
+/**
+ * Bounds free-form journal text by UTF-8 bytes so packet sizing is stable
+ * across multibyte input; oversized values retain an explicit truncation fact.
+ */
 export function boundedText(text: string | undefined): unknown {
   if (text === undefined) return undefined;
   const bytes = Buffer.byteLength(text, "utf8");

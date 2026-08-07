@@ -1,3 +1,4 @@
+/** Discriminated success/error value used to return without throwing. */
 export type Result<T, E> =
   | {
     readonly ok: true;
@@ -8,6 +9,7 @@ export type Result<T, E> =
     readonly error: E;
   };
 
+/** Constructors for the two branches of {@link Result}. */
 export const Result = {
   ok<T>(value: T): Result<T, never> {
     return {

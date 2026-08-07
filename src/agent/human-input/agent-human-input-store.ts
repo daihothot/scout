@@ -10,6 +10,7 @@ import type {
   AgentHumanInputRespondedEvent,
 } from "./human-input-events.js";
 
+/** Persisted request state, including an optional response delivered later. */
 export interface AgentHumanInputState extends AgentHumanInputRequestedEvent {
   response?: {
     body: string;
@@ -18,6 +19,7 @@ export interface AgentHumanInputState extends AgentHumanInputRequestedEvent {
   };
 }
 
+/** Rehydrates and deduplicates human-input requests from agent events. */
 export class AgentHumanInputStore {
   private readonly requests = new Map<string, AgentHumanInputState>();
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];

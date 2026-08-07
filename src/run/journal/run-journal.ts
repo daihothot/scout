@@ -26,6 +26,11 @@ interface RunLockRecord {
   acquiredAt: string;
 }
 
+/**
+ * Owns append-only run history and its host-aware lock. Opening repairs only
+ * an incomplete final record; callers remain responsible for lifecycle policy
+ * and for closing the journal.
+ */
 export class RunJournal {
   readonly runId: string;
   readonly runRoot: string;
@@ -50,6 +55,7 @@ export class RunJournal {
     this.events = input.events;
   }
 
+  /** Creates an empty journal and acquires its runtime lock. */
   static create(input: { runId: string; runRoot: string }): RunJournal {
     mkdirSync(input.runRoot, { recursive: true });
     const path = join(input.runRoot, "events.jsonl");
@@ -60,6 +66,7 @@ export class RunJournal {
     return RunJournal.open(input);
   }
 
+  /** Opens an existing journal after repairing and parsing its tail. */
   static open(input: { runId: string; runRoot: string }): RunJournal {
     const path = join(input.runRoot, "events.jsonl");
     if (!existsSync(path)) throw new Error(`Run journal does not exist: ${path}`);
@@ -77,6 +84,7 @@ export class RunJournal {
     }
   }
 
+  /** Appends one event with a monotonic sequence and returns a detached copy. */
   append(input: ScoutEvent): RunJournalEvent {
     if (this.closed) throw new Error(`Run journal ${this.runId} is closed.`);
     if (this.appendFailure) {
@@ -118,6 +126,7 @@ export class RunJournal {
     }
   }
 
+  /** Returns a detached snapshot of all successfully parsed journal events. */
   readAll(): RunJournalEvent[] {
     return structuredClone(this.events);
   }
@@ -144,6 +153,7 @@ function repairIncompleteTail(path: string): void {
   truncateSync(path, lastNewline < 0 ? 0 : lastNewline + 1);
 }
 
+/** Parses and validates a journal file without acquiring its runtime lock. */
 export function readJournalEvents(path: string): RunJournalEvent[] {
   const text = readFileSync(path, "utf8");
   const lines = text.split("\n");

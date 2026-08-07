@@ -1,17 +1,21 @@
+/** Lifecycle and error callbacks shared by the generic tick loop. */
 export interface AgenticLoopCommonHandlers {
   isStopped(): boolean;
   onError(error: unknown): void | Promise<void>;
 }
 
+/** Supplies and executes one unit of agent work at a time. */
 export interface AgenticTickLoopHandlers<TTick> extends AgenticLoopCommonHandlers {
   takeTick(): TTick | undefined;
   runTick(tick: TTick): Promise<void>;
 }
 
+/** Configuration for a serial, self-rescheduling agent tick loop. */
 export interface AgenticLoopOptions<TTick> extends AgenticTickLoopHandlers<TTick> {
   agentId: string;
 }
 
+/** Runs pending agent work serially and reports failures through its owner. */
 export class AgenticLoop<TTick> {
   readonly agentId: string;
   private readonly handlers: AgenticTickLoopHandlers<TTick>;

@@ -1,6 +1,7 @@
 import React, { type ReactNode } from "react";
 import { Box } from "ink";
 
+/** Composes top chrome, chat, task drawer, activity, and prompt regions. */
 export function ScoutShell({
   terminalWidth,
   contentWidth,

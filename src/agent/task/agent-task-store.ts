@@ -5,12 +5,14 @@ import {
   type AgentTaskStatus,
 } from "./types.js";
 
+/** Task statuses that remain visible to the agent orchestration layer. */
 export const ActiveAgentTaskStatuses = [
   AgentTaskStatuses.Queued,
   AgentTaskStatuses.Running,
   AgentTaskStatuses.Done,
 ] as const satisfies AgentTaskStatus[];
 
+/** In-memory task authority that returns detached state snapshots. */
 export class AgentTaskStore {
   private readonly tasks = new Map<string, AgentTaskState>();
   private readonly taskIdsByAgent = new Map<string, string[]>();
@@ -114,10 +116,12 @@ export class AgentTaskStore {
   }
 }
 
+/** Whether a task is still open to orchestration or resumption. */
 export function isActiveAgentTaskStatus(status: AgentTaskStatus): boolean {
   return ActiveAgentTaskStatuses.includes(status as typeof ActiveAgentTaskStatuses[number]);
 }
 
+/** Deep-clones task state before crossing a store or event boundary. */
 export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
   return {
     ...task,
@@ -135,6 +139,7 @@ export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
   };
 }
 
+/** Compares two lifecycle dispositions for idempotent event replay. */
 export function sameAgentTaskDisposition(
   left: AgentTaskDisposition,
   right: AgentTaskDisposition,

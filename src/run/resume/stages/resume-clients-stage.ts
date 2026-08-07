@@ -15,10 +15,17 @@ import {
 import { currentRunScope } from "../../run-scope.js";
 import { isPathWithin } from "../../../core/path.js";
 
+/**
+ * Reopens the run-scoped Codex client after validating that its copied home
+ * and sessions remain inside the run root. Client startup is delegated to the
+ * normal app-server lifecycle stage; this wrapper only supplies resume-time
+ * containment and ownership boundaries.
+ */
 export class ResumeClientsStage implements RunStage {
   readonly id = "restore_clients";
   private stage?: RunAppServerStage;
 
+  /** Validates copied Codex state, then starts the app-server client stage. */
   async start(): Promise<void> {
     assertRunCodexHomeIsContained();
     const stage = new RunAppServerStage();
@@ -26,12 +33,14 @@ export class ResumeClientsStage implements RunStage {
     this.stage = stage;
   }
 
+  /** Delegates client shutdown and releases the stage reference. */
   async stop(reason: string): Promise<void> {
     await this.stage?.stop();
     this.stage = undefined;
   }
 }
 
+/** Rejects copied Codex homes that escape the run root or contain symlinks. */
 function assertRunCodexHomeIsContained(): void {
   const scope = currentRunScope();
   const repoRoot = resolve(scope.repoRoot);

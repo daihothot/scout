@@ -1,5 +1,6 @@
 import type { CodexMount } from "../types.js";
 
+/** Returns unique trusted roots required by the mount and its MCP servers. */
 export function collectMountTrustedRoots(mount: CodexMount): string[] {
   return uniqueStrings([
     ...mount.trustedRoots,
@@ -7,6 +8,7 @@ export function collectMountTrustedRoots(mount: CodexMount): string[] {
   ]);
 }
 
+/** Returns unique writable roots required by the mount and its MCP servers. */
 export function collectMountWritableRoots(mount: CodexMount): string[] {
   return uniqueStrings([
     ...mount.writableRoots,

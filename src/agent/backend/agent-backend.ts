@@ -7,6 +7,11 @@ import { AgentToolBackend } from "./agent-tool-backend.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 
+/**
+ * Owns the run-scoped app-server subscriptions and routes each entry to the
+ * task or activity backend. Agent construction and lifecycle orchestration are
+ * intentionally left to the surrounding run stages.
+ */
 export class AgentBackend {
   readonly registry: RunScope["agentRegistry"];
   readonly activity: AgentActivityBackend;

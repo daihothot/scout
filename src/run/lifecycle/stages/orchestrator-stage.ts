@@ -1,6 +1,7 @@
 import { AgentOrchestrator } from "../../../agent/orchestration/agent-orchestrator.js";
 import type { RunStage } from "../run-stage.js";
 
+/** Starts and stops task-to-agent orchestration for the active run. */
 export class OrchestratorStage implements RunStage {
   readonly id = "orchestrator";
   private orchestrator?: AgentOrchestrator;

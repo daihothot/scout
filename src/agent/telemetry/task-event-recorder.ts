@@ -8,6 +8,7 @@ import { AgentEvents } from "../events/index.js";
 import type { AgentTaskNotAssignedEventPayload } from "../task/task-events.js";
 import type { AgentTaskState } from "../task/types.js";
 
+/** Writes task lifecycle events to the owning agent's task log. */
 export class TaskEventRecorder {
   private readonly taskLoggers = new Map<string, Logger>();
   private unsubscribe?: UnsubscribeEventHandler;

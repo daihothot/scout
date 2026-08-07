@@ -1,3 +1,4 @@
+/** Public agent runtime surface; implementation ownership remains in submodules. */
 export * from "./thread/types.js";
 export * from "./core/scout-agent.js";
 export * from "./backend/agent-backend.js";

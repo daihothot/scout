@@ -20,6 +20,7 @@ type TaskDrawerVisualRow =
   | { kind: "task"; id: string; task: TuiTaskDrawerItem; taskIndex: number }
   | { kind: "step"; id: string; step: TuiTaskDrawerItem["planSteps"][number] };
 
+/** Keyboard- and mouse-navigable task drawer with optional plan expansion. */
 export function TasksDrawer({
   tasks,
   open,
@@ -168,6 +169,7 @@ export function TasksDrawer({
   );
 }
 
+/** Builds the collapsed one-line task summary for compact layouts. */
 export function buildCollapsedTaskSummary(tasks: TuiTaskDrawerItem[], width: number): string {
   const activeTasks = tasks.filter((task) => isActiveTaskStatus(task.status));
   const archivedTaskCount = tasks.filter((task) => task.status === "archived").length;
@@ -209,6 +211,7 @@ function buildTaskDrawerRows(
   ]);
 }
 
+/** Resolves the drawer scroll offset around the selected task row. */
 export function resolveTaskDrawerScrollTop(
   totalRows: number,
   viewportRows: number,

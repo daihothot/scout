@@ -6,6 +6,7 @@ import {
   type EventKeyScope,
 } from "./event-key.js";
 
+/** Runtime event identity with a payload type guard for a single declared event. */
 export interface EventType<TPayload = unknown> extends EventKey {
   readonly kind: "event";
   is(
@@ -13,6 +14,7 @@ export interface EventType<TPayload = unknown> extends EventKey {
   ): event is ScoutEvent<TPayload> & { key: EventType<TPayload> };
 }
 
+/** Runtime matcher for every event below one scope/group route prefix. */
 export interface EventGroup {
   readonly kind: "group";
   readonly scope: EventKeyScope;
@@ -21,16 +23,19 @@ export interface EventGroup {
   is(event: ScoutEvent): boolean;
 }
 
+/** Marker value used to describe an event before its scope and route are assigned. */
 export interface EventDeclaration<TPayload = unknown> {
   readonly tag?: string;
   readonly __eventDeclaration: true;
   readonly __payload?: TPayload;
 }
 
+/** Recursive shape accepted when declaring a catalog of event groups and leaves. */
 export type EventCatalogShape = {
   readonly [key: string]: EventDeclaration | EventCatalogShape;
 };
 
+/** Type-level projection from a declaration tree to its runtime event/group tree. */
 export type DefinedEventCatalog<TCatalog extends EventCatalogShape> = {
   readonly [K in keyof TCatalog]: TCatalog[K] extends EventDeclaration<infer TPayload>
     ? EventType<TPayload>
@@ -39,6 +44,7 @@ export type DefinedEventCatalog<TCatalog extends EventCatalogShape> = {
       : never;
 };
 
+/** Registry that owns one scope and merges additional declaration trees into it. */
 export interface EventCatalogRegistry<TScope extends EventKeyScope> {
   readonly scope: TScope;
   add<TCatalog extends EventCatalogShape>(catalog: TCatalog): DefinedEventCatalog<TCatalog>;
@@ -46,6 +52,7 @@ export interface EventCatalogRegistry<TScope extends EventKeyScope> {
 
 const globalEventKeyFactory = createEventKeyFactory();
 
+/** Declares one event leaf while preserving its payload type for catalog expansion. */
 export function event<TPayload = unknown>(input: {
   tag?: string;
 } = {}): EventDeclaration<TPayload> {
@@ -55,6 +62,7 @@ export function event<TPayload = unknown>(input: {
   });
 }
 
+/** Expands a declaration tree into validated event keys and group matchers. */
 export function defineEventCatalog<TCatalog extends EventCatalogShape>(
   scope: EventKeyScope,
   catalog: TCatalog,
@@ -71,6 +79,7 @@ export function defineEventCatalog<TCatalog extends EventCatalogShape>(
   }) as DefinedEventCatalog<TCatalog>;
 }
 
+/** Creates a mutable registry facade whose additions share one key factory. */
 export function createEventCatalog<TScope extends EventKeyScope>(
   scope: TScope,
   input: {

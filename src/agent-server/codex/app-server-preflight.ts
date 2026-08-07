@@ -85,6 +85,7 @@ export function summarizeAgentServerPreflight(
   return summary;
 }
 
+/** Runs root, Codex catalog, plugin, hook, and shell smoke checks for one mount. */
 export async function preflightCodexAppServerMount(input: {
   mount: CodexMount;
   appServer: CodexAppServerClient;
@@ -105,40 +106,45 @@ export async function preflightCodexAppServerMount(input: {
       cwds: [mount.mountRoot],
       forceReload: true,
     });
-    result.pluginList = await appServer.request("plugin/list", {
-      cwds: [mount.mountRoot],
-    });
     if (mount.plugins.length > 0) {
-      result.pluginInstalled = await appServer.request("plugin/installed", {
-        cwds: [mount.mountRoot],
-        installSuggestionPluginNames: mount.plugins,
-      });
-      result.pluginGate = buildPluginGate({
-        pluginNames: mount.plugins,
-        marketplacePath: join(mount.mountRoot, ".agents", "plugins", "marketplace.json"),
-        installedResponse: result.pluginInstalled,
-      });
-      if (result.pluginGate.plugins.some((plugin) => !plugin.installedBefore || !plugin.enabledBefore)) {
-        result.pluginInstall = await Promise.all(mount.plugins.map((pluginName) =>
-          appServer.request("plugin/install", {
-            marketplacePath: result.pluginGate?.marketplacePath ?? join(mount.mountRoot, ".agents", "plugins", "marketplace.json"),
-            pluginName,
-          }).catch((error: unknown) => ({
-            pluginName,
-            error: error instanceof Error ? error.message : String(error),
-          }))
-        ));
-        result.pluginInstalledAfterInstall = await appServer.request("plugin/installed", {
+      await appServer.withPluginManagerLock(async () => {
+        result.pluginList = await appServer.request("plugin/list", {
+          cwds: [mount.mountRoot],
+        });
+        result.pluginInstalled = await appServer.request("plugin/installed", {
           cwds: [mount.mountRoot],
           installSuggestionPluginNames: mount.plugins,
         });
         result.pluginGate = buildPluginGate({
           pluginNames: mount.plugins,
-          marketplacePath: result.pluginGate.marketplacePath,
-          installedResponse: result.pluginInstalledAfterInstall,
-          before: result.pluginGate,
+          marketplacePath: join(mount.mountRoot, ".agents", "plugins", "marketplace.json"),
+          installedResponse: result.pluginInstalled,
         });
-      }
+        if (result.pluginGate.plugins.some((plugin) => !plugin.installedBefore || !plugin.enabledBefore)) {
+          const pluginInstallResults: unknown[] = [];
+          for (const pluginName of mount.plugins) {
+            pluginInstallResults.push(await appServer.request("plugin/install", {
+              marketplacePath: result.pluginGate?.marketplacePath
+                ?? join(mount.mountRoot, ".agents", "plugins", "marketplace.json"),
+              pluginName,
+            }).catch((error: unknown) => ({
+              pluginName,
+              error: error instanceof Error ? error.message : String(error),
+            })));
+          }
+          result.pluginInstall = pluginInstallResults;
+          result.pluginInstalledAfterInstall = await appServer.request("plugin/installed", {
+            cwds: [mount.mountRoot],
+            installSuggestionPluginNames: mount.plugins,
+          });
+          result.pluginGate = buildPluginGate({
+            pluginNames: mount.plugins,
+            marketplacePath: result.pluginGate.marketplacePath,
+            installedResponse: result.pluginInstalledAfterInstall,
+            before: result.pluginGate,
+          });
+        }
+      });
     }
     result.hooksList = await appServer.request("hooks/list", {
       cwds: [mount.mountRoot],

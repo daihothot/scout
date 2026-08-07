@@ -6,6 +6,7 @@ import type {
 } from "./types.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 
+/** Fact emitted when a Worker submits a completed task outcome. */
 export interface AgentTaskOutcomeSubmission {
   task: AgentTaskState;
   stepId: string;
@@ -15,6 +16,7 @@ export interface AgentTaskOutcomeSubmission {
   submittedAt: string;
 }
 
+/** Fact emitted when Runtime records a step lifecycle disposition. */
 export interface AgentTaskDispositionRecorded {
   task: AgentTaskState;
   disposition: AgentTaskDisposition;
@@ -42,8 +44,10 @@ const taskEventCatalog = {
 
 AgentEvents.add(taskEventCatalog);
 
+/** Event routes for task lifecycle, plan, and disposition facts. */
 export type AgentTaskEventCatalog = typeof taskEventCatalog;
 
+/** Rejection fact emitted when a Worker cannot accept a new task. */
 export interface AgentTaskNotAssignedEventPayload {
   agentId: string;
   role: ScoutAgentRole;

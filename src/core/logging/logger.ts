@@ -2,8 +2,10 @@ import { appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { ensureDir } from "../fs.js";
 
+/** Severity labels emitted in the line-oriented runtime log. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
+/** Structured event fields retained after summarization and redaction. */
 export interface LogEvent {
   timestamp: string;
   level: LogLevel;
@@ -15,10 +17,14 @@ export interface LogEvent {
   data?: unknown;
 }
 
+/** Hook that removes sensitive values before an event is serialized. */
 export type LogRedactor = (event: LogEvent) => LogEvent;
+/** Hook that bounds large values before an event is serialized. */
 export type LogSummarizer = (event: LogEvent) => LogEvent;
+/** Event fields callers provide; timestamp, level, and run identity belong to the logger. */
 export type LogInput = Omit<LogEvent, "timestamp" | "level" | "runId">;
 
+/** Runtime identity and output/pipeline configuration for a {@link Logger}. */
 export interface LoggerOptions {
   runId: string;
   logsRoot: string;
@@ -29,6 +35,7 @@ export interface LoggerOptions {
 
 const LOG_LINE_WIDTH = 120;
 
+/** Appends structured, summarized, and redacted runtime events to one run log. */
 export class Logger {
   private readonly runId: string;
   private readonly logPath: string;

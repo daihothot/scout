@@ -1,5 +1,6 @@
 import type { ScoutAgent } from "./scout-agent.js";
 
+/** Maintains agent identity and the thread-to-agent ownership index for a run. */
 export class AgentRegistry {
   private readonly agents = new Map<string, ScoutAgent>();
   private readonly threadIdToAgentId = new Map<string, string>();

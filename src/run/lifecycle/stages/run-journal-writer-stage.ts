@@ -4,6 +4,7 @@ import {
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
 
+/** Attaches the journal writer and closes the run journal on shutdown. */
 export class RunJournalWriterStage implements RunStage {
   readonly id = "run_journal_writer";
   private writer?: RunJournalWriter;

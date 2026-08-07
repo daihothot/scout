@@ -8,6 +8,7 @@ import { SystemEvents } from "../../../system/events/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
 
+/** Connects the interaction gateway and routes exit requests to termination. */
 export class InteractionStage implements RunStage {
   readonly id = "interaction";
   private gateway?: InteractionGateway;

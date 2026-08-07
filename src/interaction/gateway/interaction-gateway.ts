@@ -22,9 +22,15 @@ import type {
   UserMessageSubmittedPayload,
 } from "./interaction-events.js";
 
+/**
+ * Bridges runtime event facts and interaction-port callbacks.
+ * The gateway owns subscription wiring and user-message event construction; it does not render
+ * messages or make run-stage decisions.
+ */
 export class InteractionGateway {
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
 
+  /** Installs the gateway subscriptions once for the current run scope. */
   start(): void {
     if (this.unsubscribers.length > 0) return;
     const scope = currentRunScope();
@@ -60,12 +66,14 @@ export class InteractionGateway {
     if (unsubscribeExit) this.unsubscribers.push(unsubscribeExit);
   }
 
+  /** Removes all subscriptions and input callbacks owned by this gateway. */
   stop(): void {
     while (this.unsubscribers.length > 0) {
       this.unsubscribers.pop()?.();
     }
   }
 
+  /** Publishes user text as a coordinator attachment and waits for event subscribers. */
   async submitUserMessage(input: {
     text: string;
     messageId?: string;

@@ -3,11 +3,18 @@ import { AgentEvents } from "../../../agent/events/index.js";
 import { sameAgentTaskDisposition } from "../../../agent/task/agent-task-store.js";
 import type { RunJournalEvent } from "../../journal/index.js";
 
+/** Task state retained after an archive event removes it from the active queue. */
 export interface ProjectedArchivedTask {
   task: AgentTaskState;
   archivedAt: string;
 }
 
+/**
+ * Applies one task-domain journal event to the maps owned by `projectRun`.
+ * Returns whether the event belongs to task projection; archive removes the
+ * active task, and disposition records are checked against the embedded task
+ * before the snapshot is accepted.
+ */
 export function applyTaskJournalEvent(
   tasks: Map<string, AgentTaskState>,
   archivedTasks: Map<string, ProjectedArchivedTask>,

@@ -11,6 +11,7 @@ import {
 
 const TASK_STEP_STATUS_COLUMN_WIDTH = 10;
 
+/** Renders one task summary with selection, role, and status markers. */
 export function TaskSummaryRow({ task, selected, width }: {
   task: TuiTaskDrawerItem;
   selected: boolean;
@@ -39,6 +40,7 @@ export function TaskSummaryRow({ task, selected, width }: {
   );
 }
 
+/** Renders one plan step aligned to the drawer's status column. */
 export function TaskPlanStepRow({ step, width }: {
   step: TuiTaskPlanStep;
   width: number;
@@ -54,6 +56,7 @@ export function TaskPlanStepRow({ step, width }: {
   );
 }
 
+/** Computes the marker, label padding, and clipped status for one plan step. */
 export function buildTaskStepDisplay(
   step: TuiTaskPlanStep,
   width: number,

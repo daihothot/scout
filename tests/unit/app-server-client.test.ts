@@ -658,6 +658,62 @@ test("CodexAppServerClient serializes settings updates for one thread", async ()
   }
 });
 
+test("CodexAppServerClient serializes shared plugin-manager operations", async () => {
+  const fakeServer = writeFakeAppServer(`
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin });
+    function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+    rl.on("line", (line) => {
+      const message = JSON.parse(line);
+      if (message.method === "initialize") send({ id: message.id, result: { ok: true } });
+    });
+  `);
+  const client = new CodexAppServerClient({
+    codexPath: fakeServer,
+    home: tmpdir(),
+    codexHome: tmpdir(),
+    providerName: "missing-provider",
+  });
+  const events: string[] = [];
+  let releaseFirst!: () => void;
+  let signalFirstStarted!: () => void;
+  const firstStarted = new Promise<void>((resolve) => {
+    signalFirstStarted = resolve;
+  });
+  const first = client.withPluginManagerLock(async () => {
+    events.push("first:start");
+    signalFirstStarted();
+    await new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    events.push("first:end");
+    return "first";
+  });
+
+  try {
+    await client.startSession();
+    await firstStarted;
+    const second = client.withPluginManagerLock(async () => {
+      events.push("second:start");
+      events.push("second:end");
+      return "second";
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(events, ["first:start"]);
+    releaseFirst();
+    assert.deepEqual(await Promise.all([first, second]), ["first", "second"]);
+    assert.deepEqual(events, [
+      "first:start",
+      "first:end",
+      "second:start",
+      "second:end",
+    ]);
+  } finally {
+    releaseFirst?.();
+    client.close();
+  }
+});
+
 test("CodexAppServerClient publishes timeline after store state is reduced", async () => {
   const fakeServer = writeFakeAppServer(`
     const readline = require("node:readline");
@@ -851,6 +907,10 @@ test("CodexAppServerClient does not report an intentional close as a disconnect"
 
   await client.startSession();
   client.close();
+  await assert.rejects(
+    client.request("after-close", {}),
+    /Codex app-server is closed/,
+  );
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   assert.equal(timelineKinds.includes("disconnect"), false);

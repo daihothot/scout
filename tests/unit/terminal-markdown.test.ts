@@ -8,9 +8,8 @@ import {
   resolveActivityBarRows,
 } from "../../src/interaction/tui/chrome/activity-bar.js";
 import {
-  buildMountRestoreProgressPresentation,
-  buildMountRestoreStatusPresentation,
   buildRunLifecycleProgressPresentation,
+  buildSubprocessStatusPresentation,
   resolveTopChromeRows,
   TopChrome,
 } from "../../src/interaction/tui/chrome/top-chrome.js";
@@ -219,50 +218,69 @@ test("Subprocess progress accepts module-independent content and units", () => {
   assert.equal(subprocessProgressStatusText(content, true), "workspace▷indexing 2/5");
 });
 
-test("Mount restore maps into generic subprocess content and stable chrome rows", () => {
+test("Subprocess descriptor drives progress content and stable chrome rows", () => {
   const progress = {
-    phase: "rebuild" as const,
-    activeRole: "validator" as const,
-    activeStep: "config" as const,
-    roles: [
-      { role: "coordinator" as const, decision: "reused" as const },
-      { role: "researcher" as const, decision: "reused" as const },
-      { role: "verifier" as const, decision: "rebuild" as const, step: "config" as const },
-      { role: "validator" as const, decision: "rebuild" as const, step: "config" as const },
-    ],
+    id: "mount-restore",
+    phase: "running" as const,
     completedUnits: 8,
     totalUnits: 14,
+    descriptor: {
+      status: {
+        marker: "*",
+        label: "Preparing Scout runtime",
+        detail: "Mount · preflight · validator",
+        tone: "active" as const,
+      },
+      progress: {
+        marker: "▶",
+        label: "validator",
+        detail: "config",
+        units: "8/14",
+        tone: "active" as const,
+      },
+    },
   };
-  const presentation = buildMountRestoreProgressPresentation(progress, 80, 2);
+  const presentation = buildSubprocessProgressPresentation({
+    completedUnits: progress.completedUnits,
+    totalUnits: progress.totalUnits,
+    content: progress.descriptor.progress,
+    width: 80,
+    maxBarWidth: 53,
+  });
 
   assert.equal(presentation.width, 53);
   assert.deepEqual(presentation.content, {
     marker: "▶",
     label: "validator",
     detail: "config",
+    tone: "active",
     units: "8/14",
   });
   assert.equal(presentation.filled, "▪".repeat(30));
   assert.equal(presentation.remaining, "▫".repeat(23));
-  const preflight = buildMountRestoreProgressPresentation({
-    ...progress,
-    activeStep: "preflight",
-  }, 80, 0);
+  const preflight = buildSubprocessProgressPresentation({
+    completedUnits: progress.completedUnits,
+    totalUnits: progress.totalUnits,
+    content: { ...progress.descriptor.progress, detail: "preflight" },
+    width: 80,
+    maxBarWidth: 53,
+  });
   assert.deepEqual(preflight.content, {
-    marker: "›",
+    marker: "▶",
     label: "validator",
     detail: "preflight",
+    tone: "active",
     units: "8/14",
   });
-  assert.equal(buildMountRestoreProgressPresentation({
-    ...progress,
-    activeStep: "verify",
-  }, 80, 0).content.detail, undefined);
+  assert.equal(buildSubprocessProgressPresentation({
+    completedUnits: progress.completedUnits,
+    totalUnits: progress.totalUnits,
+    content: { ...progress.descriptor.progress, detail: undefined },
+    width: 80,
+    maxBarWidth: 53,
+  }).content.detail, undefined);
   assert.deepEqual(
-    buildMountRestoreStatusPresentation({
-      ...progress,
-      activeStep: "preflight",
-    }),
+    buildSubprocessStatusPresentation(progress.descriptor.status),
     {
       marker: "*",
       label: "Preparing Scout runtime",
@@ -271,13 +289,11 @@ test("Mount restore maps into generic subprocess content and stable chrome rows"
     },
   );
   assert.deepEqual(
-    buildMountRestoreStatusPresentation({
-      ...progress,
-      phase: "failed",
-      activeStep: "preflight",
-      roles: progress.roles.map((role) => role.role === "validator"
-        ? { ...role, decision: "failed" as const }
-        : role),
+    buildSubprocessStatusPresentation({
+      marker: "!",
+      label: "Mount restore failed",
+      detail: "validator preflight",
+      tone: "failed",
     }),
     {
       marker: "!",
@@ -286,23 +302,34 @@ test("Mount restore maps into generic subprocess content and stable chrome rows"
       color: "red",
     },
   );
-  assert.deepEqual(buildMountRestoreStatusPresentation({
-    phase: "verify",
-    roles: progress.roles.map((role) => ({
-      role: role.role,
-      decision: "reused" as const,
-    })),
-    completedUnits: 4,
-    totalUnits: 4,
+  assert.deepEqual(buildSubprocessStatusPresentation({
+    marker: "*",
+    label: "Preparing Scout runtime",
+    detail: "Mount · verifying · 4/4 reusable",
+    tone: "active",
   }), {
     marker: "*",
     label: "Preparing Scout runtime",
     detail: "Mount · verifying · 4/4 reusable",
     color: "yellow",
   });
+  assert.deepEqual(buildSubprocessStatusPresentation({
+    marker: "*",
+    label: "Preparing Scout runtime",
+    detail: "Mount · preflight · researcher",
+    tone: "active",
+  }), {
+    marker: "*",
+    label: "Preparing Scout runtime",
+    detail: "Mount · preflight · researcher",
+    color: "yellow",
+  });
   assert.equal(resolveTopChromeRows(false, true, progress), 27);
   assert.equal(resolveTopChromeRows(true, true, progress), 14);
-  assert.equal(resolveTopChromeRows(false, true, { ...progress, phase: "verify" }), 21);
+  assert.equal(resolveTopChromeRows(false, true, {
+    ...progress,
+    descriptor: { status: progress.descriptor.status },
+  }), 21);
   assert.equal(resolveTopChromeRows(false, false), 17);
   assert.equal(resolveTopChromeRows(true, false), 12);
 
@@ -329,17 +356,25 @@ test("Mount restore maps into generic subprocess content and stable chrome rows"
 
 test("Top chrome matches the full mount layout at normal and boundary widths", () => {
   const mountRestore = {
-    phase: "rebuild" as const,
-    activeRole: "researcher" as const,
-    activeStep: "preflight" as const,
-    roles: [
-      { role: "coordinator" as const, decision: "reused" as const },
-      { role: "researcher" as const, decision: "rebuild" as const, step: "preflight" as const },
-      { role: "verifier" as const, decision: "pending" as const },
-      { role: "validator" as const, decision: "pending" as const },
-    ],
+    id: "mount-restore",
+    phase: "running" as const,
     completedUnits: 11,
     totalUnits: 24,
+    descriptor: {
+      status: {
+        marker: "*",
+        label: "Preparing Scout runtime",
+        detail: "Mount · preflight · researcher",
+        tone: "active" as const,
+      },
+      progress: {
+        marker: "›",
+        label: "researcher",
+        detail: "preflight",
+        units: "11/24",
+        tone: "active" as const,
+      },
+    },
   };
   const state = tuiState({
     runtime: {
@@ -357,7 +392,7 @@ test("Top chrome matches the full mount layout at normal and boundary widths", (
       totalStages: 9,
       stages: [],
     },
-    mountRestore,
+    subprocessProgress: mountRestore,
   });
   const previousMotion = process.env.SCOUT_TUI_MOTION;
   process.env.SCOUT_TUI_MOTION = "0";

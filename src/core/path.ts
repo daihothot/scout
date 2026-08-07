@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
+/** Controls whether lexical containment accepts the root path itself. */
 export interface PathWithinOptions {
   allowRoot?: boolean;
 }

@@ -1,21 +1,48 @@
-import type { ScoutAgentRole } from "../agent/thread/types.js";
+import type { ScoutAgentRole } from "../../../agent/thread/types.js";
 import type {
   MountMaterializationStep,
   MountPreparationDecision,
-} from "../asset-store/types.js";
-import type {
-  MountRestoreProgress,
-  MountRestoreRoleDecision,
-  MountRestoreStep,
-} from "../interaction/protocol/port.js";
-import type { RuntimeInteractionPort } from "../interaction/protocol/port.js";
+} from "../../../asset-store/types.js";
+
+/** Per-role outcome tracked while mounts are verified or rebuilt. */
+export type MountRestoreRoleDecision = "pending" | "reused" | "rebuild" | "failed";
+
+/** Visible units that translate mount preparation into subprocess progress. */
+export type MountRestoreStep =
+  | "verify"
+  | "wipe"
+  | "layout"
+  | "config"
+  | "skills"
+  | "plugins"
+  | "shell"
+  | "preflight";
+
+/**
+ * Mutable operation state consumed by startup and resume progress publishers.
+ * It contains no TUI layout or transport behavior.
+ */
+export interface MountRestoreProgressState {
+  phase: "verify" | "rebuild" | "done" | "failed";
+  activeRole?: ScoutAgentRole;
+  activeStep?: MountRestoreStep;
+  roles: Array<{
+    role: ScoutAgentRole;
+    decision: MountRestoreRoleDecision;
+    step?: MountRestoreStep;
+    reason?: string;
+  }>;
+  completedUnits: number;
+  totalUnits: number;
+}
 
 const REBUILD_EXTRA_UNITS = 5;
 const REBUILD_UNITS = REBUILD_EXTRA_UNITS + 1;
 
+/** Starts verification with one provisional unit for every requested role. */
 export function createMountRestoreProgress(
   roles: readonly ScoutAgentRole[],
-): MountRestoreProgress {
+): MountRestoreProgressState {
   return {
     phase: "verify",
     roles: roles.map((role) => ({ role, decision: "pending" })),
@@ -24,12 +51,9 @@ export function createMountRestoreProgress(
   };
 }
 
-/**
- * Freezes the role decisions before materialization starts so the progress
- * denominator cannot move while the bar is visible.
- */
+/** Freeze preparation decisions before materialization starts. */
 export function planMountRestore(
-  progress: MountRestoreProgress,
+  progress: MountRestoreProgressState,
   decisions: ReadonlyMap<ScoutAgentRole, {
     decision: MountPreparationDecision;
     reason?: string;
@@ -61,8 +85,13 @@ export function planMountRestore(
   progress.activeStep = undefined;
 }
 
+/**
+ * Records the preparation decision emitted while a role is inspected or run.
+ * Unplanned rebuilds expand the total because their extra work was not known
+ * when the progress state was created.
+ */
 export function applyMountPreparationDecision(
-  progress: MountRestoreProgress,
+  progress: MountRestoreProgressState,
   role: ScoutAgentRole,
   decision: MountPreparationDecision,
   reason?: string,
@@ -88,8 +117,9 @@ export function applyMountPreparationDecision(
   progress.totalUnits += REBUILD_EXTRA_UNITS;
 }
 
+/** Advances the visible rebuild units for one materialization callback. */
 export function applyMountMaterializationStep(
-  progress: MountRestoreProgress,
+  progress: MountRestoreProgressState,
   role: ScoutAgentRole,
   step: MountMaterializationStep,
 ): void {
@@ -100,13 +130,13 @@ export function applyMountMaterializationStep(
   progress.activeStep = step;
   entry.decision = "rebuild";
   entry.step = step;
-  // plugins is reported together with skills; the other materialization
-  // callbacks each complete one visible unit.
+  // Skills and plugins share one visible unit in the mount descriptor.
   if (step !== "plugins") progress.completedUnits += 1;
 }
 
+/** Completes the preflight unit after the role builder returns. */
 export function applyMountPreflightStep(
-  progress: MountRestoreProgress,
+  progress: MountRestoreProgressState,
   role: ScoutAgentRole,
 ): void {
   if (progress.phase === "failed") return;
@@ -118,8 +148,9 @@ export function applyMountPreflightStep(
   progress.completedUnits += 1;
 }
 
+/** Selects preflight as the active step without completing its progress unit. */
 export function beginMountPreflightStep(
-  progress: MountRestoreProgress,
+  progress: MountRestoreProgressState,
   role: ScoutAgentRole,
 ): void {
   if (progress.phase === "failed") return;
@@ -129,8 +160,9 @@ export function beginMountPreflightStep(
   entry.step = "preflight";
 }
 
+/** Clears the active marker after one role finishes without changing totals. */
 export function completeMountRole(
-  progress: MountRestoreProgress,
+  progress: MountRestoreProgressState,
   role: ScoutAgentRole,
 ): void {
   if (progress.phase === "failed") return;
@@ -143,8 +175,9 @@ export function completeMountRole(
   }
 }
 
+/** Freezes the operation at the first role failure and retains a short reason. */
 export function failMountRole(
-  progress: MountRestoreProgress,
+  progress: MountRestoreProgressState,
   role: ScoutAgentRole,
   step: MountRestoreStep,
   reason?: string,
@@ -159,34 +192,15 @@ export function failMountRole(
   entry.reason = shortReason(reason);
 }
 
-export function finishMountRestore(
-  progress: MountRestoreProgress,
-): void {
+/** Marks the operation complete and clears any active role or step. */
+export function finishMountRestore(progress: MountRestoreProgressState): void {
   progress.phase = "done";
   progress.activeRole = undefined;
   progress.activeStep = undefined;
 }
 
-export async function discloseMountRestoreFailure(
-  interactionPort: RuntimeInteractionPort,
-  role: ScoutAgentRole,
-  step: MountRestoreStep,
-  reason?: string,
-): Promise<void> {
-  const detail = shortReason(reason);
-  try {
-    await interactionPort.disclose({
-      level: "error",
-      source: "run.mount-restore",
-      message: `Mount restore failed · ${role} ${step}${detail ? `: ${detail}` : ""}`,
-    });
-  } catch {
-    // Disclosure is observational; preserve the original stage failure.
-  }
-}
-
 function roleEntry(
-  progress: MountRestoreProgress,
+  progress: MountRestoreProgressState,
   role: ScoutAgentRole,
 ): {
   role: ScoutAgentRole;

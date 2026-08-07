@@ -1,3 +1,4 @@
+/** Public asset identity, mount, materialization, and preflight capabilities. */
 export * from "./asset-store.js";
 export * from "./assets/agent-profiles.js";
 export * from "./assets/asset-layout.js";

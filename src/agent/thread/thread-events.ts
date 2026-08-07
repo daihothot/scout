@@ -15,4 +15,5 @@ const agentThreadEventCatalog = {
 
 AgentEvents.add(agentThreadEventCatalog);
 
+/** Event routes for thread start, resume, and close facts. */
 export type AgentThreadEventCatalog = typeof agentThreadEventCatalog;

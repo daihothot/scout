@@ -5,15 +5,18 @@ import type {
   UnsubscribeEventHandler,
 } from "./event-bus.js";
 
+/** Dependencies and wake-up hook for an event mailbox. */
 export interface EventMailboxOptions {
   eventBus: EventBus;
   onEvent?: () => void;
 }
 
+/** Optional payload predicate applied before a subscribed event enters the queue. */
 export interface EventMailboxSubscribeOptions<TPayload = unknown> {
   filter?: (event: ScoutEvent<TPayload>) => boolean;
 }
 
+/** Queue facade that owns subscriptions and exposes drain-based event consumption. */
 export class EventMailbox {
   private readonly eventBus: EventBus;
   private readonly onEvent?: () => void;

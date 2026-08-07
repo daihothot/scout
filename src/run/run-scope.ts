@@ -13,6 +13,7 @@ import type {
 import type { RunJournal } from "./journal/index.js";
 import type { RunManifestStore } from "./persistence/index.js";
 
+/** Dependencies and lifecycle callbacks required to own one active run. */
 export interface RunScopeOptions {
   runId: string;
   repoRoot: string;
@@ -25,6 +26,11 @@ export interface RunScopeOptions {
   terminate(reason: string): Promise<void>;
 }
 
+/**
+ * Owns the per-run stores, clients, and prepared environment while stages are
+ * executing. It enforces single assignment and run-id consistency but does
+ * not create those dependencies or choose stage ordering.
+ */
 export class RunScope {
   readonly runId: string;
   readonly repoRoot: string;
@@ -113,6 +119,7 @@ export class RunScope {
 
 let activeRunScope: RunScope | undefined;
 
+/** Installs the process-local scope and starts its input store. */
 export function installRunScope(scope: RunScope): () => void {
   if (activeRunScope) {
     throw new Error(`Run scope already installed: ${activeRunScope.runId}`);
@@ -133,6 +140,7 @@ export function installRunScope(scope: RunScope): () => void {
   };
 }
 
+/** Returns the installed scope or fails when no run is active. */
 export function currentRunScope(): RunScope {
   if (!activeRunScope) {
     throw new Error("No active Scout run scope.");

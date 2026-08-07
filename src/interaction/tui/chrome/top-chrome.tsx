@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Box, Text } from "ink";
 import type { RunLifecycleSnapshot } from "../../../run/lifecycle/run-stage.js";
-import { ScoutAgentRoles, type ScoutAgentRole } from "../../../agent/thread/types.js";
 import type {
-  MountRestoreProgress,
+  SubprocessProgressSnapshot,
+  SubprocessProgressText,
+  SubprocessProgressTone,
   TuiRunStatus,
   TuiState,
 } from "../tui-store.js";
@@ -15,8 +16,7 @@ import {
   SubprocessProgressBar,
   SubprocessProgressStatus,
   subprocessProgressStatusText,
-  type SubprocessProgressContent,
-  type SubprocessProgressPresentation,
+  type ProgressTrackColor,
 } from "./subprocess-progress-bar.js";
 
 const COMPACT_TOP_CHROME_ROWS = 12;
@@ -24,16 +24,15 @@ const FULL_TOP_CHROME_ROWS = 17;
 const LIFECYCLE_PROGRESS_ROWS = 1;
 const LIFECYCLE_PROGRESS_MAX_WIDTH = 53;
 const COMPACT_LIFECYCLE_PROGRESS_MAX_WIDTH = 16;
-const MOUNT_STATUS_DETAIL_ROWS = 1;
-const MOUNT_STATUS_DETAIL_GAP_ROWS = 1;
-const MOUNT_LIFECYCLE_GAP_ROWS = 1;
-const MOUNT_RESTORE_FULL_ROWS = 3;
-const MOUNT_RESTORE_TOP_GAP_ROWS = 2;
-const MOUNT_RESTORE_BOTTOM_GAP_ROWS = 1;
-const MOUNT_RESTORE_TRACK_GAP_ROWS = 1;
-const MOUNT_RESTORE_BAR_MAX_WIDTH = LIFECYCLE_PROGRESS_MAX_WIDTH;
-const MOUNT_RESTORE_INDENT = 2;
-const MOUNT_RESTORE_PROCESS_FRAMES = ["›", "▷", "▶", "▷"] as const;
+const SUBPROCESS_STATUS_DETAIL_ROWS = 1;
+const SUBPROCESS_STATUS_DETAIL_GAP_ROWS = 1;
+const SUBPROCESS_LIFECYCLE_GAP_ROWS = 1;
+const SUBPROCESS_FULL_ROWS = 3;
+const SUBPROCESS_TOP_GAP_ROWS = 2;
+const SUBPROCESS_BOTTOM_GAP_ROWS = 1;
+const SUBPROCESS_TRACK_GAP_ROWS = 1;
+const SUBPROCESS_BAR_MAX_WIDTH = LIFECYCLE_PROGRESS_MAX_WIDTH;
+const SUBPROCESS_INDENT = 2;
 const PREPARING_STATUS_COLOR = "#f2db3f";
 const LIFECYCLE_PROGRESS_COLOR = "#e2b40b";
 const SUBPROCESS_PROGRESS_COLOR = "#ddd83b";
@@ -48,31 +47,38 @@ const FULL_LOGO = [
   " |____/ \\____\\___/ \\___/  |_|",
 ];
 
+/** Computes the fixed top-chrome row budget, including active lifecycle/subprocess strips. */
 export function resolveTopChromeRows(
   compact: boolean,
   showLifecycleProgress: boolean,
-  mountRestore?: MountRestoreProgress,
+  subprocessProgress?: SubprocessProgressSnapshot,
 ): number {
-  const showMountRestore = mountRestore?.phase === "rebuild";
-  const showMountStatusDetail = Boolean(
-    mountRestore && mountRestore.phase !== "failed",
+  const showSubprocessTrack = Boolean(
+    subprocessProgress?.phase === "running"
+      && subprocessProgress.descriptor.progress,
+  );
+  const showSubprocessStatusDetail = Boolean(
+    subprocessProgress
+      && subprocessProgress.phase !== "failed"
+      && subprocessProgress.descriptor.status.detail,
   );
   return (compact ? COMPACT_TOP_CHROME_ROWS : FULL_TOP_CHROME_ROWS)
     + (showLifecycleProgress ? LIFECYCLE_PROGRESS_ROWS : 0)
-    + (!compact && showMountStatusDetail
-      ? MOUNT_STATUS_DETAIL_GAP_ROWS
-        + MOUNT_STATUS_DETAIL_ROWS
-        + (showLifecycleProgress ? MOUNT_LIFECYCLE_GAP_ROWS : 0)
+    + (!compact && showSubprocessStatusDetail
+      ? SUBPROCESS_STATUS_DETAIL_GAP_ROWS
+        + SUBPROCESS_STATUS_DETAIL_ROWS
+        + (showLifecycleProgress ? SUBPROCESS_LIFECYCLE_GAP_ROWS : 0)
       : 0)
-    + (showMountRestore
+    + (showSubprocessTrack
       ? compact
-        ? MOUNT_RESTORE_BOTTOM_GAP_ROWS
-        : MOUNT_RESTORE_TOP_GAP_ROWS
-          + MOUNT_RESTORE_FULL_ROWS
-          + MOUNT_RESTORE_BOTTOM_GAP_ROWS
+        ? SUBPROCESS_BOTTOM_GAP_ROWS
+        : SUBPROCESS_TOP_GAP_ROWS
+          + SUBPROCESS_FULL_ROWS
+          + SUBPROCESS_BOTTOM_GAP_ROWS
       : 0);
 }
 
+/** Renders Scout identity, runtime facts, lifecycle progress, and active subprocess progress. */
 export function TopChrome({
   state,
   activeTasks,
@@ -87,11 +93,12 @@ export function TopChrome({
   const showLifecycleProgress = Boolean(
     state.lifecycle && state.runtime.status !== "ready",
   );
-  const showMountStatusDetail = Boolean(
+  const showSubprocessStatusDetail = Boolean(
     !compact
       && state.runtime.status === "preparing"
-      && state.mountRestore
-      && state.mountRestore.phase !== "failed",
+      && state.subprocessProgress
+      && state.subprocessProgress.phase !== "failed"
+      && state.subprocessProgress.descriptor.status.detail,
   );
   return (
     <Box flexDirection="column" width={width} flexShrink={0}>
@@ -116,8 +123,8 @@ export function TopChrome({
         width={width}
       />
 
-      {showLifecycleProgress && showMountStatusDetail && (
-        <Box height={MOUNT_LIFECYCLE_GAP_ROWS} flexShrink={0} />
+      {showLifecycleProgress && showSubprocessStatusDetail && (
+        <Box height={SUBPROCESS_LIFECYCLE_GAP_ROWS} flexShrink={0} />
       )}
 
       {showLifecycleProgress && state.lifecycle && (
@@ -125,25 +132,27 @@ export function TopChrome({
           snapshot={state.lifecycle}
           width={width}
           compact={compact}
-          compactMountRestore={compact && state.mountRestore?.phase === "rebuild"
-            ? state.mountRestore
+          compactSubprocessProgress={compact && state.subprocessProgress?.phase === "running"
+            ? state.subprocessProgress
             : undefined}
         />
       )}
 
-      {/* Failure stays in the status line and SYSTEM disclosure; the strip is rebuild-only. */}
+      {/* Failure stays in the status line and SYSTEM disclosure; the track is active-only. */}
       {!compact
         && state.runtime.status !== "ready"
-        && state.mountRestore?.phase === "rebuild" && (
-        <MountRestoreStrip
-          progress={state.mountRestore}
+        && state.subprocessProgress?.phase === "running"
+        && state.subprocessProgress.descriptor.progress && (
+        <SubprocessProgressStrip
+          progress={state.subprocessProgress}
           width={width}
         />
       )}
       {compact
         && state.runtime.status !== "ready"
-        && state.mountRestore?.phase === "rebuild" && (
-        <Box height={MOUNT_RESTORE_BOTTOM_GAP_ROWS} flexShrink={0} />
+        && state.subprocessProgress?.phase === "running"
+        && state.subprocessProgress.descriptor.progress && (
+        <Box height={SUBPROCESS_BOTTOM_GAP_ROWS} flexShrink={0} />
       )}
     </Box>
   );
@@ -367,14 +376,20 @@ function RuntimeStatusLine({ state, activeTasks, compact, width }: {
   compact: boolean;
   width: number;
 }) {
-  const showMountStatus = state.runtime.status === "preparing"
-    || (state.runtime.status === "failed" && state.mountRestore?.phase === "failed");
-  const mountRestore = showMountStatus ? state.mountRestore : undefined;
-  const presentation = mountRestore
-    ? buildMountRestoreStatusPresentation(mountRestore)
+  const subprocess = state.subprocessProgress;
+  const useSubprocessStatus = Boolean(
+    subprocess
+      && (state.runtime.status === "preparing"
+        || (state.runtime.status === "failed" && subprocess.phase === "failed")),
+  );
+  const presentation = useSubprocessStatus
+    ? buildSubprocessStatusPresentation(subprocess!.descriptor.status)
     : runtimeStatusPresentation(state.runtime.status, activeTasks);
-  const splitMountDetail = Boolean(
-    mountRestore && mountRestore.phase !== "failed",
+  const splitSubprocessDetail = Boolean(
+    useSubprocessStatus
+      && subprocess
+      && subprocess.phase !== "failed"
+      && subprocess.descriptor.status.detail,
   );
   return (
     <Box
@@ -392,195 +407,109 @@ function RuntimeStatusLine({ state, activeTasks, compact, width }: {
         >
           {presentation.marker} {presentation.label}
         </Text>
-        {splitMountDetail
-          ? compact && mountRestore && (
-            <MountRestoreStatusDetail progress={mountRestore} compact />
+        {splitSubprocessDetail
+          ? compact && subprocess && (
+            <SubprocessStatusDetail
+              descriptor={subprocess.descriptor.status}
+              compact
+            />
           )
           : <Text dimColor>{` - ${presentation.detail}`}</Text>}
       </Text>
-      {splitMountDetail && !compact && mountRestore && (
+      {splitSubprocessDetail && !compact && subprocess && (
         <>
-          <Box height={MOUNT_STATUS_DETAIL_GAP_ROWS} flexShrink={0} />
-          <MountRestoreStatusDetail progress={mountRestore} />
+          <Box height={SUBPROCESS_STATUS_DETAIL_GAP_ROWS} flexShrink={0} />
+          <SubprocessStatusDetail descriptor={subprocess.descriptor.status} />
         </>
       )}
     </Box>
   );
 }
 
-function MountRestoreStrip({ progress, width }: {
-  progress: MountRestoreProgress;
+function SubprocessProgressStrip({ progress, width }: {
+  progress: SubprocessProgressSnapshot;
   width: number;
 }) {
-  const [frame, setFrame] = useState(0);
-  useEffect(() => {
-    if (process.env.SCOUT_TUI_MOTION === "0") return;
-    const timer = setInterval(() => {
-      setFrame((current) => (current + 1) % MOUNT_RESTORE_PROCESS_FRAMES.length);
-    }, 90);
-    return () => clearInterval(timer);
-  }, []);
-
-  const trackWidth = Math.max(1, width - MOUNT_RESTORE_INDENT);
-  const presentation = buildMountRestoreProgressPresentation(progress, trackWidth, frame);
+  const content = progress.descriptor.progress;
+  if (!content) return null;
+  const trackWidth = Math.max(1, width - SUBPROCESS_INDENT);
+  const presentation = buildSubprocessProgressPresentation({
+    completedUnits: progress.completedUnits,
+    totalUnits: progress.totalUnits,
+    content,
+    width: trackWidth,
+    maxBarWidth: SUBPROCESS_BAR_MAX_WIDTH,
+  });
   return (
     <Box
       flexDirection="column"
       width={width}
-      height={MOUNT_RESTORE_FULL_ROWS}
-      marginTop={MOUNT_RESTORE_TOP_GAP_ROWS}
-      marginBottom={MOUNT_RESTORE_BOTTOM_GAP_ROWS}
+      height={SUBPROCESS_FULL_ROWS}
+      marginTop={SUBPROCESS_TOP_GAP_ROWS}
+      marginBottom={SUBPROCESS_BOTTOM_GAP_ROWS}
       flexShrink={0}
       overflow="hidden"
     >
       <SubprocessProgressBar
         presentation={presentation}
-        markerColor={PREPARING_STATUS_COLOR}
-        trackColor={SUBPROCESS_PROGRESS_COLOR}
-        trackIndent={MOUNT_RESTORE_INDENT}
-        trackGapRows={MOUNT_RESTORE_TRACK_GAP_ROWS}
+        markerColor={subprocessToneColor(content.tone)}
+        trackColor={subprocessToneColor(content.tone, SUBPROCESS_PROGRESS_COLOR)}
+        trackIndent={SUBPROCESS_INDENT}
+        trackGapRows={SUBPROCESS_TRACK_GAP_ROWS}
       />
     </Box>
   );
 }
 
-export function buildMountRestoreProgressPresentation(
-  progress: MountRestoreProgress,
-  width: number,
-  frame = 0,
-): SubprocessProgressPresentation {
-  return buildSubprocessProgressPresentation({
-    completedUnits: progress.completedUnits,
-    totalUnits: progress.totalUnits,
-    content: buildMountSubprocessContent(
-      progress,
-      MOUNT_RESTORE_PROCESS_FRAMES[frame % MOUNT_RESTORE_PROCESS_FRAMES.length],
-    ),
-    width,
-    maxBarWidth: MOUNT_RESTORE_BAR_MAX_WIDTH,
-  });
-}
-
-function buildMountSubprocessContent(
-  progress: MountRestoreProgress,
-  marker: string,
-): SubprocessProgressContent {
-  return {
-    marker,
-    label: roleLabel(progress.activeRole),
-    detail: progress.activeStep && progress.activeStep !== "verify"
-      ? progress.activeStep
-      : undefined,
-    units: `${progress.completedUnits}/${progress.totalUnits}`,
-  };
-}
-
-function mountVerifyDetail(progress: MountRestoreProgress): string {
-  const planned = progress.roles.filter((role) => role.decision !== "pending").length;
-  return planned === progress.roles.length && progress.roles.length > 0
-    ? `Mount · verifying · ${reusableRoleCount(progress)}/${progress.roles.length} reusable`
-    : "Mount · verifying";
-}
-
-function MountRestoreStatusDetail({ progress, compact = false }: {
-  progress: MountRestoreProgress;
+function SubprocessStatusDetail({ descriptor, compact = false }: {
+  descriptor: SubprocessProgressText;
   compact?: boolean;
 }) {
-  const step = progress.phase === "rebuild"
-    ? progress.activeStep ?? "rebuilding"
-    : progress.phase === "verify"
-      ? "verifying"
-      : "ready";
-  const suffix = progress.phase === "rebuild"
-    ? progress.activeRole
-      ? roleLabel(progress.activeRole)
-      : undefined
-    : progress.phase === "verify"
-      && progress.roles.every((role) => role.decision !== "pending")
-      && progress.roles.length > 0
-        ? `${reusableRoleCount(progress)}/${progress.roles.length} reusable`
-        : progress.phase === "done"
-          && progress.roles.every((role) => role.decision === "reused")
-          ? `${reusableRoleCount(progress)}/${progress.roles.length} reusable`
-          : undefined;
+  const detail = descriptor.detail ?? "";
   return (
     <Text wrap="truncate-end">
-      <Text dimColor>{compact ? " · Mount " : "  Mount · "}</Text>
-      <Text color="white">{step}</Text>
-      {!compact && suffix && <Text dimColor>{` · ${suffix}`}</Text>}
+      {detail && <Text color="white">{compact ? ` · ${detail}` : `  ${detail}`}</Text>}
+      {descriptor.units && <Text dimColor>{` · ${descriptor.units}`}</Text>}
     </Text>
   );
 }
 
-export function buildMountRestoreStatusPresentation(progress: MountRestoreProgress): {
+/** Converts operation-owned status text into the marker/label/detail presentation used by chrome. */
+export function buildSubprocessStatusPresentation(descriptor: SubprocessProgressText): {
   marker: string;
   label: string;
   detail: string;
-  color: "green" | "yellow" | "red" | "gray";
+  color: ProgressTrackColor;
 } {
-  if (progress.phase === "failed") {
-    return {
-      marker: "!",
-      label: "Mount restore failed",
-      detail: `${roleLabel(progress.activeRole)}${progress.activeStep ? ` ${progress.activeStep}` : ""}`,
-      color: "red",
-    };
-  }
-  if (progress.phase === "rebuild") {
-    const role = progress.activeRole ? roleLabel(progress.activeRole) : undefined;
-    return {
-      marker: "*",
-      label: "Preparing Scout runtime",
-      detail: `Mount · ${progress.activeStep ?? "rebuilding"}${role ? ` · ${role}` : ""}`,
-      color: "yellow",
-    };
-  }
-  if (progress.phase === "verify") {
-    return {
-      marker: "*",
-      label: "Preparing Scout runtime",
-      detail: mountVerifyDetail(progress),
-      color: "yellow",
-    };
-  }
-  if (progress.phase === "done") {
-    return {
-      marker: "*",
-      label: "Preparing Scout runtime",
-      detail: progress.roles.every((role) => role.decision === "reused")
-        ? `Mount · ready · ${reusableRoleCount(progress)}/${progress.roles.length} reusable`
-        : "Mount · ready",
-      color: "yellow",
-    };
-  }
-  return runtimeStatusPresentation("preparing", 0);
+  return {
+    marker: descriptor.marker ?? "*",
+    label: descriptor.label,
+    detail: descriptor.detail ?? "",
+    color: subprocessToneColor(descriptor.tone, "yellow"),
+  };
 }
 
-function reusableRoleCount(progress: MountRestoreProgress): number {
-  return progress.roles.filter((role) => role.decision === "reused").length;
+function subprocessToneColor(
+  tone: SubprocessProgressTone | undefined,
+  activeFallback: ProgressTrackColor = PREPARING_STATUS_COLOR,
+): ProgressTrackColor {
+  if (tone === "failed") return "red";
+  if (tone === "success") return "green";
+  if (tone === "neutral") return "gray";
+  return activeFallback;
 }
 
-function roleLabel(role: ScoutAgentRole | undefined): string {
-  if (role === ScoutAgentRoles.Coordinator) return "coordinator";
-  if (role === ScoutAgentRoles.Researcher) return "researcher";
-  if (role === ScoutAgentRoles.Verifier) return "verifier";
-  if (role === ScoutAgentRoles.Validator) return "validator";
-  return "mount";
-}
-
-function RunLifecycleProgress({ snapshot, width, compact, compactMountRestore }: {
+function RunLifecycleProgress({ snapshot, width, compact, compactSubprocessProgress }: {
   snapshot: RunLifecycleSnapshot;
   width: number;
   compact: boolean;
-  compactMountRestore?: MountRestoreProgress;
+  compactSubprocessProgress?: SubprocessProgressSnapshot;
 }) {
-  const subprocessContent = compactMountRestore
-    ? buildMountSubprocessContent(compactMountRestore, "▷")
-    : undefined;
+  const subprocessContent = compactSubprocessProgress?.descriptor.progress;
   const trailingText = subprocessContent
     ? subprocessProgressStatusText(subprocessContent, true)
     : undefined;
-  const trackIndent = compact ? 0 : MOUNT_RESTORE_INDENT;
+  const trackIndent = compact ? 0 : SUBPROCESS_INDENT;
   const presentation = buildRunLifecycleProgressPresentation(
     snapshot,
     Math.max(1, width - trackIndent),
@@ -602,12 +531,12 @@ function RunLifecycleProgress({ snapshot, width, compact, compactMountRestore }:
           color={LIFECYCLE_PROGRESS_COLOR}
         />
       </Text>
-      {subprocessContent && (
+      {subprocessContent && compactSubprocessProgress && (
         <>
           <Text>{"  "}</Text>
           <SubprocessProgressStatus
             content={subprocessContent}
-            markerColor={PREPARING_STATUS_COLOR}
+            markerColor={subprocessToneColor(subprocessContent.tone)}
             compact
           />
         </>
@@ -616,6 +545,7 @@ function RunLifecycleProgress({ snapshot, width, compact, compactMountRestore }:
   );
 }
 
+/** Converts run lifecycle units into a segmented track and optional compact subprocess suffix. */
 export function buildRunLifecycleProgressPresentation(
   snapshot: RunLifecycleSnapshot,
   width: number,

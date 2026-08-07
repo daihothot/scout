@@ -12,6 +12,11 @@ import {
   type ResumePacketInput,
 } from "./resume-packet-common.js";
 
+/**
+ * Builds the selected worker's focused recovery view. A missing task is kept
+ * representable so the caller can still inject identity and pending delivery
+ * facts without fabricating a new task or changing journal state.
+ */
 export function buildWorkerResumePacket(
   input: ResumePacketInput,
 ): ResumePacket {

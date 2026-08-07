@@ -12,6 +12,11 @@ import {
   type ResumePacketInput,
 } from "./resume-packet-common.js";
 
+/**
+ * Builds the coordinator's recovery view from a read-only run projection.
+ * It includes cross-agent task, gate, message, and interruption facts but does
+ * not mutate the projection or perform any resume action.
+ */
 export function buildCoordinatorResumePacket(
   input: ResumePacketInput,
 ): ResumePacket {

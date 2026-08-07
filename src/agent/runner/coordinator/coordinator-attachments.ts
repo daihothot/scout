@@ -1,11 +1,13 @@
 import { attachments } from "../../context/attachments.js";
 import type { ScoutAgentRole } from "../../thread/types.js";
 
+/** Tag names reserved for Coordinator context blocks. */
 export const CoordinatorContextTags = {
   User: "coordinator-user",
   Observation: "coordinator-observation",
 } as const;
 
+/** User message envelope inserted into the Coordinator prompt. */
 export interface CoordinatorUserAttachmentInput {
   messageId: string;
   text: string;
@@ -14,11 +16,13 @@ export interface CoordinatorUserAttachmentInput {
   data?: unknown;
 }
 
+/** Minimal observation emitted when a task is accepted. */
 export interface CoordinatorTaskAssignedAttachmentInput {
   agentId: string;
   taskId: string;
 }
 
+/** Rejection observation preserved for Coordinator context and replay. */
 export interface CoordinatorTaskNotAssignedAttachmentInput {
   agentId: string;
   role: ScoutAgentRole;
@@ -27,6 +31,7 @@ export interface CoordinatorTaskNotAssignedAttachmentInput {
   reason: string;
 }
 
+/** Builds structured context blocks consumed by the Coordinator runner. */
 export const coordinator = {
   user(input: CoordinatorUserAttachmentInput): string {
     return attachments.addTagBlock(CoordinatorContextTags.User, JSON.stringify(input, null, 2));

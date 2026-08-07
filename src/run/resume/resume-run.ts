@@ -28,6 +28,14 @@ import type {
 import { projectRun } from "./projection/index.js";
 import { ResumeRunStageAssembly } from "./resume-run-stage-assembly.js";
 
+/**
+ * Reopens a persisted run and executes its resume lifecycle.
+ *
+ * The run manifest and journal are the source of truth; this entry point does
+ * not create a new run or fall back to a cold start. Stage-owned restoration
+ * rebuilds runtime resources, then activation publishes the ready runtime and
+ * re-enables any work represented by the journal projection.
+ */
 export async function resumeRun(
   options: ResumeRunOptions,
 ): Promise<ScoutRunSummary> {
@@ -125,6 +133,7 @@ export async function resumeRun(
   return toRunSummary(scope.environment);
 }
 
+/** Resolves either a run id beneath `<cwd>/run` or an explicitly supplied run path. */
 function resolveRunRoot(cwd: string, run: string): string {
   const direct = isAbsolute(run) ? resolve(run) : resolve(cwd, run);
   const candidates = isAbsolute(run) || run.includes("/") || run.includes("\\")
@@ -140,6 +149,7 @@ function resolveRunRoot(cwd: string, run: string): string {
   throw new Error(`Scout run directory does not exist: ${run}`);
 }
 
+/** Performs the non-throwing directory probe used during run discovery. */
 function isDirectory(path: string): boolean {
   try {
     return statSync(path).isDirectory();
@@ -148,6 +158,7 @@ function isDirectory(path: string): boolean {
   }
 }
 
+/** Checks whether a candidate directory has the persisted run manifest marker. */
 function isRunManifest(path: string): boolean {
   try {
     return statSync(join(path, "run.json")).isFile();
@@ -156,6 +167,7 @@ function isRunManifest(path: string): boolean {
   }
 }
 
+/** Projects the restored in-memory environment into the public run summary. */
 function toRunSummary(environment: RunEnvironment): ScoutRunSummary {
   const coordinator = environment.agents[ScoutAgentRoles.Coordinator];
   return {
@@ -175,6 +187,7 @@ function toRunSummary(environment: RunEnvironment): ScoutRunSummary {
   };
 }
 
+/** Applies a summary projection to every role without changing environment state. */
 function mapAgents<T>(
   environment: RunEnvironment,
   mapper: (agent: RunAgentEnvironment) => T,

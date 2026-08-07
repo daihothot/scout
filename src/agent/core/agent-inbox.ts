@@ -6,12 +6,14 @@ import {
 } from "../../core/events/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 
+/** Callbacks controlling an inbox's drain loop and error boundary. */
 export interface AgentInboxOptions {
   isStopped(): boolean;
   onEvents(events: ScoutEvent[]): Promise<void>;
   onError(error: unknown): void | Promise<void>;
 }
 
+/** Buffers subscribed events and drains them serially until the owner stops. */
 export class AgentInbox {
   private readonly mailbox: EventMailbox;
   private readonly isStopped: () => boolean;

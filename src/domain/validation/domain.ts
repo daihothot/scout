@@ -30,6 +30,12 @@ import {
   type UnsubscribeEventHandler,
 } from "../../core/events/index.js";
 
+/**
+ * Owns validation artifact/gate facts, rebuilding its in-memory indexes from the run journal
+ * and publishing newly discovered immutable artifacts through the current run event bus.
+ * It does not decide task scheduling or render interaction state; those responsibilities stay
+ * with the run orchestrator and interaction port.
+ */
 export class ValidationDomain implements ScoutDomain {
   readonly domainId = "validation";
   readonly name = "Scout Validation Domain";
@@ -38,6 +44,7 @@ export class ValidationDomain implements ScoutDomain {
   private readonly recordedGates = new Map<string, string>();
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
 
+  /** Installs idempotent subscriptions that update validation indexes as runtime facts arrive. */
   async start(): Promise<void> {
     if (this.unsubscribers.length > 0) return;
     const eventBus = currentRunScope().eventBus;
@@ -66,20 +73,24 @@ export class ValidationDomain implements ScoutDomain {
     );
   }
 
+  /** Removes the subscriptions owned by this domain instance. */
   async stop(): Promise<void> {
     while (this.unsubscribers.length > 0) {
       this.unsubscribers.pop()?.();
     }
   }
 
+  /** Returns no role-specific tools because validation has no dynamic tool surface yet. */
   dynamicToolsForRole(_role: ScoutAgentRole): AgentDynamicToolSpec[] {
     return [];
   }
 
+  /** Delegates a dynamic-tool call to the validation backend without changing its response shape. */
   handleDynamicToolCall(call: ScoutDomainDynamicToolCall): DynamicToolCallResponse | undefined {
     return this.backend.handleDynamicToolCall(call);
   }
 
+  /** Reconstructs recorded artifact/gate indexes from journal facts and current artifact mounts. */
   restore(): void {
     const scope = currentRunScope();
     const events = scope.journal.readAll();

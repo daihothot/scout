@@ -1,11 +1,13 @@
 import type { AssetCommit, CodexMount } from "./types.js";
 
+/** Inputs needed to persist the mount identity and preflight outcome. */
 export interface BuildAssetCommitOptions {
   mount: CodexMount;
   preflightStatus: "passed" | "failed";
   preflightPath: string;
 }
 
+/** Copies the effective mount description into the run's asset-commit record. */
 export function buildAssetCommit(options: BuildAssetCommitOptions): AssetCommit {
   return {
     agentId: options.mount.agentId,

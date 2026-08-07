@@ -1,12 +1,14 @@
 import { AgentInbox } from "../core/agent-inbox.js";
 import { AgentEvents } from "../events/index.js";
 
+/** Observable lifecycle state for the task-event orchestrator. */
 export interface AgentOrchestratorSnapshot {
   started: boolean;
   stopped: boolean;
   pendingEventCount: number;
 }
 
+/** Owns the task-event subscription and rejects unrelated agent events. */
 export class AgentOrchestrator {
   private readonly inbox: AgentInbox;
   private started = false;

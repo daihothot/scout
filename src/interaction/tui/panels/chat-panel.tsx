@@ -29,6 +29,7 @@ type ChatVisualRow =
   | SystemEventVisualRow
   | { id: string; kind: "spacer" };
 
+/** Scrollable conversation panel backed by the store's chat projection. */
 export function ChatPanel({
   items,
   width,
@@ -101,6 +102,7 @@ export function ChatPanel({
   );
 }
 
+/** Inserts visual spacers and delegates wrapping by message kind. */
 export function buildChatVisualRows(items: TuiChatItem[], width: number): ChatVisualRow[] {
   return items.flatMap((item, index) => {
     const rows = item.kind === "user"

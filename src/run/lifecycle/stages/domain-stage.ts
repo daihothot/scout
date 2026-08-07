@@ -1,6 +1,7 @@
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
 
+/** Starts the run's validation domain and rolls it back if startup fails. */
 export class DomainStage implements RunStage {
   readonly id = "domain";
   private started = false;

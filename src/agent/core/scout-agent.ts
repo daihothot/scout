@@ -22,6 +22,7 @@ import {
 } from "../thread/thread-preflight.js";
 import { AgentEvents } from "../events/index.js";
 
+/** Input contract for one app-server turn owned by a Scout agent. */
 export interface ScoutAgentTurnInput {
   prompt: string;
   outputContract?: string;
@@ -32,6 +33,7 @@ export interface ScoutAgentTurnInput {
   onTurnStarted?(invocationId: string): void | Promise<void>;
 }
 
+/** Durable lifecycle record for one agent turn invocation. */
 export interface ScoutAgentTurnRecord {
   invocationId: string;
   agentId: string;
@@ -45,6 +47,7 @@ export interface ScoutAgentTurnRecord {
   error?: string;
 }
 
+/** Turn result plus app-server projections consumed by task runners. */
 export interface ScoutAgentTurnOutcome {
   turn: ScoutAgentTurnRecord;
   finalResponse?: string;
@@ -53,6 +56,7 @@ export interface ScoutAgentTurnOutcome {
   goal?: AppServerThreadGoalState;
 }
 
+/** Snapshot exposed to run persistence and resume assembly. */
 export interface ScoutAgentSnapshot {
   agentId: string;
   thread?: AgentThreadSnapshot;
@@ -60,6 +64,7 @@ export interface ScoutAgentSnapshot {
   pendingMessageCount: number;
 }
 
+/** Prepared mount and tool inputs needed to construct a Scout agent. */
 export interface ScoutAgentOptions {
   agentId?: string;
   agentMount: CodexMount;
@@ -84,6 +89,11 @@ class AgentTurnInterruptedError extends Error {
   override readonly name = "AgentTurnInterruptedError";
 }
 
+/**
+ * Owns one role's app-server thread, turn lifecycle, and registry identity.
+ * Concrete role agents provide runner behavior; this base keeps thread and
+ * interruption facts consistent for startup, telemetry, and resume.
+ */
 export abstract class ScoutAgent {
   readonly agentId: string;
   readonly spec: AgentThreadSpec;

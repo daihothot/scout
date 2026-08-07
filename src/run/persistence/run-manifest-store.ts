@@ -7,6 +7,7 @@ import {
 import { dirname, join, resolve } from "node:path";
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 
+/** Stable role identity and relative artifact references stored in a manifest. */
 export interface RunAgentManifestEntry {
   mountId: string;
   assetCommitId: string;
@@ -16,6 +17,7 @@ export interface RunAgentManifestEntry {
   preflightRef: string;
 }
 
+/** Versioned run identity, runtime state, checkpoint, and role index. */
 export interface RunManifest {
   version: 2;
   runId: string;
@@ -32,6 +34,10 @@ export interface RunManifest {
   agents?: Record<ScoutAgentRole, RunAgentManifestEntry>;
 }
 
+/**
+ * Reads and atomically replaces the run manifest while preserving its run id.
+ * It persists lifecycle facts; environment capabilities own the artifact data.
+ */
 export class RunManifestStore {
   readonly path: string;
 

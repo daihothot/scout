@@ -16,8 +16,10 @@ const INPUT_BORDER_WIDTH = 1;
 const INPUT_PADDING_X = 1;
 const INPUT_PROMPT = "› ";
 
+/** Fixed vertical budget reserved for the prompt and its footer. */
 export const PROMPT_INPUT_ROWS = 5;
 
+/** Interactive prompt that translates terminal input into submit and exit callbacks. */
 export function PromptInput({
   active,
   appHeight,

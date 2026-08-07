@@ -1,3 +1,4 @@
+/** Truncates by terminal cell width and appends an ellipsis when needed. */
 export function truncateByDisplayWidth(value: string, maxWidth: number): string {
   if (maxWidth <= 0) return "";
   if (terminalDisplayWidth(value) <= maxWidth) return value;
@@ -13,6 +14,7 @@ export function truncateByDisplayWidth(value: string, maxWidth: number): string 
   return `${output.join("")}...`;
 }
 
+/** Counts terminal cells, treating combining and wide code points accordingly. */
 export function terminalDisplayWidth(value: string): number {
   let width = 0;
   for (const char of value) {
@@ -22,6 +24,7 @@ export function terminalDisplayWidth(value: string): number {
   return width;
 }
 
+/** Keeps the rightmost terminal cells so identifiers remain inspectable. */
 export function tailByDisplayWidth(value: string, maxWidth: number): string {
   if (maxWidth <= 0) return "";
   const chars = Array.from(value);
@@ -37,6 +40,7 @@ export function tailByDisplayWidth(value: string, maxWidth: number): string {
   return output.reverse().join("");
 }
 
+/** Wraps text at terminal-cell boundaries while preserving explicit newlines. */
 export function wrapByDisplayWidth(value: string, maxWidth: number): string[] {
   if (maxWidth <= 0) return [""];
   return value.split("\n").flatMap((source) => {

@@ -14,8 +14,10 @@ import {
   type MountMacroValuesInput,
 } from "./macros.js";
 
+/** Macro inputs shared by the mount config and command materializers. */
 export type MountDynamicValuesInput = MountMacroValuesInput;
 
+/** Inputs used to turn MCP contracts into executable mount-local wrappers. */
 export interface MaterializeMcpServersOptions {
   mountRoot: string;
   mcpServers: McpServersFile;
@@ -23,6 +25,7 @@ export interface MaterializeMcpServersOptions {
   dynamicValues: Record<string, string | undefined>;
 }
 
+/** Inputs used to render the generated Codex config layer for one mount. */
 export interface GenerateCodexConfigOptions {
   baseConfig: string;
   mountRoot: string;
@@ -33,10 +36,12 @@ export interface GenerateCodexConfigOptions {
   mcpServers: MaterializedMcpServer[];
 }
 
+/** Builds the dynamic values consumed by MCP, shell, and config expansion. */
 export function buildMountDynamicValues(input: MountDynamicValuesInput): Record<string, string | undefined> {
   return buildMountMacroValues(input);
 }
 
+/** Writes one wrapper per configured MCP server and returns resolved contracts. */
 export function materializeMcpServers(options: MaterializeMcpServersOptions): MaterializedMcpServer[] {
   return Object.entries(options.mcpServers.servers).flatMap(([name, server]) => {
     assertMountPathSegment(name, "MCP server name");
@@ -88,6 +93,7 @@ export function materializeMcpServers(options: MaterializeMcpServersOptions): Ma
   });
 }
 
+/** Writes the local plugin marketplace descriptor consumed by Codex preflight. */
 export function writePluginMarketplace(mountRoot: string, pluginNames: string[]): void {
   const marketplace = {
     name: "scout-runtime-marketplace",
@@ -110,6 +116,7 @@ export function writePluginMarketplace(mountRoot: string, pluginNames: string[])
   writeJsonFile(join(mountRoot, ".agents", "plugins", "marketplace.json"), marketplace);
 }
 
+/** Creates executable shell-tool wrappers and reports unresolved contracts as issues. */
 export function materializeShellTools(
   mountRoot: string,
   tools: ShellToolContract[],
@@ -164,6 +171,7 @@ export function materializeShellTools(
   };
 }
 
+/** Renders the base config plus runtime environment and MCP wrapper sections. */
 export function generateCodexConfig(input: GenerateCodexConfigOptions): string {
   const lines = [
     input.baseConfig.trimEnd(),
@@ -233,6 +241,7 @@ function resolveDynamicRecord(
   );
 }
 
+/** Resolves an MCP command, preserving an unresolved bare name for Codex diagnostics. */
 export function resolveCommand(command: string, assetsRoot: string): string {
   if (command === "node") return process.execPath;
   if (command.startsWith("assets/")) return resolveAssetLocalPath(command, assetsRoot);
@@ -240,6 +249,7 @@ export function resolveCommand(command: string, assetsRoot: string): string {
   return resolveExecutableFromPath(command) ?? command;
 }
 
+/** Resolves a shell-tool executable; returns undefined when its contract is unusable. */
 export function resolveShellToolCommand(tool: ShellToolContract, assetsRoot: string): string | undefined {
   const command = tool.command;
   if (command === "node") return process.execPath;
@@ -252,10 +262,12 @@ export function resolveShellToolCommand(tool: ShellToolContract, assetsRoot: str
   return resolveExecutableFromPath(command);
 }
 
+/** Resolves an `assets/...` command argument against the repository asset root. */
 export function resolveAssetArg(arg: string, assetsRoot: string): string {
   return arg.startsWith("assets/") ? resolveAssetLocalPath(arg, assetsRoot) : arg;
 }
 
+/** Resolves an asset-local command path and rejects traversal outside `assetsRoot`. */
 export function resolveAssetLocalPath(assetPath: string, assetsRoot: string): string {
   const repoRoot = resolve(assetsRoot, "..", "..");
   const resolvedPath = resolve(repoRoot, assetPath);
@@ -269,6 +281,7 @@ export function resolveAssetLocalPath(assetPath: string, assetsRoot: string): st
   return resolvedPath;
 }
 
+/** Rejects names that could introduce path traversal or multi-segment mount paths. */
 export function assertMountPathSegment(value: string, label: string): void {
   if (value === "." || value === ".." || !/^[A-Za-z0-9._-]+$/.test(value)) {
     throw new Error(`Invalid ${label}: ${value}`);

@@ -10,12 +10,19 @@ import {
   ResumeActionTypes,
 } from "../projection/index.js";
 
+/**
+ * Rehydrates projected messages, worker state, and coordinator state after all
+ * runtime services and agents exist. `start` only prepares state; `activate`
+ * is called after the run is marked ready so restored work cannot execute
+ * against a partially restored scope.
+ */
 export class InjectResumeContextStage implements RunStage {
   readonly id = "inject_resume_context";
   private readonly workersToActivate: WorkerAgent[] = [];
   private coordinatorRunner?: import("../../../agent/runner/coordinator/coordinator-runner.js").CoordinatorRunner;
   private activateCoordinator = false;
 
+  /** Loads journal-derived context into interaction stores and agent runners. */
   async start(): Promise<void> {
     const scope = currentRunScope();
     const projection = projectRun(scope.journal.readAll());
@@ -117,6 +124,7 @@ export class InjectResumeContextStage implements RunStage {
     });
   }
 
+  /** Starts only the restored workers and coordinator that have resumable work. */
   activate(): void {
     for (const worker of this.workersToActivate) worker.activateRestoredTask();
     if (this.activateCoordinator) {

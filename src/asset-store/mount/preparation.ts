@@ -34,6 +34,7 @@ interface CachedMountInspection {
 export class MountPreparation {
   private readonly inspectedMountContexts = new WeakMap<MaterializeOptions, CachedMountInspection>();
 
+  /** Reuses a cached inspection when inputs are unchanged, otherwise materializes the role mount. */
   prepare(
     options: MaterializeOptions & { persistedManifest?: MountManifest },
   ): MountPreparationResult {
@@ -75,6 +76,7 @@ export class MountPreparation {
     };
   }
 
+  /** Performs and caches the non-mutating mount reuse inspection for one options object. */
   inspect(
     options: MaterializeOptions & { persistedManifest?: MountManifest },
   ): MountPreparationInspection {

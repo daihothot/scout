@@ -32,6 +32,7 @@ import {
 } from "../assets/agent-profiles.js";
 import { buildScoutSkillCatalog } from "../assets/skill-catalog.js";
 
+/** Inputs that identify one role and control the inspect/materialize callbacks. */
 export interface MaterializeOptions {
   repoRoot: string;
   runId?: string;
@@ -50,6 +51,7 @@ export interface MaterializeOptions {
   onMaterializationStep?(step: MountMaterializationStep): void;
 }
 
+/** Immutable resource and path facts shared by inspection and materialization. */
 export interface MountContext {
   repoRoot: string;
   assetsRoot: string;
@@ -185,6 +187,7 @@ function sanitizeAgentId(agentId: string): string {
   return normalized;
 }
 
+/** Fails when a profile-selected asset path is absent or escapes the asset root. */
 export function assertAssetFileExists(assetsRoot: string, assetPath: string, label: string): void {
   if (!existsSync(resolveAssetRelativePath(assetPath, assetsRoot))) {
     throw new Error(`Agent profile references missing ${label}: ${assetPath}`);
@@ -323,6 +326,11 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
 }
 
+/**
+ * Computes the portable identity of the selected resource inventory. Device
+ * executable paths are resolved separately and are therefore not included as
+ * authoritative asset identity.
+ */
 export function computeResourceHash(input: {
   assetsRoot: string;
   agentId: string;
@@ -396,21 +404,25 @@ function hashOptionalAssetFile(prefix: string, assetPath: string, assetsRoot: st
   return [`${prefix}:${assetPath}:${sha256File(resolvedPath)}`];
 }
 
+/** Resolves an asset-local reference and fails if the referenced file is missing. */
 export function resolveRequiredAssetFile(assetPath: string, assetsRoot: string): string {
   const resolvedPath = resolveAssetArg(assetPath, assetsRoot);
   if (!existsSync(resolvedPath)) throw new Error(`Asset-local resource is missing: ${assetPath}`);
   return resolvedPath;
 }
 
+/** Extracts the Codex custom-agent name represented by a TOML asset path. */
 export function customAgentNameFromPath(customAgentPath: string): string {
   return basename(customAgentPath, ".toml");
 }
 
+/** Extracts a Scout Skill name from either its directory or `SKILL.md` path. */
 export function skillNameFromPath(skillPath: string): string {
   const source = resolve(skillPath);
   return basename(source) === "SKILL.md" ? basename(resolve(source, "..")) : basename(source);
 }
 
+/** Resolves a repository-relative asset path while enforcing root containment. */
 export function resolveAssetRelativePath(assetPath: string, assetsRoot: string): string {
   const resolvedPath = resolve(assetsRoot, assetPath);
   if (!isPathWithin(assetsRoot, resolvedPath)) {
@@ -419,10 +431,12 @@ export function resolveAssetRelativePath(assetPath: string, assetsRoot: string):
   return resolvedPath;
 }
 
+/** Converts an asset-relative path into the portable source path recorded in manifests. */
 export function assetSourcePath(assetPath: string): string {
   return join("assets", "codex", assetPath);
 }
 
+/** Returns a relative path, using `.` when both inputs identify the same location. */
 export function relativeOrSelf(base: string, target: string): string {
   const relativePath = relative(base, target);
   return relativePath.length === 0 ? "." : relativePath;

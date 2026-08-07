@@ -116,6 +116,74 @@ test("mount preflight redacts credentials from persisted config layers", async (
   }]);
 });
 
+test("mount preflight serializes installs within the plugin-manager lock", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-plugin-preflight-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const mountRoot = join(root, "mount");
+  const artifactRoot = join(root, "artifacts");
+  mkdirSync(mountRoot, { recursive: true });
+  mkdirSync(artifactRoot, { recursive: true });
+  const installed = new Set<string>();
+  const installOrder: string[] = [];
+  let activeInstalls = 0;
+  let maxActiveInstalls = 0;
+  const appServer = {
+    request: async (method: string, params: unknown) => {
+      if (method === "config/read") return { layers: [] };
+      if (method === "skills/list") return { data: [] };
+      if (method === "plugin/list") {
+        return {
+          marketplaces: [{
+            name: "local",
+            plugins: ["alpha", "beta"].map((name) => ({ name })),
+          }],
+        };
+      }
+      if (method === "plugin/installed") {
+        return {
+          marketplaces: [{
+            name: "local",
+            plugins: ["alpha", "beta"].map((name) => ({
+              name,
+              installed: installed.has(name),
+              enabled: installed.has(name),
+            })),
+          }],
+        };
+      }
+      if (method === "plugin/install") {
+        const pluginName = (params as { pluginName: string }).pluginName;
+        activeInstalls += 1;
+        maxActiveInstalls = Math.max(maxActiveInstalls, activeInstalls);
+        installOrder.push(pluginName);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        installed.add(pluginName);
+        activeInstalls -= 1;
+        return { pluginName, status: "installed" };
+      }
+      if (method === "hooks/list") return {};
+      throw new Error(`unexpected app-server method: ${method}`);
+    },
+    withPluginManagerLock: async <T>(operation: () => Promise<T>) => operation(),
+  } as unknown as CodexAppServerClient;
+
+  const report = await preflightCodexAppServerMount({
+    mount: testMount({
+      root,
+      mountRoot,
+      artifactRoot,
+      trustedRoots: [mountRoot],
+      writableRoots: [artifactRoot],
+      plugins: ["alpha", "beta"],
+    }),
+    appServer,
+  });
+
+  assert.equal(report.status, "passed");
+  assert.equal(maxActiveInstalls, 1);
+  assert.deepEqual(installOrder, ["alpha", "beta"]);
+});
+
 test("preflight persistence keeps catalog state without device-local payloads", () => {
   const root = "/private/tmp/source-scout/run/run-portable";
   const mount = testMount({
@@ -216,6 +284,7 @@ function testMount(input: {
   artifactRoot: string;
   trustedRoots: string[];
   writableRoots: string[];
+  plugins?: string[];
 }): CodexMount {
   return {
     agentId: "coordinator",
@@ -234,7 +303,7 @@ function testMount(input: {
       skills: [],
       shellTools: [],
       mcpServers: [],
-      plugins: [],
+      plugins: input.plugins ?? [],
       trustedRoots: input.trustedRoots,
       writableRoots: input.writableRoots,
     },
@@ -252,7 +321,7 @@ function testMount(input: {
     customAgents: [],
     skills: [],
     skillCatalog: [],
-    plugins: [],
+    plugins: input.plugins ?? [],
     manifestPath: join(input.mountRoot, "mount-manifest.json"),
     resourceHash: "resource-preflight",
   };

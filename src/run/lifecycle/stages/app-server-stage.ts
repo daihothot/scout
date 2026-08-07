@@ -32,6 +32,7 @@ import { readJsonFile } from "../../../core/fs.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
 
+/** Root sets passed to Codex clients when configuring one run's sandbox. */
 export interface RunAppServerRootPlan {
   mountRoots: string[];
   trustedRoots: string[];
@@ -39,10 +40,16 @@ export interface RunAppServerRootPlan {
   defaultWritableRoots: string[];
 }
 
+/** Optional role selection used when an environment is not yet prepared. */
 export interface RunAppServerStageOptions {
   agentRoles?: readonly ScoutAgentRole[];
 }
 
+/**
+ * Creates the per-run Codex app-server clients, isolated home, and config.
+ * Mount/environment stages provide the facts; this stage only binds clients
+ * and releases them during lifecycle shutdown.
+ */
 export class RunAppServerStage implements RunStage {
   readonly id = "clients";
   private readonly options: RunAppServerStageOptions;

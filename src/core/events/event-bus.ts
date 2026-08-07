@@ -1,23 +1,28 @@
 import type { EventKey } from "./event-key.js";
 import type { EventGroup, EventType } from "./event-catalog.js";
 
+/** Optional identity and timestamp overrides for a published event. */
 export interface EventPublishOptions {
   id?: string;
   occurredAt?: string;
 }
 
+/** Stable priority values used to order subscriber execution. */
 export const EventSubscriptionPriorities = {
   High: 300,
   Normal: 200,
   Low: 100,
 } as const;
+/** A subscriber priority accepted by the event bus. */
 export type EventSubscriptionPriority =
   typeof EventSubscriptionPriorities[keyof typeof EventSubscriptionPriorities];
 
+/** Subscription ordering options applied when a handler is registered. */
 export interface EventSubscriptionOptions {
   priority?: EventSubscriptionPriority;
 }
 
+/** Event envelope delivered to subscribers and persisted by runtime consumers. */
 export interface ScoutEvent<TPayload = unknown> {
   id: string;
   key: EventKey;
@@ -25,10 +30,14 @@ export interface ScoutEvent<TPayload = unknown> {
   occurredAt: string;
 }
 
+/** Handler invoked for a matching event; asynchronous failures propagate to awaited dispatch. */
 export type ScoutEventHandler<TPayload = unknown> = (event: ScoutEvent<TPayload>) => void | Promise<void>;
+/** Removes one previously registered event handler. */
 export type UnsubscribeEventHandler = () => void;
+/** Exact key, event type, or group prefix a subscription can target. */
 export type EventSubscriptionTarget = EventKey | EventType | EventGroup;
 
+/** Publish/subscribe contract used by runtime components without exposing storage details. */
 export interface EventBus {
   publish<TPayload>(type: EventType, payload: TPayload, options?: EventPublishOptions): ScoutEvent<TPayload>;
   publishAndWait<TPayload>(
@@ -48,6 +57,7 @@ export interface EventBus {
   ): UnsubscribeEventHandler;
 }
 
+/** In-process event bus that snapshots matching handlers and dispatches priority groups serially. */
 export class InMemoryEventBus implements EventBus {
   private readonly exactHandlers = new Map<string, RegisteredHandler[]>();
   private readonly groupHandlers = new Map<string, RegisteredHandler[]>();

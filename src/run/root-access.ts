@@ -6,6 +6,10 @@ import type {
   RunRootAccess,
 } from "./types.js";
 
+/**
+ * Derives deduplicated trusted, writable, and mount roots from prepared role
+ * mounts. It does not decide policy or mutate either the asset store or run.
+ */
 export function buildRunRootAccess(
   assetStore: Pick<AssetStore, "trustedRootsForMount" | "writableRootsForMount">,
   agents: Record<ScoutAgentRole, RunAgentEnvironment>,

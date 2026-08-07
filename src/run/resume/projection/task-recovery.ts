@@ -9,6 +9,7 @@ import {
 } from "../../../agent/thread/types.js";
 import type { RunProjection } from "./run-projector.js";
 
+/** Ordered recovery checkpoints inferred from persisted task and turn facts. */
 export const TaskRecoveryCheckpoints = {
   Queued: "task_queued",
   Resumable: "task_resumable",
@@ -17,9 +18,11 @@ export const TaskRecoveryCheckpoints = {
   OutcomeSubmitted: "outcome_submitted",
   Terminated: "task_terminated",
 } as const;
+/** String union consumed by packet schemas and resume-stage decisions. */
 export type TaskRecoveryCheckpoint =
   typeof TaskRecoveryCheckpoints[keyof typeof TaskRecoveryCheckpoints];
 
+/** Discriminants for actions a resumed agent may be asked to inspect or run. */
 export const ResumeActionTypes = {
   ResumeTask: "resume_task",
   ConsumeMessage: "consume_message",
@@ -27,9 +30,15 @@ export const ResumeActionTypes = {
   EvaluateOutcome: "evaluate_outcome",
   ResolveTermination: "resolve_termination",
 } as const;
+/** Internal, side-effect-free action plan derived from a run projection. */
 export type ResumeActionType =
   typeof ResumeActionTypes[keyof typeof ResumeActionTypes];
 
+/**
+ * Declarative recovery work selected for one agent. The action carries only a
+ * stable identifier; execution remains in the agent/resume orchestration
+ * layer, so constructing this union cannot mutate the run.
+ */
 export type ResumeAction =
   | {
     type: typeof ResumeActionTypes.ResumeTask;
@@ -52,6 +61,11 @@ export type ResumeAction =
     taskId: string;
   };
 
+/**
+ * Infers the highest-priority recovery boundary for a task. Terminal status
+ * wins first, then unresolved human input, queued state, interrupted steps or
+ * turns, and finally a resumable task; `undefined` means no task exists.
+ */
 export function inferTaskRecoveryCheckpoint(
   projection: RunProjection,
   task: AgentTaskState | undefined,
@@ -86,6 +100,11 @@ export function inferTaskRecoveryCheckpoint(
     : TaskRecoveryCheckpoints.Resumable;
 }
 
+/**
+ * Plans pending-message consumption and role-specific task actions. The
+ * coordinator evaluates every task, while a worker receives only its own
+ * queued/resumable task; this function records intent without executing it.
+ */
 export function planResumeActions(input: {
   projection: RunProjection;
   agentId: string;

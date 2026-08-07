@@ -1,5 +1,6 @@
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 
+/** Palette names accepted by the TUI's semantic color helpers. */
 export type TuiColor =
   | "blue"
   | "cyan"
@@ -10,6 +11,7 @@ export type TuiColor =
   | "white"
   | "yellow";
 
+/** Selects the stable role color used across task and activity rows. */
 export function roleColor(role: ScoutAgentRole | string | undefined): TuiColor {
   if (role === "coordinator") return "cyan";
   if (role === "researcher") return "green";
@@ -18,6 +20,7 @@ export function roleColor(role: ScoutAgentRole | string | undefined): TuiColor {
   return "gray";
 }
 
+/** Selects a semantic color for a task or lifecycle status. */
 export function statusColor(status: string | undefined): TuiColor {
   if (
     status === "done"

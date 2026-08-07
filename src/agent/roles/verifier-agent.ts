@@ -4,6 +4,7 @@ import { ScoutAgentPhases, ScoutAgentRoles } from "../thread/types.js";
 import { readWorkerRoleInstructions } from "./instructions.js";
 import { currentRunScope } from "../../run/run-scope.js";
 
+/** Worker role responsible for verification-phase tasks. */
 export class VerifierAgent extends WorkerAgent {
   constructor(options: ScoutAgentOptions) {
     const scope = currentRunScope();

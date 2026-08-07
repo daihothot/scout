@@ -6,6 +6,7 @@ import type {
   RunStageSnapshot,
 } from "./run-stage.js";
 
+/** Inputs for lifecycle execution and optional state observation. */
 export interface RunStageExecutorOptions {
   runId: string;
   logger: Logger;
@@ -22,6 +23,11 @@ interface RunStageGroupStart {
   errors: unknown[];
 }
 
+/**
+ * Registers serial and parallel stage groups, coordinates startup/termination,
+ * and publishes snapshots. It owns ordering and cleanup, while stages own
+ * their domain resources and failure details.
+ */
 export class RunStageExecutor {
   private readonly runId: string;
   private readonly logger: Logger;

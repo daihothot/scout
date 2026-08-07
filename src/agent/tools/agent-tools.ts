@@ -2,15 +2,30 @@ import type { AgentDynamicToolSpec, AgentJsonValue } from "./types.js";
 import type { ScoutAgentPhase, ScoutAgentRole } from "../thread/types.js";
 import { ScoutAgentPhases, ScoutAgentRoles } from "../thread/types.js";
 
+/**
+ * Declares the typed dynamic-tool protocol exposed to Scout agents. This
+ * module owns namespace validation and argument parsing; tool handlers own
+ * task, message, skill, and human-input side effects.
+ */
+
+/** Stable namespaces used to route each agent dynamic tool. */
 export const AGENT_ASSIGN_TASK_TOOL_NAMESPACE = "scout_agent_assigntask";
+/** Namespace for ordinary agent-to-agent messages. */
 export const AGENT_SEND_MESSAGE_TOOL_NAMESPACE = "scout_agent_sendmessage";
+/** Namespace for worker requests that require human input. */
 export const AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE = "scout_agent_requesthumaninput";
+/** Namespace for coordinator responses to human-input requests. */
 export const AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE = "scout_agent_respondhumaninput";
+/** Namespace for formal worker task handoffs. */
 export const AGENT_SUBMIT_TASK_TOOL_NAMESPACE = "scout_agent_submittask";
+/** Namespace for coordinator task archival. */
 export const AGENT_ARCHIVE_TASK_TOOL_NAMESPACE = "scout_agent_archivetask";
+/** Namespace for phase-scoped skill navigation. */
 export const AGENT_FIND_SKILLS_TOOL_NAMESPACE = "scout_agent_findskills";
+/** Namespace for reading a selected skill resource. */
 export const AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE = "scout_agent_readskillresource";
 
+/** Maps protocol tool names to their required app-server namespace. */
 export const AGENT_TOOL_NAMESPACE_BY_NAME: Readonly<Record<string, string>> = {
   AssignTask: AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
   SendMessage: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
@@ -22,10 +37,12 @@ export const AGENT_TOOL_NAMESPACE_BY_NAME: Readonly<Record<string, string>> = {
   ReadSkillResource: AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
 };
 
+/** Set used to reject non-Scout namespaces at the app-server boundary. */
 export const AGENT_TOOL_NAMESPACES = new Set<string>(
   Object.values(AGENT_TOOL_NAMESPACE_BY_NAME),
 );
 
+/** Throws when a dynamic tool is sent through the wrong namespace. */
 export function assertAgentToolNamespace(namespace: string, tool: string): void {
   const expected = AGENT_TOOL_NAMESPACE_BY_NAME[tool];
   if (!expected) throw new Error(`Unsupported agent tool: ${tool}`);
@@ -34,6 +51,7 @@ export function assertAgentToolNamespace(namespace: string, tool: string): void 
   }
 }
 
+/** Input contract for coordinator-to-worker task assignment. */
 export interface AssignTaskToolCall {
   tool: "AssignTask";
   agent_id?: string;
@@ -42,39 +60,46 @@ export interface AssignTaskToolCall {
   prompt: string;
 }
 
+/** Input contract for ordinary agent-to-agent messaging. */
 export interface SendMessageToolCall {
   tool: "SendMessage";
   to: string;
   message: string;
 }
 
+/** Input contract for a worker request that pauses on human confirmation. */
 export interface RequestHumanInputToolCall {
   tool: "RequestHumanInput";
   request: string;
 }
 
+/** Input contract for a coordinator response to a pending human request. */
 export interface RespondHumanInputToolCall {
   tool: "RespondHumanInput";
   task_id: string;
   response: string;
 }
 
+/** Input contract for a worker's formal task handoff. */
 export interface SubmitTaskToolCall {
   tool: "SubmitTask";
   outcome: string;
 }
 
+/** Input contract for coordinator task archival. */
 export interface ArchiveTaskToolCall {
   tool: "ArchiveTask";
   task_id: string;
 }
 
+/** Input contract for phase-scoped skill family navigation. */
 export interface FindSkillsToolCall {
   tool: "FindSkills";
   phase: ScoutAgentPhase;
   family?: string[];
 }
 
+/** Input contract for reading a resource from a selected skill. */
 export interface ReadSkillResourceToolCall {
   tool: "ReadSkillResource";
   selection_id: string;
@@ -82,6 +107,7 @@ export interface ReadSkillResourceToolCall {
   resource: string;
 }
 
+/** Discriminated union accepted by the dynamic-tool dispatcher. */
 export type AgentDynamicToolCall =
   | AssignTaskToolCall
   | SendMessageToolCall
@@ -92,6 +118,7 @@ export type AgentDynamicToolCall =
   | FindSkillsToolCall
   | ReadSkillResourceToolCall;
 
+/** Builds the schema for phase-scoped skill navigation. */
 export function buildFindSkillsDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_FIND_SKILLS_TOOL_NAMESPACE,
@@ -122,6 +149,7 @@ export function buildFindSkillsDynamicTool(): AgentDynamicToolSpec {
   };
 }
 
+/** Builds the schema for reading a resource from the latest skill selection. */
 export function buildReadSkillResourceDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
@@ -148,6 +176,7 @@ export function buildReadSkillResourceDynamicTool(): AgentDynamicToolSpec {
   };
 }
 
+/** Builds the schema for assigning work to an existing worker agent. */
 export function buildAssignTaskDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
@@ -175,6 +204,7 @@ export function buildAssignTaskDynamicTool(): AgentDynamicToolSpec {
   };
 }
 
+/** Builds the schema for ordinary agent-to-agent messaging. */
 export function buildSendMessageDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
@@ -193,6 +223,7 @@ export function buildSendMessageDynamicTool(): AgentDynamicToolSpec {
   };
 }
 
+/** Builds the schema for a worker's human-input request. */
 export function buildRequestHumanInputDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
@@ -207,6 +238,7 @@ export function buildRequestHumanInputDynamicTool(): AgentDynamicToolSpec {
   };
 }
 
+/** Builds the schema for a coordinator's human-input response. */
 export function buildRespondHumanInputDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
@@ -225,6 +257,7 @@ export function buildRespondHumanInputDynamicTool(): AgentDynamicToolSpec {
   };
 }
 
+/** Builds the schema for formal worker task submission. */
 export function buildSubmitTaskDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
@@ -239,6 +272,7 @@ export function buildSubmitTaskDynamicTool(): AgentDynamicToolSpec {
   };
 }
 
+/** Builds the schema for coordinator-only task archival. */
 export function buildArchiveTaskDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
@@ -253,6 +287,7 @@ export function buildArchiveTaskDynamicTool(): AgentDynamicToolSpec {
   };
 }
 
+/** Validates and narrows untrusted app-server arguments into a tool call. */
 export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDynamicToolCall {
   if (typeof args !== "object" || args === null || Array.isArray(args)) {
     throw new Error(`${tool} arguments must be an object.`);

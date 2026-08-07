@@ -7,10 +7,18 @@ import {
 import { buildCoordinatorResumePacket } from "./resume-packet-coordinator.js";
 import { buildWorkerResumePacket } from "./resume-packet-worker.js";
 
+/** Hard upper bound for the serialized resume attachment sent to an agent. */
 const MAX_PACKET_BYTES = 12 * 1024;
 
+/** Re-exported wire shape used by callers that inspect a built packet. */
 export type { ResumePacket } from "./resume-packet-common.js";
 
+/**
+ * Selects the role-specific packet, applies deterministic size reduction, and
+ * wraps the result in the attachment tag consumed by the agent context layer.
+ * It never replays events or starts a thread; an irreducibly oversized packet
+ * fails closed instead of silently changing its recovery meaning.
+ */
 export function buildResumePacket(input: ResumePacketInput): string {
   const packet = input.role === ScoutAgentRoles.Coordinator
     ? buildCoordinatorResumePacket(input)
@@ -23,6 +31,10 @@ export function buildResumePacket(input: ResumePacketInput): string {
   return attachments.addTagBlock("resume", rendered);
 }
 
+/**
+ * Removes the least essential history in bounded passes while retaining the
+ * identity, recovery actions, and most recent state needed to resume safely.
+ */
 function fitPacket(packet: ResumePacket): ResumePacket {
   if (packetBytes(packet) <= MAX_PACKET_BYTES) return packet;
 
@@ -65,6 +77,7 @@ function fitPacket(packet: ResumePacket): ResumePacket {
   };
 }
 
+/** Keeps task status and step identity while dropping verbose prompt text. */
 function compactTask(
   task: ResumePacket["task"],
 ): ResumePacket["task"] {
@@ -92,6 +105,7 @@ function packetBytes(packet: ResumePacket): number {
   return Buffer.byteLength(renderPacket(packet), "utf8");
 }
 
+/** Serializes the packet with stable indentation and escapes tag delimiters. */
 function renderPacket(packet: ResumePacket): string {
   return JSON.stringify(packet, null, 2).replaceAll("<", "\\u003c");
 }
