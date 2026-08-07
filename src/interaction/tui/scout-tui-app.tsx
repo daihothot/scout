@@ -30,6 +30,7 @@ import {
   resolveTuiWorkspaceLayout,
 } from "./workspace-layout.js";
 
+/** Root props connecting the store snapshot to the terminal application. */
 export interface ScoutTuiAppProps {
   store: TuiStore;
   onExit: () => void;
@@ -39,6 +40,7 @@ const MIN_APP_HEIGHT = 14;
 const MOUSE_TRACKING_ON = "\u001b[?1000h\u001b[?1006h";
 const MOUSE_TRACKING_OFF = "\u001b[?1006l\u001b[?1000l";
 
+/** Renders the top-level terminal shell and routes exit requests. */
 export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
   const [state, setState] = useState<TuiState>(() => store.snapshot());
   const [tasksOpen, setTasksOpen] = useState(false);
@@ -54,7 +56,7 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
   const topChromeRows = resolveTopChromeRows(
     compact,
     showLifecycleProgress,
-    state.runtime.status !== "ready" ? state.mountRestore : undefined,
+    state.runtime.status !== "ready" ? state.subprocessProgress : undefined,
   );
   const promptRows = inputReady ? PROMPT_INPUT_ROWS : 0;
   const availableWorkspaceRows = Math.max(1, appHeight - topChromeRows - promptRows);

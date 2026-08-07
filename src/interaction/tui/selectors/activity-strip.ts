@@ -5,6 +5,7 @@ import type {
 } from "../../../agent/activity/activity-event.js";
 import type { TuiState } from "../tui-store.js";
 
+/** Reduced activity item used by the compact activity strip. */
 export interface TuiAgentActivityStripItem {
   activityId: string;
   role: ScoutAgentRole;
@@ -17,6 +18,7 @@ export interface TuiAgentActivityStripItem {
   processing: boolean;
 }
 
+/** Selects the latest visible activity for the active agent timeline. */
 export function selectCurrentAgentActivity(
   state: TuiState,
 ): TuiAgentActivityStripItem | undefined {

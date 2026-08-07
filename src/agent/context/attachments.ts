@@ -1,9 +1,11 @@
+/** Parsed representation of one Runtime attachment block. */
 export interface AgentTaggedAttachmentBlock {
   tag: string;
   body: string;
   raw: string;
 }
 
+/** Composes and inspects the tagged blocks carried in agent messages. */
 export const attachments = {
   compose(...blocks: string[]): string {
     const validBlocks: string[] = [];

@@ -1,3 +1,8 @@
+/**
+ * Loads profile assets and enforces the runtime schema before mount assembly.
+ * Profile files provide declarations; this module does not grant permissions
+ * or choose which lifecycle stage consumes them.
+ */
 import { join, resolve } from "node:path";
 import type {
   CodexModelConfig,
@@ -12,6 +17,7 @@ import type {
   AgentProfilesFile,
 } from "../types.js";
 
+/** Provider reasoning-effort values accepted by profile validation. */
 const reasoningEfforts = new Set<CodexReasoningEffort>([
   "none",
   "minimal",
@@ -29,15 +35,18 @@ const reasoningSummaries = new Set<CodexReasoningSummary>([
   "none",
 ]);
 
+/** Loads the agent profile document rooted at `repoRoot/assets/codex`. */
 export function readAgentProfilesForRepo(repoRoot: string): AgentProfilesFile {
   const assetsRoot = join(resolve(repoRoot), "assets", "codex");
   return readJsonFile<AgentProfilesFile>(join(assetsRoot, CodexAssetLayout.agentProfiles));
 }
 
+/** Validates and returns the model selected by the profile defaults section. */
 export function resolveDefaultAgentModel(profiles: AgentProfilesFile): CodexModelConfig {
   return normalizeModelConfig(profiles.defaults?.model, "agent profile default model");
 }
 
+/** Resolves one named agent profile, applying and validating its model override. */
 export function resolveAgentProfile(
   profiles: AgentProfilesFile,
   agentId: string,

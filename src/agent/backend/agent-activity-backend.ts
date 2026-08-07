@@ -11,6 +11,11 @@ import type {
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { AgentEvents } from "../events/index.js";
 
+/**
+ * Projects app-server timeline entries into agent activity facts. It owns no
+ * task state and only publishes observations after the caller has resolved the
+ * relevant timeline item.
+ */
 export class AgentActivityBackend {
   private readonly scope: RunScope;
 

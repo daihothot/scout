@@ -1,3 +1,4 @@
+/** JSON-compatible value used for dynamic-tool schemas and configuration. */
 export type AgentJsonValue =
   | null
   | boolean
@@ -6,6 +7,7 @@ export type AgentJsonValue =
   | AgentJsonValue[]
   | { [key: string]: AgentJsonValue };
 
+/** Dynamic tool definition registered with the app-server thread. */
 export interface AgentDynamicToolSpec {
   namespace?: string;
   name: string;

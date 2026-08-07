@@ -9,6 +9,7 @@ import {
 const LABEL = "YOU";
 const MIN_INLINE_BODY_WIDTH = 16;
 
+/** One wrapped user message row with label alignment metadata. */
 export interface UserMessageVisualRow {
   id: string;
   kind: "user";
@@ -18,6 +19,7 @@ export interface UserMessageVisualRow {
   prefixOnly?: boolean;
 }
 
+/** Wraps user text while preserving the YOU label on narrow terminals. */
 export function buildUserMessageRows(
   item: TuiUserChatItem,
   width: number,
@@ -54,6 +56,7 @@ export function buildUserMessageRows(
   }));
 }
 
+/** Renders one user message row. */
 export function UserMessageRow({ row }: { row: UserMessageVisualRow }) {
   return (
     <Text wrap="truncate-end">

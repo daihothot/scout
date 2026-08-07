@@ -18,6 +18,7 @@ import type {
 } from "../thread/types.js";
 import { ScoutAgentRoles } from "../thread/types.js";
 
+/** Persists redacted thread lifecycle facts without embedding instruction bodies. */
 export class AgentThreadRecorder {
   private readonly threadLoggers = new Map<string, Logger>();
   private unsubscribe?: UnsubscribeEventHandler;

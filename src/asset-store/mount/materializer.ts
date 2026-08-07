@@ -31,9 +31,15 @@ import {
 } from "./context-builder.js";
 import { MountManifestBuilder } from "./manifest-builder.js";
 
+/**
+ * Owns filesystem writes for one role mount. It creates links and generated
+ * wrappers/configuration from an immutable MountContext; reuse decisions and
+ * run lifecycle persistence are handled by MountPreparation and run stages.
+ */
 export class MountMaterializer {
   constructor(private readonly context: MountContext) {}
 
+  /** Reconstructs a mount projection from a manifest without rewriting files. */
   buildReusableMount(manifest: MountManifest): CodexMount {
     const { context } = this;
     const shellToolsById = new Map(context.profiledShellTools.map((tool) => [tool.id, tool] as const));
@@ -66,6 +72,7 @@ export class MountMaterializer {
     };
   }
 
+  /** Wipes/recreates the role mount, writes generated resources, and records a manifest. */
   materialize(options: MaterializeOptions): CodexMount {
     const context = this.context;
     const {
@@ -226,6 +233,7 @@ export class MountMaterializer {
   }
 }
 
+/** Links selected Skill directories into the mount's Scout Skill namespace. */
 function materializeSkills(assetsRoot: string, mountRoot: string, skills: string[]): string[] {
   return skills.map((skillPath) => {
     const source = resolveAssetRelativePath(skillPath, assetsRoot);
@@ -235,6 +243,7 @@ function materializeSkills(assetsRoot: string, mountRoot: string, skills: string
   });
 }
 
+/** Links selected custom-agent TOML files into Codex's mount-local agents directory. */
 function materializeCustomAgents(
   assetsRoot: string,
   mountRoot: string,
@@ -250,6 +259,7 @@ function materializeCustomAgents(
   });
 }
 
+/** Links selected plugin directories into the mount-local plugin namespace. */
 function materializePlugins(assetsRoot: string, mountRoot: string, plugins: string[]): string[] {
   return plugins.map((pluginPath) => {
     const source = resolveAssetRelativePath(pluginPath, assetsRoot);
@@ -259,6 +269,7 @@ function materializePlugins(assetsRoot: string, mountRoot: string, plugins: stri
   });
 }
 
+/** Links worker-only instructions and returns the manifest-relative target path. */
 function materializeWorkerAgent(assetsRoot: string, mountRoot: string): string {
   const targetPath = join("agents", "worker.AGENTS.md");
   safeSymlink(
@@ -268,6 +279,7 @@ function materializeWorkerAgent(assetsRoot: string, mountRoot: string): string {
   return targetPath;
 }
 
+/** Links the role-specific AGENTS file and returns its manifest-relative path. */
 function materializeRoleAgent(
   assetsRoot: string,
   mountRoot: string,

@@ -69,10 +69,10 @@ import {
 import type {
   AgentMessageReply,
   AgentMessageSend,
-  MountRestoreProgress,
   RuntimeDisclosureEvent,
   RuntimeInteractionPort,
   RuntimeInteractionUnsubscribe,
+  SubprocessProgressSnapshot,
 } from "../../src/interaction/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import type {
@@ -2107,7 +2107,7 @@ class CapturingInteractionPort implements RuntimeInteractionPort {
     return undefined;
   }
 
-  async publishMountRestoreProgress(_progress: MountRestoreProgress): Promise<void> {
+  async publishSubprocessProgress(_progress: SubprocessProgressSnapshot): Promise<void> {
     return undefined;
   }
 

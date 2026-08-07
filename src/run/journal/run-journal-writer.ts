@@ -41,6 +41,11 @@ const persistedEventTypes: EventType[] = [
   ValidationEvents.gate.recorded,
 ];
 
+/**
+ * Subscribes to the event facts that form run history and appends them to the
+ * active journal. It reports persistent write failure once and owns no event
+ * production or recovery policy.
+ */
 export class RunJournalWriter {
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
   private failurePublished = false;

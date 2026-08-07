@@ -18,6 +18,11 @@ import { agent } from "../context/agent-attachments.js";
 import type { AgentMessage } from "../message/types.js";
 import { canonicalizeAgentArtifactReferences } from "../task/artifact-references.js";
 
+/**
+ * Base implementation for role-specific workers. It owns task runner binding
+ * and lifecycle-tool delegation while the concrete role supplies its thread
+ * specification.
+ */
 export abstract class WorkerAgent extends ScoutAgent {
   declare runner: WorkerRunner | undefined;
   private taskSequence = 0;

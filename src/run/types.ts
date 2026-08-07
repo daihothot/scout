@@ -7,21 +7,25 @@ import type {
 import type { AgentThreadSnapshot } from "../agent/thread/types.js";
 import type { RuntimeInteractionPort } from "../interaction/index.js";
 
+/** CLI/runtime inputs shared by startup and resume. */
 export interface ScoutRunOptions {
   cwd: string;
   interactionPort?: RuntimeInteractionPort;
 }
 
+/** Adds the run identifier or directory used to reconstruct a prior run. */
 export interface ResumeRunOptions extends ScoutRunOptions {
   run: string;
 }
 
+/** Permission roots derived from the role mounts for one run. */
 export interface RunRootAccess {
   mountRoots: string[];
   trustedRoots: string[];
   writableRoots: string[];
 }
 
+/** Prepared mount, preflight facts, and artifact locations for one role. */
 export interface RunAgentEnvironment {
   role: ScoutAgentRole;
   mount: CodexMount;
@@ -31,12 +35,14 @@ export interface RunAgentEnvironment {
   assetCommitPath: string;
 }
 
+/** Complete environment consumed by later lifecycle stages. */
 export interface RunEnvironment {
   agents: Record<ScoutAgentRole, RunAgentEnvironment>;
   rootAccess: RunRootAccess;
   contextBundle: RunContextBundle;
 }
 
+/** Persistable summary returned when startup or resume finishes. */
 export interface ScoutRunSummary {
   status: "passed" | "failed";
   runId: string;
@@ -53,6 +59,7 @@ export interface ScoutRunSummary {
   }>;
 }
 
+/** Shared coordinator inputs and identity used by all agent threads. */
 export interface RunContextBundle {
   contextBundleId: string;
   runId: string;
@@ -65,6 +72,7 @@ export interface RunContextBundle {
   };
 }
 
+/** Builds the stable shared-context identity from a coordinator asset commit. */
 export function buildRunContextBundle(input: {
   runId: string;
   assetCommit: RunContextBundle["assetCommit"];
@@ -82,6 +90,7 @@ export function buildRunContextBundle(input: {
   };
 }
 
+/** Persisted orchestration facts used to inspect a completed run. */
 export interface RunOrchestrationArtifact {
   artifactVersion: 1;
   runId: string;

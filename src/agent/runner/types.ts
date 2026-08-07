@@ -1,12 +1,15 @@
 import type { AgentTaskState } from "../task/types.js";
 
+/** Runner implementations supported by the agent runtime. */
 export type AgentRunnerKind = "coordinator" | "worker";
 
+/** Minimal state exposed by every runner to its owning agent. */
 export interface AgentRunnerSnapshot {
   activeTask?: AgentTaskState;
   pendingMessageCount: number;
 }
 
+/** Common lifecycle boundary for Coordinator and Worker runners. */
 export abstract class AgentRunner {
   abstract readonly runnerKind: AgentRunnerKind;
   abstract readonly agentId: string;

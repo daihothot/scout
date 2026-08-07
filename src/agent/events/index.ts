@@ -18,6 +18,7 @@ import "../runner/coordinator/coordinator-runner-events.js";
 import "../skill/skill-events.js";
 import { AgentEvents as AgentEventCatalog } from "./catalog.js";
 
+/** Fully typed registry of all agent-owned event routes. */
 export const AgentEvents = AgentEventCatalog as EventCatalogRegistry<"agent">
   & DefinedEventCatalog<AgentActivityEventCatalog>
   & DefinedEventCatalog<AgentThreadEventCatalog>

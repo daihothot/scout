@@ -1,34 +1,32 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { terminalDisplayWidth } from "../terminal-text.js";
+import type { SubprocessProgressText } from "../../protocol/port.js";
 
 const DEFAULT_MAX_BAR_WIDTH = 42;
 const FILLED_TRACK = "▪";
 const REMAINING_TRACK = "▫";
 const TRACK_SEPARATOR = "";
 
-type ProgressTrackColor = "yellow" | "red" | "gray" | "white" | `#${string}`;
+/** Ink color accepted by progress tracks and status markers. */
+export type ProgressTrackColor = "yellow" | "red" | "green" | "gray" | "white" | `#${string}`;
 
-export interface SubprocessProgressContent {
-  marker?: string;
-  label: string;
-  detail?: string;
-  units: string;
-}
-
+/** Render-ready subprocess status and segmented track. */
 export interface SubprocessProgressPresentation {
   width: number;
   filled: string;
   remaining: string;
-  content: SubprocessProgressContent;
+  content: SubprocessProgressText;
 }
 
+/** Segmented track strings with a stable display width. */
 export interface SegmentedProgressTrack {
   width: number;
   filled: string;
   remaining: string;
 }
 
+/** Builds a clamped, cell-based track while preserving configured separators and width limits. */
 export function buildSegmentedProgressTrack(input: {
   completedUnits: number;
   totalUnits: number;
@@ -64,10 +62,11 @@ export function buildSegmentedProgressTrack(input: {
   };
 }
 
+/** Maps operation units and descriptor text to the standard subprocess track glyphs. */
 export function buildSubprocessProgressPresentation(input: {
   completedUnits: number;
   totalUnits: number;
-  content: SubprocessProgressContent;
+  content: SubprocessProgressText;
   width: number;
   maxBarWidth?: number;
 }): SubprocessProgressPresentation {
@@ -86,6 +85,7 @@ export function buildSubprocessProgressPresentation(input: {
   };
 }
 
+/** Renders a subprocess status line and optional segmented track supplied by the operation. */
 export function SubprocessProgressBar({
   presentation,
   markerColor = "yellow",
@@ -119,12 +119,13 @@ export function SubprocessProgressBar({
   );
 }
 
+/** Renders only the operation-owned status text, with a compact layout when requested. */
 export function SubprocessProgressStatus({
   content,
   markerColor = "yellow",
   compact = false,
 }: {
-  content: SubprocessProgressContent;
+  content: SubprocessProgressText;
   markerColor?: ProgressTrackColor;
   compact?: boolean;
 }) {
@@ -134,7 +135,7 @@ export function SubprocessProgressStatus({
         <Text>{content.label}</Text>
         {content.marker && <Text color={markerColor}>{content.marker}</Text>}
         {content.detail && <Text dimColor>{content.detail}</Text>}
-        <Text dimColor>{` ${content.units}`}</Text>
+        {content.units && <Text dimColor>{` ${content.units}`}</Text>}
       </Text>
     );
   }
@@ -143,21 +144,23 @@ export function SubprocessProgressStatus({
       {content.marker && <Text color={markerColor}>{`${content.marker} `}</Text>}
       <Text>{content.label}</Text>
       {content.detail && <Text dimColor>{`  ${content.detail}`}</Text>}
-      <Text dimColor>{`  ${content.units}`}</Text>
+      {content.units && <Text dimColor>{`  ${content.units}`}</Text>}
     </Text>
   );
 }
 
+/** Produces the text form used when a subprocess status shares a lifecycle-progress row. */
 export function subprocessProgressStatusText(
-  content: SubprocessProgressContent,
+  content: SubprocessProgressText,
   compact = false,
 ): string {
   if (compact) {
-    return `${content.label}${content.marker ?? ""}${content.detail ?? ""} ${content.units}`;
+    return `${content.label}${content.marker ?? ""}${content.detail ?? ""}${content.units ? ` ${content.units}` : ""}`;
   }
-  return `${content.marker ? `${content.marker} ` : ""}${content.label}${content.detail ? `  ${content.detail}` : ""}  ${content.units}`;
+  return `${content.marker ? `${content.marker} ` : ""}${content.label}${content.detail ? `  ${content.detail}` : ""}${content.units ? `  ${content.units}` : ""}`;
 }
 
+/** Renders filled and remaining track cells with foreground or background styling. */
 export function ProgressTrack({
   filled,
   remaining,

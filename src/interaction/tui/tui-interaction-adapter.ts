@@ -12,9 +12,10 @@ import type {
   AgentTurnActivity,
 } from "../../agent/activity/activity-event.js";
 import type { RunLifecycleSnapshot } from "../../run/lifecycle/run-stage.js";
-import type { MountRestoreProgress } from "../protocol/port.js";
+import type { SubprocessProgressSnapshot } from "../protocol/port.js";
 import type { TuiStore } from "./tui-store.js";
 
+/** Bridges runtime interaction events and commands into the TUI store. */
 export class TuiInteractionAdapter implements RuntimeInteractionPort {
   constructor(private readonly store: TuiStore) {}
 
@@ -22,8 +23,8 @@ export class TuiInteractionAdapter implements RuntimeInteractionPort {
     this.store.setRunLifecycleSnapshot(snapshot);
   }
 
-  async publishMountRestoreProgress(progress: MountRestoreProgress): Promise<void> {
-    this.store.setMountRestoreProgress(progress);
+  async publishSubprocessProgress(progress: SubprocessProgressSnapshot): Promise<void> {
+    this.store.setSubprocessProgress(progress);
   }
 
   async disclose(event: RuntimeDisclosureEvent): Promise<void> {

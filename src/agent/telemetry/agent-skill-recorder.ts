@@ -7,6 +7,7 @@ import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
 import type { AgentSkillEventContext } from "../skill/skill-events.js";
 
+/** Records Skill discovery/read facts and marks rejected operations as warnings. */
 export class AgentSkillRecorder {
   private readonly skillLoggers = new Map<string, Logger>();
   private unsubscribe?: UnsubscribeEventHandler;

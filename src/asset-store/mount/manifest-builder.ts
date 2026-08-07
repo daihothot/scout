@@ -20,6 +20,7 @@ import {
   skillNameFromPath,
 } from "./context-builder.js";
 
+/** Inputs describing the selected source resources before mount files exist. */
 export interface AssetInventoryInput {
   agentId: string;
   agentProfile: AgentProfile;
@@ -34,6 +35,7 @@ export interface AssetInventoryInput {
   shellToolsRegistryHash: string;
 }
 
+/** Materialized paths and identity fields combined with the source inventory. */
 export type MountManifestInput = AssetInventoryInput & {
   assetCommitId: string;
   parentAssetCommitId?: string;
@@ -52,20 +54,25 @@ export type MountManifestInput = AssetInventoryInput & {
   pluginNames: string[];
 };
 
+/** Fields supplied after materialization when the manifest is assembled. */
 export type MountManifestFields = Omit<MountManifestInput, keyof AssetInventoryInput>;
 
+/** Builds portable source inventory and the generated mount manifest projection. */
 export class MountManifestBuilder {
   constructor(private readonly inventoryInput: AssetInventoryInput) {}
 
+  /** Hashes and describes every selected source resource. */
   buildAssetInventory(): MountManifest["assets"] {
     return buildAssetInventoryInternal(this.inventoryInput);
   }
 
+  /** Combines source inventory with generated paths and mount identity metadata. */
   build(fields: MountManifestFields): MountManifest {
     return buildMountManifestInternal({ ...this.inventoryInput, ...fields });
   }
 }
 
+/** Reads a non-symlink manifest when present; malformed manifests are treated as absent. */
 export function readExistingMountManifest(mountRoot: string): MountManifest | undefined {
   const path = join(mountRoot, "mount-manifest.json");
   if (!existsSync(path)) return undefined;

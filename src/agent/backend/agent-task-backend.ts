@@ -15,6 +15,11 @@ import type {
 } from "../task/types.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 
+/**
+ * Applies agent task commands and app-server plan observations to the shared
+ * task store. It delegates execution to the owning runner and does not decide
+ * how a runner schedules its turns.
+ */
 export class AgentTaskBackend {
   private readonly registry: RunScope["agentRegistry"];
   private readonly taskStore: AgentTaskStore;
@@ -128,10 +133,12 @@ export class AgentTaskBackend {
 
 }
 
+/** Resolves an app-server timeline entry to its complete task-oriented view. */
 export type AgentTaskTimelineResolver = (
   entry: AppServerTimelineEntry,
 ) => AppServerResolvedTimelineEntry;
 
+/** Returns a detached task snapshot suitable for event or persistence consumers. */
 export function cloneTask(task: AgentTaskState): AgentTaskState {
   return cloneAgentTaskState(task);
 }

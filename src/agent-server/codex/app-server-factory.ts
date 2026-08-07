@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CodexAppServerClient } from "./app-server-client.js";
 
+/** Filesystem, provider, and root settings used to launch one isolated app-server. */
 export interface CreateCodexAppServerClientOptions {
   isolatedHome: string;
   isolatedCodexHome: string;
@@ -16,6 +17,7 @@ export interface CreateCodexAppServerClientOptions {
   trustedRoots?: string[];
 }
 
+/** Client plus the isolated paths and effective roots needed by run stages. */
 export interface CodexAppServerClientBundle {
   client: CodexAppServerClient;
   isolatedHome: string;
@@ -25,6 +27,7 @@ export interface CodexAppServerClientBundle {
   trustedRoots: string[];
 }
 
+/** Writes the isolated Codex config and constructs the corresponding protocol client. */
 export function createCodexAppServerClient(options: CreateCodexAppServerClientOptions): CodexAppServerClientBundle {
   writeFileSync(
     join(options.isolatedCodexHome, "config.toml"),

@@ -3,6 +3,7 @@ import type { CodexMount } from "../../asset-store/types.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import type { AgentThreadSnapshot } from "./types.js";
 
+/** Persisted result of the MCP/thread smoke checks for one agent thread. */
 export interface ScoutAgentThreadPreflightSnapshot {
   agentId: string;
   role: AgentThreadSnapshot["role"];
@@ -11,6 +12,7 @@ export interface ScoutAgentThreadPreflightSnapshot {
   result: ThreadPreflightReport;
 }
 
+/** Runs non-mutating MCP status and smoke checks against an active thread. */
 export async function runThreadPreflight(input: {
   agentId: string;
   thread: AgentThreadSnapshot;

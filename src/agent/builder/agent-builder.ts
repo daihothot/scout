@@ -11,6 +11,7 @@ import { buildAgentDynamicTools } from "../tools/tool-profiles.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 import { ScoutAgentRoles } from "../thread/types.js";
 
+/** Builds the run's fixed role agents from prepared mounts and domain tools. */
 export class AgentBuilder {
   private readonly scope: RunScope = currentRunScope();
 

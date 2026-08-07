@@ -15,6 +15,7 @@ import type { RunScope } from "../run-scope.js";
 import { PrepareEnvironmentStage } from "./stages/prepare-environment-stage.js";
 import { InitializeRunStage } from "./stages/initialize-run-stage.js";
 
+/** Registers startup's lifecycle groups and exposes its scope stage. */
 export class StartRunStageAssembly {
   readonly executor: RunStageExecutor;
   readonly runScopeStage: RunScopeStage;

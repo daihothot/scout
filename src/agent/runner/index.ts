@@ -1,3 +1,4 @@
+/** Public runner contracts and role-specific runner implementations. */
 export * from "./types.js";
 export * from "./coordinator/coordinator-attachments.js";
 export * from "./coordinator/coordinator-runner.js";

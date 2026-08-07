@@ -5,6 +5,7 @@ import {
   resolveDefaultAgentModel,
 } from "../asset-store/assets/agent-profiles.js";
 
+/** Starts either a new or resumed run and keeps the TUI alive for disclosure. */
 export async function runScoutTui(input: {
   cwd: string;
   resume?: string;

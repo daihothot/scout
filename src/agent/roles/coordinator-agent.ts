@@ -9,6 +9,7 @@ import { Result } from "../../core/result.js";
 import type { SendAgentMessageInput } from "../task/types.js";
 import { currentRunScope } from "../../run/run-scope.js";
 
+/** Coordinator role: owns orchestration messages and task assignment, not worker tasks. */
 export class CoordinatorAgent extends ScoutAgent {
   declare readonly runner: CoordinatorRunner;
 

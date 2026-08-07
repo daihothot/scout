@@ -1,3 +1,4 @@
+/** Stable repository-relative locations for Codex assets consumed by Scout. */
 export const CodexAssetLayout = {
   agentsMd: "agents/AGENTS.md",
   agentProfiles: "agents/agent-profiles.json",
@@ -11,6 +12,7 @@ export const CodexAssetLayout = {
   vendorsRoot: "vendors",
 } as const;
 
+/** Builds the repository-relative AGENTS file path for one role identifier. */
 export function roleAgentPath(agentId: string): string {
   return `agents/${agentId}.AGENTS.md`;
 }

@@ -2,6 +2,7 @@ import {
   attachments,
 } from "./attachments.js";
 
+/** Runtime-owned tag names used to distinguish agent protocol attachments. */
 export const AgentContextTags = {
   UseUpdateTools: "use-update-tools",
   Message: "message",
@@ -10,6 +11,7 @@ export const AgentContextTags = {
   HumanResponse: "human-response",
 } as const;
 
+/** Constructs validated, typed attachment blocks for agent turns. */
 export const agent = {
   turn: {
     use_update_tools(): string {

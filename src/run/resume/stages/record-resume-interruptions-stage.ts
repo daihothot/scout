@@ -8,9 +8,16 @@ import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import { projectRun } from "../projection/index.js";
 
+/**
+ * Converts evidence of an unclean previous shutdown into journal events.
+ * It marks incomplete turns and task steps interrupted and records a missing
+ * runtime detach; it does not restart agents or decide how projected work is
+ * resumed.
+ */
 export class RecordResumeInterruptionsStage implements RunStage {
   readonly id = "record_resume_interruptions";
 
+  /** Reconciles prior runtime, turn, and step state before other restoration. */
   async start(): Promise<void> {
     this.recordPreviousRuntimeInterruption();
     const scope = currentRunScope();
@@ -69,6 +76,7 @@ export class RecordResumeInterruptionsStage implements RunStage {
     }
   }
 
+  /** Emits one runtime interruption only when the prior runtime lacks a detach. */
   private recordPreviousRuntimeInterruption(): void {
     const scope = currentRunScope();
     const runtimeEvent = [...scope.journal.readAll()].reverse().find((event) =>

@@ -5,6 +5,7 @@ const INPUT_BORDER_WIDTH = 1;
 const INPUT_PADDING_X = 1;
 const INPUT_PROMPT = "> ";
 
+/** Width budget shared by the shell, chat, drawer, and prompt. */
 export interface TuiWidths {
   terminalWidth: number;
   rootPaddingX: number;
@@ -12,6 +13,7 @@ export interface TuiWidths {
   inputValueWidth: number;
 }
 
+/** Row allocation for the visible TUI regions. */
 export interface TuiWorkspaceLayout {
   totalRows: number;
   chatOffset: number;
@@ -24,6 +26,7 @@ export interface TuiWorkspaceLayout {
   activityRows: number;
 }
 
+/** Computes width budgets from the current terminal column count. */
 export function resolveTuiWidths(columns: number): TuiWidths {
   const terminalWidth = Math.max(1, Number.isFinite(columns) ? Math.floor(columns) : 1);
   const rootPaddingX = terminalWidth < 24 ? 0 : terminalWidth < 48 ? 1 : ROOT_PADDING_X;
@@ -43,6 +46,7 @@ export function resolveTuiWidths(columns: number): TuiWidths {
   };
 }
 
+/** Allocates chat, task, and activity rows without exceeding the viewport. */
 export function resolveTuiWorkspaceLayout(input: {
   availableRows: number;
   drawerOpen: boolean;

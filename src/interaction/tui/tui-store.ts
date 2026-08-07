@@ -10,17 +10,21 @@ import type { RunLifecycleSnapshot } from "../../run/lifecycle/run-stage.js";
 import type {
   AgentMessageReply,
   AgentMessageSend,
-  MountRestoreProgress,
   RuntimeDisclosureEvent,
+  SubprocessProgressSnapshot,
 } from "../protocol/port.js";
 export type {
-  MountRestoreProgress,
-  MountRestoreRoleDecision,
-  MountRestoreStep,
+  SubprocessProgressDescriptor,
+  SubprocessProgressPhase,
+  SubprocessProgressSnapshot,
+  SubprocessProgressText,
+  SubprocessProgressTone,
 } from "../protocol/port.js";
 
+/** Categories used when a runtime disclosure is rendered in the activity log. */
 export type TuiLogKind = "disclosure" | "agent" | "input" | "system";
 
+/** Immutable display record for one disclosure or activity log entry. */
 export interface TuiLogEntry {
   id: string;
   kind: TuiLogKind;
@@ -30,6 +34,7 @@ export interface TuiLogEntry {
   createdAt: string;
 }
 
+/** Reduced task state consumed by the drawer and task selectors. */
 export interface TuiTaskSummary {
   taskId: string;
   taskSequence: number;
@@ -41,13 +46,16 @@ export interface TuiTaskSummary {
   planSteps: TuiTaskPlanStep[];
 }
 
+/** Display-level plan step retained inside a task summary. */
 export interface TuiTaskPlanStep {
   step: string;
   status: string;
 }
 
+/** Terminal-facing status of the current run. */
 export type TuiRunStatus = "preparing" | "ready" | "failed" | "stopping";
 
+/** Static runtime identity shown in the top chrome. */
 export interface TuiRuntimeInfo {
   cwd: string;
   version: string;
@@ -57,16 +65,18 @@ export interface TuiRuntimeInfo {
   status: TuiRunStatus;
 }
 
+/** Snapshot consumed by the TUI render tree. */
 export interface TuiState {
   runtime: TuiRuntimeInfo;
   lifecycle?: RunLifecycleSnapshot;
-  mountRestore?: MountRestoreProgress;
+  subprocessProgress?: SubprocessProgressSnapshot;
   logs: TuiLogEntry[];
   tasks: TuiTaskSummary[];
   activities: AgentActivity[];
   turnActivities: AgentTurnActivity[];
 }
 
+/** Construction inputs for the store's stable runtime identity. */
 export interface TuiStoreOptions {
   cwd: string;
   version: string;
@@ -78,6 +88,7 @@ type TuiStoreListener = (state: TuiState) => void;
 type TuiExitListener = () => void | Promise<void>;
 type TuiAgentMessageListener = (message: AgentMessageSend) => void | Promise<void>;
 
+/** Owns the mutable TUI projection and notifies subscribers after each update. */
 export class TuiStore {
   private readonly listeners = new Set<TuiStoreListener>();
   private readonly exitListeners = new Set<TuiExitListener>();
@@ -87,7 +98,7 @@ export class TuiStore {
   private readonly turnActivityMap = new Map<string, AgentTurnActivity>();
   private readonly logs: TuiLogEntry[] = [];
   private lifecycle?: RunLifecycleSnapshot;
-  private mountRestore?: MountRestoreProgress;
+  private subprocessProgress?: SubprocessProgressSnapshot;
   private runtime: TuiRuntimeInfo;
   private sequence = 0;
 
@@ -107,8 +118,8 @@ export class TuiStore {
       lifecycle: this.lifecycle
         ? cloneRunLifecycleSnapshot(this.lifecycle)
         : undefined,
-      mountRestore: this.mountRestore
-        ? cloneMountRestoreProgress(this.mountRestore)
+      subprocessProgress: this.subprocessProgress
+        ? cloneSubprocessProgress(this.subprocessProgress)
         : undefined,
       logs: [...this.logs],
       tasks: [...this.taskMap.values()],
@@ -123,14 +134,14 @@ export class TuiStore {
   }): void {
     const runChanged = input.runId !== undefined
       && input.runId !== this.runtime.runId;
-    const preserveMountFailure = !runChanged && this.mountRestore?.phase === "failed";
+    const preserveSubprocessFailure = !runChanged && this.subprocessProgress?.phase === "failed";
     if (
       runChanged
       || input.status === "ready"
       || input.status === "stopping"
-      || (input.status === "failed" && !preserveMountFailure)
+      || (input.status === "failed" && !preserveSubprocessFailure)
     ) {
-      this.mountRestore = undefined;
+      this.subprocessProgress = undefined;
     }
     this.runtime = {
       ...this.runtime,
@@ -141,26 +152,16 @@ export class TuiStore {
   }
 
   setRunLifecycleSnapshot(snapshot: RunLifecycleSnapshot): void {
-    const mountStageCompleted = snapshot.stages.some((stage) =>
-      (stage.id === "environment" || stage.id === "restore_environment")
-      && (stage.status === "completed" || stage.status === "stopping" || stage.status === "stopped")
-    );
-    const mountStageFailed = snapshot.stages.some((stage) =>
-      (stage.id === "environment" || stage.id === "restore_environment")
-      && stage.status === "failed"
-    );
-    const preserveMountFailure = this.mountRestore?.phase === "failed";
-    const discardNonFailureMountState = snapshot.status === "ready"
+    const preserveSubprocessFailure = this.subprocessProgress?.phase === "failed";
+    const discardNonFailureSubprocessState = snapshot.status === "ready"
       || snapshot.status === "terminating"
       || snapshot.status === "terminated"
-      || (mountStageFailed && !preserveMountFailure)
-      || (snapshot.status === "failed" && !preserveMountFailure);
+      || (snapshot.status === "failed" && !preserveSubprocessFailure);
     if (
       (this.runtime.runId && this.runtime.runId !== snapshot.runId)
-      || (mountStageCompleted && !preserveMountFailure)
-      || discardNonFailureMountState
+      || discardNonFailureSubprocessState
     ) {
-      this.mountRestore = undefined;
+      this.subprocessProgress = undefined;
     }
     this.lifecycle = cloneRunLifecycleSnapshot(snapshot);
     this.runtime = {
@@ -171,8 +172,14 @@ export class TuiStore {
     this.emit();
   }
 
-  setMountRestoreProgress(progress: MountRestoreProgress): void {
-    this.mountRestore = cloneMountRestoreProgress(progress);
+  setSubprocessProgress(progress: SubprocessProgressSnapshot): void {
+    this.subprocessProgress = cloneSubprocessProgress(progress);
+    this.emit();
+  }
+
+  clearSubprocessProgress(): void {
+    if (!this.subprocessProgress) return;
+    this.subprocessProgress = undefined;
     this.emit();
   }
 
@@ -376,9 +383,16 @@ function cloneRunLifecycleSnapshot(
   };
 }
 
-function cloneMountRestoreProgress(progress: MountRestoreProgress): MountRestoreProgress {
+function cloneSubprocessProgress(
+  progress: SubprocessProgressSnapshot,
+): SubprocessProgressSnapshot {
   return {
     ...progress,
-    roles: progress.roles.map((role) => ({ ...role })),
+    descriptor: {
+      status: { ...progress.descriptor.status },
+      progress: progress.descriptor.progress
+        ? { ...progress.descriptor.progress }
+        : undefined,
+    },
   };
 }

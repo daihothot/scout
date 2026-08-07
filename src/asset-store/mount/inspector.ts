@@ -33,6 +33,10 @@ import {
 } from "./context-builder.js";
 import { MountManifestBuilder } from "./manifest-builder.js";
 
+/**
+ * Compares persisted mount identity, inventories, links, wrappers, and config
+ * against the current context without mutating the mount filesystem.
+ */
 export class MountInspector {
   constructor(
     private readonly context: MountContext,
@@ -40,6 +44,7 @@ export class MountInspector {
     private readonly persistedIdentity?: MaterializeOptions["persistedIdentity"],
   ) {}
 
+  /** Returns a reuse/rebuild decision and a short reason for any mismatch. */
   inspect(): MountPreparationInspection {
     const context = this.context;
     const existingManifest = this.existingManifest;
@@ -63,6 +68,7 @@ export class MountInspector {
   }
 }
 
+/** Performs the cheap identity/layout checks before detailed inventory checks. */
 function inspectReusableMount(
   context: MountContext,
   manifest: MountManifest,
@@ -167,6 +173,7 @@ function inspectReusableMount(
   return { reusable: true };
 }
 
+/** Rebuilds the expected source inventory and compares portable asset identities. */
 function inspectAssetInventory(
   context: MountContext,
   actual: MountManifest["assets"],
@@ -211,6 +218,7 @@ function inspectAssetInventory(
   return undefined;
 }
 
+/** Verifies generated/linked file inventories, wrappers, and dynamic bindings. */
 function inspectManifestInventory(context: MountContext, manifest: MountManifest): string | undefined {
   if (manifest.issues.some((issue) => issue.severity === "error")) return "mount contains materialization errors";
   if (!sameStrings(manifest.customAgents, context.profiledCustomAgentPaths.map(customAgentNameFromPath))) {

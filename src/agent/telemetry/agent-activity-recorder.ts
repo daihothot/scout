@@ -10,6 +10,7 @@ import type {
 } from "../activity/activity-event.js";
 import { AgentEvents } from "../events/index.js";
 
+/** Records app-server activity projections into per-agent run logs. */
 export class AgentActivityRecorder {
   private readonly activityLoggers = new Map<string, Logger>();
   private readonly nativeSubagentLoggers = new Map<string, Logger>();

@@ -1,3 +1,10 @@
+/**
+ * Owns the long-lived JSON-RPC connection to one Codex app-server process.
+ * It translates Scout's thread/turn operations into protocol requests, reduces
+ * incoming notifications through the event store, and exposes subscription
+ * points for runtime observers. It does not decide agent policy or materialize
+ * a workspace; those decisions belong to run stages and the asset store.
+ */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -21,6 +28,7 @@ import {
 } from "./model-config.js";
 import type { DynamicToolCallResponse } from "../types.js";
 
+/** A successful or failed response to a client-issued JSON-RPC request. */
 export interface JsonRpcResponse {
   id: number;
   result?: unknown;
@@ -31,17 +39,20 @@ export interface JsonRpcResponse {
   };
 }
 
+/** A server notification that has no request/response pairing. */
 export interface JsonRpcNotification {
   method: string;
   params?: unknown;
 }
 
+/** A server-initiated request that Scout must answer on the same connection. */
 export interface JsonRpcServerRequest {
   id: number | string;
   method: string;
   params?: unknown;
 }
 
+/** The three message shapes accepted by the app-server receive loop. */
 export type JsonRpcMessage =
   | JsonRpcResponse
   | JsonRpcNotification
@@ -61,11 +72,15 @@ interface TurnWaiter {
   reject: (error: Error) => void;
 }
 
+type AppServerExclusiveOperation = "plugin-manager";
+
+/** The protocol turn identifier returned after a `turn/start` request. */
 export interface TurnStartResponse {
   turnId: string;
   response: unknown;
 }
 
+/** Process, environment, and diagnostic paths used to launch one app-server. */
 export interface CodexAppServerOptions {
   codexPath?: string;
   home: string;
@@ -78,6 +93,7 @@ export interface CodexAppServerOptions {
   onDynamicToolCall?: DynamicToolCallHandler;
 }
 
+/** Optional Scout-facing inputs used to construct a `thread/start` request. */
 export interface ThreadStartOptions {
   cwd: string;
   model?: string;
@@ -92,6 +108,7 @@ export interface ThreadStartOptions {
   dynamicTools?: DynamicToolSpec[];
 }
 
+/** Normalized `thread/start` payload sent to Codex after defaults are applied. */
 export interface ThreadStartRequest {
   cwd: string;
   model?: string;
@@ -105,12 +122,14 @@ export interface ThreadStartRequest {
   dynamicTools?: DynamicToolSpec[];
 }
 
+/** Protocol response plus the exact normalized start input for persistence. */
 export interface ThreadStartResponse {
   threadId: string;
   startInput: ThreadStartRequest;
   response: unknown;
 }
 
+/** Optional overrides used when reattaching a persisted Codex thread. */
 export interface ThreadResumeOptions {
   threadId: string;
   path?: string;
@@ -126,6 +145,7 @@ export interface ThreadResumeOptions {
   developerInstructions?: string;
 }
 
+/** Normalized `thread/resume` payload; turns are excluded because Scout rebuilds projections. */
 export interface ThreadResumeRequest {
   threadId: string;
   excludeTurns: true;
@@ -141,12 +161,14 @@ export interface ThreadResumeRequest {
   developerInstructions?: string;
 }
 
+/** Resume response together with the input whose paths and settings were checked. */
 export interface ThreadResumeResponse {
   threadId: string;
   resumeInput: ThreadResumeRequest;
   response: unknown;
 }
 
+/** Sandbox shape understood by the thread-settings update endpoint. */
 export type ThreadSandboxPolicy =
   | {
       type: "readOnly";
@@ -160,6 +182,7 @@ export type ThreadSandboxPolicy =
       excludeTmpdirEnvVar?: boolean;
     };
 
+/** Settings that may be changed after a thread has been resumed. */
 export interface ThreadSettingsUpdateOptions {
   threadId: string;
   cwd?: string;
@@ -168,6 +191,7 @@ export interface ThreadSettingsUpdateOptions {
   timeoutMs?: number;
 }
 
+/** Normalized payload sent to `thread/settings/update`. */
 export interface ThreadSettingsUpdateRequest {
   threadId: string;
   cwd?: string;
@@ -175,6 +199,7 @@ export interface ThreadSettingsUpdateRequest {
   sandboxPolicy?: ThreadSandboxPolicy;
 }
 
+/** Confirmed settings response; the notification is validated before returning it. */
 export interface ThreadSettingsUpdateResponse {
   threadId: string;
   updateInput: ThreadSettingsUpdateRequest;
@@ -182,6 +207,7 @@ export interface ThreadSettingsUpdateResponse {
   response: unknown;
 }
 
+/** Prompt and execution policy for one Codex turn. */
 export interface TurnStartOptions {
   threadId: string;
   prompt: string;
@@ -196,6 +222,7 @@ export interface TurnStartOptions {
   onTurnStarted?: (turnId: string) => void;
 }
 
+/** Reduced turn result assembled from completion notification and event-store state. */
 export interface TurnOutput {
   turnId?: string;
   finalResponse: string;
@@ -208,6 +235,7 @@ export interface TurnOutput {
   goal?: AppServerThreadGoalState;
 }
 
+/** Schema and presentation metadata advertised for a Scout dynamic tool. */
 export interface DynamicToolSpec {
   namespace?: string;
   name: string;
@@ -216,6 +244,7 @@ export interface DynamicToolSpec {
   deferLoading?: boolean;
 }
 
+/** Identifiers and arguments supplied by Codex for a dynamic-tool invocation. */
 export interface DynamicToolCallInput {
   threadId: string;
   turnId: string;
@@ -225,33 +254,49 @@ export interface DynamicToolCallInput {
   arguments: unknown;
 }
 
+/** Callback that executes a dynamic tool and returns protocol content items. */
 export type DynamicToolCallHandler = (
   input: DynamicToolCallInput,
 ) => Promise<DynamicToolCallResponse> | DynamicToolCallResponse;
 
+/** Observer invoked for every raw app-server notification. */
 export type AppServerNotificationHandler = (
   notification: JsonRpcNotification,
 ) => void;
 
+/** Reply capability handed to a server-request handler. */
 export interface AppServerRequestController {
   sendResult(result: unknown): void;
   sendError(code: number, message: string): void;
 }
 
+/** Handler for server requests that can claim a request by returning true. */
 export type AppServerRequestHandler = (
   request: JsonRpcServerRequest,
   controller: AppServerRequestController,
 ) => boolean | Promise<boolean>;
 
+/** Observer invoked after an incoming message passes the JSON-RPC shape gate. */
 export type AppServerMessageHandler = (message: JsonRpcMessage) => void;
+/** Observer invoked for timeline entries reduced by the event store. */
 export type AppServerTimelineHandler = (entry: AppServerTimelineEntry) => void;
 
+/**
+ * Runs one Codex app-server child process and presents its protocol as typed
+ * thread/turn operations. It owns request correlation, disconnect rejection,
+ * and observer cleanup; lifecycle stages own when the client is created or
+ * closed, while the event store owns durable in-memory projections.
+ */
 export class CodexAppServerClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly turnWaiters = new Map<string, TurnWaiter>();
   private readonly settingsUpdateTails = new Map<string, Promise<void>>();
   private readonly settingsUpdateWaiters = new Set<(error: Error) => void>();
+  private readonly exclusiveOperationTails = new Map<
+    AppServerExclusiveOperation,
+    Promise<void>
+  >();
   private readonly messageHandlers = new Set<AppServerMessageHandler>();
   private readonly notificationHandlers = new Set<AppServerNotificationHandler>();
   private readonly serverRequestHandlers = new Set<AppServerRequestHandler>();
@@ -314,6 +359,7 @@ export class CodexAppServerClient {
     this.startReceiveLoop();
   }
 
+  /** Performs the protocol handshake before thread operations are allowed. */
   async startSession(): Promise<void> {
     await this.request("initialize", {
       clientInfo: {
@@ -326,6 +372,7 @@ export class CodexAppServerClient {
     this.notify("initialized");
   }
 
+  /** Starts a new Codex thread and returns the normalized request for recording. */
   async startThread(options: ThreadStartOptions): Promise<ThreadStartResponse> {
     const startInput: ThreadStartRequest = cleanUndefined({
       model: options.model,
@@ -352,6 +399,7 @@ export class CodexAppServerClient {
     };
   }
 
+  /** Resumes a persisted thread and fail-closes when Codex confirms different identity or paths. */
   async resumeThread(options: ThreadResumeOptions): Promise<ThreadResumeResponse> {
     const resumeInput: ThreadResumeRequest = cleanUndefined({
       threadId: options.threadId,
@@ -440,6 +488,7 @@ export class CodexAppServerClient {
     };
   }
 
+  /** Serializes per-thread settings updates and waits for Codex's confirming notification. */
   async updateThreadSettings(
     options: ThreadSettingsUpdateOptions,
   ): Promise<ThreadSettingsUpdateResponse> {
@@ -653,6 +702,7 @@ export class CodexAppServerClient {
     }
   }
 
+  /** Starts one turn and waits for its completion projection, cancelling the waiter on start failure. */
   async runTurn(options: TurnStartOptions): Promise<TurnOutput> {
     const completion = this.awaitTurnCompletion({
       threadId: options.threadId,
@@ -680,6 +730,7 @@ export class CodexAppServerClient {
     };
   }
 
+  /** Sends a `turn/start` request with the supplied prompt and sandbox policy. */
   async startTurn(options: TurnStartOptions): Promise<TurnStartResponse> {
     const response = await this.request("turn/start", cleanUndefined({
       threadId: options.threadId,
@@ -699,6 +750,7 @@ export class CodexAppServerClient {
     };
   }
 
+  /** Requests interruption of a currently running turn. */
   async interruptTurn(input: {
     threadId: string;
     turnId: string;
@@ -709,6 +761,7 @@ export class CodexAppServerClient {
     });
   }
 
+  /** Persists a thread goal through Codex and returns the reduced goal state when available. */
   async setThreadGoal(input: {
     threadId: string;
     objective: string;
@@ -723,6 +776,7 @@ export class CodexAppServerClient {
     return snapshot?.goal ?? normalizeGoalFromResponse(response, input.threadId);
   }
 
+  /** Registers a single completion waiter for a thread until notification, timeout, or disconnect. */
   awaitTurnCompletion(input: {
     threadId: string;
     timeoutMs?: number;
@@ -751,6 +805,7 @@ export class CodexAppServerClient {
     });
   }
 
+  /** Rejects and removes the outstanding completion waiter for a thread, if one exists. */
   cancelTurnWait(threadId: string, error = new Error(`Turn wait cancelled for thread ${threadId}.`)): void {
     const waiter = this.turnWaiters.get(threadId);
     if (!waiter) return;
@@ -759,7 +814,19 @@ export class CodexAppServerClient {
     waiter.reject(error);
   }
 
+  /**
+   * Serializes Codex operations that mutate or refresh the shared plugin
+   * catalog/cache. Ordinary role-scoped RPCs remain multiplexed.
+   */
+  withPluginManagerLock<T>(operation: () => Promise<T>): Promise<T> {
+    return this.withExclusiveOperation("plugin-manager", operation);
+  }
+
+  /** Sends a raw JSON-RPC request while retaining response correlation in this client. */
   request(method: string, params: unknown): Promise<unknown> {
+    if (this.closing) {
+      return Promise.reject(new Error("Codex app-server is closed."));
+    }
     const id = this.nextRequestId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -767,6 +834,38 @@ export class CodexAppServerClient {
     });
   }
 
+  private async withExclusiveOperation<T>(
+    key: AppServerExclusiveOperation,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    if (this.closing) {
+      throw new Error("Codex app-server is closed.");
+    }
+    const previous = this.exclusiveOperationTails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.exclusiveOperationTails.set(key, current);
+    await previous;
+    if (this.closing) {
+      release();
+      if (this.exclusiveOperationTails.get(key) === current) {
+        this.exclusiveOperationTails.delete(key);
+      }
+      throw new Error("Codex app-server is closed.");
+    }
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.exclusiveOperationTails.get(key) === current) {
+        this.exclusiveOperationTails.delete(key);
+      }
+    }
+  }
+
+  /** Stops the child process and rejects all operations still waiting on the transport. */
   close(): void {
     if (this.closing) return;
     this.closing = true;
@@ -777,6 +876,7 @@ export class CodexAppServerClient {
     }
   }
 
+  /** Installs one dynamic-tool callback and returns a disposer for that callback. */
   setDynamicToolCallHandler(handler: DynamicToolCallHandler): () => void {
     this.onDynamicToolCall = handler;
     return () => {
@@ -786,6 +886,7 @@ export class CodexAppServerClient {
     };
   }
 
+  /** Subscribes to raw protocol messages and returns an unsubscribe function. */
   onMessage(handler: AppServerMessageHandler): () => void {
     this.messageHandlers.add(handler);
     return () => {
@@ -793,6 +894,7 @@ export class CodexAppServerClient {
     };
   }
 
+  /** Subscribes to protocol notifications and returns an unsubscribe function. */
   onNotification(handler: AppServerNotificationHandler): () => void {
     this.notificationHandlers.add(handler);
     return () => {
@@ -800,6 +902,7 @@ export class CodexAppServerClient {
     };
   }
 
+  /** Registers a server-request handler and returns an unsubscribe function. */
   onServerRequest(handler: AppServerRequestHandler): () => void {
     this.serverRequestHandlers.add(handler);
     return () => {
@@ -807,6 +910,7 @@ export class CodexAppServerClient {
     };
   }
 
+  /** Subscribes to reduced timeline entries and returns an unsubscribe function. */
   onTimeline(handler: AppServerTimelineHandler): () => void {
     this.timelineHandlers.add(handler);
     return () => {
@@ -814,14 +918,17 @@ export class CodexAppServerClient {
     };
   }
 
+  /** Returns a deep-copied projection suitable for persistence or rendering. */
   getEventStoreSnapshot(): AppServerEventStoreSnapshot {
     return this.eventStore.snapshot();
   }
 
+  /** Returns the latest monotonic sequence number in the event-store timeline. */
   currentTimelineSeq(): number {
     return this.eventStore.currentSeq();
   }
 
+  /** Reads timeline entries after a sequence, optionally scoped by thread or stream. */
   timelineSince(seq: number, filter: {
     threadId?: string;
     stream?: AppServerTimelineStream;
@@ -830,14 +937,17 @@ export class CodexAppServerClient {
     return this.eventStore.timelineSince(seq, filter);
   }
 
+  /** Returns an isolated snapshot of one thread's reduced state. */
   threadSnapshot(threadId: string): AppServerThreadState | undefined {
     return this.eventStore.threadSnapshot(threadId);
   }
 
+  /** Returns an isolated snapshot of one turn within a thread. */
   turnSnapshot(threadId: string, turnId: string): AppServerTurnState | undefined {
     return this.eventStore.turnSnapshot(threadId, turnId);
   }
 
+  /** Looks up one command/tool progress item from the reduced thread state. */
   progressItem(input: {
     threadId: string;
     turnId: string;
@@ -846,18 +956,22 @@ export class CodexAppServerClient {
     return this.eventStore.progressItem(input);
   }
 
+  /** Returns the latest plan projection for a thread. */
   planSnapshot(threadId: string): AppServerPlanState | undefined {
     return this.eventStore.threadSnapshot(threadId)?.plan;
   }
 
+  /** Returns the current goal projection for a thread. */
   goalSnapshot(threadId: string): AppServerThreadGoalState | undefined {
     return this.eventStore.threadSnapshot(threadId)?.goal;
   }
 
+  /** Returns Codex's latest token-usage payload without imposing a provider schema. */
   tokenUsageSnapshot(threadId: string): unknown {
     return this.eventStore.threadSnapshot(threadId)?.tokenUsage;
   }
 
+  /** Joins a timeline entry with the current thread, turn, item, request, and plan projections. */
   resolveTimelineEntry(entry: AppServerTimelineEntry): AppServerResolvedTimelineEntry {
     return this.eventStore.resolveTimelineEntry(entry);
   }
@@ -1180,6 +1294,7 @@ function buildSandboxPolicy(input: {
   };
 }
 
+/** Reads a required string at a nested object path and rejects malformed protocol data. */
 export function readNestedString(value: unknown, path: string[]): string {
   let current: unknown = value;
   for (const key of path) {

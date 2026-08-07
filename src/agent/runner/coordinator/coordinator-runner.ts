@@ -20,12 +20,18 @@ import { coordinator } from "./coordinator-attachments.js";
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "../../message/types.js";
 
+/** Host callbacks through which a Coordinator runner owns its Scout agent. */
 export interface CoordinatorRunnerHost {
   readonly agentId: string;
   readonly threadId?: string;
   runTurn(input: ScoutAgentTurnInput): Promise<ScoutAgentTurnOutcome>;
 }
 
+/**
+ * Serializes Coordinator messages into turns and task observations. It owns
+ * delivery queues for the Coordinator only; task assignment remains delegated
+ * to the agent backends.
+ */
 export class CoordinatorRunner extends AgentRunner {
   readonly runnerKind = "coordinator";
   private readonly host: CoordinatorRunnerHost;

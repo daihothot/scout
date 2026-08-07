@@ -1,3 +1,4 @@
+/** Maps a run or lifecycle status to the compact marker used in status rows. */
 export function statusMarker(status: string | undefined): string {
   if (
     status === "done"
@@ -10,6 +11,7 @@ export function statusMarker(status: string | undefined): string {
   return "o";
 }
 
+/** Maps task state and selection to the drawer's marker glyph. */
 export function taskMarker(status: string | undefined, selected: boolean): string {
   if (selected) return "▶";
   if (status === "archived") return "□";
@@ -19,6 +21,7 @@ export function taskMarker(status: string | undefined, selected: boolean): strin
   return "o";
 }
 
+/** Maps a plan-step state to the marker rendered beside its label. */
 export function planStepMarker(status: string): string {
   if (status === "completed") return "✓";
   if (status === "inProgress") return "→";

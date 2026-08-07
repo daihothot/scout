@@ -1,3 +1,4 @@
+/** Runtime placeholders expanded only after the run and mount roots exist. */
 export const MountMacros = {
   RepoRoot: "SCOUT_REPO_ROOT",
   RunRoot: "SCOUT_RUN_ROOT",
@@ -7,8 +8,10 @@ export const MountMacros = {
   RunId: "SCOUT_RUN_ID",
 } as const;
 
+/** Union of placeholder names accepted by mount configuration expansion. */
 export type MountMacro = typeof MountMacros[keyof typeof MountMacros];
 
+/** Repository/run paths and identity values available during expansion. */
 export interface MountMacroValuesInput {
   repoRoot: string;
   runRoot: string;
@@ -18,8 +21,10 @@ export interface MountMacroValuesInput {
   runId?: string;
 }
 
+/** Complete macro map passed to config, MCP, and shell-tool materializers. */
 export type MountMacroValues = Record<MountMacro, string | undefined>;
 
+/** Values exported into a shell process; repository root is intentionally omitted. */
 export interface MountShellEnvironmentInput {
   runRoot: string;
   artifactRoot: string;
@@ -27,6 +32,7 @@ export interface MountShellEnvironmentInput {
   runId?: string;
 }
 
+/** Creates the full placeholder map, deriving the run id when omitted. */
 export function buildMountMacroValues(input: MountMacroValuesInput): MountMacroValues {
   return {
     [MountMacros.RepoRoot]: input.repoRoot,
@@ -38,6 +44,7 @@ export function buildMountMacroValues(input: MountMacroValuesInput): MountMacroV
   };
 }
 
+/** Replaces known `${...}` placeholders and removes unresolved values. */
 export function resolveMountMacros(
   value: string,
   values: Record<string, string | undefined>,
@@ -45,6 +52,7 @@ export function resolveMountMacros(
   return value.replace(/\$\{([A-Za-z0-9_.]+)\}/g, (_match, key: string) => values[key] ?? "");
 }
 
+/** Produces the environment variables exposed to shell and MCP commands. */
 export function buildMountShellEnvironment(input: MountShellEnvironmentInput): Record<string, string> {
   return {
     [MountMacros.RunId]: input.runId ?? runIdFromRunRoot(input.runRoot),

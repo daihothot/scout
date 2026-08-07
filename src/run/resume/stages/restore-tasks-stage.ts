@@ -7,9 +7,15 @@ import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import { projectRun, type RunProjection } from "../projection/index.js";
 
+/**
+ * Rehydrates worker task stores and republishes projected task facts to the
+ * interaction boundary. It restores sequence/state only; resumed execution is
+ * activated later by `InjectResumeContextStage`.
+ */
 export class RestoreTasksStage implements RunStage {
   readonly id = "restore_tasks";
 
+  /** Restores active and archived task projections for every worker role. */
   async start(): Promise<void> {
     const scope = currentRunScope();
     const projection = projectRun(scope.journal.readAll());
@@ -56,6 +62,7 @@ export class RestoreTasksStage implements RunStage {
   }
 }
 
+/** Converts a projected task status into the event used to replay its UI fact. */
 function restoredTaskEvent(task: RunProjection["tasks"][number]): ScoutEvent {
   const key = task.status === AgentTaskStatuses.Done
     ? AgentEvents.task.done

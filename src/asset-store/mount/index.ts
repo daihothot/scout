@@ -1,3 +1,4 @@
+/** Mount inspection, preparation, materialization, and manifest builders. */
 export * from "./context-builder.js";
 export * from "./helpers.js";
 export * from "./inspector.js";

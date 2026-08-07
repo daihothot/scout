@@ -26,6 +26,7 @@ import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
 import { AgentSkillBackend } from "./agent-skill-backend.js";
 
+/** Dependencies required to dispatch agent-owned dynamic tools. */
 export interface AgentToolBackendOptions {
   taskBackend: AgentTaskBackend;
 }
@@ -46,6 +47,10 @@ type AssignTaskToolResponse =
     reason: string;
   };
 
+/**
+ * Dispatches validated agent dynamic tools to task, message, skill, and
+ * human-input backends while routing other namespaces to the domain.
+ */
 export class AgentToolBackend {
   private readonly registry: RunScope["agentRegistry"];
   private readonly taskStore: RunScope["taskStore"];

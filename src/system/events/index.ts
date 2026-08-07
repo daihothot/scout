@@ -4,5 +4,6 @@ import type { InteractionEventCatalog } from "../../interaction/gateway/interact
 import "../../interaction/gateway/interaction-events.js";
 import { SystemEvents as SystemEventCatalog } from "./catalog.js";
 
+/** Typed system event catalog exposed to runtime producers and subscribers. */
 export const SystemEvents = SystemEventCatalog as EventCatalogRegistry<"system">
   & DefinedEventCatalog<InteractionEventCatalog>;

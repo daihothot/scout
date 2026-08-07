@@ -18,8 +18,10 @@ import {
   type ProjectedArchivedTask,
 } from "./task-projector.js";
 
+/** Human-input state retained under the projection's recovery namespace. */
 export type ProjectedHumanInputRequest = AgentHumanInputState;
 
+/** Folded lifecycle state for one agent-server turn. */
 export interface ProjectedTurn {
   invocationId: string;
   agentId: string;
@@ -33,6 +35,7 @@ export interface ProjectedTurn {
   error?: string;
 }
 
+/** Durable task outcome facts used when deciding post-submit recovery. */
 export interface ProjectedTaskOutcome {
   taskId: string;
   agentId: string;
@@ -41,6 +44,7 @@ export interface ProjectedTaskOutcome {
   submittedAt: string;
 }
 
+/** Published artifact identity and verification facts, without artifact body. */
 export interface ProjectedArtifact {
   artifactId: string;
   taskId?: string;
@@ -52,6 +56,7 @@ export interface ProjectedArtifact {
   publishedAt: string;
 }
 
+/** Validation gate fact retained for coordinator review during resume. */
 export interface ProjectedGate {
   gateId: string;
   taskId?: string;
@@ -64,6 +69,12 @@ export interface ProjectedGate {
   recordedAt: string;
 }
 
+/**
+ * Read model derived from the run journal at a single checkpoint. It combines
+ * active and archived tasks, thread state, deliveries, human-input requests,
+ * turns, outcomes, artifacts, and gates; it is not a second source of truth
+ * and does not perform runtime restoration.
+ */
 export interface RunProjection {
   runId: string;
   checkpointSeq: number;
@@ -92,6 +103,12 @@ export interface RunProjection {
   }>;
 }
 
+/**
+ * Folds ordered journal events into a recovery read model. The projector
+ * validates required starts and matching identifiers, preserves the last
+ * journal sequence as the checkpoint, and fails on contradictory facts rather
+ * than inventing state. It is read-only with respect to the journal.
+ */
 export function projectRun(events: RunJournalEvent[]): RunProjection {
   const created = events.find((event) => RunEvents.run.created.is(event));
   if (!created || !RunEvents.run.created.is(created)) {

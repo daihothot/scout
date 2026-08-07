@@ -5,6 +5,7 @@ import {
   type ScoutAgentPhase,
 } from "../../agent/thread/types.js";
 
+/** Validated frontmatter projection used for Skill routing and dependency loading. */
 export interface ScoutSkillCatalogEntry {
   name: string;
   description: string;
@@ -24,6 +25,7 @@ interface FrontmatterField {
 const SKILL_TOKEN_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SCOUT_AGENT_PHASES = new Set<ScoutAgentPhase>(Object.values(ScoutAgentPhases));
 
+/** Reads selected Skill files, parses their metadata, and validates the complete catalog. */
 export function buildScoutSkillCatalog(input: {
   assetsRoot: string;
   skillPaths: string[];
@@ -41,6 +43,7 @@ export function buildScoutSkillCatalog(input: {
   return catalog;
 }
 
+/** Parses one Skill frontmatter block and rejects legacy or inconsistent metadata. */
 export function parseScoutSkillMetadata(input: {
   text: string;
   expectedName: string;
@@ -90,6 +93,7 @@ export function parseScoutSkillMetadata(input: {
   };
 }
 
+/** Returns selected Skills in dependency-first order and rejects cycles or unknown names. */
 export function resolveSkillDependencyLoadOrder(
   catalog: ScoutSkillCatalogEntry[],
   selectedNames: string[],
@@ -117,6 +121,7 @@ export function resolveSkillDependencyLoadOrder(
   return result;
 }
 
+/** Validates names, phase compatibility, dependency closure, and family routing constraints. */
 export function validateScoutSkillCatalog(catalog: ScoutSkillCatalogEntry[]): void {
   const names = new Set<string>();
   for (const skill of catalog) {
@@ -147,12 +152,14 @@ export function validateScoutSkillCatalog(catalog: ScoutSkillCatalogEntry[]): vo
   validateDependencyOnlySkillReachability(catalog);
 }
 
+/** Extracts the YAML-like frontmatter section required by every Scout Skill. */
 function extractFrontmatter(text: string, label: string): string {
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
   if (!match?.[1]) throw new Error(`Scout Skill ${label} must contain YAML frontmatter.`);
   return match[1];
 }
 
+/** Parses nested scalar field paths while rejecting tabs and duplicate declarations. */
 function parseFrontmatterFields(frontmatter: string, label: string): FrontmatterField[] {
   const fields: FrontmatterField[] = [];
   const fieldPaths = new Set<string>();

@@ -1,3 +1,4 @@
+/** Stage implementations that reconstruct a prior run's runtime state. */
 export * from "./inject-resume-context-stage.js";
 export * from "./resume-clients-stage.js";
 export * from "./restore-environment-stage.js";

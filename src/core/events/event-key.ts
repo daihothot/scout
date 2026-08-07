@@ -1,5 +1,7 @@
+/** Namespace accepted by the event route builder; domain scopes remain explicitly namespaced. */
 export type EventKeyScope = "system" | "agent" | `domain.${string}`;
 
+/** Declarative components from which a stable event route key is built. */
 export interface EventKeyDefinition {
   scope: EventKeyScope;
   group: string;
@@ -7,15 +9,18 @@ export interface EventKeyDefinition {
   tag?: string;
 }
 
+/** Immutable event identity returned by the key factory, including its route string. */
 export interface EventKey extends EventKeyDefinition {
   routeKey: string;
 }
 
+/** Factory boundary that validates, builds, and de-duplicates event identities. */
 export interface EventKeyFactory {
   define(input: EventKeyDefinition): EventKey;
   build(input: EventKeyDefinition): string;
 }
 
+/** Creates a factory whose definitions cannot register the same route twice. */
 export function createEventKeyFactory(): EventKeyFactory {
   const keys = new Set<string>();
   return {
@@ -34,6 +39,7 @@ export function createEventKeyFactory(): EventKeyFactory {
   };
 }
 
+/** Validates route components and joins them into the canonical dot-separated key. */
 export function buildEventRouteKey(input: EventKeyDefinition): string {
   assertEventKeyPart("scope", input.scope);
   assertEventKeyPart("group", input.group);

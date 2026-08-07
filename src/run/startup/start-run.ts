@@ -29,6 +29,7 @@ import {
 } from "../lifecycle/index.js";
 import { StartRunStageAssembly } from "./start-run-stage-assembly.js";
 
+/** Creates a run scope, executes startup stages, and returns its persisted summary. */
 export async function startRun(
   options: ScoutRunOptions,
 ): Promise<ScoutRunSummary> {

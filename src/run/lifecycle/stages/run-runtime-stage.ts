@@ -2,6 +2,7 @@ import { RunEvents } from "../../events/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
 
+/** Records runtime attachment/detachment facts and mirrors them to the manifest. */
 export class RunRuntimeStage implements RunStage {
   readonly id = "run_runtime";
 

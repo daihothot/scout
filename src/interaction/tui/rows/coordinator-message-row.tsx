@@ -10,6 +10,7 @@ import { terminalDisplayWidth } from "../terminal-text.js";
 const LABEL = "COORD";
 const MIN_INLINE_BODY_WIDTH = 16;
 
+/** One wrapped coordinator message row with markdown span metadata. */
 export interface CoordinatorMessageVisualRow {
   id: string;
   kind: "coordinator";
@@ -20,6 +21,7 @@ export interface CoordinatorMessageVisualRow {
   prefixOnly?: boolean;
 }
 
+/** Wraps coordinator markdown while preserving the label alignment contract. */
 export function buildCoordinatorMessageRows(
   item: TuiCoordinatorChatItem,
   width: number,
@@ -61,6 +63,7 @@ export function buildCoordinatorMessageRows(
   }));
 }
 
+/** Renders one coordinator row using the spans prepared by the row builder. */
 export function CoordinatorMessageRow({ row }: { row: CoordinatorMessageVisualRow }) {
   return (
     <Text wrap="truncate-end">

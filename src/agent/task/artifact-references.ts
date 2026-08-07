@@ -4,6 +4,7 @@ import { isPathWithin } from "../../core/path.js";
 const LOCAL_ARTIFACT_ROOT = "${SCOUT_ARTIFACT_ROOT}";
 const RUN_ROOT = "${SCOUT_RUN_ROOT}";
 
+/** Rewrites local artifact macros into the portable run-root representation. */
 export function canonicalizeAgentArtifactReferences(
   value: string,
   input: {

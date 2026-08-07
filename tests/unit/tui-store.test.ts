@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type {
   AgentMessageSend,
-  MountRestoreProgress,
+  SubprocessProgressSnapshot,
 } from "../../src/interaction/protocol/port.js";
 import type {
   AgentActivity,
@@ -73,59 +73,75 @@ test("TuiStore projects Run lifecycle snapshots into runtime state", () => {
   assert.equal(store.snapshot().runtime.status, "failed");
 });
 
-test("TuiStore projects and clones mount restore progress", () => {
+test("TuiStore projects and clones subprocess progress", () => {
   const store = createStore();
-  const progress: MountRestoreProgress = {
-    phase: "rebuild",
-    activeRole: ScoutAgentRoles.Validator,
-    activeStep: "config",
-    roles: [
-      { role: ScoutAgentRoles.Coordinator, decision: "reused" },
-      { role: ScoutAgentRoles.Validator, decision: "rebuild", step: "config" },
-    ],
+  const progress: SubprocessProgressSnapshot = {
+    id: "mount-restore",
+    phase: "running",
     completedUnits: 7,
     totalUnits: 8,
+    descriptor: {
+      status: {
+        marker: "*",
+        label: "Preparing Scout runtime",
+        detail: "Mount · config · validator",
+        tone: "active",
+      },
+      progress: {
+        marker: "▶",
+        label: "validator",
+        detail: "config",
+        units: "7/8",
+        tone: "active",
+      },
+    },
   };
 
-  store.setMountRestoreProgress(progress);
-  progress.roles[0]!.decision = "failed";
+  store.setSubprocessProgress(progress);
+  progress.descriptor.status.detail = "mutated";
   const snapshot = store.snapshot();
 
-  assert.equal(snapshot.mountRestore?.phase, "rebuild");
-  assert.equal(snapshot.mountRestore?.roles[0]?.decision, "reused");
-  assert.equal(snapshot.mountRestore?.completedUnits, 7);
+  assert.equal(snapshot.subprocessProgress?.phase, "running");
+  assert.equal(snapshot.subprocessProgress?.descriptor.status.detail, "Mount · config · validator");
+  assert.equal(snapshot.subprocessProgress?.completedUnits, 7);
 });
 
-test("TuiStore clears completed mount progress when the mount stage advances", () => {
+test("TuiStore retains completed subprocess snapshots until the run is ready", () => {
   const store = createStore();
-  store.setMountRestoreProgress({
+  store.setSubprocessProgress({
+    id: "index",
     phase: "done",
-    roles: [{ role: ScoutAgentRoles.Coordinator, decision: "reused" }],
     completedUnits: 1,
     totalUnits: 1,
+    descriptor: {
+      status: { label: "Index ready", tone: "success" },
+    },
   });
 
   store.setRunLifecycleSnapshot(lifecycleSnapshot({
     stages: [{ id: "environment", status: "completed" }],
   }));
 
-  assert.equal(store.snapshot().mountRestore, undefined);
+  assert.equal(store.snapshot().subprocessProgress?.phase, "done");
+  store.setRun({ status: "ready" });
+  assert.equal(store.snapshot().subprocessProgress, undefined);
 });
 
-test("TuiStore keeps a mount failure visible through stopped lifecycle snapshots", () => {
+test("TuiStore keeps a subprocess failure visible through failed lifecycle snapshots", () => {
   const store = createStore();
-  store.setMountRestoreProgress({
+  store.setSubprocessProgress({
+    id: "preflight",
     phase: "failed",
-    activeRole: ScoutAgentRoles.Validator,
-    activeStep: "preflight",
-    roles: [{
-      role: ScoutAgentRoles.Validator,
-      decision: "failed",
-      step: "preflight",
-      reason: "app-server unavailable",
-    }],
     completedUnits: 5,
     totalUnits: 6,
+    descriptor: {
+      status: {
+        marker: "!",
+        label: "Preflight failed",
+        detail: "app-server unavailable",
+        tone: "failed",
+      },
+    },
   });
 
   store.setRunLifecycleSnapshot(lifecycleSnapshot({
@@ -133,31 +149,28 @@ test("TuiStore keeps a mount failure visible through stopped lifecycle snapshots
     stages: [{ id: "restore_environment", status: "stopped" }],
   }));
 
-  assert.equal(store.snapshot().mountRestore?.phase, "failed");
+  assert.equal(store.snapshot().subprocessProgress?.phase, "failed");
   store.setRun({ status: "stopping" });
-  assert.equal(store.snapshot().mountRestore, undefined);
+  assert.equal(store.snapshot().subprocessProgress, undefined);
 });
 
-test("TuiStore clears mount state immediately when switching runs", () => {
+test("TuiStore clears subprocess state immediately when switching runs", () => {
   const store = createStore();
   store.setRun({ runId: "run-old", status: "preparing" });
-  store.setMountRestoreProgress({
+  store.setSubprocessProgress({
+    id: "preflight",
     phase: "failed",
-    activeRole: ScoutAgentRoles.Validator,
-    activeStep: "preflight",
-    roles: [{
-      role: ScoutAgentRoles.Validator,
-      decision: "failed",
-      step: "preflight",
-    }],
     completedUnits: 5,
     totalUnits: 6,
+    descriptor: {
+      status: { marker: "!", label: "Preflight failed", tone: "failed" },
+    },
   });
 
   store.setRun({ runId: "run-new", status: "preparing" });
 
   assert.equal(store.snapshot().runtime.runId, "run-new");
-  assert.equal(store.snapshot().mountRestore, undefined);
+  assert.equal(store.snapshot().subprocessProgress, undefined);
 });
 
 test("TuiStore tracks runtime metadata", () => {

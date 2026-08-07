@@ -24,7 +24,7 @@ import { InMemoryEventBus } from "../../src/core/events/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import {
   NoopRuntimeInteractionPort,
-  type MountRestoreProgress,
+  type SubprocessProgressSnapshot,
   type RuntimeInteractionPort,
 } from "../../src/interaction/protocol/port.js";
 import { PrepareEnvironmentStage } from "../../src/run/startup/index.js";
@@ -102,6 +102,27 @@ test("PrepareEnvironmentStage materializes, preflights, and commits every agent 
   }
 });
 
+test("PrepareEnvironmentStage overlaps independent role preflights", async (t) => {
+  const fixtureRoot = createFixture("scout-boot-environment-parallel-");
+  const runtime = installEnvironmentScope(t, fixtureRoot, "boot-environment-parallel");
+  t.after(runtime.release);
+  let activePreflights = 0;
+  let maxActivePreflights = 0;
+  const stage = new PrepareEnvironmentStage({
+    preflightMount: async () => {
+      activePreflights += 1;
+      maxActivePreflights = Math.max(maxActivePreflights, activePreflights);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      activePreflights -= 1;
+      return { status: "passed" };
+    },
+  });
+
+  await stage.start();
+
+  assert.ok(maxActivePreflights > 1);
+});
+
 test("PrepareEnvironmentStage reports six rebuild units per role", async (t) => {
   const fixtureRoot = createFixture("scout-boot-environment-progress-");
   const interactionPort = new CapturingMountProgressPort();
@@ -114,12 +135,14 @@ test("PrepareEnvironmentStage reports six rebuild units per role", async (t) => 
   await stage.start();
 
   const snapshots = interactionPort.progress;
-  assert.ok(snapshots.some((snapshot) => snapshot.phase === "rebuild"));
-  assert.ok(snapshots.some((snapshot) => snapshot.activeStep === "layout"));
-  assert.ok(snapshots.some((snapshot) => snapshot.activeStep === "plugins"));
-  assert.ok(snapshots.some((snapshot) => snapshot.activeStep === "shell"));
-  assert.ok(snapshots.some((snapshot) => snapshot.activeStep === "preflight"));
-  const rebuildingSnapshots = snapshots.filter((snapshot) => snapshot.phase === "rebuild");
+  assert.ok(snapshots.some((snapshot) => snapshot.phase === "running"));
+  assert.ok(snapshots.some((snapshot) => snapshot.descriptor.progress?.detail === "layout"));
+  assert.ok(snapshots.some((snapshot) => snapshot.descriptor.progress?.detail === "plugins"));
+  assert.ok(snapshots.some((snapshot) => snapshot.descriptor.progress?.detail === "shell"));
+  assert.ok(snapshots.some((snapshot) => snapshot.descriptor.progress?.detail === "preflight"));
+  const rebuildingSnapshots = snapshots.filter((snapshot) =>
+    snapshot.phase === "running" && snapshot.descriptor.progress,
+  );
   assert.ok(rebuildingSnapshots.every((snapshot) =>
     snapshot.totalUnits === Object.values(ScoutAgentRoles).length * 6
   ));
@@ -168,8 +191,10 @@ test("PrepareEnvironmentStage collects every role before reporting a failed pref
   assert.equal(runtime.scope.hasEnvironment, true);
   const failed = interactionPort.progress.filter((snapshot) => snapshot.phase === "failed").at(-1);
   assert.ok(failed);
-  assert.equal(failed.activeRole, ScoutAgentRoles.Coordinator);
-  assert.equal(failed.activeStep, "preflight");
+  assert.equal(
+    failed.descriptor.status.detail,
+    `${ScoutAgentRoles.Coordinator} preflight`,
+  );
   for (const role of roles) {
     assert.ok(existsSync(join(
       fixtureRoot,
@@ -458,12 +483,10 @@ test("RestoreEnvironmentStage rebuilds only damaged roles and is idempotent", as
   assert.equal(firstFinal.phase, "done");
   assert.equal(firstFinal.totalUnits, 9);
   assert.equal(firstFinal.completedUnits, 9);
-  assert.deepEqual(
-    firstFinal.roles.map((role) => [role.role, role.decision]),
-    roles.map((role) => [role, role === damagedRole ? "rebuild" : "reused"]),
-  );
+  assert.equal(firstFinal.descriptor.status.detail, "Mount · ready · 3/4 reusable");
   assert.ok(firstProgressPort.progress.some((snapshot) =>
-    snapshot.phase === "rebuild"
+    snapshot.phase === "running"
+    && snapshot.descriptor.progress
     && snapshot.totalUnits === 9
     && snapshot.completedUnits === 3
   ));
@@ -495,8 +518,8 @@ test("RestoreEnvironmentStage rebuilds only damaged roles and is idempotent", as
   assert.equal(secondFinal.phase, "done");
   assert.equal(secondFinal.totalUnits, roles.length);
   assert.equal(secondFinal.completedUnits, roles.length);
-  assert.ok(secondProgressPort.progress.every((snapshot) => snapshot.phase !== "rebuild"));
-  assert.ok(secondFinal.roles.every((role) => role.decision === "reused"));
+  assert.ok(secondProgressPort.progress.every((snapshot) => !snapshot.descriptor.progress));
+  assert.equal(secondFinal.descriptor.status.detail, "Mount · ready · 4/4 reusable");
   secondResume.release();
   secondReleased = true;
 });
@@ -799,9 +822,9 @@ function installExistingEnvironmentScope(
 }
 
 class CapturingMountProgressPort extends NoopRuntimeInteractionPort {
-  readonly progress: MountRestoreProgress[] = [];
+  readonly progress: SubprocessProgressSnapshot[] = [];
 
-  override async publishMountRestoreProgress(progress: MountRestoreProgress): Promise<void> {
+  override async publishSubprocessProgress(progress: SubprocessProgressSnapshot): Promise<void> {
     this.progress.push(structuredClone(progress));
   }
 }

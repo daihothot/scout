@@ -3,6 +3,7 @@ import type {
   TuiTaskPlanStep,
 } from "../tui-store.js";
 
+/** Drawer projection combining task identity, status, and plan steps. */
 export interface TuiTaskDrawerItem {
   taskId: string;
   agentId?: string;
@@ -13,6 +14,7 @@ export interface TuiTaskDrawerItem {
   planSteps: TuiTaskPlanStep[];
 }
 
+/** Selects task summaries in their stable sequence order for the drawer. */
 export function selectTaskSummaries(state: TuiState): TuiTaskDrawerItem[] {
   return state.tasks
     .map((task) => ({
@@ -29,6 +31,7 @@ export function selectTaskSummaries(state: TuiState): TuiTaskDrawerItem[] {
     );
 }
 
+/** Identifies statuses that keep a task in the active summary. */
 export function isActiveTaskStatus(status: string | undefined): boolean {
   return status === "queued" || status === "running";
 }

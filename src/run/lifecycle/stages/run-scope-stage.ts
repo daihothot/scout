@@ -4,6 +4,7 @@ import {
 } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
 
+/** Installs the process-local RunScope before dependent stages start. */
 export class RunScopeStage implements RunStage {
   readonly id = "run_scope";
   private installedScope?: RunScope;

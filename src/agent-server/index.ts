@@ -1,3 +1,4 @@
+/** Public Codex app-server contracts, clients, and preflight capabilities. */
 export type {
   AgentServerPreflightReport,
   DynamicToolCallResponse,

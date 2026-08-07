@@ -9,6 +9,7 @@ import {
 const LABEL = "SYSTEM";
 const MIN_INLINE_BODY_WIDTH = 16;
 
+/** One wrapped system disclosure row with its severity. */
 export interface SystemEventVisualRow {
   id: string;
   kind: "system";
@@ -19,6 +20,7 @@ export interface SystemEventVisualRow {
   prefixOnly?: boolean;
 }
 
+/** Wraps a disclosure and preserves the SYSTEM label on narrow terminals. */
 export function buildSystemEventRows(
   item: TuiSystemChatItem,
   width: number,
@@ -58,6 +60,7 @@ export function buildSystemEventRows(
   }));
 }
 
+/** Renders one system disclosure row with severity-specific emphasis. */
 export function SystemEventRow({ row }: { row: SystemEventVisualRow }) {
   const color = row.level === "error" ? "red" : row.level === "warn" ? "yellow" : "gray";
   return (

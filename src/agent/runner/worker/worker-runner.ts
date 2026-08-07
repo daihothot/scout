@@ -35,11 +35,13 @@ import { AgentRunner } from "../types.js";
 import { randomUUID } from "node:crypto";
 import type { AgentMessage } from "../../message/types.js";
 
+/** Snapshot of a Worker runner's active task and queued messages. */
 export interface WorkerRunnerSnapshot {
   activeTask?: AgentTaskState;
   pendingMessageCount: number;
 }
 
+/** Host boundary used by a Worker runner to execute turns and deliver outcomes. */
 export interface WorkerRunnerHost {
   readonly agentId: string;
   readonly role: AgentThreadSpec["role"];
@@ -49,15 +51,18 @@ export interface WorkerRunnerHost {
   deliverTaskProtocolFailure(message: string): Promise<void>;
 }
 
+/** Identity of a lifecycle tool call bound to the current turn. */
 export interface WorkerLifecycleToolCall {
   turnId: string;
   callId: string;
 }
 
+/** Lifecycle call that submits a completed task outcome. */
 export interface WorkerTaskSubmission extends WorkerLifecycleToolCall {
   outcome: string;
 }
 
+/** Lifecycle call that records a request waiting for human response. */
 export interface WorkerHumanInputDisposition extends WorkerLifecycleToolCall {
   requestId: string;
   request: string;
@@ -65,12 +70,17 @@ export interface WorkerHumanInputDisposition extends WorkerLifecycleToolCall {
 
 const WORKER_DISPOSITION_PROTOCOL_ERROR = "WORKER_DISPOSITION_REQUIRED";
 
+/** Construction and optional restored task state for a Worker runner. */
 export interface WorkerRunnerOptions {
   host: WorkerRunnerHost;
   taskSequence: number;
   restoredTask?: AgentTaskState;
 }
 
+/**
+ * Executes one Worker task at a time and enforces its lifecycle disposition
+ * protocol before publishing completion or failure facts.
+ */
 export class WorkerRunner extends AgentRunner {
   readonly runnerKind = "worker";
   private readonly host: WorkerRunnerHost;
@@ -960,10 +970,12 @@ export class WorkerRunner extends AgentRunner {
 
 }
 
+/** Returns a detached task state for callers outside the Worker runner. */
 export function cloneAgentTaskState(task: AgentTaskState): AgentTaskState {
   return cloneTaskState(task);
 }
 
+/** Whether a task status prevents another Worker turn from being scheduled. */
 export function isTerminalTaskStatus(status: AgentTaskState["status"]): boolean {
   return status === AgentTaskStatuses.Failed
     || status === AgentTaskStatuses.Stopped;

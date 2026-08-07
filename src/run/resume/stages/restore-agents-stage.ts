@@ -28,10 +28,18 @@ import {
   type RunProjection,
 } from "../projection/index.js";
 
+/**
+ * Reconstructs Scout agents and reconnects them to persisted Codex threads.
+ * Journal projections select the threads and copied Codex session files supply
+ * the resumable rollout; the stage restores roles concurrently and stops any
+ * partial restoration when one role fails. Task/context activation belongs to
+ * later resume stages.
+ */
 export class RestoreAgentsStage implements RunStage {
   readonly id = "restore_agents";
   private stopped = false;
 
+  /** Builds all role agents and restores each role's persisted thread state. */
   async start(): Promise<void> {
     const scope = currentRunScope();
     const projection = projectRun(scope.journal.readAll());
@@ -74,12 +82,17 @@ export class RestoreAgentsStage implements RunStage {
     throw new AggregateError(errors, `${errors.length} Scout agents failed to restore.`);
   }
 
+  /** Stops restored agents once, preserving aggregate shutdown failures. */
   async stop(reason: string): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
     await this.stopAgents(reason);
   }
 
+  /**
+   * Restores one role from its rollout, or delegates the no-resumable-state
+   * path to the agent.
+   */
   private async restoreAgent(
     agent: ScoutAgent,
     projection: RunProjection,
@@ -130,6 +143,7 @@ export class RestoreAgentsStage implements RunStage {
     });
   }
 
+  /** Stops the coordinator first, then workers, and aggregates cleanup errors. */
   private async stopAgents(reason: string): Promise<void> {
     const agents = currentRunScope().agentRegistry.listAgents();
     const coordinator = agents.find((agent) =>
@@ -159,6 +173,11 @@ export class RestoreAgentsStage implements RunStage {
   }
 }
 
+/**
+ * Maps journaled thread ids to copied Codex rollout paths beneath the run's
+ * Codex home. Only the first JSONL record is inspected for `session_meta`; a
+ * missing rollout is fatal only for a thread whose journal has resumable work.
+ */
 function locatePersistedRollouts(input: {
   repoRoot: string;
   runId: string;
@@ -261,6 +280,7 @@ function locatePersistedRollouts(input: {
   return result;
 }
 
+/** Reads one bounded JSONL record without loading the complete rollout log. */
 function readFirstLine(path: string): string {
   const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   const chunks: Buffer[] = [];
@@ -288,6 +308,7 @@ function readFirstLine(path: string): string {
   return Buffer.concat(chunks).toString("utf8").replace(/\r$/, "");
 }
 
+/** Narrows an arbitrary JSON value to the Codex session identity record. */
 function isSessionMeta(value: unknown): value is {
   type: "session_meta";
   payload: { id: string };
@@ -300,11 +321,13 @@ function isSessionMeta(value: unknown): value is {
   return typeof (record.payload as Record<string, unknown>).id === "string";
 }
 
+/** Enforces that a resolved copied-session path remains beneath its owner root. */
 function assertInside(path: string, root: string, label: string): void {
   if (isPathWithin(root, path)) return;
   throw new Error(`${label} escapes ${root}: ${path}.`);
 }
 
+/** Keeps the rollout reference portable and restricted to `.codex/sessions`. */
 function assertRelativeSessionsPath(path: string, absolutePath: string): void {
   if (isAbsolute(path)
     || path === ".."
