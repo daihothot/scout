@@ -262,7 +262,7 @@ export function buildSubmitTaskDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
     name: "SubmitTask",
-    description: "仅供 Worker 正式交回当前一轮工作。当前 outcome 已符合适用 handoff contract 时，必须在本轮结束前调用；普通回复、SendMessage、artifact 写入或完成 plan 都不构成提交，漏调会使 task 保持 running。同一 step 不得重复调用或再调用 RequestHumanInput。Runtime 在当前 step 完成后先将当前 task 置为 done，再把 Markdown outcome 投递给 Coordinator。",
+    description: "仅供 Worker 正式交回当前一轮工作。当前 outcome 已符合适用 handoff contract 时，必须在本轮结束前调用；普通回复、SendMessage、artifact 写入或完成 plan 都不构成提交，漏调会使 task 保持 running。同一 step 不得重复调用或再调用 RequestHumanInput。Runtime 接受 outcome 时会把当前 Worker 的 ${SCOUT_ARTIFACT_ROOT} 引用绑定为带 owner 的 run-scoped ref；在当前 step 完成后先将 task 置为 done，再把 Markdown outcome 投递给 Coordinator。",
     inputSchema: objectSchema({
       outcome: {
         type: "string",
