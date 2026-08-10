@@ -50,6 +50,21 @@ export function sha256File(path: string): string {
   return sha256Text(readFileSync(path, "utf8"));
 }
 
+/** Serializes JSON-shaped data with object keys in lexical order. Array order is preserved. */
+export function stableJson(value: unknown): string {
+  return JSON.stringify(sortJsonObjectKeys(value));
+}
+
+function sortJsonObjectKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonObjectKeys);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, child]) => [key, sortJsonObjectKeys(child)]),
+  );
+}
+
 /** Hashes a directory from sorted relative file names and their file digests. */
 export function hashDirectory(path: string): string {
   const entries = listFiles(path)

@@ -7,75 +7,30 @@ import {
   sha256File,
   sha256Text,
 } from "../../core/fs.js";
-import { isPathWithin } from "../../core/path.js";
+import type { MaterializeOptions } from "../contracts/materialization.js";
+import type { MountContext } from "../contracts/mount-context.js";
+import type { AgentProfile } from "../contracts/profile.js";
 import type {
-  AgentProfile,
-  MountManifest,
-  MountMaterializationStep,
   McpServersFile,
   ShellToolContract,
-  MountPreparationDecision,
-} from "../types.js";
+} from "../contracts/resources.js";
 import { CodexAssetLayout, roleAgentPath } from "../assets/asset-layout.js";
 import {
+  assertAssetFileExists,
   assertMountPathSegment,
-  resolveAssetArg,
-  resolveAssetLocalPath,
-} from "./helpers.js";
+  customAgentNameFromPath,
+  resolveRequiredAssetFile,
+  skillNameFromPath,
+} from "../files/asset-paths.js";
 import {
   buildMountMacroValues,
   resolveMountMacros,
-} from "./macros.js";
+} from "../mount/macros.js";
 import {
   readAgentProfilesForRepo,
   resolveAgentProfile,
 } from "../assets/agent-profiles.js";
 import { buildScoutSkillCatalog } from "../assets/skill-catalog.js";
-
-/** Inputs that identify one role and control the inspect/materialize callbacks. */
-export interface MaterializeOptions {
-  repoRoot: string;
-  runId?: string;
-  agentId: string;
-  persistedManifest?: MountManifest;
-  parentAssetCommitId?: string;
-  persistedIdentity?: {
-    assetCommitId: string;
-    parentAssetCommitId: string | undefined;
-    mountId: string;
-    resourceHash: string;
-    allowLegacyResourceIdentityMigration?: boolean;
-  };
-  cleanRunRoot?: boolean;
-  onPreparationDecision?(decision: MountPreparationDecision, reason?: string): void;
-  onMaterializationStep?(step: MountMaterializationStep): void;
-}
-
-/** Immutable resource and path facts shared by inspection and materialization. */
-export interface MountContext {
-  repoRoot: string;
-  assetsRoot: string;
-  runId: string;
-  runRoot: string;
-  agentId: string;
-  agentRoot: string;
-  artifactRoot: string;
-  logsRoot: string;
-  mountRoot: string;
-  agentProfile: AgentProfile;
-  profiledMcpServers: McpServersFile;
-  profiledShellTools: ShellToolContract[];
-  profiledCustomAgentPaths: string[];
-  profiledSkillPaths: string[];
-  profiledPluginPaths: string[];
-  skillCatalog: ReturnType<typeof buildScoutSkillCatalog>;
-  resourceHash: string;
-  assetCommitId: string;
-  parentAssetCommitId?: string;
-  mountId: string;
-  trustedRoots: string[];
-  writableRoots: string[];
-}
 
 /**
  * Derives the immutable per-role runtime description from the Scout checkout.
@@ -187,13 +142,6 @@ function sanitizeAgentId(agentId: string): string {
   return normalized;
 }
 
-/** Fails when a profile-selected asset path is absent or escapes the asset root. */
-export function assertAssetFileExists(assetsRoot: string, assetPath: string, label: string): void {
-  if (!existsSync(resolveAssetRelativePath(assetPath, assetsRoot))) {
-    throw new Error(`Agent profile references missing ${label}: ${assetPath}`);
-  }
-}
-
 function filterMcpServers(mcpServers: McpServersFile, names: string[]): McpServersFile {
   assertUnique(names, "mcpServers");
   const servers = Object.fromEntries(names.map((name) => {
@@ -208,12 +156,24 @@ function filterMcpServers(mcpServers: McpServersFile, names: string[]): McpServe
 function filterShellTools(tools: ShellToolContract[], ids: string[]): ShellToolContract[] {
   assertUnique(ids, "shellTools");
   const byId = new Map(tools.map((tool) => [tool.id, tool] as const));
-  return ids.map((id) => {
+  const selected = ids.map((id) => {
     const tool = byId.get(id);
     if (!tool) throw new Error(`Agent profile references unknown shell tool: ${id}`);
     assertMountPathSegment(tool.exposeAs, `shell tool exposeAs for ${tool.id}`);
     return tool;
   });
+  const toolByExecutableName = new Map<string, ShellToolContract>();
+  for (const tool of selected) {
+    const existing = toolByExecutableName.get(tool.exposeAs);
+    if (existing) {
+      throw new Error(
+        `Agent profile shell tools expose the same executable name: ${tool.exposeAs}`
+        + ` (${existing.id}, ${tool.id})`,
+      );
+    }
+    toolByExecutableName.set(tool.exposeAs, tool);
+  }
+  return selected;
 }
 
 function filterCustomAgents(customAgentPaths: string[], names: string[]): string[] {
@@ -402,42 +362,4 @@ function hashOptionalAssetFile(prefix: string, assetPath: string, assetsRoot: st
   if (!assetPath.startsWith("assets/")) return [];
   const resolvedPath = resolveRequiredAssetFile(assetPath, assetsRoot);
   return [`${prefix}:${assetPath}:${sha256File(resolvedPath)}`];
-}
-
-/** Resolves an asset-local reference and fails if the referenced file is missing. */
-export function resolveRequiredAssetFile(assetPath: string, assetsRoot: string): string {
-  const resolvedPath = resolveAssetArg(assetPath, assetsRoot);
-  if (!existsSync(resolvedPath)) throw new Error(`Asset-local resource is missing: ${assetPath}`);
-  return resolvedPath;
-}
-
-/** Extracts the Codex custom-agent name represented by a TOML asset path. */
-export function customAgentNameFromPath(customAgentPath: string): string {
-  return basename(customAgentPath, ".toml");
-}
-
-/** Extracts a Scout Skill name from either its directory or `SKILL.md` path. */
-export function skillNameFromPath(skillPath: string): string {
-  const source = resolve(skillPath);
-  return basename(source) === "SKILL.md" ? basename(resolve(source, "..")) : basename(source);
-}
-
-/** Resolves a repository-relative asset path while enforcing root containment. */
-export function resolveAssetRelativePath(assetPath: string, assetsRoot: string): string {
-  const resolvedPath = resolve(assetsRoot, assetPath);
-  if (!isPathWithin(assetsRoot, resolvedPath)) {
-    throw new Error(`Asset path escapes assets root: ${assetPath}`);
-  }
-  return resolvedPath;
-}
-
-/** Converts an asset-relative path into the portable source path recorded in manifests. */
-export function assetSourcePath(assetPath: string): string {
-  return join("assets", "codex", assetPath);
-}
-
-/** Returns a relative path, using `.` when both inputs identify the same location. */
-export function relativeOrSelf(base: string, target: string): string {
-  const relativePath = relative(base, target);
-  return relativePath.length === 0 ? "." : relativePath;
 }

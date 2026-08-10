@@ -109,10 +109,15 @@ export class InteractionGateway {
     try {
       await currentRunScope().interactionPort.disclose(event.payload);
     } catch (error) {
-      this.warnInteractionError("disclosure_request_failed", error, {
-        eventId: event.id,
-        source: event.payload.source,
-      });
+      this.warnInteractionError(
+        "disclosure_request_failed",
+        "Failed to disclose a runtime message through the interaction port.",
+        error,
+        {
+          eventId: event.id,
+          source: event.payload.source,
+        },
+      );
     }
   }
 
@@ -120,11 +125,16 @@ export class InteractionGateway {
     try {
       await currentRunScope().interactionPort.publishAgentActivity(event.payload);
     } catch (error) {
-      this.warnInteractionError("agent_activity_publish_failed", error, {
-        eventId: event.id,
-        agentId: event.payload.agentId,
-        itemId: event.payload.itemId,
-      });
+      this.warnInteractionError(
+        "agent_activity_publish_failed",
+        "Failed to publish agent activity through the interaction port.",
+        error,
+        {
+          eventId: event.id,
+          agentId: event.payload.agentId,
+          itemId: event.payload.itemId,
+        },
+      );
     }
   }
 
@@ -132,11 +142,16 @@ export class InteractionGateway {
     try {
       await currentRunScope().interactionPort.publishAgentTurnActivity(event.payload);
     } catch (error) {
-      this.warnInteractionError("agent_turn_activity_publish_failed", error, {
-        eventId: event.id,
-        agentId: event.payload.agentId,
-        turnId: event.payload.turnId,
-      });
+      this.warnInteractionError(
+        "agent_turn_activity_publish_failed",
+        "Failed to publish agent turn activity through the interaction port.",
+        error,
+        {
+          eventId: event.id,
+          agentId: event.payload.agentId,
+          turnId: event.payload.turnId,
+        },
+      );
     }
   }
 
@@ -144,10 +159,15 @@ export class InteractionGateway {
     try {
       await currentRunScope().interactionPort.publishTaskEvent(event);
     } catch (error) {
-      this.warnInteractionError("task_event_publish_failed", error, {
-        eventId: event.id,
-        eventKey: event.key.routeKey,
-      });
+      this.warnInteractionError(
+        "task_event_publish_failed",
+        "Failed to publish a task event through the interaction port.",
+        error,
+        {
+          eventId: event.id,
+          eventKey: event.key.routeKey,
+        },
+      );
     }
   }
 
@@ -159,20 +179,25 @@ export class InteractionGateway {
         data: event.payload.data,
       }),
     ).catch((error) =>
-      this.warnInteractionError("agent_message_failed", error, {
-        eventId: event.id,
-      }),
+      this.warnInteractionError(
+        "agent_message_failed",
+        "Failed to deliver a coordinator message through the interaction port.",
+        error,
+        { eventId: event.id },
+      ),
     );
   }
 
   private warnInteractionError(
     event: string,
+    message: string,
     error: unknown,
     context: Record<string, unknown> = {},
   ): void {
     currentRunScope().logger.warn({
       module: "interaction.gateway",
       event,
+      message,
       data: {
         ...context,
         error: error instanceof Error ? error.stack ?? error.message : String(error),

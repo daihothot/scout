@@ -15,7 +15,7 @@ import type {
   AgentProfile,
   AgentProfileDefinition,
   AgentProfilesFile,
-} from "../types.js";
+} from "../contracts/profile.js";
 
 /** Provider reasoning-effort values accepted by profile validation. */
 const reasoningEfforts = new Set<CodexReasoningEffort>([

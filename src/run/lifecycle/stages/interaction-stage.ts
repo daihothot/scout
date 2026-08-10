@@ -22,6 +22,7 @@ export class InteractionStage implements RunStage {
         scope.logger.info({
           module: "run.lifecycle",
           event: "run_exit_requested",
+          message: `Run exit was requested at ${event.payload.requestedAt}.`,
           data: {
             requestedAt: event.payload.requestedAt,
           },

@@ -415,12 +415,32 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
     },
   };
   const resumedBeforeRecording = structuredClone(resumed);
+  const restartedThread = {
+    ...started,
+    threadId: "thread-researcher-restarted",
+    createdAt: "2026-07-17T00:45:00.000Z",
+    startResponse: {
+      ...resumed.resumeResponse,
+      thread: {
+        ...resumed.resumeResponse.thread,
+        id: "thread-researcher-restarted",
+      },
+    },
+  } satisfies AgentThreadSnapshot;
+  const restarted = {
+    previousThreadId: started.threadId,
+    reason: "codex_rollout_not_persisted",
+    restartedAt: restartedThread.createdAt,
+    newThread: restartedThread,
+  };
+  const restartedBeforeRecording = structuredClone(restarted);
   recorder.start();
 
   await eventBus.publishAndWait(AgentEvents.thread.started, started);
   await eventBus.publishAndWait(AgentEvents.thread.resumed, resumed);
+  await eventBus.publishAndWait(AgentEvents.thread.restarted, restarted);
   await eventBus.publishAndWait(AgentEvents.thread.closed, {
-    ...started,
+    ...restartedThread,
     status: "closed",
     closedAt: "2026-07-17T01:00:00.000Z",
     closeReason: "run_exit",
@@ -429,13 +449,43 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
 
   assert.deepEqual(started, startedBeforeRecording);
   assert.deepEqual(resumed, resumedBeforeRecording);
+  assert.deepEqual(restarted, restartedBeforeRecording);
 
   const threadLogPath = join(logsRoot, "thread.log");
   const text = readFileSync(threadLogPath, "utf8");
-  assert.equal(readEventCount(text), 3);
+  assert.equal(readEventCount(text), 4);
   assert.match(text, /event=agent\.thread\.started/);
   assert.match(text, /event=agent\.thread\.resumed/);
+  assert.match(text, /event=agent\.thread\.restarted/);
   assert.match(text, /event=agent\.thread\.closed/);
+  const eventBlocks = text.trim().split("\n\n");
+  const startedBlock = eventBlocks.find((block) =>
+    block.includes("event=agent.thread.started")
+  );
+  const resumedBlock = eventBlocks.find((block) =>
+    block.includes("event=agent.thread.resumed")
+  );
+  const restartedBlock = eventBlocks.find((block) =>
+    block.includes("event=agent.thread.restarted")
+  );
+  assert.ok(startedBlock);
+  assert.ok(resumedBlock);
+  assert.ok(restartedBlock);
+  assert.match(startedBlock, /\ndata:/);
+  assert.doesNotMatch(startedBlock, /\nmessage:/);
+  assert.match(
+    resumedBlock,
+    /\nmessage: Resumed Codex thread thread-researcher\./,
+  );
+  assert.doesNotMatch(resumedBlock, /\ndata:/);
+  assert.doesNotMatch(resumedBlock, /resumeInput|resumeResponse|resumedAt/);
+  assert.match(restartedBlock, /\ndata:/);
+  assert.doesNotMatch(restartedBlock, /\nmessage:/);
+  assert.match(restartedBlock, /previousThreadId: "thread-researcher"/);
+  assert.match(restartedBlock, /reason: "codex_rollout_not_persisted"/);
+  assert.match(restartedBlock, /newThread:/);
+  assert.doesNotMatch(restartedBlock, /restartedAt/);
+  assert.match(restartedBlock, /thread-researcher-restarted/);
   assert.match(text, /- "AGENTS\.md"/);
   assert.match(text, /- "agents\/worker\.AGENTS\.md"/);
   assert.match(text, /- "agents\/researcher\.AGENTS\.md"/);

@@ -507,6 +507,54 @@ test("ScoutAgent starts a thread, runs preflight, and binds it to registry", asy
   unsubscribe();
 });
 
+test("ScoutAgent restarts a journaled thread as a distinct lifecycle fact", async () => {
+  const appServer = createFakeAppServer();
+  const fixture = createAgentFixture("thread-restart", { appServer });
+  const agent = new AgentBuilder().buildCoordinator();
+  const threadEvents: ScoutEvent[] = [];
+  const unsubscribe = fixture.eventBus.subscribe(
+    AgentEvents.thread,
+    (event) => {
+      threadEvents.push(event);
+    },
+  );
+  const previousThread = {
+    agentId: agent.agentId,
+    role: agent.role,
+    phases: [...agent.phases],
+    contextBundleId: agent.spec.contextBundleId,
+    threadId: "thread-before-restart",
+    createdAt: "2026-08-10T00:00:00.000Z",
+    status: "closed",
+    closedAt: "2026-08-10T00:01:00.000Z",
+    closeReason: "runtime_detached",
+    startInput: {
+      cwd: agent.spec.cwd,
+      approvalPolicy: agent.spec.approvalPolicy,
+      sandbox: agent.spec.sandbox,
+      ephemeral: false,
+    },
+    startResponse: { thread: { id: "thread-before-restart" } },
+  } satisfies AgentThreadSnapshot;
+
+  const thread = await agent.restartThread({
+    previousThread,
+    reason: "codex_rollout_not_persisted",
+  });
+
+  assert.equal(thread.threadId, "thread-test");
+  assert.equal(fixture.registry.resolveAgentByThreadId("thread-test"), agent);
+  await waitFor(() => agent.threadPreflightSnapshot?.result.status === "passed");
+  assert.equal(threadEvents.length, 1);
+  const restarted = threadEvents[0];
+  assert.ok(restarted && AgentEvents.thread.restarted.is(restarted));
+  assert.equal(restarted.payload.previousThreadId, previousThread.threadId);
+  assert.equal(restarted.payload.reason, "codex_rollout_not_persisted");
+  assert.equal(restarted.payload.newThread.threadId, thread.threadId);
+  assert.equal(restarted.occurredAt, restarted.payload.restartedAt);
+  unsubscribe();
+});
+
 test("ScoutAgent interrupts its owned turn and seals queued work before stopping", async () => {
   let releaseTurn: (() => void) | undefined;
   let markTurnStarted: (() => void) | undefined;

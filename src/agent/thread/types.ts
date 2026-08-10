@@ -79,3 +79,11 @@ export interface AgentThreadResumeRecord {
   resumeInput: ThreadResumeRequest;
   resumeResponse: unknown;
 }
+
+/** Durable replacement fact linking an unrestorable thread to its successor. */
+export interface AgentThreadRestartRecord {
+  previousThreadId: string;
+  reason: string;
+  restartedAt: string;
+  newThread: AgentThreadSnapshot;
+}

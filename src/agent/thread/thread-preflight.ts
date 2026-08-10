@@ -1,5 +1,5 @@
 import type { ThreadPreflightReport } from "../../agent-server/types.js";
-import type { CodexMount } from "../../asset-store/types.js";
+import type { CodexMount } from "../../asset-store/contracts/mount.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import type { AgentThreadSnapshot } from "./types.js";
 

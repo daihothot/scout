@@ -1,4 +1,5 @@
-import type { AssetCommit, CodexMount } from "./types.js";
+import type { AssetCommit } from "../contracts/asset-commit.js";
+import type { CodexMount } from "../contracts/mount.js";
 
 /** Inputs needed to persist the mount identity and preflight outcome. */
 export interface BuildAssetCommitOptions {

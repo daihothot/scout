@@ -1,9 +1,7 @@
 import type { ScoutAgentRole } from "../agent/thread/types.js";
 import type { AgentServerPreflightReport } from "../agent-server/types.js";
-import type {
-  AssetCommit,
-  CodexMount,
-} from "../asset-store/types.js";
+import type { AssetCommit } from "../asset-store/contracts/asset-commit.js";
+import type { CodexMount } from "../asset-store/contracts/mount.js";
 import type { AgentThreadSnapshot } from "../agent/thread/types.js";
 import type { RuntimeInteractionPort } from "../interaction/index.js";
 

@@ -21,7 +21,7 @@ import {
   buildMountMacroValues,
   resolveMountMacros,
 } from "../../../asset-store/mount/macros.js";
-import type { McpServersFile } from "../../../asset-store/types.js";
+import type { McpServersFile } from "../../../asset-store/contracts/resources.js";
 import {
   ScoutAgentRoles,
   type ScoutAgentRole,

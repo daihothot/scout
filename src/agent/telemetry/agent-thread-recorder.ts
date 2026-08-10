@@ -12,7 +12,6 @@ import {
   workerRoleInstructionAssetPaths,
 } from "../roles/instructions.js";
 import type {
-  AgentThreadResumeRecord,
   AgentThreadSnapshot,
   ScoutAgentRole,
 } from "../thread/types.js";
@@ -40,27 +39,25 @@ export class AgentThreadRecorder {
   private record(event: ScoutEvent): void {
     if (AgentEvents.thread.started.is(event)) {
       const thread = event.payload;
-      this.write(event, thread.agentId, {
-        ...thread,
-        startInput: summarizeThreadStartInput(
-          thread.agentId,
-          thread.role,
-          thread.startInput,
-        ),
-        startResponse: summarizeThreadResponse(thread.agentId, thread.startResponse),
-      });
+      this.write(event, thread.agentId, summarizeThreadSnapshot(thread));
       return;
     }
     if (AgentEvents.thread.resumed.is(event)) {
       const resumed = event.payload;
-      this.write(event, resumed.agentId, {
-        ...resumed,
-        resumeInput: summarizeThreadResumeInput(
-          resumed.agentId,
-          resumed.role,
-          resumed.resumeInput,
-        ),
-        resumeResponse: summarizeThreadResponse(resumed.agentId, resumed.resumeResponse),
+      this.loggerFor(resumed.agentId).info({
+        module: "agent.thread",
+        event: event.key.routeKey,
+        agentId: resumed.agentId,
+        message: `Resumed Codex thread ${resumed.threadId}.`,
+      });
+      return;
+    }
+    if (AgentEvents.thread.restarted.is(event)) {
+      const thread = event.payload.newThread;
+      this.write(event, thread.agentId, {
+        previousThreadId: event.payload.previousThreadId,
+        reason: event.payload.reason,
+        newThread: summarizeThreadSnapshot(thread),
       });
       return;
     }
@@ -104,6 +101,18 @@ export class AgentThreadRecorder {
   }
 }
 
+function summarizeThreadSnapshot(thread: AgentThreadSnapshot): object {
+  return {
+    ...thread,
+    startInput: summarizeThreadStartInput(
+      thread.agentId,
+      thread.role,
+      thread.startInput,
+    ),
+    startResponse: summarizeThreadResponse(thread.agentId, thread.startResponse),
+  };
+}
+
 function summarizeThreadStartInput(
   agentId: string,
   role: ScoutAgentRole,
@@ -127,23 +136,6 @@ function summarizeThreadStartInput(
             name: tool.name,
           })),
         }),
-  };
-}
-
-function summarizeThreadResumeInput(
-  agentId: string,
-  role: ScoutAgentRole,
-  input: AgentThreadResumeRecord["resumeInput"],
-): object {
-  const {
-    baseInstructions,
-    developerInstructions,
-    ...metadata
-  } = input;
-  return {
-    ...summarizeThreadRequestMetadata(agentId, metadata),
-    ...(baseInstructions === undefined ? {} : { hasBaseInstructions: true }),
-    ...summarizeDeveloperInstructions(role, developerInstructions),
   };
 }
 

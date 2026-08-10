@@ -54,6 +54,17 @@ export async function resumeRun(
     runId: manifest.runId,
     logsRoot: join(runRoot, "logs"),
   });
+  const resumeStartedAt = Date.now();
+  logger.info({
+    module: "run.lifecycle",
+    event: "run_resume_started",
+    message: `Resuming Scout run ${manifest.runId} from ${runRoot}.`,
+    data: {
+      runRoot,
+      repoRoot,
+      checkpointSeq: manifest.checkpointSeq,
+    },
+  });
   const journal = RunJournal.open({ runId: manifest.runId, runRoot });
   const eventBus = new InMemoryEventBus();
   const executor = new RunStageExecutor({
@@ -83,6 +94,7 @@ export async function resumeRun(
     logger.error({
       module: "run.lifecycle",
       event: "run_resume_failed",
+      message: `Scout run ${manifest.runId} failed while restoring its runtime.`,
       data: {
         error: error instanceof Error ? error.stack ?? error.message : String(error),
         lifecycle: assembly.executor.snapshot(),
@@ -116,18 +128,32 @@ export async function resumeRun(
     logger.error({
       module: "run.lifecycle",
       event: "run_resume_activation_failed",
+      message: `Scout run ${manifest.runId} restored its runtime but failed during activation.`,
       data: { error: error instanceof Error ? error.stack ?? error.message : String(error) },
     });
     throw error;
   }
   const scope = currentRunScope();
+  const checkpointSeq = projectRun(scope.journal.readAll()).checkpointSeq;
+  const agentIds = scope.agentRegistry.listAgents().map((agent) => agent.agentId);
+  scope.logger.info({
+    module: "run.lifecycle",
+    event: "run_ready",
+    message: `Scout run ${manifest.runId} resumed and is ready with ${agentIds.length} agents.`,
+    data: {
+      mode: "resume",
+      durationMs: Math.max(0, Date.now() - resumeStartedAt),
+      agents: agentIds,
+      checkpointSeq,
+    },
+  });
   scope.eventBus.publish(SystemEvents.interaction.disclosureRequested, {
     level: "info",
     source: "run.resume",
     message: "Scout run resumed.",
     data: {
       runId: manifest.runId,
-      checkpointSeq: projectRun(scope.journal.readAll()).checkpointSeq,
+      checkpointSeq,
     },
   } satisfies RuntimeDisclosureEvent);
   return toRunSummary(scope.environment);

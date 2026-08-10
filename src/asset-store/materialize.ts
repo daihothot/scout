@@ -4,20 +4,15 @@
  * dedicated mount objects.
  */
 import type {
-  CodexMount,
-  MountManifest,
+  MaterializeOptions,
   MountPreparationInspection,
   MountPreparationResult,
-} from "./types.js";
-import {
-  MountContextBuilder,
-  type MaterializeOptions,
-} from "./mount/context-builder.js";
+} from "./contracts/materialization.js";
+import type { MountManifest } from "./contracts/manifest.js";
+import type { CodexMount } from "./contracts/mount.js";
+import { MountContextBuilder } from "./builders/mount-context-builder.js";
 import { MountMaterializer } from "./mount/materializer.js";
-import { MountPreparation } from "./mount/preparation.js";
-
-/** Re-export of the options contract accepted by the mount pipeline. */
-export type { MaterializeOptions } from "./mount/context-builder.js";
+import { MountPreparation } from "./preparation.js";
 
 const defaultMountPreparation = new MountPreparation();
 
@@ -37,6 +32,7 @@ export function inspectCodexMount(
 /** Reuses a verified mount or rebuilds it, preserving the preparation decision. */
 export function prepareCodexMount(
   options: MaterializeOptions & { persistedManifest?: MountManifest },
+  observeMaterializationStep?: MaterializeOptions["onMaterializationStep"],
 ): MountPreparationResult {
-  return defaultMountPreparation.prepare(options);
+  return defaultMountPreparation.prepare(options, observeMaterializationStep);
 }

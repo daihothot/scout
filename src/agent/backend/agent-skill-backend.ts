@@ -7,10 +7,8 @@ import {
   win32,
 } from "node:path";
 import type { DynamicToolCallInput } from "../../agent-server/types.js";
-import {
-  resolveSkillDependencyLoadOrder,
-  type ScoutSkillCatalogEntry,
-} from "../../asset-store/assets/skill-catalog.js";
+import { resolveSkillDependencyLoadOrder } from "../../asset-store/assets/skill-catalog.js";
+import type { ScoutSkillCatalogEntry } from "../../asset-store/contracts/skill.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import { isPathWithin } from "../../core/path.js";
 import type { ScoutAgent } from "../core/scout-agent.js";

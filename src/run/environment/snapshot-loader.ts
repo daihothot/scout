@@ -12,10 +12,10 @@ import {
 import type { AgentServerPreflightReport } from "../../agent-server/types.js";
 import {
   type AssetCommit,
+  CodexAssetLayout,
   type MountManifest,
   resolveAssetLocalPath,
 } from "../../asset-store/index.js";
-import { CodexAssetLayout } from "../../asset-store/assets/asset-layout.js";
 import {
   type ScoutAgentRole,
 } from "../../agent/thread/types.js";

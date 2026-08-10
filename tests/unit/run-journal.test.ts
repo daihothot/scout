@@ -31,6 +31,7 @@ import {
   RunEvents,
   type RunJournalWriteFailedEvent,
 } from "../../src/run/events/index.js";
+import { projectRun } from "../../src/run/resume/projection/index.js";
 import {
   createTestRunPersistence,
   installTestRunScope,
@@ -199,7 +200,7 @@ test("RunJournalWriter persists Human Input semantics and message delivery as se
   );
 });
 
-test("RunJournalWriter persists thread start, resume and close lifecycle facts", async (t) => {
+test("RunJournalWriter persists thread start, restart, resume and close lifecycle facts", async (t) => {
   const eventBus = new InMemoryEventBus();
   const { journal } = createTestRunPersistence(t, "journal-thread", "/repo", eventBus);
   const started = {
@@ -218,23 +219,35 @@ test("RunJournalWriter persists thread start, resume and close lifecycle facts",
     },
     startResponse: { thread: { id: "thread-researcher" } },
   } satisfies AgentThreadSnapshot;
+  const restarted = {
+    ...started,
+    threadId: "thread-researcher-restarted",
+    createdAt: "2026-07-23T00:01:00.000Z",
+    startResponse: { thread: { id: "thread-researcher-restarted" } },
+  } satisfies AgentThreadSnapshot;
 
   await eventBus.publishAndWait(AgentEvents.thread.started, started);
+  await eventBus.publishAndWait(AgentEvents.thread.restarted, {
+    previousThreadId: started.threadId,
+    reason: "missing_rollout_without_recoverable_work",
+    restartedAt: restarted.createdAt,
+    newThread: restarted,
+  });
   await eventBus.publishAndWait(AgentEvents.thread.resumed, {
-    agentId: started.agentId,
-    role: started.role,
-    threadId: started.threadId,
-    resumedAt: "2026-07-23T00:01:00.000Z",
+    agentId: restarted.agentId,
+    role: restarted.role,
+    threadId: restarted.threadId,
+    resumedAt: "2026-07-23T00:02:00.000Z",
     resumeInput: {
-      threadId: started.threadId,
+      threadId: restarted.threadId,
       excludeTurns: true,
     },
-    resumeResponse: { thread: { id: started.threadId, turns: [] } },
+    resumeResponse: { thread: { id: restarted.threadId, turns: [] } },
   });
   await eventBus.publishAndWait(AgentEvents.thread.closed, {
-    ...started,
+    ...restarted,
     status: "closed",
-    closedAt: "2026-07-23T00:02:00.000Z",
+    closedAt: "2026-07-23T00:03:00.000Z",
     closeReason: "test",
   });
 
@@ -242,9 +255,107 @@ test("RunJournalWriter persists thread start, resume and close lifecycle facts",
     journal.readAll().slice(1).map((event) => event.key.routeKey),
     [
       AgentEvents.thread.started.routeKey,
+      AgentEvents.thread.restarted.routeKey,
       AgentEvents.thread.resumed.routeKey,
       AgentEvents.thread.closed.routeKey,
     ],
+  );
+  const restartEvent = journal.readAll().find((event) =>
+    AgentEvents.thread.restarted.is(event)
+  );
+  assert.ok(restartEvent && AgentEvents.thread.restarted.is(restartEvent));
+  assert.deepEqual(restartEvent.payload, {
+    previousThreadId: started.threadId,
+    reason: "missing_rollout_without_recoverable_work",
+    restartedAt: restarted.createdAt,
+    newThread: restarted,
+  });
+});
+
+test("Run projection replaces a thread only when restart names the current snapshot", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const { journal } = createTestRunPersistence(
+    t,
+    "journal-thread-restart-projection",
+    "/repo",
+    eventBus,
+  );
+  const started = {
+    agentId: ScoutAgentRoles.Validator,
+    role: ScoutAgentRoles.Validator,
+    phases: [ScoutAgentPhases.Validate],
+    contextBundleId: "context-validator-old",
+    threadId: "thread-validator-old",
+    createdAt: "2026-07-23T00:00:00.000Z",
+    status: "active",
+    startInput: {
+      cwd: "/repo",
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      ephemeral: false,
+    },
+    startResponse: { thread: { id: "thread-validator-old" } },
+  } satisfies AgentThreadSnapshot;
+  const restarted = {
+    ...started,
+    contextBundleId: "context-validator-new",
+    threadId: "thread-validator-new",
+    createdAt: "2026-07-23T00:01:00.000Z",
+    startResponse: { thread: { id: "thread-validator-new" } },
+  } satisfies AgentThreadSnapshot;
+
+  await eventBus.publishAndWait(AgentEvents.thread.started, started);
+  await eventBus.publishAndWait(AgentEvents.thread.restarted, {
+    previousThreadId: started.threadId,
+    reason: "missing_rollout_without_recoverable_work",
+    restartedAt: restarted.createdAt,
+    newThread: restarted,
+  });
+
+  assert.deepEqual(projectRun(journal.readAll()).threads, [restarted]);
+});
+
+test("Run projection rejects a restart whose previous thread is not current", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const { journal } = createTestRunPersistence(
+    t,
+    "journal-thread-restart-conflict",
+    "/repo",
+    eventBus,
+  );
+  const started = {
+    agentId: ScoutAgentRoles.Verifier,
+    role: ScoutAgentRoles.Verifier,
+    phases: [ScoutAgentPhases.Verify],
+    contextBundleId: "context-verifier",
+    threadId: "thread-verifier-current",
+    createdAt: "2026-07-23T00:00:00.000Z",
+    status: "active",
+    startInput: {
+      cwd: "/repo",
+      approvalPolicy: "never",
+      sandbox: "workspace-write",
+      ephemeral: false,
+    },
+    startResponse: { thread: { id: "thread-verifier-current" } },
+  } satisfies AgentThreadSnapshot;
+
+  await eventBus.publishAndWait(AgentEvents.thread.started, started);
+  await eventBus.publishAndWait(AgentEvents.thread.restarted, {
+    previousThreadId: "thread-verifier-stale",
+    reason: "missing_rollout_without_recoverable_work",
+    restartedAt: "2026-07-23T00:01:00.000Z",
+    newThread: {
+      ...started,
+      threadId: "thread-verifier-new",
+      createdAt: "2026-07-23T00:01:00.000Z",
+      startResponse: { thread: { id: "thread-verifier-new" } },
+    },
+  });
+
+  assert.throws(
+    () => projectRun(journal.readAll()),
+    /Thread restarted without matching previous thread: thread-verifier-stale/,
   );
 });
 

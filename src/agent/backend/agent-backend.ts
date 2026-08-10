@@ -103,6 +103,9 @@ export class AgentBackend {
     this.scope.logger.warn({
       module: "runtime.app_server",
       event: "disconnected",
+      message: agent
+        ? `Codex app-server disconnected while serving agent ${agent.agentId}.`
+        : "Codex app-server disconnected before its event could be bound to an agent.",
       agentId: agent?.agentId,
       taskId: activeTask?.taskId,
       data: {
