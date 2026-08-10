@@ -61,14 +61,9 @@ export class EnvironmentRoleRunner {
     await this.hooks.onRoleStart?.(role, plan);
 
     try {
-      const options = {
-        ...plan.options,
-        onMaterializationStep: (nextStep: MountMaterializationStep) => {
-          step = nextStep;
-          plan.options.onMaterializationStep?.(nextStep);
-        },
-      };
-      const preparation = this.assetStore.prepareMount(options);
+      const preparation = this.assetStore.prepareMount(plan.options, (nextStep: MountMaterializationStep) => {
+        step = nextStep;
+      });
       if (preparation.decision !== plan.inspection.decision) {
         throw new Error(
           `Mount preparation changed after verification for ${role}`

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import {
   ensureDir,
@@ -10,26 +10,23 @@ import {
 } from "../../core/fs.js";
 import type {
   CodexMount,
-  MountManifest,
-  ShellToolContract,
-} from "../types.js";
+} from "../contracts/mount.js";
+import type { MountManifest } from "../contracts/manifest.js";
+import type { MaterializeOptions } from "../contracts/materialization.js";
+import type { MountContext } from "../contracts/mount-context.js";
+import type { ShellToolContract } from "../contracts/resources.js";
 import { CodexAssetLayout, roleAgentPath } from "../assets/asset-layout.js";
-import {
-  buildMountDynamicValues,
-  generateCodexConfig,
-  materializeMcpServers,
-  materializeShellTools,
-  writePluginMarketplace,
-} from "./helpers.js";
+import { McpServerBuilder } from "../builders/mcp-server-builder.js";
+import { MountGeneratedFilesBuilder } from "../builders/mount-generated-files-builder.js";
+import { MountManifestBuilder } from "../builders/mount-manifest-builder.js";
+import { ShellToolBuilder } from "../builders/shell-tool-builder.js";
 import {
   assertAssetFileExists,
   customAgentNameFromPath,
   resolveAssetRelativePath,
   skillNameFromPath,
-  type MaterializeOptions,
-  type MountContext,
-} from "./context-builder.js";
-import { MountManifestBuilder } from "./manifest-builder.js";
+} from "../files/asset-paths.js";
+import { buildMountMacroValues } from "./macros.js";
 
 /**
  * Owns filesystem writes for one role mount. It creates links and generated
@@ -102,7 +99,7 @@ export class MountMaterializer {
     const shellToolsRegistryHash = sha256File(join(assetsRoot, CodexAssetLayout.shellTools));
     if (
       options.persistedIdentity
-      && !options.persistedIdentity.allowLegacyResourceIdentityMigration
+      && !options.allowLegacyResourceIdentityMigration
       && options.persistedIdentity.resourceHash !== computedResourceHash
     ) {
       throw new Error(
@@ -111,7 +108,7 @@ export class MountMaterializer {
         + ` portable=${computedResourceHash}.`,
       );
     }
-    const resourceHash = options.persistedIdentity?.allowLegacyResourceIdentityMigration
+    const resourceHash = options.allowLegacyResourceIdentityMigration
       ? computedResourceHash
       : options.persistedIdentity?.resourceHash ?? computedResourceHash;
 
@@ -133,18 +130,22 @@ export class MountMaterializer {
     ensureDir(join(mountRoot, "bin"));
     ensureDir(join(mountRoot, "mcp"));
 
-    const materializedMcpServers = materializeMcpServers({
+    const builtMcpServers = new McpServerBuilder({
       mountRoot,
-      mcpServers: profiledMcpServers,
       assetsRoot,
-      dynamicValues: buildMountDynamicValues({
+      dynamicValues: buildMountMacroValues({
         repoRoot,
         runRoot,
         mountRoot,
         artifactRoot,
         assetCommitId,
       }),
-    });
+    }).build(profiledMcpServers);
+    for (const builtServer of builtMcpServers) {
+      writeTextFile(builtServer.server.wrapperPath, builtServer.wrapperContent);
+      chmodSync(builtServer.server.wrapperPath, 0o755);
+    }
+    const materializedMcpServers = builtMcpServers.map(({ server }) => server);
     safeSymlink(join(assetsRoot, CodexAssetLayout.agentsMd), join(mountRoot, "AGENTS.md"));
     const workerAgentPath = agentId === "coordinator"
       ? undefined
@@ -152,27 +153,44 @@ export class MountMaterializer {
     const roleAgentPaths = materializeRoleAgent(assetsRoot, mountRoot, agentId);
     options.onMaterializationStep?.("layout");
 
-    const configText = generateCodexConfig({
-      baseConfig: readFileSync(join(assetsRoot, agentProfile.config), "utf8"),
-      mountRoot,
-      runRoot,
-      artifactRoot,
-      runId,
-      assetCommitId,
-      mcpServers: materializedMcpServers,
-    });
-    writeTextFile(join(mountRoot, ".codex", "config.toml"), configText);
-    writeTextFile(join(mountRoot, ".codex", "hooks.json"), "{\n  \"hooks\": []\n}\n");
+    const generatedFiles = new MountGeneratedFilesBuilder(
+      context,
+      readFileSync(join(assetsRoot, agentProfile.config), "utf8"),
+      materializedMcpServers,
+    ).build();
+    const generatedContent = (path: string): string => {
+      const file = generatedFiles.find((candidate) => candidate.path === path);
+      if (!file) throw new Error(`Generated mount file projection is missing: ${path}`);
+      return file.content;
+    };
+    writeTextFile(
+      join(mountRoot, ".codex", "config.toml"),
+      generatedContent(".codex/config.toml"),
+    );
+    writeTextFile(
+      join(mountRoot, ".codex", "hooks.json"),
+      generatedContent(".codex/hooks.json"),
+    );
     options.onMaterializationStep?.("config");
 
     const customAgentNames = materializeCustomAgents(assetsRoot, mountRoot, profiledCustomAgentPaths);
     const skillNames = materializeSkills(assetsRoot, mountRoot, profiledSkillPaths);
-    writeJsonFile(join(mountRoot, ".scout", "skill-catalog.json"), skillCatalog);
+    writeTextFile(
+      join(mountRoot, ".scout", "skill-catalog.json"),
+      generatedContent(".scout/skill-catalog.json"),
+    );
     options.onMaterializationStep?.("skills");
     const pluginNames = materializePlugins(assetsRoot, mountRoot, profiledPluginPaths);
     options.onMaterializationStep?.("plugins");
-    const shellMaterialization = materializeShellTools(mountRoot, profiledShellTools, assetsRoot);
-    writePluginMarketplace(mountRoot, pluginNames);
+    const shellBuild = new ShellToolBuilder(mountRoot, assetsRoot).build(profiledShellTools);
+    for (const builtTool of shellBuild.tools) {
+      writeTextFile(builtTool.wrapperPath, builtTool.wrapperContent);
+      chmodSync(builtTool.wrapperPath, 0o755);
+    }
+    writeTextFile(
+      join(mountRoot, ".agents", "plugins", "marketplace.json"),
+      generatedContent(".agents/plugins/marketplace.json"),
+    );
     options.onMaterializationStep?.("shell");
 
     const manifestBuilder = new MountManifestBuilder({
@@ -195,11 +213,14 @@ export class MountMaterializer {
       mountRoot,
       trustedRoots,
       writableRoots,
-      issues: shellMaterialization.issues,
+      issues: shellBuild.issues,
       resourceHash,
       mcpServers: materializedMcpServers,
-      shellTools: shellMaterialization.shellTools,
-      shellWrappers: shellMaterialization.wrappers,
+      shellTools: shellBuild.tools.map(({ contract }) => contract),
+      shellWrappers: shellBuild.tools.map(({ contract, wrapperPath }) => ({
+        id: contract.id,
+        wrapperPath,
+      })),
       customAgentNames,
       skillNames,
       skillCatalog,
@@ -218,10 +239,10 @@ export class MountMaterializer {
       runRoot,
       artifactRoot,
       logsRoot,
-      issues: shellMaterialization.issues,
+      issues: shellBuild.issues,
       trustedRoots,
       writableRoots,
-      shellTools: shellMaterialization.shellTools,
+      shellTools: shellBuild.tools.map(({ contract }) => contract),
       mcpServers: materializedMcpServers,
       customAgents: customAgentNames,
       skills: skillNames,

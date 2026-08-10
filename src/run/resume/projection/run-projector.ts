@@ -156,6 +156,22 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
       });
       continue;
     }
+    if (AgentEvents.thread.restarted.is(event)) {
+      const existing = threads.get(event.payload.newThread.agentId);
+      if (
+        !existing
+        || existing.threadId !== event.payload.previousThreadId
+      ) {
+        throw new Error(
+          `Thread restarted without matching previous thread: ${event.payload.previousThreadId}`,
+        );
+      }
+      threads.set(
+        event.payload.newThread.agentId,
+        structuredClone(event.payload.newThread),
+      );
+      continue;
+    }
     if (AgentEvents.thread.closed.is(event)) {
       const existing = threads.get(event.payload.agentId);
       if (!existing || existing.threadId !== event.payload.threadId) {

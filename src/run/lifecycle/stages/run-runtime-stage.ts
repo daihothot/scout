@@ -27,6 +27,16 @@ export class RunRuntimeStage implements RunStage {
       },
       checkpointSeq: scope.journal.lastSeq,
     }));
+    scope.logger.info({
+      module: "run.lifecycle",
+      event: "run_runtime_attached",
+      message: `Attached Scout runtime ${scope.runId} in ${this.mode} mode with process ${process.pid}.`,
+      data: {
+        mode: this.mode,
+        attachedAt,
+        processId: process.pid,
+      },
+    });
   }
 
   async stop(reason: string): Promise<void> {
@@ -53,5 +63,20 @@ export class RunRuntimeStage implements RunStage {
       runtime: { status: interrupted ? "interrupted" : "detached", reason },
       checkpointSeq: scope.journal.lastSeq,
     }));
+    if (interrupted) {
+      scope.logger.warn({
+        module: "run.lifecycle",
+        event: "run_runtime_interrupted",
+        message: `Interrupted Scout runtime ${scope.runId} because ${reason}.`,
+        data: { reason, interruptedAt: stoppedAt },
+      });
+    } else {
+      scope.logger.info({
+        module: "run.lifecycle",
+        event: "run_runtime_detached",
+        message: `Detached Scout runtime ${scope.runId} because ${reason}.`,
+        data: { reason, detachedAt: stoppedAt },
+      });
+    }
   }
 }

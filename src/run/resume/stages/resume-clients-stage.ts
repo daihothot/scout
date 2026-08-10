@@ -1,6 +1,7 @@
 import {
   lstatSync,
   realpathSync,
+  type Stats,
 } from "node:fs";
 import {
   join,
@@ -98,7 +99,26 @@ function assertRunCodexHomeIsContained(): void {
   const repoRootReal = realpathSync(repoRoot);
   const runRootReal = realpathSync(runRoot);
   assertInside(runRootReal, repoRootReal, "Run root");
-  requireDirectoryChain(runRoot, sessionsRoot, "Codex home");
-  assertInside(realpathSync(sessionsRoot), runRootReal, "Codex sessions root");
+  requireDirectoryChain(runRoot, codexRoot, "Codex home");
+  const codexRootReal = realpathSync(codexRoot);
+  assertInside(codexRootReal, runRootReal, "Codex home");
+
+  let sessionsStat: Stats | undefined;
+  try {
+    sessionsStat = lstatSync(sessionsRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(`Cannot inspect Codex sessions root ${sessionsRoot}.`, { cause: error });
+    }
+  }
+  if (sessionsStat?.isSymbolicLink()) {
+    throw new Error(`Refusing symlinked Codex home component: ${sessionsRoot}.`);
+  }
+  if (sessionsStat && !sessionsStat.isDirectory()) {
+    throw new Error(`Expected Codex home component to be a directory: ${sessionsRoot}.`);
+  }
+  if (sessionsStat) {
+    assertInside(realpathSync(sessionsRoot), codexRootReal, "Codex sessions root");
+  }
   requireRegularFileIfPresent(join(codexRoot, "config.toml"), "Codex config");
 }

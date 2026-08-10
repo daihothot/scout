@@ -1,4 +1,4 @@
-import type { CodexMount } from "../types.js";
+import type { CodexMount } from "../contracts/mount.js";
 
 /** Returns unique trusted roots required by the mount and its MCP servers. */
 export function collectMountTrustedRoots(mount: CodexMount): string[] {

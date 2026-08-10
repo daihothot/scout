@@ -774,14 +774,15 @@ test("RestoreAgentsStage never cold-starts an Agent after thread settings fails"
 
 test("RestoreAgentsStage rejects a missing persisted rollout before building Agents", async (t) => {
   const missing = await installRolloutLocatorFixture(t, "missing");
-  mkdirSync(join(
+  const codexRoot = join(
     missing.fixtureRoot,
     "run",
     missing.scope.runId,
     "codex-home",
     ".codex",
-    "sessions",
-  ), { recursive: true });
+  );
+  mkdirSync(codexRoot, { recursive: true });
+  assert.equal(existsSync(join(codexRoot, "sessions")), false);
   await assert.rejects(
     new RestoreAgentsStage().start(),
     new RegExp(`No persisted Codex rollout found for thread ${missing.thread.threadId}`),
@@ -789,7 +790,7 @@ test("RestoreAgentsStage rejects a missing persisted rollout before building Age
   assert.equal(missing.scope.agentRegistry.listAgents().length, 0);
 });
 
-test("RestoreAgentsStage starts a thread that Codex never persisted", async (t) => {
+test("RestoreAgentsStage restarts a journaled thread that Codex never persisted", async (t) => {
   const startedRoles: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
@@ -824,23 +825,41 @@ test("RestoreAgentsStage starts a thread that Codex never persisted", async (t) 
     "not-persisted",
     { includeTurn: false, appServer },
   );
-  mkdirSync(join(
+  const codexRoot = join(
     noCodexRecord.fixtureRoot,
     "run",
     noCodexRecord.scope.runId,
     "codex-home",
     ".codex",
-    "sessions",
-  ), { recursive: true });
+  );
+  mkdirSync(codexRoot, { recursive: true });
+  assert.equal(existsSync(join(codexRoot, "sessions")), false);
+  const restartedEvents: ScoutEvent[] = [];
+  const unsubscribe = noCodexRecord.scope.eventBus.subscribe(
+    AgentEvents.thread.restarted,
+    (event) => {
+      restartedEvents.push(event);
+    },
+  );
 
   const stage = new RestoreAgentsStage();
   await stage.start();
 
-  assert.ok(startedRoles.includes(ScoutAgentRoles.Researcher));
+  assert.deepEqual(startedRoles.sort(), Object.values(ScoutAgentRoles).sort());
   assert.equal(
     noCodexRecord.scope.agentRegistry.resolveAgent(ScoutAgentRoles.Researcher).threadId,
     `new-thread-${ScoutAgentRoles.Researcher}`,
   );
+  assert.equal(restartedEvents.length, 1);
+  const restarted = restartedEvents[0];
+  assert.ok(restarted && AgentEvents.thread.restarted.is(restarted));
+  assert.equal(restarted.payload.previousThreadId, noCodexRecord.thread.threadId);
+  assert.equal(restarted.payload.reason, "codex_rollout_not_persisted");
+  assert.equal(
+    restarted.payload.newThread.threadId,
+    `new-thread-${ScoutAgentRoles.Researcher}`,
+  );
+  unsubscribe();
   await stage.stop("test_cleanup");
 });
 
@@ -913,7 +932,7 @@ test("RestoreAgentsStage resumes a persisted thread even when it has no turns", 
   await stage.stop("test_cleanup");
 });
 
-test("RestoreAgentsStage does not require a rollout for a new zero-turn thread after an older turn", async (t) => {
+test("RestoreAgentsStage restarts a current zero-turn thread after an older turn", async (t) => {
   const startedRoles: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
@@ -978,6 +997,13 @@ test("RestoreAgentsStage does not require a rollout for a new zero-turn thread a
     AgentEvents.thread.started,
     currentThread,
   );
+  const restartedEvents: ScoutEvent[] = [];
+  const unsubscribe = fixture.scope.eventBus.subscribe(
+    AgentEvents.thread.restarted,
+    (event) => {
+      restartedEvents.push(event);
+    },
+  );
 
   const stage = new RestoreAgentsStage();
   await stage.start();
@@ -987,6 +1013,15 @@ test("RestoreAgentsStage does not require a rollout for a new zero-turn thread a
     fixture.scope.agentRegistry.resolveAgent(ScoutAgentRoles.Researcher).threadId,
     `new-thread-${ScoutAgentRoles.Researcher}`,
   );
+  assert.equal(restartedEvents.length, 1);
+  const restarted = restartedEvents[0];
+  assert.ok(restarted && AgentEvents.thread.restarted.is(restarted));
+  assert.equal(restarted.payload.previousThreadId, currentThread.threadId);
+  assert.equal(
+    restarted.payload.newThread.threadId,
+    `new-thread-${ScoutAgentRoles.Researcher}`,
+  );
+  unsubscribe();
   await stage.stop("test_cleanup");
 });
 

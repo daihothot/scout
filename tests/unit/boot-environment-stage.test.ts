@@ -19,7 +19,11 @@ import { homedir, tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
-import type { MountManifest } from "../../src/asset-store/types.js";
+import {
+  AssetStore,
+  type MaterializeOptions,
+  type MountManifest,
+} from "../../src/asset-store/index.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import {
@@ -275,7 +279,7 @@ for (const scenario of [
     arrange(runRoot: string, fixtureRoot: string): string {
       const codexRoot = join(runRoot, "codex-home", ".codex");
       const outsideConfig = join(fixtureRoot, "outside-config.toml");
-      mkdirSync(join(codexRoot, "sessions"), { recursive: true });
+      mkdirSync(codexRoot, { recursive: true });
       writeFileSync(outsideConfig, "sentinel\n", "utf8");
       symlinkSync(outsideConfig, join(codexRoot, "config.toml"));
       return outsideConfig;
@@ -522,6 +526,120 @@ test("RestoreEnvironmentStage rebuilds only damaged roles and is idempotent", as
   assert.equal(secondFinal.descriptor.status.detail, "Mount · ready · 4/4 reusable");
   secondResume.release();
   secondReleased = true;
+});
+
+test("RestoreEnvironmentStage self-heals a partial mount without rebuilding completed roles", async (t) => {
+  const fixtureRoot = createLinkedAssetsFixture(t, "scout-restore-partial-mount-");
+  const runId = "restore-partial-mount";
+  const initial = installEnvironmentScope(t, fixtureRoot, runId);
+  let initialReleased = false;
+  t.after(() => {
+    if (!initialReleased) initial.release();
+  });
+  await new PrepareEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+
+  const coordinatorRoot = initial.scope.environment.agents.coordinator.mount.mountRoot;
+  const researcherRoot = initial.scope.environment.agents.researcher.mount.mountRoot;
+  for (const mountRoot of [coordinatorRoot, researcherRoot]) {
+    const configPath = join(mountRoot, ".codex", "config.toml");
+    writeFileSync(configPath, readFileSync(configPath, "utf8") + "# force rebuild\n", "utf8");
+  }
+  const journal = initial.scope.journal;
+  const manifestStore = initial.scope.manifestStore;
+  initial.release();
+  initialReleased = true;
+
+  const failedProgress = new CapturingMountProgressPort();
+  const failedResume = installExistingEnvironmentScope(
+    fixtureRoot,
+    runId,
+    journal,
+    manifestStore,
+    failedProgress,
+  );
+  let failedReleased = false;
+  t.after(() => {
+    if (!failedReleased) failedResume.release();
+  });
+  await assert.rejects(
+    new RestoreEnvironmentStage({
+      assetStore: new FailOnceAfterConfigAssetStore(ScoutAgentRoles.Coordinator),
+      preflightMount: async () => ({ status: "passed" }),
+    }).start(),
+    /Injected materialization failure after config for coordinator/,
+  );
+  const failedSnapshot = failedProgress.progress
+    .filter((snapshot) => snapshot.phase === "failed")
+    .at(-1);
+  assert.ok(failedSnapshot);
+  assert.equal(failedSnapshot.descriptor.status.detail, "coordinator config");
+  assert.equal(
+    existsSync(join(coordinatorRoot, ".scout", "skill-catalog.json")),
+    false,
+    "the injected failure should leave coordinator incomplete",
+  );
+  assert.equal(
+    existsSync(join(researcherRoot, ".scout", "skill-catalog.json")),
+    true,
+    "the parallel researcher rebuild should complete",
+  );
+  const researcherSentinel = join(researcherRoot, "completed-before-retry.txt");
+  writeFileSync(researcherSentinel, "preserve\n", "utf8");
+  failedResume.release();
+  failedReleased = true;
+
+  const retryProgress = new CapturingMountProgressPort();
+  const retry = installExistingEnvironmentScope(
+    fixtureRoot,
+    runId,
+    journal,
+    manifestStore,
+    retryProgress,
+  );
+  let retryReleased = false;
+  t.after(() => {
+    if (!retryReleased) retry.release();
+  });
+  await new RestoreEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+  const retryFinal = retryProgress.progress.at(-1);
+  assert.ok(retryFinal);
+  assert.equal(retryFinal.phase, "done");
+  assert.equal(retryFinal.totalUnits, 9);
+  assert.equal(retryFinal.descriptor.status.detail, "Mount · ready · 3/4 reusable");
+  assert.equal(readFileSync(researcherSentinel, "utf8"), "preserve\n");
+  const coordinatorSentinel = join(coordinatorRoot, "completed-after-retry.txt");
+  writeFileSync(coordinatorSentinel, "preserve\n", "utf8");
+  retry.release();
+  retryReleased = true;
+
+  const finalProgress = new CapturingMountProgressPort();
+  const finalResume = installExistingEnvironmentScope(
+    fixtureRoot,
+    runId,
+    journal,
+    manifestStore,
+    finalProgress,
+  );
+  let finalReleased = false;
+  t.after(() => {
+    if (!finalReleased) finalResume.release();
+  });
+  await new RestoreEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+  const final = finalProgress.progress.at(-1);
+  assert.ok(final);
+  assert.equal(final.totalUnits, Object.values(ScoutAgentRoles).length);
+  assert.equal(final.descriptor.status.detail, "Mount · ready · 4/4 reusable");
+  assert.ok(finalProgress.progress.every((snapshot) => !snapshot.descriptor.progress));
+  assert.equal(readFileSync(coordinatorSentinel, "utf8"), "preserve\n");
+  assert.equal(readFileSync(researcherSentinel, "utf8"), "preserve\n");
+  finalResume.release();
+  finalReleased = true;
 });
 
 test("RestoreEnvironmentStage upgrades an old resource inventory once and then rejects script drift", async (t) => {
@@ -826,6 +944,30 @@ class CapturingMountProgressPort extends NoopRuntimeInteractionPort {
 
   override async publishSubprocessProgress(progress: SubprocessProgressSnapshot): Promise<void> {
     this.progress.push(structuredClone(progress));
+  }
+}
+
+class FailOnceAfterConfigAssetStore extends AssetStore {
+  private failed = false;
+
+  constructor(private readonly targetRole: string) {
+    super();
+  }
+
+  override prepareMount(
+    options: MaterializeOptions,
+    observeMaterializationStep?: MaterializeOptions["onMaterializationStep"],
+  ) {
+    if (options.agentId !== this.targetRole || this.failed) {
+      return super.prepareMount(options, observeMaterializationStep);
+    }
+    return super.prepareMount(options, (step) => {
+      observeMaterializationStep?.(step);
+      if (step === "config") {
+        this.failed = true;
+        throw new Error(`Injected materialization failure after config for ${this.targetRole}`);
+      }
+    });
   }
 }
 

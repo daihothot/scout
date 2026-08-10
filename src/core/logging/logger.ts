@@ -11,6 +11,7 @@ export interface LogEvent {
   level: LogLevel;
   module: string;
   event: string;
+  message?: string;
   runId?: string;
   agentId?: string;
   taskId?: string;
@@ -93,8 +94,19 @@ function formatLogEvent(event: LogEvent): string {
     event.agentId ? `agent=${event.agentId}` : undefined,
     event.taskId ? `task=${event.taskId}` : undefined,
   ].filter((part): part is string => Boolean(part)).join(" ");
-  if (event.data === undefined) return `${fields}\n\n`;
-  return `${fields}\n${formatLogData(event.data)}\n\n`;
+  const details = [
+    event.message === undefined ? undefined : formatLogMessage(event.message),
+    event.data === undefined ? undefined : formatLogData(event.data),
+  ].filter((part): part is string => part !== undefined);
+  if (details.length === 0) return `${fields}\n\n`;
+  return `${fields}\n${details.join("\n")}\n\n`;
+}
+
+function formatLogMessage(value: string): string {
+  if (shouldUseStringBlock(value, "message: ")) {
+    return ["message: |", ...formatStringBlock(value, 1)].join("\n");
+  }
+  return `message: ${value}`;
 }
 
 function levelLabel(level: LogLevel): string {
@@ -233,6 +245,7 @@ function defaultLogRedactor(event: LogEvent): LogEvent {
 function defaultLogSummarizer(event: LogEvent): LogEvent {
   return {
     ...event,
+    message: event.message === undefined ? undefined : summarizeString(event.message),
     data: summarizeValue(event.data),
   };
 }
@@ -247,9 +260,7 @@ function redactValue(value: unknown): unknown {
 }
 
 function summarizeValue(value: unknown): unknown {
-  if (typeof value === "string") {
-    return value.length > 4000 ? `${value.slice(0, 4000)}...[truncated:${value.length}]` : value;
-  }
+  if (typeof value === "string") return summarizeString(value);
   if (Array.isArray(value)) {
     const summarized = value.slice(0, 200).map(summarizeValue);
     return value.length > 200
@@ -261,6 +272,10 @@ function summarizeValue(value: unknown): unknown {
     key,
     summarizeValue(entry),
   ]));
+}
+
+function summarizeString(value: string): string {
+  return value.length > 4000 ? `${value.slice(0, 4000)}...[truncated:${value.length}]` : value;
 }
 
 function shouldRedactKey(key: string): boolean {

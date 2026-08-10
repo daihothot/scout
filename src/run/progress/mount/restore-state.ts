@@ -2,7 +2,7 @@ import type { ScoutAgentRole } from "../../../agent/thread/types.js";
 import type {
   MountMaterializationStep,
   MountPreparationDecision,
-} from "../../../asset-store/types.js";
+} from "../../../asset-store/contracts/materialization.js";
 
 /** Per-role outcome tracked while mounts are verified or rebuilt. */
 export type MountRestoreRoleDecision = "pending" | "reused" | "rebuild" | "failed";

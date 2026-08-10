@@ -19,6 +19,7 @@ const persistedEventTypes: EventType[] = [
   AgentEvents.coordinator.messageProduced,
   AgentEvents.thread.started,
   AgentEvents.thread.resumed,
+  AgentEvents.thread.restarted,
   AgentEvents.thread.closed,
   AgentEvents.message.queued,
   AgentEvents.message.consumed,
@@ -84,6 +85,7 @@ export class RunJournalWriter {
               scope.logger.warn({
                 module: "run.journal",
                 event: "run_journal_write_failed",
+                message: `Failed to append ${payload.failedEventKey} to the run journal after 2 attempts.`,
                 data: payload,
               });
             } catch {

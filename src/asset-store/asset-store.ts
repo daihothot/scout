@@ -1,17 +1,15 @@
-import { buildAssetCommit, type BuildAssetCommitOptions } from "./commit.js";
-import {
-  materializeCodexMount,
-  type MaterializeOptions,
-} from "./materialize.js";
-import { MountPreparation } from "./mount/preparation.js";
-import { collectMountTrustedRoots, collectMountWritableRoots } from "./mount/preflight.js";
+import { buildAssetCommit, type BuildAssetCommitOptions } from "./builders/asset-commit-builder.js";
+import type { AssetCommit } from "./contracts/asset-commit.js";
+import type { MountManifest } from "./contracts/manifest.js";
 import type {
-  AssetCommit,
-  CodexMount,
-  MountManifest,
+  MaterializeOptions,
   MountPreparationInspection,
   MountPreparationResult,
-} from "./types.js";
+} from "./contracts/materialization.js";
+import type { CodexMount } from "./contracts/mount.js";
+import { materializeCodexMount } from "./materialize.js";
+import { MountPreparation } from "./preparation.js";
+import { collectMountTrustedRoots, collectMountWritableRoots } from "./mount/preflight.js";
 
 /**
  * Public asset-store facade used by run stages. It delegates resource reading,
@@ -27,8 +25,11 @@ export class AssetStore {
   }
 
   /** Inspects a persisted mount and either reuses or rebuilds it as one unit. */
-  prepareMount(options: MaterializeOptions & { persistedManifest?: MountManifest }): MountPreparationResult {
-    return this.mountPreparation.prepare(options);
+  prepareMount(
+    options: MaterializeOptions & { persistedManifest?: MountManifest },
+    observeMaterializationStep?: MaterializeOptions["onMaterializationStep"],
+  ): MountPreparationResult {
+    return this.mountPreparation.prepare(options, observeMaterializationStep);
   }
 
   /** Performs the inexpensive decision pass without mutating the mount root. */

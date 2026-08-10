@@ -40,6 +40,7 @@ export class RunStageExecutor {
   private terminationPromise?: Promise<void>;
   private resolveStartupTermination?: () => void;
   private terminationReason?: string;
+  private terminationStartedAt?: number;
 
   constructor(options: RunStageExecutorOptions) {
     this.runId = options.runId;
@@ -71,7 +72,10 @@ export class RunStageExecutor {
     this.terminationReason = reason;
 
     if (this.status === "starting") {
+      const startedAt = Date.now();
+      this.terminationStartedAt = startedAt;
       this.status = "terminating";
+      this.logTerminationStarted(reason, startedAt);
       this.terminationPromise = new Promise<void>((resolve) => {
         this.resolveStartupTermination = resolve;
       });
@@ -138,11 +142,16 @@ export class RunStageExecutor {
   private async runStartup(): Promise<void> {
     const startedAt = Date.now();
     this.status = "starting";
+    const progress = this.lifecycleProgress();
     this.logger.info({
       module: "run.lifecycle",
       event: "run_startup_started",
+      message: `Run lifecycle startup began with ${progress.stageCount} registered stages.`,
       data: {
-        stageCount: this.stageSnapshots.size,
+        stageCount: progress.stageCount,
+        completedStages: progress.completedStages,
+        remainingStages: progress.remainingStages,
+        elapsedMs: 0,
       },
     });
     await this.emitSnapshot();
@@ -153,7 +162,7 @@ export class RunStageExecutor {
         throw new Error(`Run startup terminated: ${this.terminationReason}`);
       }
 
-      const result = await this.startGroup(group);
+      const result = await this.startGroup(group, startedAt);
       if (result.entered.length > 0) {
         this.enteredGroups.push({
           mode: group.mode,
@@ -161,7 +170,7 @@ export class RunStageExecutor {
         });
       }
       if (result.errors.length > 0) {
-        await this.failStartup(result.errors);
+        await this.failStartup(result.errors, startedAt);
         throw stageGroupError(result.errors);
       }
       if (this.terminationReason) {
@@ -171,20 +180,31 @@ export class RunStageExecutor {
     }
 
     this.status = "ready";
+    const durationMs = Math.max(0, Date.now() - startedAt);
+    const completedProgress = this.lifecycleProgress();
     this.logger.info({
       module: "run.lifecycle",
       event: "run_startup_completed",
+      message: `Run lifecycle startup completed ${completedProgress.completedStages} stages in ${durationMs} ms.`,
       data: {
-        durationMs: Math.max(0, Date.now() - startedAt),
-        stageCount: this.stageSnapshots.size,
+        durationMs,
+        stageCount: completedProgress.stageCount,
+        completedStages: completedProgress.completedStages,
+        remainingStages: completedProgress.remainingStages,
+        elapsedMs: durationMs,
       },
     });
     await this.emitSnapshot();
   }
 
-  private async startGroup(group: RunStageGroup): Promise<RunStageGroupStart> {
+  private async startGroup(
+    group: RunStageGroup,
+    lifecycleStartedAt: number,
+  ): Promise<RunStageGroupStart> {
     if (group.mode === "parallel") {
-      const settled = await Promise.allSettled(group.stages.map((stage) => this.startStage(stage)));
+      const settled = await Promise.allSettled(group.stages.map((stage) =>
+        this.startStage(stage, group.mode, lifecycleStartedAt)
+      ));
       return settled.reduce<RunStageGroupStart>((result, entry) => {
         if (entry.status === "rejected") {
           result.errors.push(entry.reason);
@@ -197,7 +217,7 @@ export class RunStageExecutor {
     for (const stage of group.stages) {
       result.entered.push(stage);
       try {
-        await this.startStage(stage);
+        await this.startStage(stage, group.mode, lifecycleStartedAt);
         if (this.terminationReason) break;
       } catch (error) {
         result.errors.push(error);
@@ -207,36 +227,66 @@ export class RunStageExecutor {
     return result;
   }
 
-  private async startStage(stage: RunStage): Promise<void> {
+  private async startStage(
+    stage: RunStage,
+    groupMode: RunStageGroup["mode"],
+    lifecycleStartedAt: number,
+  ): Promise<void> {
     const startedAt = Date.now();
     this.updateStage(stage.id, { status: "running", error: undefined });
+    const position = this.stagePosition(stage.id);
+    const startedProgress = this.lifecycleProgress();
     this.logger.info({
       module: "run.lifecycle",
       event: "run_stage_started",
-      data: { stage: stage.id },
+      message: `Starting stage ${stage.id} (${position.stageIndex}/${position.stageCount}) in the ${groupMode} group.`,
+      data: {
+        stage: stage.id,
+        ...position,
+        groupMode,
+        completedStages: startedProgress.completedStages,
+        remainingStages: startedProgress.remainingStages,
+        elapsedMs: Math.max(0, Date.now() - lifecycleStartedAt),
+      },
     });
     await this.emitSnapshot();
     try {
       await stage.start();
       this.updateStage(stage.id, { status: "completed", error: undefined });
+      const durationMs = Math.max(0, Date.now() - startedAt);
+      const completedProgress = this.lifecycleProgress();
       this.logger.info({
         module: "run.lifecycle",
         event: "run_stage_completed",
+        message: `Completed stage ${stage.id} (${completedProgress.completedStages}/${position.stageCount}); ${completedProgress.remainingStages} remain.`,
         data: {
           stage: stage.id,
-          durationMs: Math.max(0, Date.now() - startedAt),
+          ...position,
+          groupMode,
+          durationMs,
+          completedStages: completedProgress.completedStages,
+          remainingStages: completedProgress.remainingStages,
+          elapsedMs: Math.max(0, Date.now() - lifecycleStartedAt),
         },
       });
       await this.emitSnapshot();
     } catch (error) {
       const text = errorText(error);
       this.updateStage(stage.id, { status: "failed", error: text });
+      const durationMs = Math.max(0, Date.now() - startedAt);
+      const failedProgress = this.lifecycleProgress();
       this.logger.error({
         module: "run.lifecycle",
         event: "run_stage_failed",
+        message: `Stage ${stage.id} failed after ${durationMs} ms; ${failedProgress.remainingStages} stages remain.`,
         data: {
           stage: stage.id,
-          durationMs: Math.max(0, Date.now() - startedAt),
+          ...position,
+          groupMode,
+          durationMs,
+          completedStages: failedProgress.completedStages,
+          remainingStages: failedProgress.remainingStages,
+          elapsedMs: Math.max(0, Date.now() - lifecycleStartedAt),
           error: text,
         },
       });
@@ -245,15 +295,29 @@ export class RunStageExecutor {
     }
   }
 
-  private async failStartup(errors: unknown[]): Promise<void> {
+  private async failStartup(errors: unknown[], lifecycleStartedAt: number): Promise<void> {
+    const failedProgress = this.lifecycleProgress();
+    const elapsedMs = Math.max(0, Date.now() - lifecycleStartedAt);
     this.status = "failed";
     await this.emitSnapshot();
-    await this.stopEnteredGroups(this.terminationReason ?? "startup_failed");
+    const stopReason = this.terminationReason ?? "startup_failed";
+    const stopErrorCount = await this.stopEnteredGroups(
+      stopReason,
+      this.terminationStartedAt ?? lifecycleStartedAt,
+    );
+    if (this.terminationStartedAt !== undefined) {
+      this.logTerminationCompleted(stopReason, stopErrorCount, this.terminationStartedAt);
+    }
     this.logger.error({
       module: "run.lifecycle",
       event: "run_startup_failed",
+      message: `Run lifecycle startup failed after ${elapsedMs} ms with ${errors.length} ${errors.length === 1 ? "error" : "errors"}.`,
       data: {
         errorCount: errors.length,
+        stageCount: failedProgress.stageCount,
+        completedStages: failedProgress.completedStages,
+        remainingStages: failedProgress.remainingStages,
+        elapsedMs,
       },
     });
     this.resolveStartupTermination?.();
@@ -262,8 +326,10 @@ export class RunStageExecutor {
 
   private async finishStartupTermination(): Promise<void> {
     const reason = this.terminationReason ?? "termination_requested";
-    const errorCount = await this.stopEnteredGroups(reason);
+    const startedAt = this.terminationStartedAt ?? Date.now();
+    const errorCount = await this.stopEnteredGroups(reason, startedAt);
     this.status = errorCount === 0 ? "terminated" : "failed";
+    this.logTerminationCompleted(reason, errorCount, startedAt);
     await this.emitSnapshot();
     this.resolveStartupTermination?.();
     this.resolveStartupTermination = undefined;
@@ -271,40 +337,29 @@ export class RunStageExecutor {
 
   private async runTermination(reason: string): Promise<void> {
     const startedAt = Date.now();
+    this.terminationStartedAt = startedAt;
     this.status = "terminating";
-    this.logger.info({
-      module: "run.lifecycle",
-      event: "run_termination_started",
-      data: { reason },
-    });
+    this.logTerminationStarted(reason, startedAt);
     await this.emitSnapshot();
-    const errorCount = await this.stopEnteredGroups(reason);
+    const errorCount = await this.stopEnteredGroups(reason, startedAt);
     this.status = errorCount === 0 ? "terminated" : "failed";
-    this.logger.info({
-      module: "run.lifecycle",
-      event: "run_termination_completed",
-      data: {
-        reason,
-        errorCount,
-        durationMs: Math.max(0, Date.now() - startedAt),
-      },
-    });
+    this.logTerminationCompleted(reason, errorCount, startedAt);
     await this.emitSnapshot();
   }
 
-  private async stopEnteredGroups(reason: string): Promise<number> {
+  private async stopEnteredGroups(reason: string, lifecycleStartedAt: number): Promise<number> {
     let errorCount = 0;
     for (const group of [...this.enteredGroups].reverse()) {
       if (group.mode === "parallel") {
         const settled = await Promise.allSettled(group.stages.map((stage) =>
-          this.stopStage(stage, reason)
+          this.stopStage(stage, reason, group.mode, lifecycleStartedAt)
         ));
         errorCount += settled.filter((entry) => entry.status === "rejected").length;
         continue;
       }
       for (const stage of [...group.stages].reverse()) {
         try {
-          await this.stopStage(stage, reason);
+          await this.stopStage(stage, reason, group.mode, lifecycleStartedAt);
         } catch {
           errorCount += 1;
         }
@@ -314,29 +369,51 @@ export class RunStageExecutor {
     return errorCount;
   }
 
-  private async stopStage(stage: RunStage, reason: string): Promise<void> {
+  private async stopStage(
+    stage: RunStage,
+    reason: string,
+    groupMode: RunStageGroup["mode"],
+    lifecycleStartedAt: number,
+  ): Promise<void> {
     const current = this.stageSnapshots.get(stage.id);
     if (!current || current.status === "stopped") return;
+    const startedAt = Date.now();
+    const position = this.stagePosition(stage.id);
     this.updateStage(stage.id, { status: "stopping", error: undefined });
     await this.emitSnapshot();
     try {
       await stage.stop?.(reason);
       this.updateStage(stage.id, { status: "stopped", error: undefined });
+      const durationMs = Math.max(0, Date.now() - startedAt);
       this.logger.info({
         module: "run.lifecycle",
         event: "run_stage_stopped",
-        data: { stage: stage.id, reason },
+        message: `Stopped stage ${stage.id} in ${durationMs} ms because ${reason}.`,
+        data: {
+          stage: stage.id,
+          reason,
+          ...position,
+          groupMode,
+          durationMs,
+          elapsedMs: Math.max(0, Date.now() - lifecycleStartedAt),
+        },
       });
       await this.emitSnapshot();
     } catch (error) {
       const text = errorText(error);
       this.updateStage(stage.id, { status: "failed", error: text });
+      const durationMs = Math.max(0, Date.now() - startedAt);
       this.logger.error({
         module: "run.lifecycle",
         event: "run_stage_stop_failed",
+        message: `Stage ${stage.id} failed to stop after ${durationMs} ms because ${reason}.`,
         data: {
           stage: stage.id,
           reason,
+          ...position,
+          groupMode,
+          durationMs,
+          elapsedMs: Math.max(0, Date.now() - lifecycleStartedAt),
           error: text,
         },
       });
@@ -366,9 +443,68 @@ export class RunStageExecutor {
       this.logger.warn({
         module: "run.lifecycle",
         event: "run_lifecycle_state_publish_failed",
+        message: `Failed to publish the ${this.status} run lifecycle snapshot.`,
         data: { error: errorText(error) },
       });
     }
+  }
+
+  private lifecycleProgress(): {
+    stageCount: number;
+    completedStages: number;
+    remainingStages: number;
+  } {
+    const snapshot = this.snapshot();
+    return {
+      stageCount: snapshot.totalStages,
+      completedStages: snapshot.completedStages,
+      remainingStages: Math.max(0, snapshot.totalStages - snapshot.completedStages),
+    };
+  }
+
+  private stagePosition(stageId: string): { stageIndex: number; stageCount: number } {
+    const stageIds = [...this.stageSnapshots.keys()];
+    const stageIndex = stageIds.indexOf(stageId);
+    if (stageIndex < 0) throw new Error(`Unknown run stage: ${stageId}`);
+    return {
+      stageIndex: stageIndex + 1,
+      stageCount: stageIds.length,
+    };
+  }
+
+  private logTerminationStarted(reason: string, startedAt: number): void {
+    const progress = this.lifecycleProgress();
+    this.logger.info({
+      module: "run.lifecycle",
+      event: "run_termination_started",
+      message: `Run termination started because ${reason}; ${progress.completedStages}/${progress.stageCount} stages had completed.`,
+      data: {
+        reason,
+        stageCount: progress.stageCount,
+        completedStages: progress.completedStages,
+        remainingStages: progress.remainingStages,
+        elapsedMs: Math.max(0, Date.now() - startedAt),
+      },
+    });
+  }
+
+  private logTerminationCompleted(reason: string, errorCount: number, startedAt: number): void {
+    const durationMs = Math.max(0, Date.now() - startedAt);
+    const progress = this.lifecycleProgress();
+    this.logger.info({
+      module: "run.lifecycle",
+      event: "run_termination_completed",
+      message: `Run termination completed in ${durationMs} ms with ${errorCount} ${errorCount === 1 ? "stop error" : "stop errors"}.`,
+      data: {
+        reason,
+        errorCount,
+        durationMs,
+        stageCount: progress.stageCount,
+        completedStages: progress.completedStages,
+        remainingStages: progress.remainingStages,
+        elapsedMs: durationMs,
+      },
+    });
   }
 }
 

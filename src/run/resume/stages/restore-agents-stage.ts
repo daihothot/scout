@@ -6,6 +6,7 @@ import {
   readdirSync,
   readSync,
   realpathSync,
+  type Stats,
 } from "node:fs";
 import {
   isAbsolute,
@@ -132,8 +133,11 @@ export class RestoreAgentsStage implements RunStage {
       }
       // Codex does not create a session row/file until a thread produces a
       // turn. A journaled thread with no such Codex record has no resumable
-      // state; initialize it through the same start path used for a new run.
-      await agent.startThread();
+      // state; explicitly replace that journaled identity with a new thread.
+      await agent.restartThread({
+        previousThread: thread,
+        reason: "codex_rollout_not_persisted",
+      });
       return;
     }
     await agent.resumeThread({
@@ -212,57 +216,72 @@ function locatePersistedRollouts(input: {
     }
   };
   requireDirectory(codexHome, "Codex home");
-  requireDirectory(sessionsRoot, "Codex sessions root");
 
   const runRootReal = realpathSync(runRoot);
   const codexHomeReal = realpathSync(codexHome);
   assertInside(codexHomeReal, runRootReal, "Codex home");
-  const sessionsRootReal = realpathSync(sessionsRoot);
-  assertInside(sessionsRootReal, codexHomeReal, "Codex sessions root");
 
   const wantedThreadIds = new Set(input.threadIds);
   const requiredThreadIds = new Set(input.requiredThreadIds);
   const matches = new Map<string, string[]>();
-  const visit = (directory: string): void => {
-    const directoryReal = realpathSync(directory);
-    assertInside(directoryReal, sessionsRootReal, "Codex sessions directory");
-    const entries = readdirSync(directory, { withFileTypes: true })
-      .sort((left, right) => left.name.localeCompare(right.name));
-    for (const entry of entries) {
-      const path = join(directory, entry.name);
-      const stat = lstatSync(path);
-      if (stat.isSymbolicLink()) {
-        throw new Error(`Refusing symlink beneath Codex sessions: ${path}.`);
-      }
-      if (stat.isDirectory()) {
-        visit(path);
-        continue;
-      }
-      if (!stat.isFile() || !entry.name.endsWith(".jsonl")) continue;
-
-      const pathReal = realpathSync(path);
-      assertInside(pathReal, sessionsRootReal, "Codex rollout");
-      const firstLine = readFirstLine(path);
-      let firstRecord: unknown;
-      try {
-        firstRecord = JSON.parse(firstLine);
-      } catch {
-        // Codex may leave unrelated or partially written JSONL files in the
-        // copied sessions tree. They are not usable rollout candidates and
-        // must not prevent valid persisted threads from being restored.
-        continue;
-      }
-      if (!isSessionMeta(firstRecord)) continue;
-      const threadId = firstRecord.payload.id;
-      if (!wantedThreadIds.has(threadId)) continue;
-      const rolloutPath = relative(codexHome, path);
-      assertRelativeSessionsPath(rolloutPath, path);
-      const threadMatches = matches.get(threadId) ?? [];
-      threadMatches.push(rolloutPath);
-      matches.set(threadId, threadMatches);
+  let sessionsStat: Stats | undefined;
+  try {
+    sessionsStat = lstatSync(sessionsRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(`Cannot inspect Codex sessions root ${sessionsRoot}.`, { cause: error });
     }
-  };
-  visit(sessionsRoot);
+  }
+  if (sessionsStat?.isSymbolicLink()) {
+    throw new Error(`Refusing symlinked Codex sessions root: ${sessionsRoot}.`);
+  }
+  if (sessionsStat && !sessionsStat.isDirectory()) {
+    throw new Error(`Expected Codex sessions root to be a directory: ${sessionsRoot}.`);
+  }
+  if (sessionsStat) {
+    const sessionsRootReal = realpathSync(sessionsRoot);
+    assertInside(sessionsRootReal, codexHomeReal, "Codex sessions root");
+    const visit = (directory: string): void => {
+      const directoryReal = realpathSync(directory);
+      assertInside(directoryReal, sessionsRootReal, "Codex sessions directory");
+      const entries = readdirSync(directory, { withFileTypes: true })
+        .sort((left, right) => left.name.localeCompare(right.name));
+      for (const entry of entries) {
+        const path = join(directory, entry.name);
+        const stat = lstatSync(path);
+        if (stat.isSymbolicLink()) {
+          throw new Error(`Refusing symlink beneath Codex sessions: ${path}.`);
+        }
+        if (stat.isDirectory()) {
+          visit(path);
+          continue;
+        }
+        if (!stat.isFile() || !entry.name.endsWith(".jsonl")) continue;
+
+        const pathReal = realpathSync(path);
+        assertInside(pathReal, sessionsRootReal, "Codex rollout");
+        const firstLine = readFirstLine(path);
+        let firstRecord: unknown;
+        try {
+          firstRecord = JSON.parse(firstLine);
+        } catch {
+          // Codex may leave unrelated or partially written JSONL files in the
+          // copied sessions tree. They are not usable rollout candidates and
+          // must not prevent valid persisted threads from being restored.
+          continue;
+        }
+        if (!isSessionMeta(firstRecord)) continue;
+        const threadId = firstRecord.payload.id;
+        if (!wantedThreadIds.has(threadId)) continue;
+        const rolloutPath = relative(codexHome, path);
+        assertRelativeSessionsPath(rolloutPath, path);
+        const threadMatches = matches.get(threadId) ?? [];
+        threadMatches.push(rolloutPath);
+        matches.set(threadId, threadMatches);
+      }
+    };
+    visit(sessionsRoot);
+  }
 
   const result = new Map<string, string>();
   for (const threadId of wantedThreadIds) {

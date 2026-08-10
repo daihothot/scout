@@ -75,6 +75,40 @@ test("Logger pretty-prints structured data below the event header", () => {
   assert.match(events[0] ?? "", /yaml: \|\n    name: scout\n    status: ok/);
 });
 
+test("Logger writes a summarized message between the header and structured data", () => {
+  const root = mkdtempSync(join(tmpdir(), "scout-logger-message-test-"));
+  const logger = new Logger({
+    runId: "run-message",
+    logsRoot: join(root, "logs"),
+  });
+
+  logger.info({
+    module: "run.lifecycle",
+    event: "run_stage_started",
+    message: "Starting stage restore_environment (2/8) in the serial group.",
+    data: { stage: "restore_environment" },
+  });
+  logger.info({
+    module: "run.lifecycle",
+    event: "legacy_event",
+    data: { unchanged: true },
+  });
+  logger.warn({
+    module: "run.lifecycle",
+    event: "long_message",
+    message: "x".repeat(4100),
+  });
+
+  const events = readEvents(join(root, "logs", "runtime.log"));
+  assert.match(
+    events[0] ?? "",
+    /event=run_stage_started run=run-message\nmessage: Starting stage restore_environment \(2\/8\) in the serial group\.\ndata:\n  stage: "restore_environment"/,
+  );
+  assert.match(events[1] ?? "", /event=legacy_event run=run-message\ndata:/);
+  assert.equal(events[1]?.includes("\nmessage:"), false);
+  assert.match((events[2] ?? "").replaceAll("\n  ", ""), /\.\.\.\[truncated:4100\]/);
+});
+
 test("Logger supports custom redactor and summarizer hooks", () => {
   const root = mkdtempSync(join(tmpdir(), "scout-logger-test-"));
   const logger = new Logger({

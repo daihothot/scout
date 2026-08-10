@@ -8,7 +8,7 @@ import {
   preflightCodexAppServerMount,
   summarizeAgentServerPreflight,
 } from "../../src/agent-server/codex/app-server-preflight.js";
-import type { CodexMount } from "../../src/asset-store/types.js";
+import type { CodexMount } from "../../src/asset-store/contracts/mount.js";
 
 test("mount preflight reports missing profile roots instead of deferring to a turn", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-root-preflight-"));

@@ -103,9 +103,9 @@ export class RestoreEnvironmentStage implements RunStage {
           parentAssetCommitId: persisted.assetCommit.parentAssetCommitId,
           mountId: persisted.assetCommit.mountId,
           resourceHash: persisted.assetCommit.resourceHash,
-          allowLegacyResourceIdentityMigration:
-            persisted.allowLegacyResourceIdentityMigration,
         },
+        allowLegacyResourceIdentityMigration:
+          persisted.allowLegacyResourceIdentityMigration,
         onPreparationDecision: (decision, reason) => {
           const planned = plansByRole.get(persisted.role)?.inspection.decision;
           if (planned && planned !== decision) {

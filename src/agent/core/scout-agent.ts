@@ -3,7 +3,8 @@ import type {
   AppServerThreadGoalState,
 } from "../../agent-server/codex/app-server-event-store.js";
 import type { CodexAppServerClient } from "../../agent-server/codex/app-server-client.js";
-import type { AssetCommit, CodexMount } from "../../asset-store/types.js";
+import type { AssetCommit } from "../../asset-store/contracts/asset-commit.js";
+import type { CodexMount } from "../../asset-store/contracts/mount.js";
 import type { Result } from "../../core/result.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import { AgentRunner } from "../runner/types.js";
@@ -159,6 +160,43 @@ export abstract class ScoutAgent {
     if (this.thread) {
       throw new Error(`Agent ${this.agentId} thread is closed.`);
     }
+    const thread = await this.openNewThread();
+    this.eventBus.publish(AgentEvents.thread.started, structuredClone(thread));
+    await this.checkThread(thread);
+    return thread;
+  }
+
+  async restartThread(input: {
+    previousThread: AgentThreadSnapshot;
+    reason: string;
+  }): Promise<AgentThreadSnapshot> {
+    if (
+      input.previousThread.agentId !== this.agentId
+      || input.previousThread.role !== this.role
+    ) {
+      throw new Error(
+        `Thread ${input.previousThread.threadId} does not belong to agent ${this.agentId}.`,
+      );
+    }
+    if (this.thread?.status === "active") return this.thread;
+    if (this.thread) {
+      throw new Error(`Agent ${this.agentId} thread is closed.`);
+    }
+    const thread = await this.openNewThread();
+    const restartedAt = thread.createdAt;
+    this.eventBus.publish(AgentEvents.thread.restarted, {
+      previousThreadId: input.previousThread.threadId,
+      reason: input.reason,
+      restartedAt,
+      newThread: structuredClone(thread),
+    }, {
+      occurredAt: restartedAt,
+    });
+    await this.checkThread(thread);
+    return thread;
+  }
+
+  private async openNewThread(): Promise<AgentThreadSnapshot> {
     const started = await this.appServer.startThread({
       model: this.spec.model.id,
       modelProvider: this.spec.model.provider,
@@ -184,8 +222,6 @@ export abstract class ScoutAgent {
       startResponse: started.response,
     };
     this.registry.bindThread(this.agentId, this.thread.threadId);
-    this.eventBus.publish(AgentEvents.thread.started, structuredClone(this.thread));
-    await this.checkThread(this.thread);
     return this.thread;
   }
 

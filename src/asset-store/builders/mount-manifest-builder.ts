@@ -1,24 +1,24 @@
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { hashDirectory, sha256File } from "../../core/fs.js";
 import type {
-  AgentProfile,
   MaterializedMcpServer,
-  MountManifest,
-  MountMaterializationIssue,
   McpServersFile,
   ShellToolContract,
-} from "../types.js";
+} from "../contracts/resources.js";
+import type { AgentProfile } from "../contracts/profile.js";
+import type { MountManifest } from "../contracts/manifest.js";
+import type { MountMaterializationIssue } from "../contracts/mount.js";
 import { CodexAssetLayout, roleAgentPath } from "../assets/asset-layout.js";
-import { assertMountPathSegment } from "./helpers.js";
 import {
+  assertMountPathSegment,
   assetSourcePath,
   customAgentNameFromPath,
   resolveAssetRelativePath,
   resolveRequiredAssetFile,
   relativeOrSelf,
   skillNameFromPath,
-} from "./context-builder.js";
+} from "../files/asset-paths.js";
 
 /** Inputs describing the selected source resources before mount files exist. */
 export interface AssetInventoryInput {
@@ -69,19 +69,6 @@ export class MountManifestBuilder {
   /** Combines source inventory with generated paths and mount identity metadata. */
   build(fields: MountManifestFields): MountManifest {
     return buildMountManifestInternal({ ...this.inventoryInput, ...fields });
-  }
-}
-
-/** Reads a non-symlink manifest when present; malformed manifests are treated as absent. */
-export function readExistingMountManifest(mountRoot: string): MountManifest | undefined {
-  const path = join(mountRoot, "mount-manifest.json");
-  if (!existsSync(path)) return undefined;
-  try {
-    const stat = lstatSync(path);
-    if (!stat.isFile() || stat.isSymbolicLink()) return undefined;
-    return JSON.parse(readFileSync(path, "utf8")) as MountManifest;
-  } catch {
-    return undefined;
   }
 }
 

@@ -49,6 +49,7 @@ export async function startRun(
   runtimeLogger.info({
     module: "run.lifecycle",
     event: "run_started",
+    message: `Created Scout run ${runId} in ${repoRoot}.`,
     data: { cwd: repoRoot },
   });
 
@@ -80,6 +81,7 @@ export async function startRun(
     runtimeLogger.error({
       module: "run.lifecycle",
       event: "run_start_failed",
+      message: `Scout run ${runId} failed during startup.`,
       data: {
         error: errorText(error),
         lifecycle: executor.snapshot(),
@@ -99,6 +101,7 @@ export async function startRun(
       runtimeLogger.warn({
         module: "interaction.gateway",
         event: "start_failure_disclosure_failed",
+        message: `Failed to disclose the startup failure for Scout run ${runId}.`,
         data: { error: errorText(disclosureError) },
       });
     }
@@ -131,6 +134,7 @@ export async function startRun(
     runtimeLogger.error({
       module: "run.lifecycle",
       event: "run_ready_commit_failed",
+      message: `Scout run ${runId} started but its ready state could not be persisted.`,
       data: { error: errorText(error) },
     });
     throw error;
@@ -145,6 +149,7 @@ export async function startRun(
   scope.logger.info({
     module: "run.lifecycle",
     event: "run_ready",
+    message: `Scout run ${runId} is ready with ${scope.agentRegistry.listAgents().length} agents.`,
     data: {
       durationMs: Math.max(0, Date.now() - runStartedAt),
       agents: scope.agentRegistry.listAgents().map((agent) => agent.agentId),

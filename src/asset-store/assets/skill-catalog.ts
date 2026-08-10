@@ -4,18 +4,7 @@ import {
   ScoutAgentPhases,
   type ScoutAgentPhase,
 } from "../../agent/thread/types.js";
-
-/** Validated frontmatter projection used for Skill routing and dependency loading. */
-export interface ScoutSkillCatalogEntry {
-  name: string;
-  description: string;
-  summary: string;
-  phase: ScoutAgentPhase[];
-  family?: string[];
-  tags: string[];
-  requiredSkills: string[];
-  path: string;
-}
+import type { ScoutSkillCatalogEntry } from "../contracts/skill.js";
 
 interface FrontmatterField {
   path: string[];

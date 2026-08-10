@@ -4,11 +4,17 @@ import {
   RunStageExecutor,
   type RunStage,
 } from "../../src/run/lifecycle/index.js";
-import type { Logger } from "../../src/core/logging/index.js";
+import type { Logger, LogInput, LogLevel } from "../../src/core/logging/index.js";
+
+interface CapturedLog {
+  level: LogLevel;
+  input: LogInput;
+}
 
 test("RunStageExecutor starts registered groups and terminates them in reverse dependency order", async () => {
   const activity: string[] = [];
-  const boot = new RunStageExecutor({ runId: "run-1", logger: noopLogger() });
+  const logs: CapturedLog[] = [];
+  const boot = new RunStageExecutor({ runId: "run-1", logger: recordingLogger(logs) });
   boot.registerSerial(
     stage("a", activity),
     stage("b", activity),
@@ -31,6 +37,29 @@ test("RunStageExecutor starts registered groups and terminates them in reverse d
   assert.ok(stopB < stopA);
   assert.equal(boot.snapshot().status, "terminated");
   assert.ok(boot.snapshot().stages.every((entry) => entry.status === "stopped"));
+
+  const stageStarted = capturedEvent(logs, "run_stage_started", "a");
+  assert.match(stageStarted.input.message ?? "", /stage a \(1\/4\).*serial group/);
+  assert.deepEqual(stageStarted.input.data, {
+    stage: "a",
+    stageIndex: 1,
+    stageCount: 4,
+    groupMode: "serial",
+    completedStages: 0,
+    remainingStages: 4,
+    elapsedMs: (stageStarted.input.data as Record<string, unknown>).elapsedMs,
+  });
+  assertNonNegativeNumber((stageStarted.input.data as Record<string, unknown>).elapsedMs);
+
+  const stageCompleted = capturedEvent(logs, "run_stage_completed", "d");
+  assert.equal((stageCompleted.input.data as Record<string, unknown>).stageIndex, 4);
+  assert.equal((stageCompleted.input.data as Record<string, unknown>).groupMode, "parallel");
+  assert.equal((stageCompleted.input.data as Record<string, unknown>).completedStages, 4);
+  assert.equal((stageCompleted.input.data as Record<string, unknown>).remainingStages, 0);
+
+  const stageStopped = capturedEvent(logs, "run_stage_stopped", "a");
+  assertNonNegativeNumber((stageStopped.input.data as Record<string, unknown>).durationMs);
+  assertNonNegativeNumber((stageStopped.input.data as Record<string, unknown>).elapsedMs);
 });
 
 test("RunStageExecutor waits for a parallel group to settle before rolling back successful stages", async () => {
@@ -72,6 +101,7 @@ test("RunStageExecutor waits for a parallel group to settle before rolling back 
 
 test("RunStageExecutor terminates after the active startup group settles and skips later groups", async () => {
   const activity: string[] = [];
+  const logs: CapturedLog[] = [];
   let releaseStart: (() => void) | undefined;
   const started = new Promise<void>((resolve) => {
     releaseStart = resolve;
@@ -80,7 +110,7 @@ test("RunStageExecutor terminates after the active startup group settles and ski
   const running = new Promise<void>((resolve) => {
     markRunning = resolve;
   });
-  const boot = new RunStageExecutor({ runId: "run-3", logger: noopLogger() });
+  const boot = new RunStageExecutor({ runId: "run-3", logger: recordingLogger(logs) });
   boot.registerSerial(
     {
       id: "slow",
@@ -105,6 +135,14 @@ test("RunStageExecutor terminates after the active startup group settles and ski
   await assert.rejects(startup, /terminated/);
   assert.deepEqual(activity, ["start:slow", "stop:slow:exit_requested"]);
   assert.equal(boot.snapshot().status, "terminated");
+  assert.deepEqual(
+    logs
+      .filter(({ input }) => input.event.startsWith("run_termination_"))
+      .map(({ input }) => input.event),
+    ["run_termination_started", "run_termination_completed"],
+  );
+  const completed = capturedEvent(logs, "run_termination_completed");
+  assertNonNegativeNumber((completed.input.data as Record<string, unknown>).durationMs);
 });
 
 test("RunStageExecutor rejects duplicate and late registration and shares termination", async () => {
@@ -169,4 +207,30 @@ function noopLogger(): Logger {
     warn: () => undefined,
     error: () => undefined,
   } as unknown as Logger;
+}
+
+function recordingLogger(events: CapturedLog[]): Logger {
+  const record = (level: LogLevel) => (input: LogInput): void => {
+    events.push({ level, input });
+  };
+  return {
+    debug: record("debug"),
+    info: record("info"),
+    warn: record("warn"),
+    error: record("error"),
+  } as unknown as Logger;
+}
+
+function capturedEvent(logs: CapturedLog[], event: string, stage?: string): CapturedLog {
+  const matched = logs.find(({ input }) =>
+    input.event === event
+    && (stage === undefined || (input.data as Record<string, unknown> | undefined)?.stage === stage)
+  );
+  assert.ok(matched, `Expected captured log event ${event}${stage ? ` for ${stage}` : ""}.`);
+  return matched;
+}
+
+function assertNonNegativeNumber(value: unknown): void {
+  assert.equal(typeof value, "number");
+  assert.ok((value as number) >= 0);
 }
