@@ -204,15 +204,23 @@ function preflightPassed(result: AgentServerPreflightReport): boolean {
 
 function inspectRootAccess(mount: CodexMount): NonNullable<AgentServerPreflightReport["rootAccess"]> {
   const writableRoots = new Set([
+    mount.artifactRoot,
     ...mount.writableRoots,
     ...mount.mcpServers.flatMap((server) => server.writableRoots),
   ]);
+  const readableRoots = new Set([
+    mount.mountRoot,
+    ...mount.readableRoots,
+  ]);
   const roots = [...new Set([
-    ...mount.trustedRoots,
-    ...mount.mcpServers.flatMap((server) => server.trustedRoots),
+    ...readableRoots,
     ...writableRoots,
   ])].map((path) => {
-    const access = writableRoots.has(path) ? "writable" as const : "trusted" as const;
+    const access = writableRoots.has(path)
+      ? "writable" as const
+      : readableRoots.has(path)
+      ? "readable" as const
+      : "readable" as const;
     try {
       if (!statSync(path).isDirectory()) {
         throw new Error("path is not a directory");

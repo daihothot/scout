@@ -9,7 +9,10 @@ import type {
 import type { CodexMount } from "./contracts/mount.js";
 import { materializeCodexMount } from "./materialize.js";
 import { MountPreparation } from "./preparation.js";
-import { collectMountTrustedRoots, collectMountWritableRoots } from "./mount/preflight.js";
+import {
+  collectMountReadableRoots,
+  collectMountWritableRoots,
+} from "./mount/preflight.js";
 
 /**
  * Public asset-store facade used by run stages. It delegates resource reading,
@@ -42,9 +45,9 @@ export class AssetStore {
     return buildAssetCommit(options);
   }
 
-  /** Returns the trusted roots declared by the mount and its MCP servers. */
-  trustedRootsForMount(mount: CodexMount): string[] {
-    return collectMountTrustedRoots(mount);
+  /** Returns the Agent-shell readable roots owned by runtime and the role profile. */
+  readableRootsForMount(mount: CodexMount): string[] {
+    return collectMountReadableRoots(mount);
   }
 
   /** Returns the writable roots declared by the mount and its MCP servers. */

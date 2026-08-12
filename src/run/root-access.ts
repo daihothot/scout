@@ -7,18 +7,21 @@ import type {
 } from "./types.js";
 
 /**
- * Derives deduplicated trusted, writable, and mount roots from prepared role
+ * Derives deduplicated read, write, and mount roots from prepared role
  * mounts. It does not decide policy or mutate either the asset store or run.
  */
 export function buildRunRootAccess(
-  assetStore: Pick<AssetStore, "trustedRootsForMount" | "writableRootsForMount">,
+  assetStore: Pick<
+    AssetStore,
+    "readableRootsForMount" | "writableRootsForMount"
+  >,
   agents: Record<ScoutAgentRole, RunAgentEnvironment>,
 ): RunRootAccess {
   const preparedAgents = Object.values(agents);
   return {
     mountRoots: uniqueResolved(preparedAgents.map((agent) => agent.mount.mountRoot)),
-    trustedRoots: uniqueResolved(preparedAgents.flatMap((agent) =>
-      assetStore.trustedRootsForMount(agent.mount)
+    readableRoots: uniqueResolved(preparedAgents.flatMap((agent) =>
+      assetStore.readableRootsForMount(agent.mount)
     )),
     writableRoots: uniqueResolved(preparedAgents.flatMap((agent) =>
       assetStore.writableRootsForMount(agent.mount)

@@ -82,7 +82,7 @@ function cloneAgentProfile(
     shellTools: [...(profile.shellTools ?? [])],
     mcpServers: [...profile.mcpServers],
     plugins: [...profile.plugins],
-    trustedRoots: [...(profile.trustedRoots ?? [])],
+    readableRoots: [...(profile.readableRoots ?? [])],
     writableRoots: [...(profile.writableRoots ?? [])],
   };
 }

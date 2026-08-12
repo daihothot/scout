@@ -24,7 +24,7 @@ export interface AgentProfileDefinition {
   shellTools?: string[];
   mcpServers: string[];
   plugins: string[];
-  trustedRoots?: string[];
+  readableRoots?: string[];
   writableRoots?: string[];
 }
 

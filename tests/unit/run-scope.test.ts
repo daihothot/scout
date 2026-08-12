@@ -108,7 +108,7 @@ function createRunEnvironment(runId: string): RunEnvironment {
     agents: {} as RunEnvironment["agents"],
     rootAccess: {
       mountRoots: [],
-      trustedRoots: [],
+      readableRoots: [],
       writableRoots: [],
     },
     contextBundle: {

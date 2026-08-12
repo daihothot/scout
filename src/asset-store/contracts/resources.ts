@@ -10,7 +10,6 @@ export interface McpServersFile {
     args?: string[];
     cwd?: string;
     env?: Record<string, string>;
-    trustedRoots?: string[];
     writableRoots?: string[];
     smoke?: {
       tool: string;
@@ -27,7 +26,6 @@ export interface MaterializedMcpServer {
   args: string[];
   cwd?: string;
   env?: Record<string, string>;
-  trustedRoots: string[];
   writableRoots: string[];
   smoke?: {
     tool: string;

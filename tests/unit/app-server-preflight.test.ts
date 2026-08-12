@@ -15,7 +15,7 @@ test("mount preflight reports missing profile roots instead of deferring to a tu
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const mountRoot = join(root, "mount");
   const artifactRoot = join(root, "artifacts");
-  const missingTrustedRoot = join(root, "missing-knowledge");
+  const missingReadableRoot = join(root, "missing-knowledge");
   const missingWritableRoot = join(root, "missing-codebase");
   mkdirSync(mountRoot, { recursive: true });
   mkdirSync(artifactRoot, { recursive: true });
@@ -24,7 +24,7 @@ test("mount preflight reports missing profile roots instead of deferring to a tu
       root,
       mountRoot,
       artifactRoot,
-      trustedRoots: [mountRoot, missingTrustedRoot],
+      readableRoots: [mountRoot, missingReadableRoot],
       writableRoots: [artifactRoot, missingWritableRoot],
     }),
     appServer: testAppServer(),
@@ -36,13 +36,13 @@ test("mount preflight reports missing profile roots instead of deferring to a tu
     report.rootAccess?.roots.filter((entry) => entry.status === "failed")
       .map((entry) => [entry.path, entry.access]),
     [
-      [missingTrustedRoot, "trusted"],
+      [missingReadableRoot, "readable"],
       [missingWritableRoot, "writable"],
     ],
   );
 });
 
-test("mount preflight accepts readable trusted roots and writable roots", async (t) => {
+test("mount preflight accepts readable and writable roots", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-root-preflight-passed-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const mountRoot = join(root, "mount");
@@ -54,7 +54,7 @@ test("mount preflight accepts readable trusted roots and writable roots", async 
       root,
       mountRoot,
       artifactRoot,
-      trustedRoots: [mountRoot],
+      readableRoots: [mountRoot],
       writableRoots: [artifactRoot],
     }),
     appServer: testAppServer(),
@@ -95,7 +95,7 @@ test("mount preflight redacts credentials from persisted config layers", async (
       root,
       mountRoot,
       artifactRoot,
-      trustedRoots: [mountRoot],
+      readableRoots: [mountRoot],
       writableRoots: [artifactRoot],
     }),
     appServer,
@@ -172,7 +172,7 @@ test("mount preflight serializes installs within the plugin-manager lock", async
       root,
       mountRoot,
       artifactRoot,
-      trustedRoots: [mountRoot],
+      readableRoots: [mountRoot],
       writableRoots: [artifactRoot],
       plugins: ["alpha", "beta"],
     }),
@@ -190,7 +190,7 @@ test("preflight persistence keeps catalog state without device-local payloads", 
     root,
     mountRoot: `${root}/agents/coordinator/mount`,
     artifactRoot: `${root}/agents/coordinator/artifacts`,
-    trustedRoots: [],
+    readableRoots: [],
     writableRoots: [],
   });
   const report = {
@@ -203,7 +203,7 @@ test("preflight persistence keeps catalog state without device-local payloads", 
         status: "passed" as const,
       }, {
         path: "/Users/source/.guru/knowledge",
-        access: "trusted" as const,
+        access: "readable" as const,
         status: "failed" as const,
         error: "missing source root\nfull stack",
       }],
@@ -282,7 +282,7 @@ function testMount(input: {
   root: string;
   mountRoot: string;
   artifactRoot: string;
-  trustedRoots: string[];
+  readableRoots: string[];
   writableRoots: string[];
   plugins?: string[];
 }): CodexMount {
@@ -304,7 +304,7 @@ function testMount(input: {
       shellTools: [],
       mcpServers: [],
       plugins: input.plugins ?? [],
-      trustedRoots: input.trustedRoots,
+      readableRoots: input.readableRoots,
       writableRoots: input.writableRoots,
     },
     assetCommitId: "ac_preflight",
@@ -314,7 +314,7 @@ function testMount(input: {
     artifactRoot: input.artifactRoot,
     logsRoot: join(input.root, "logs"),
     issues: [],
-    trustedRoots: input.trustedRoots,
+    readableRoots: input.readableRoots,
     writableRoots: input.writableRoots,
     shellTools: [],
     mcpServers: [],

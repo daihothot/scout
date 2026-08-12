@@ -48,10 +48,6 @@ export class McpServerBuilder {
           .map(([key, value]) => [key, resolveMountMacros(value, dynamicValues)] as const)
           .filter((entry) => entry[1].length > 0))
         : undefined;
-      const trustedRoots = (contract.trustedRoots ?? [])
-        .map((root) => resolveMountMacros(root, dynamicValues))
-        .filter((root) => root.length > 0)
-        .map((root) => resolve(root));
       const writableRoots = (contract.writableRoots ?? [])
         .map((root) => resolveMountMacros(root, dynamicValues))
         .filter((root) => root.length > 0)
@@ -63,7 +59,6 @@ export class McpServerBuilder {
         args,
         cwd,
         env,
-        trustedRoots,
         writableRoots,
         smoke: contract.smoke
           ? {

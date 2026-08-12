@@ -8,7 +8,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import readline from "node:readline";
 import {
   AppServerEventStore,
@@ -96,11 +96,12 @@ export interface CodexAppServerOptions {
 /** Optional Scout-facing inputs used to construct a `thread/start` request. */
 export interface ThreadStartOptions {
   cwd: string;
+  runtimeWorkspaceRoots?: string[];
   model?: string;
   modelProvider?: string;
   reasoningEffort?: CodexReasoningEffort;
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
-  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  permissions: string;
   ephemeral?: boolean;
   config?: Record<string, unknown>;
   baseInstructions?: string;
@@ -111,10 +112,11 @@ export interface ThreadStartOptions {
 /** Normalized `thread/start` payload sent to Codex after defaults are applied. */
 export interface ThreadStartRequest {
   cwd: string;
+  runtimeWorkspaceRoots?: string[];
   model?: string;
   modelProvider?: string;
   approvalPolicy: "never" | "on-request" | "on-failure" | "untrusted";
-  sandbox: "read-only" | "workspace-write" | "danger-full-access";
+  permissions: string;
   ephemeral: boolean;
   config?: Record<string, unknown>;
   baseInstructions?: string;
@@ -139,7 +141,7 @@ export interface ThreadResumeOptions {
   modelProvider?: string;
   reasoningEffort?: CodexReasoningEffort;
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
-  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  permissions: string;
   config?: Record<string, unknown>;
   baseInstructions?: string;
   developerInstructions?: string;
@@ -155,7 +157,7 @@ export interface ThreadResumeRequest {
   model?: string;
   modelProvider?: string;
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
-  sandbox?: "read-only" | "workspace-write" | "danger-full-access";
+  permissions: string;
   config?: Record<string, unknown>;
   baseInstructions?: string;
   developerInstructions?: string;
@@ -168,45 +170,6 @@ export interface ThreadResumeResponse {
   response: unknown;
 }
 
-/** Sandbox shape understood by the thread-settings update endpoint. */
-export type ThreadSandboxPolicy =
-  | {
-      type: "readOnly";
-      networkAccess?: boolean;
-    }
-  | {
-      type: "workspaceWrite";
-      writableRoots: string[];
-      networkAccess?: boolean;
-      excludeSlashTmp?: boolean;
-      excludeTmpdirEnvVar?: boolean;
-    };
-
-/** Settings that may be changed after a thread has been resumed. */
-export interface ThreadSettingsUpdateOptions {
-  threadId: string;
-  cwd?: string;
-  approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
-  sandboxPolicy?: ThreadSandboxPolicy;
-  timeoutMs?: number;
-}
-
-/** Normalized payload sent to `thread/settings/update`. */
-export interface ThreadSettingsUpdateRequest {
-  threadId: string;
-  cwd?: string;
-  approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
-  sandboxPolicy?: ThreadSandboxPolicy;
-}
-
-/** Confirmed settings response; the notification is validated before returning it. */
-export interface ThreadSettingsUpdateResponse {
-  threadId: string;
-  updateInput: ThreadSettingsUpdateRequest;
-  threadSettings: Record<string, unknown>;
-  response: unknown;
-}
-
 /** Prompt and execution policy for one Codex turn. */
 export interface TurnStartOptions {
   threadId: string;
@@ -216,8 +179,7 @@ export interface TurnStartOptions {
   reasoningEffort?: CodexReasoningEffort;
   reasoningSummary?: CodexReasoningSummary;
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
-  sandbox?: "readOnly" | "workspaceWrite";
-  writableRoots?: string[];
+  permissions: string;
   onStatusMessage?: (message: string) => void;
   onTurnStarted?: (turnId: string) => void;
 }
@@ -291,8 +253,6 @@ export class CodexAppServerClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly turnWaiters = new Map<string, TurnWaiter>();
-  private readonly settingsUpdateTails = new Map<string, Promise<void>>();
-  private readonly settingsUpdateWaiters = new Set<(error: Error) => void>();
   private readonly exclusiveOperationTails = new Map<
     AppServerExclusiveOperation,
     Promise<void>
@@ -378,8 +338,9 @@ export class CodexAppServerClient {
       model: options.model,
       modelProvider: options.modelProvider,
       cwd: options.cwd,
+      runtimeWorkspaceRoots: options.runtimeWorkspaceRoots,
       approvalPolicy: options.approvalPolicy ?? "never",
-      sandbox: options.sandbox ?? "workspace-write",
+      permissions: options.permissions,
       ephemeral: options.ephemeral ?? true,
       config: options.reasoningEffort === undefined
         ? options.config
@@ -392,6 +353,7 @@ export class CodexAppServerClient {
       dynamicTools: options.dynamicTools,
     });
     const response = await this.request("thread/start", startInput);
+    assertActivePermissionProfile(response, options.permissions, "started thread");
     return {
       threadId: readNestedString(response, ["thread", "id"]),
       startInput,
@@ -410,7 +372,7 @@ export class CodexAppServerClient {
       cwd: options.cwd,
       runtimeWorkspaceRoots: options.runtimeWorkspaceRoots,
       approvalPolicy: options.approvalPolicy,
-      sandbox: options.sandbox,
+      permissions: options.permissions,
       config: options.reasoningEffort === undefined
         ? options.config
         : {
@@ -442,6 +404,7 @@ export class CodexAppServerClient {
     assertResponseString("model", options.model);
     assertResponseString("modelProvider", options.modelProvider);
     assertResponseString("approvalPolicy", options.approvalPolicy);
+    assertActivePermissionProfile(responseObject, options.permissions, `resumed thread ${threadId}`);
     if (options.runtimeWorkspaceRoots !== undefined) {
       const actualRoots = responseObject.runtimeWorkspaceRoots;
       if (!Array.isArray(actualRoots)
@@ -450,20 +413,6 @@ export class CodexAppServerClient {
         || options.runtimeWorkspaceRoots.some((root) => !actualRoots.includes(root))) {
         throw new Error(
           `Codex resumed thread ${threadId} with unexpected runtime workspace roots.`,
-        );
-      }
-    }
-    if (options.sandbox !== undefined) {
-      const sandbox = readObject(responseObject.sandbox);
-      const expectedSandboxType = options.sandbox === "read-only"
-        ? "readOnly"
-        : options.sandbox === "workspace-write"
-        ? "workspaceWrite"
-        : "dangerFullAccess";
-      const actualSandboxType = readString(sandbox, "type");
-      if (actualSandboxType !== expectedSandboxType) {
-        throw new Error(
-          `Codex resumed thread ${threadId} with sandbox ${actualSandboxType}, expected ${expectedSandboxType}.`,
         );
       }
     }
@@ -486,220 +435,6 @@ export class CodexAppServerClient {
       resumeInput,
       response,
     };
-  }
-
-  /** Serializes per-thread settings updates and waits for Codex's confirming notification. */
-  async updateThreadSettings(
-    options: ThreadSettingsUpdateOptions,
-  ): Promise<ThreadSettingsUpdateResponse> {
-    const previous = this.settingsUpdateTails.get(options.threadId) ?? Promise.resolve();
-    const operation = previous.then(() => this.updateThreadSettingsOnce(options));
-    const tail = operation.then(() => undefined, () => undefined);
-    this.settingsUpdateTails.set(options.threadId, tail);
-    try {
-      return await operation;
-    } finally {
-      if (this.settingsUpdateTails.get(options.threadId) === tail) {
-        this.settingsUpdateTails.delete(options.threadId);
-      }
-    }
-  }
-
-  private async updateThreadSettingsOnce(
-    options: ThreadSettingsUpdateOptions,
-  ): Promise<ThreadSettingsUpdateResponse> {
-    const updateInput: ThreadSettingsUpdateRequest = cleanUndefined({
-      threadId: options.threadId,
-      cwd: options.cwd,
-      approvalPolicy: options.approvalPolicy,
-      sandboxPolicy: options.sandboxPolicy,
-    });
-    const assertStringSetting = (
-      threadSettings: Record<string, unknown>,
-      key: "cwd" | "approvalPolicy",
-      expected: string | undefined,
-      label: string,
-    ): void => {
-      if (expected === undefined) return;
-      const actual = threadSettings[key];
-      if (typeof actual !== "string" || actual !== expected) {
-        throw new Error(
-          `Codex updated thread ${options.threadId} ${label} to ${String(actual)}, expected ${expected}.`,
-        );
-      }
-    };
-    const assertBooleanSetting = (
-      policy: Record<string, unknown>,
-      key: "networkAccess" | "excludeSlashTmp" | "excludeTmpdirEnvVar",
-      expected: boolean | undefined,
-      label: string,
-    ): void => {
-      if (expected === undefined) return;
-      const actual = policy[key];
-      if (typeof actual !== "boolean" || actual !== expected) {
-        throw new Error(
-          `Codex updated thread ${options.threadId} ${label} to ${String(actual)}, expected ${String(expected)}.`,
-        );
-      }
-    };
-    const assertSandboxPolicy = (
-      threadSettings: Record<string, unknown>,
-      expectedPolicy: ThreadSandboxPolicy,
-    ): void => {
-      const rawPolicy = threadSettings.sandboxPolicy;
-      if (typeof rawPolicy !== "object" || rawPolicy === null || Array.isArray(rawPolicy)) {
-        throw new Error(
-          `Codex updated thread ${options.threadId} with an invalid sandbox policy.`,
-        );
-      }
-      const actualPolicy = rawPolicy as Record<string, unknown>;
-      const actualType = actualPolicy.type;
-      if (typeof actualType !== "string") {
-        throw new Error(
-          `Codex updated thread ${options.threadId} with an invalid sandbox policy type.`,
-        );
-      }
-      if (actualType !== expectedPolicy.type) {
-        throw new Error(
-          `Codex updated thread ${options.threadId} sandbox policy to ${actualType}, expected ${expectedPolicy.type}.`,
-        );
-      }
-
-      if (expectedPolicy.type === "workspaceWrite") {
-        const actualRoots = actualPolicy.writableRoots;
-        if (!Array.isArray(actualRoots)
-          || actualRoots.some((root) => typeof root !== "string")) {
-          throw new Error(
-            `Codex updated thread ${options.threadId} with unexpected sandbox writable roots.`,
-          );
-        }
-        const confirmedCwd = threadSettings.cwd;
-        if (typeof confirmedCwd !== "string") {
-          throw new Error(
-            `Codex updated thread ${options.threadId} with an invalid sandbox cwd.`,
-          );
-        }
-        const isCoveredByCwd = (root: string): boolean => {
-          const relativeRoot = relative(confirmedCwd, root);
-          return relativeRoot === ""
-            || (!isAbsolute(relativeRoot)
-              && relativeRoot !== ".."
-              && !relativeRoot.startsWith(`..${sep}`));
-        };
-        const expectedRoots = [...new Set(
-          expectedPolicy.writableRoots.filter((root) => !isCoveredByCwd(root)),
-        )];
-        const confirmedRoots = [...new Set(
-          (actualRoots as string[]).filter((root) => !isCoveredByCwd(root)),
-        )];
-        if (confirmedRoots.length !== expectedRoots.length
-          || expectedRoots.some((root) => !confirmedRoots.includes(root))) {
-          throw new Error(
-            `Codex updated thread ${options.threadId} with unexpected sandbox writable roots.`,
-          );
-        }
-      }
-
-      assertBooleanSetting(
-        actualPolicy,
-        "networkAccess",
-        expectedPolicy.networkAccess,
-        "sandbox networkAccess",
-      );
-      if (expectedPolicy.type === "workspaceWrite") {
-        assertBooleanSetting(
-          actualPolicy,
-          "excludeSlashTmp",
-          expectedPolicy.excludeSlashTmp,
-          "sandbox excludeSlashTmp",
-        );
-        assertBooleanSetting(
-          actualPolicy,
-          "excludeTmpdirEnvVar",
-          expectedPolicy.excludeTmpdirEnvVar,
-          "sandbox excludeTmpdirEnvVar",
-        );
-      }
-    };
-    const validateThreadSettings = (threadSettings: Record<string, unknown>): void => {
-      assertStringSetting(threadSettings, "cwd", updateInput.cwd, "cwd");
-      assertStringSetting(
-        threadSettings,
-        "approvalPolicy",
-        updateInput.approvalPolicy,
-        "approval policy",
-      );
-      if (updateInput.sandboxPolicy !== undefined) {
-        assertSandboxPolicy(threadSettings, updateInput.sandboxPolicy);
-      }
-    };
-    const timeoutMs = options.timeoutMs ?? 5000;
-    let disposeNotification: (() => void) | undefined;
-    let updateTimeout: NodeJS.Timeout | undefined;
-    let responseReceived = false;
-    let settingsNotificationReceived = false;
-    const settingsUpdated = new Promise<Record<string, unknown>>((resolve, reject) => {
-      disposeNotification = this.onNotification((notification) => {
-        if (notification.method !== "thread/settings/updated") return;
-        if (typeof notification.params !== "object"
-          || notification.params === null
-          || Array.isArray(notification.params)) return;
-        const params = notification.params as Record<string, unknown>;
-        if (params.threadId !== options.threadId) return;
-        try {
-          const threadSettings = readObject(params.threadSettings);
-          validateThreadSettings(threadSettings);
-          settingsNotificationReceived = true;
-          resolve(threadSettings);
-        } catch (error) {
-          reject(error instanceof Error ? error : new Error(String(error)));
-        }
-      });
-    });
-    const responseReceivedPromise = this.request(
-      "thread/settings/update",
-      updateInput,
-    ).then((value) => {
-      readObject(value);
-      responseReceived = true;
-      return value;
-    });
-    const timedOut = new Promise<never>((_, reject) => {
-      updateTimeout = setTimeout(() => {
-        const waitingFor = responseReceived && !settingsNotificationReceived
-          ? "thread/settings/updated"
-          : "thread/settings/update response";
-        reject(new Error(
-          `Timed out waiting for ${waitingFor} on thread ${options.threadId} after ${timeoutMs}ms.`,
-        ));
-      }, timeoutMs);
-    });
-    let cancelWait: ((error: Error) => void) | undefined;
-    const cancelled = new Promise<never>((_, reject) => {
-      cancelWait = reject;
-      this.settingsUpdateWaiters.add(reject);
-    });
-
-    try {
-      const [response, threadSettings] = await Promise.race([
-        Promise.all([
-          responseReceivedPromise,
-          settingsUpdated,
-        ]),
-        timedOut,
-        cancelled,
-      ]);
-      return {
-        threadId: options.threadId,
-        updateInput,
-        threadSettings,
-        response,
-      };
-    } finally {
-      disposeNotification?.();
-      if (updateTimeout) clearTimeout(updateTimeout);
-      if (cancelWait) this.settingsUpdateWaiters.delete(cancelWait);
-    }
   }
 
   /** Starts one turn and waits for its completion projection, cancelling the waiter on start failure. */
@@ -730,16 +465,13 @@ export class CodexAppServerClient {
     };
   }
 
-  /** Sends a `turn/start` request with the supplied prompt and sandbox policy. */
+  /** Sends a `turn/start` request with the role's named permission profile. */
   async startTurn(options: TurnStartOptions): Promise<TurnStartResponse> {
     const response = await this.request("turn/start", cleanUndefined({
       threadId: options.threadId,
       input: [{ type: "text", text: options.prompt, text_elements: [] }],
       approvalPolicy: options.approvalPolicy ?? "never",
-      sandboxPolicy: buildSandboxPolicy({
-        type: options.sandbox ?? "workspaceWrite",
-        writableRoots: options.writableRoots,
-      }),
+      permissions: options.permissions,
       model: options.model,
       effort: options.reasoningEffort,
       summary: options.reasoningSummary,
@@ -1266,8 +998,6 @@ export class CodexAppServerClient {
     }
     this.turnWaiters.clear();
 
-    for (const reject of this.settingsUpdateWaiters) reject(error);
-    this.settingsUpdateWaiters.clear();
   }
 
   private handleDisconnect(message: string): void {
@@ -1275,23 +1005,6 @@ export class CodexAppServerClient {
     this.eventStore.markDisconnected(message);
     this.publishTimelineSince(beforeSeq);
   }
-}
-
-function buildSandboxPolicy(input: {
-  type: "readOnly" | "workspaceWrite";
-  writableRoots?: string[];
-}): Record<string, unknown> {
-  if (input.type === "readOnly") {
-    return {
-      type: "readOnly",
-      networkAccess: false,
-    };
-  }
-  return {
-    type: "workspaceWrite",
-    writableRoots: [...new Set(input.writableRoots ?? [])],
-    networkAccess: false,
-  };
 }
 
 /** Reads a required string at a nested object path and rejects malformed protocol data. */
@@ -1405,6 +1118,21 @@ function isAppServerConfirmationRequest(method: string): boolean {
   ].some((token) => normalized.includes(token))
     || normalized.endsWith("/prompt/request")
     || normalized.endsWith("/input/request");
+}
+
+function assertActivePermissionProfile(
+  value: unknown,
+  expectedId: string,
+  context: string,
+): void {
+  const response = readObject(value);
+  const profile = readObject(response.activePermissionProfile);
+  const actualId = readString(profile, "id");
+  if (actualId !== expectedId) {
+    throw new Error(
+      `Codex ${context} with permission profile ${actualId}, expected ${expectedId}.`,
+    );
+  }
 }
 
 function readObject(value: unknown): Record<string, unknown> {

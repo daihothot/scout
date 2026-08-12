@@ -46,7 +46,7 @@ test("real Codex app-server exposes thread goal update and get across turns", {
     const thread = await client.startThread({
       cwd: root,
       approvalPolicy: "never",
-      sandbox: "read-only",
+      permissions: ":read-only",
       ephemeral: false,
       baseInstructions: [
         "You are a Scout goal integration test agent.",
@@ -76,7 +76,7 @@ test("real Codex app-server exposes thread goal update and get across turns", {
         threadId: thread.threadId,
         prompt: `Answer exactly SCOUT_GOAL_TURN_${turnIndex}_DONE.`,
         timeoutMs: 120_000,
-        sandbox: "readOnly",
+        permissions: ":read-only",
       });
       context.diagnostic(`turn ${turnIndex} result:\n${JSON.stringify({
         turnId: turn.turnId,

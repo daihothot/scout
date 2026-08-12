@@ -78,8 +78,6 @@ test("PrepareEnvironmentStage materializes, preflights, and commits every agent 
     assert.equal(agent.assetCommit.preflightRef, agent.preflightPath);
     assert.equal(JSON.parse(readFileSync(agent.preflightPath, "utf8")).status, "passed");
   }
-  assert.ok(stage.rootAccess.trustedRoots.includes(resolve(fixtureRoot)));
-  assert.ok(stage.rootAccess.trustedRoots.includes(resolve(homedir(), ".guru", "knowledge")));
   assert.ok(stage.rootAccess.writableRoots.includes(resolve(homedir(), ".guru", "codebase")));
   assert.equal(runtime.scope.environment.agents, stage.agents);
   assert.equal(runtime.scope.environment.rootAccess, stage.rootAccess);

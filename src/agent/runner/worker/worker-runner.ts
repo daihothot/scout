@@ -511,7 +511,6 @@ export class WorkerRunner extends AgentRunner {
     const startedAt = Date.now();
     const outcome = await this.host.runTurn({
       prompt,
-      sandbox: this.host.spec.sandbox === "workspace-write" ? "workspaceWrite" : "readOnly",
     });
     const durationMs = Date.now() - startedAt;
     const latest = this.getTask(taskId);

@@ -21,7 +21,7 @@ export function buildAssetCommit(options: BuildAssetCommitOptions): AssetCommit 
     artifactRoot: options.mount.artifactRoot,
     logsRoot: options.mount.logsRoot,
     issues: options.mount.issues,
-    trustedRoots: options.mount.trustedRoots,
+    readableRoots: options.mount.readableRoots,
     writableRoots: options.mount.writableRoots,
     shellTools: options.mount.shellTools,
     mcpServers: options.mount.mcpServers,

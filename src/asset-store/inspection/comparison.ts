@@ -46,7 +46,6 @@ export function sameMcpServer(
     && sameValue(actual.args, expected.args)
     && actual.cwd === expected.cwd
     && sameValue(actual.env, expected.env)
-    && sameUnorderedStrings(actual.trustedRoots, expected.trustedRoots)
     && sameUnorderedStrings(actual.writableRoots, expected.writableRoots)
     && sameValue(actual.smoke, expected.smoke);
 }
@@ -54,7 +53,7 @@ export function sameMcpServer(
 function normalizeAgentProfile(profile: AgentProfile): AgentProfile {
   return {
     ...profile,
-    trustedRoots: [...(profile.trustedRoots ?? [])].sort(),
+    readableRoots: [...(profile.readableRoots ?? [])].sort(),
     writableRoots: [...(profile.writableRoots ?? [])].sort(),
   };
 }

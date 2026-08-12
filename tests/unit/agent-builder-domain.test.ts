@@ -30,6 +30,7 @@ import {
 import {
   ScoutAgentRoles,
   ScoutAgentPhases,
+  ScoutAgentPermissionProfiles,
   type AgentThreadSnapshot,
   type ScoutAgentRole,
 } from "../../src/agent/thread/types.js";
@@ -209,7 +210,7 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   assert.ok(instructions.indexOf("worker instructions") < instructions.indexOf("researcher instructions"));
 });
 
-test("Validator turns use workspace-write with only the profile write roots", async () => {
+test("Validator turns use the role permission profile", async () => {
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("builder-validator-write-roots", { appServer });
   const validatorMount = createMount(fixture.root, ScoutAgentRoles.Validator);
@@ -218,7 +219,7 @@ test("Validator turns use workspace-write with only the profile write roots", as
   const validator = new AgentBuilder().buildWorker(ScoutAgentRoles.Validator);
 
   assert.ok(validator instanceof ValidatorAgent);
-  assert.equal(validator.spec.sandbox, "workspace-write");
+  assert.equal(validator.spec.permissionProfile, "scout-validator");
   await validator.startThread();
   assert.deepEqual(validator.threadSnapshot?.startInput.config, {
     features: {
@@ -232,11 +233,10 @@ test("Validator turns use workspace-write with only the profile write roots", as
   });
   await validator.runTurn({ prompt: "Write the Research Pack Gate." });
 
-  assert.deepEqual(appServer.turnInputs[0]?.writableRoots, [validatorMount.artifactRoot]);
-  assert.equal(appServer.turnInputs[0]?.writableRoots?.includes(validatorMount.mountRoot), false);
+  assert.equal(appServer.turnInputs[0]?.permissions, ScoutAgentPermissionProfiles.Validator);
 });
 
-test("Worker turns preserve profile write-root order for sandbox application", async () => {
+test("Worker turns keep the role permission profile independent of mount write roots", async () => {
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("builder-worker-write-root-order", { appServer });
   const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
@@ -257,11 +257,7 @@ test("Worker turns preserve profile write-root order for sandbox application", a
   await researcher.startThread();
   await researcher.runTurn({ prompt: "Inspect the Research inputs." });
 
-  assert.deepEqual(appServer.turnInputs[0]?.writableRoots, [
-    researcherMount.mountRoot,
-    researcherMount.artifactRoot,
-    codebaseRoot,
-  ]);
+  assert.equal(appServer.turnInputs[0]?.permissions, ScoutAgentPermissionProfiles.Researcher);
 });
 
 for (const status of ["failed", "interrupted"] as const) {
@@ -531,7 +527,7 @@ test("ScoutAgent restarts a journaled thread as a distinct lifecycle fact", asyn
     startInput: {
       cwd: agent.spec.cwd,
       approvalPolicy: agent.spec.approvalPolicy,
-      sandbox: agent.spec.sandbox,
+      permissions: agent.spec.permissionProfile,
       ephemeral: false,
     },
     startResponse: { thread: { id: "thread-before-restart" } },
@@ -1910,7 +1906,7 @@ function createAgentFixture(
     agents: preparedAgents,
     rootAccess: {
       mountRoots: [mount.mountRoot],
-      trustedRoots: [],
+      readableRoots: [],
       writableRoots: [],
     },
     contextBundle,
@@ -2103,7 +2099,7 @@ function createMount(root: string, role: string): CodexMount {
     artifactRoot,
     logsRoot,
     issues: [],
-    trustedRoots: [root],
+    readableRoots: [root],
     writableRoots: [artifactRoot],
     shellTools: [],
     mcpServers: [],
@@ -2292,7 +2288,7 @@ function createFakeAppServer(options: {
     model?: string;
     reasoningEffort?: string;
     reasoningSummary?: string;
-    writableRoots?: string[];
+    permissions?: string;
   }>;
   threadInputs: Array<{
     model?: string;
@@ -2310,7 +2306,7 @@ function createFakeAppServer(options: {
       model?: string;
       reasoningEffort?: string;
       reasoningSummary?: string;
-      writableRoots?: string[];
+      permissions?: string;
     }>,
     threadInputs: [] as Array<{
       model?: string;
@@ -2375,7 +2371,7 @@ function createFakeAppServer(options: {
           model: threadInput.model,
           modelProvider: threadInput.modelProvider,
           approvalPolicy: threadInput.approvalPolicy ?? "never",
-          sandbox: threadInput.sandbox ?? "workspace-write",
+          permissions: threadInput.permissions,
           ephemeral: threadInput.ephemeral ?? true,
           config: threadInput.reasoningEffort === undefined
             ? threadInput.config
@@ -2427,7 +2423,7 @@ function createFakeAppServer(options: {
       model?: string;
       reasoningEffort?: string;
       reasoningSummary?: string;
-      writableRoots?: string[];
+      permissions?: string;
       onTurnStarted?: (turnId: string) => void;
     }) => {
       appServer.turnInputs.push(turnInput);
@@ -2471,7 +2467,7 @@ function createFakeAppServer(options: {
       model?: string;
       reasoningEffort?: string;
       reasoningSummary?: string;
-      writableRoots?: string[];
+      permissions?: string;
     }>;
     threadInputs: Array<{
       model?: string;

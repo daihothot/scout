@@ -24,6 +24,7 @@ import {
   type AgentTaskState,
 } from "../../src/agent/task/types.js";
 import {
+  ScoutAgentPermissionProfiles,
   ScoutAgentPhases,
   ScoutAgentRoles,
   type AgentThreadSnapshot,
@@ -168,7 +169,7 @@ test("Run projection keeps the original thread snapshot across resume lifecycles
     startInput: {
       cwd: "/repo",
       approvalPolicy: "never",
-      sandbox: "workspace-write",
+      permissions: "scout-researcher",
       ephemeral: false,
     },
     startResponse: { thread: { id: "thread-researcher" } },
@@ -189,6 +190,7 @@ test("Run projection keeps the original thread snapshot across resume lifecycles
       resumeInput: {
         threadId: started.threadId,
         excludeTurns: true,
+        permissions: "scout-researcher",
       },
       resumeResponse: { thread: { id: started.threadId, turns: [] } },
     }),
@@ -767,10 +769,7 @@ for (const status of ["failed", "interrupted"] as const) {
 }
 
 test("RestoreAgentsStage never cold-starts an Agent after thread resume fails", (t) =>
-  assertThreadRestoreFailure(t, "resume"));
-
-test("RestoreAgentsStage never cold-starts an Agent after thread settings fails", (t) =>
-  assertThreadRestoreFailure(t, "settings"));
+  assertThreadRestoreFailure(t));
 
 test("RestoreAgentsStage rejects a missing persisted rollout before building Agents", async (t) => {
   const missing = await installRolloutLocatorFixture(t, "missing");
@@ -891,14 +890,6 @@ test("RestoreAgentsStage resumes a persisted thread even when it has no turns", 
         threadId: options.threadId,
         resumeInput: { threadId: options.threadId, excludeTurns: true as const },
         response: { thread: { id: options.threadId } },
-      };
-    },
-    async updateThreadSettings(options: { threadId: string }) {
-      return {
-        threadId: options.threadId,
-        updateInput: { threadId: options.threadId },
-        threadSettings: {},
-        response: {},
       };
     },
     async request(_method: string, params: { threadId?: string }) {
@@ -1248,7 +1239,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     startInput: {
       cwd: initialScope.environment.agents[ScoutAgentRoles.Researcher].mount.mountRoot,
       approvalPolicy: "never",
-      sandbox: "workspace-write",
+      permissions: "scout-researcher",
       ephemeral: false,
     },
     startResponse: { thread: { id: "researcher-old-thread" } },
@@ -1379,7 +1370,6 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   let turnSequence = 0;
   const resumedThreadIds: string[] = [];
   const resumedThreadInputs: Record<string, unknown>[] = [];
-  const updatedThreadSettings: Record<string, unknown>[] = [];
   const researcherResumeOrder: string[] = [];
   const appServer = {
     close() {},
@@ -1411,20 +1401,6 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
             turns: [],
           },
         },
-      };
-    },
-    async updateThreadSettings(settingsInput: Record<string, unknown>) {
-      updatedThreadSettings.push(settingsInput);
-      researcherResumeOrder.push("settings");
-      return {
-        threadId: settingsInput.threadId,
-        updateInput: settingsInput,
-        threadSettings: {
-          cwd: settingsInput.cwd,
-          approvalPolicy: settingsInput.approvalPolicy,
-          sandboxPolicy: settingsInput.sandboxPolicy,
-        },
-        response: {},
       };
     },
     async request(method: string, params: unknown) {
@@ -1566,27 +1542,14 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     cwd: restoredResearcherMount.mountRoot,
     runtimeWorkspaceRoots: [restoredResearcherMount.mountRoot],
     approvalPolicy: "never",
-    sandbox: "workspace-write",
+    permissions: ScoutAgentPermissionProfiles.Researcher,
     config: researcherAgent.spec.config,
     baseInstructions: researcherAgent.spec.baseInstructions,
     developerInstructions: researcherAgent.spec.developerInstructions,
   }]);
-  assert.deepEqual(updatedThreadSettings, [{
-    threadId: "researcher-old-thread",
-    cwd: restoredResearcherMount.mountRoot,
-    approvalPolicy: "never",
-    sandboxPolicy: {
-      type: "workspaceWrite",
-      writableRoots: [...new Set([
-        ...restoredResearcherMount.writableRoots,
-        restoredResearcherMount.artifactRoot,
-      ])],
-      networkAccess: false,
-    },
-  }]);
-  assert.deepEqual(researcherResumeOrder.slice(0, 2), ["resume", "settings"]);
-  assert.ok(researcherResumeOrder.indexOf("ready") > 1);
-  assert.ok(researcherResumeOrder.indexOf("preflight") > 1);
+  assert.equal(researcherResumeOrder[0], "resume");
+  assert.ok(researcherResumeOrder.indexOf("ready") > 0);
+  assert.ok(researcherResumeOrder.indexOf("preflight") > 0);
   assert.equal(threadSequence, 3);
   assert.equal(
     researcherAgent.threadId,
@@ -1813,7 +1776,6 @@ function writePersistedRollout(input: {
 
 async function assertThreadRestoreFailure(
   t: Parameters<typeof installTestRunScope>[0],
-  failurePoint: "resume" | "settings",
 ): Promise<void> {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-thread-restore-failure-"));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
@@ -1825,7 +1787,6 @@ async function assertThreadRestoreFailure(
   const eventBus = new InMemoryEventBus();
   const startedRoles: string[] = [];
   const resumedThreadIds: string[] = [];
-  const settingsThreadIds: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
       const role = Object.values(ScoutAgentRoles).find((candidate) =>
@@ -1846,21 +1807,7 @@ async function assertThreadRestoreFailure(
     },
     async resumeThread(options: { threadId: string }) {
       resumedThreadIds.push(options.threadId);
-      if (failurePoint === "resume") {
-        throw new Error(`resume failed for ${options.threadId}`);
-      }
-      return {
-        threadId: options.threadId,
-        resumeInput: {
-          threadId: options.threadId,
-          excludeTurns: true as const,
-        },
-        response: { thread: { id: options.threadId } },
-      };
-    },
-    async updateThreadSettings(options: { threadId: string }) {
-      settingsThreadIds.push(options.threadId);
-      throw new Error(`settings failed for ${options.threadId}`);
+      throw new Error(`resume failed for ${options.threadId}`);
     },
     async request(_method: string, params: { threadId?: string }) {
       return {
@@ -1906,7 +1853,7 @@ async function assertThreadRestoreFailure(
     startInput: {
       cwd: scope.environment.agents[ScoutAgentRoles.Researcher].mount.mountRoot,
       approvalPolicy: "never",
-      sandbox: "workspace-write",
+      permissions: "scout-researcher",
       ephemeral: false,
     },
     startResponse: { thread: { id: "thread-researcher-original" } },
@@ -1931,14 +1878,10 @@ async function assertThreadRestoreFailure(
 
   await assert.rejects(
     stage.start(),
-    new RegExp(`${failurePoint} failed for thread-researcher-original`),
+    /resume failed for thread-researcher-original/,
   );
 
   assert.deepEqual(resumedThreadIds, ["thread-researcher-original"]);
-  assert.deepEqual(
-    settingsThreadIds,
-    failurePoint === "settings" ? ["thread-researcher-original"] : [],
-  );
   assert.equal(
     scope.agentRegistry.resolveAgentByThreadId("thread-researcher-original"),
     undefined,
@@ -1989,7 +1932,7 @@ async function installRolloutLocatorFixture(
     startInput: {
       cwd: scope.environment.agents[ScoutAgentRoles.Researcher].mount.mountRoot,
       approvalPolicy: "never",
-      sandbox: "workspace-write",
+      permissions: "scout-researcher",
       ephemeral: false,
     },
     startResponse: { thread: { id: `thread-${suffix}` } },
@@ -2082,7 +2025,7 @@ function workerHost(
     phases: [ScoutAgentPhases.Research],
     cwd: "/repo",
     approvalPolicy: "never",
-    sandbox: "workspace-write",
+    permissionProfile: ScoutAgentPermissionProfiles.Researcher,
     contextBundleId: "context-1",
     model: {
       id: "gpt-5.5",

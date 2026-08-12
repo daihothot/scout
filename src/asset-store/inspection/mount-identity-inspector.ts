@@ -43,9 +43,12 @@ export class MountIdentityInspector {
       return "agent profile changed";
     }
 
-    const trustedRoots = context.trustedRoots.map((root) => relativeOrSelf(context.mountRoot, root));
-    if (!sameUnorderedStrings(manifest.trustedRoots, trustedRoots)) {
-      return "trusted roots changed";
+    const readableRoots = context.readableRoots.map((root) =>
+      relativeOrSelf(context.mountRoot, root)
+    );
+    if (!Array.isArray(manifest.readableRoots)
+      || !sameUnorderedStrings(manifest.readableRoots, readableRoots)) {
+      return "readable roots changed";
     }
     const writableRoots = context.writableRoots.map((root) => relativeOrSelf(context.mountRoot, root));
     if (!sameUnorderedStrings(manifest.writableRoots, writableRoots)) {

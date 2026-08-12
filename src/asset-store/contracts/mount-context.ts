@@ -28,6 +28,6 @@ export interface MountContext {
   assetCommitId: string;
   parentAssetCommitId?: string;
   mountId: string;
-  trustedRoots: string[];
+  readableRoots: string[];
   writableRoots: string[];
 }

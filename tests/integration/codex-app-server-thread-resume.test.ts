@@ -42,7 +42,7 @@ test("real Codex app-server restores thread memory across processes", {
       modelProvider: providerName,
       reasoningEffort: "minimal",
       approvalPolicy: "never",
-      sandbox: "read-only",
+      permissions: ":read-only",
       ephemeral: false,
       baseInstructions: "You are a thread memory integration test agent. Do not use tools.",
       developerInstructions: "Remember explicit user facts across turns and answer concisely.",
@@ -52,7 +52,7 @@ test("real Codex app-server restores thread memory across processes", {
       threadId,
       prompt: `Remember this exact secret for the next turn: ${secret}. Reply only MEMORY_STORED.`,
       timeoutMs: 120_000,
-      sandbox: "readOnly",
+      permissions: ":read-only",
     });
     assert.match(stored.finalResponse, /MEMORY_STORED/);
   } finally {
@@ -71,7 +71,7 @@ test("real Codex app-server restores thread memory across processes", {
       modelProvider: providerName,
       reasoningEffort: "minimal",
       approvalPolicy: "never",
-      sandbox: "read-only",
+      permissions: ":read-only",
       baseInstructions: "You are a thread memory integration test agent. Do not use tools.",
       developerInstructions: "Remember explicit user facts across turns and answer concisely.",
     });
@@ -82,7 +82,7 @@ test("real Codex app-server restores thread memory across processes", {
       threadId,
       prompt: "Return only the exact secret I asked you to remember in the previous turn.",
       timeoutMs: 120_000,
-      sandbox: "readOnly",
+      permissions: ":read-only",
     });
     assert.match(recalled.finalResponse, new RegExp(secret));
     context.diagnostic(JSON.stringify({

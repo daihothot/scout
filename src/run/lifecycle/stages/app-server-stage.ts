@@ -1,12 +1,15 @@
 import {
+  existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import {
   createCodexAppServerClient,
   type CodexAppServerClientBundle,
@@ -16,13 +19,28 @@ import {
   readAgentProfilesForRepo,
   resolveAgentProfile,
 } from "../../../asset-store/assets/agent-profiles.js";
-import { CodexAssetLayout } from "../../../asset-store/assets/asset-layout.js";
+import {
+  CodexAssetLayout,
+  roleAgentPath,
+} from "../../../asset-store/assets/asset-layout.js";
+import {
+  resolveAssetArg,
+} from "../../../asset-store/files/asset-paths.js";
+import {
+  resolveShellToolCommand,
+} from "../../../asset-store/files/command-resolution.js";
 import {
   buildMountMacroValues,
   resolveMountMacros,
 } from "../../../asset-store/mount/macros.js";
-import type { McpServersFile } from "../../../asset-store/contracts/resources.js";
+import type { AgentProfile } from "../../../asset-store/contracts/profile.js";
+import type {
+  McpServersFile,
+  ShellToolContract,
+  ShellToolsFile,
+} from "../../../asset-store/contracts/resources.js";
 import {
+  ScoutAgentPermissionProfiles,
   ScoutAgentRoles,
   type ScoutAgentRole,
 } from "../../../agent/thread/types.js";
@@ -32,12 +50,21 @@ import { readJsonFile } from "../../../core/fs.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
 
-/** Root sets passed to Codex clients when configuring one run's sandbox. */
+/** Per-role local-command filesystem policy rendered into Codex config. */
+export interface RunAgentPermissionPlan {
+  id: string;
+  mountRoot: string;
+  readableRoots: string[];
+  writableRoots: string[];
+  deniedRoots: string[];
+}
+
+/** Run-wide diagnostics plus the role-owned authorization plans. */
 export interface RunAppServerRootPlan {
   mountRoots: string[];
-  trustedRoots: string[];
+  readableRoots: string[];
   writableRoots: string[];
-  defaultWritableRoots: string[];
+  permissionProfiles: Partial<Record<ScoutAgentRole, RunAgentPermissionPlan>>;
 }
 
 /** Optional role selection used when an environment is not yet prepared. */
@@ -74,7 +101,7 @@ export class RunAppServerStage implements RunStage {
   async start(): Promise<void> {
     const scope = currentRunScope();
     const rootPlan = scope.hasEnvironment
-      ? buildPreparedClientRootPlan(scope.environment)
+      ? buildPreparedClientRootPlan(scope.environment, scope.repoRoot)
       : buildClientRootPlan({
         repoRoot: scope.repoRoot,
         runId: scope.runId,
@@ -92,7 +119,7 @@ export class RunAppServerStage implements RunStage {
     rebindTargetCodexAuth(isolatedCodexHome, providerConfig.authPath);
     const configToml = buildClientConfig({
       mountRoots: rootPlan.mountRoots,
-      trustedRoots: rootPlan.trustedRoots,
+      permissionProfiles: rootPlan.permissionProfiles,
       model: defaultModel,
       providerConfig,
     });
@@ -107,9 +134,7 @@ export class RunAppServerStage implements RunStage {
       transportLogPath: process.env.SCOUT_APP_SERVER_TRACE === "1"
         ? join(logsRoot, "app-server.ndjson")
         : undefined,
-      defaultWritableRoots: rootPlan.defaultWritableRoots,
       mountRoots: rootPlan.mountRoots,
-      trustedRoots: rootPlan.trustedRoots,
       rootPlan,
     };
     const clientBundle = createCodexAppServerClient(clientOptions);
@@ -147,10 +172,18 @@ function buildClientRootPlan(options: {
   const assetsRoot = join(repoRoot, "assets", "codex");
   const profiles = readAgentProfilesForRepo(repoRoot);
   const mcpServers = readJsonFile<McpServersFile>(join(assetsRoot, CodexAssetLayout.mcpServers));
+  const shellTools = readJsonFile<ShellToolsFile>(join(assetsRoot, CodexAssetLayout.shellTools));
   const agentRoles = options.agentRoles ?? Object.values(ScoutAgentRoles);
   const mountRoots: string[] = [];
-  const trustedRoots: string[] = [];
+  const readableRoots: string[] = [];
   const writableRoots: string[] = [];
+  const roleRoots: Array<{
+    role: ScoutAgentRole;
+    mountRoot: string;
+    artifactRoot: string;
+    readableRoots: string[];
+    writableRoots: string[];
+  }> = [];
 
   for (const role of agentRoles) {
     const profile = resolveAgentProfile(profiles, role);
@@ -158,20 +191,35 @@ function buildClientRootPlan(options: {
     const mountRoot = join(agentRoot, "mount");
     const artifactRoot = join(agentRoot, "artifacts");
     mountRoots.push(mountRoot);
-    trustedRoots.push(...resolveProfileRoots({
-      roots: profile.trustedRoots,
+    const profileReadableRoots = resolveProfileRoots({
+      roots: profile.readableRoots,
       repoRoot,
       runRoot,
       mountRoot,
       artifactRoot,
-    }));
-    writableRoots.push(...resolveProfileRoots({
+    });
+    const profileWritableRoots = resolveProfileRoots({
       roots: profile.writableRoots,
       repoRoot,
       runRoot,
       mountRoot,
       artifactRoot,
-    }));
+    });
+    const runtimeReadableRoots = resolveRoleRuntimeReadableRoots({
+      assetsRoot,
+      role,
+      profile,
+      shellTools: shellTools.tools,
+    });
+    readableRoots.push(mountRoot, ...profileReadableRoots, ...runtimeReadableRoots);
+    writableRoots.push(artifactRoot, ...profileWritableRoots);
+    roleRoots.push({
+      role,
+      mountRoot,
+      artifactRoot,
+      readableRoots: [...profileReadableRoots, ...runtimeReadableRoots],
+      writableRoots: profileWritableRoots,
+    });
     const dynamicValues = buildMountMacroValues({
       repoRoot,
       runRoot,
@@ -183,50 +231,67 @@ function buildClientRootPlan(options: {
     for (const serverName of profile.mcpServers) {
       const server = mcpServers.servers[serverName];
       if (!server) throw new Error(`Agent profile references unknown MCP server: ${serverName}`);
-      trustedRoots.push(...resolveDynamicRoots(server.trustedRoots, dynamicValues));
       writableRoots.push(...resolveDynamicRoots(server.writableRoots, dynamicValues));
     }
   }
 
   const uniqueMountRoots = uniqueResolved(mountRoots);
-  const uniqueTrustedRoots = uniqueResolved(trustedRoots);
+  const uniqueReadableRoots = uniqueResolved(readableRoots);
   const uniqueWritableRoots = uniqueResolved(writableRoots);
   return {
     mountRoots: uniqueMountRoots,
-    trustedRoots: uniqueTrustedRoots,
+    readableRoots: uniqueReadableRoots,
     writableRoots: uniqueWritableRoots,
-    defaultWritableRoots: uniqueResolved([
-      ...uniqueMountRoots,
-      ...uniqueMountRoots.map((mountRoot) => resolve(mountRoot, "..", "artifacts")),
-      ...uniqueWritableRoots,
-    ]),
+    permissionProfiles: buildPermissionProfiles({ repoRoot, roleRoots }),
   };
 }
 
-function buildPreparedClientRootPlan(environment: RunEnvironment): RunAppServerRootPlan {
+function buildPreparedClientRootPlan(
+  environment: RunEnvironment,
+  currentRepoRoot: string,
+): RunAppServerRootPlan {
   const agents = Object.values(environment.agents);
   const mountRoots = uniqueResolved(environment.rootAccess.mountRoots);
+  const repoRoot = resolve(currentRepoRoot);
+  const assetsRoot = join(repoRoot, "assets", "codex");
+  const shellTools = readJsonFile<ShellToolsFile>(join(assetsRoot, CodexAssetLayout.shellTools));
+  const roleRoots = agents.map((agent) => ({
+    role: agent.role,
+    mountRoot: agent.mount.mountRoot,
+    artifactRoot: agent.mount.artifactRoot,
+    readableRoots: [
+      ...agent.mount.readableRoots,
+      ...resolveRoleRuntimeReadableRoots({
+        assetsRoot,
+        role: agent.role,
+        profile: agent.mount.agentProfile,
+        shellTools: shellTools.tools,
+      }),
+    ],
+    writableRoots: agent.mount.writableRoots,
+  }));
   return {
     mountRoots,
-    trustedRoots: uniqueResolved(environment.rootAccess.trustedRoots),
-    writableRoots: uniqueResolved(environment.rootAccess.writableRoots),
-    defaultWritableRoots: uniqueResolved([
-      ...mountRoots,
-      ...agents.map((agent) => agent.mount.artifactRoot),
-      ...environment.rootAccess.writableRoots,
+    readableRoots: uniqueResolved([
+      ...environment.rootAccess.readableRoots,
+      ...roleRoots.flatMap((role) => role.readableRoots),
     ]),
+    writableRoots: uniqueResolved(environment.rootAccess.writableRoots),
+    permissionProfiles: buildPermissionProfiles({
+      repoRoot,
+      roleRoots,
+    }),
   };
 }
 
 function buildClientConfig(input: {
   mountRoots: string[];
-  trustedRoots: string[];
+  permissionProfiles: RunAppServerRootPlan["permissionProfiles"];
   model: CodexModelConfig;
   providerConfig: ReturnType<typeof readHomeProviderConfig>;
 }): string {
   const homeConfig = input.providerConfig;
   const mountRoots = uniqueResolved(input.mountRoots);
-  const trustedRoots = uniqueResolved(input.trustedRoots);
   const providerLines = [
     `[model_providers.${input.model.provider}]`,
     `name = "${escapeToml(input.model.provider)}"`,
@@ -246,6 +311,7 @@ function buildClientConfig(input: {
     "",
   );
   const lines = [
+    'default_permissions = ":read-only"',
     `model = "${escapeToml(input.model.id)}"`,
     `model_provider = "${escapeToml(input.model.provider)}"`,
     `model_reasoning_effort = "${input.model.reasoningEffort}"`,
@@ -256,6 +322,27 @@ function buildClientConfig(input: {
     "",
     ...providerLines,
   ];
+  for (const role of Object.values(ScoutAgentRoles)) {
+    const profile = input.permissionProfiles[role];
+    if (!profile) continue;
+    lines.push(
+      `[permissions.${profile.id}.filesystem]`,
+      '":minimal" = "read"',
+    );
+    const rules = new Map<string, "read" | "write" | "deny">();
+    for (const root of profile.readableRoots) rules.set(root, "read");
+    for (const root of profile.writableRoots) rules.set(root, "write");
+    for (const root of profile.deniedRoots) rules.set(root, "deny");
+    for (const [root, access] of [...rules].sort(([left], [right]) => left.localeCompare(right))) {
+      lines.push(`"${escapeToml(root)}" = "${access}"`);
+    }
+    lines.push(
+      "",
+      `[permissions.${profile.id}.network]`,
+      "enabled = false",
+      "",
+    );
+  }
   for (const mountRoot of mountRoots) {
     lines.push(
       `[projects."${escapeToml(mountRoot)}"]`,
@@ -263,15 +350,145 @@ function buildClientConfig(input: {
       "",
     );
   }
-  for (const trustedRoot of trustedRoots) {
-    if (mountRoots.includes(trustedRoot)) continue;
-    lines.push(
-      `[projects."${escapeToml(trustedRoot)}"]`,
-      'trust_level = "trusted"',
-      "",
-    );
-  }
   return lines.join("\n");
+}
+
+function buildPermissionProfiles(input: {
+  repoRoot: string;
+  roleRoots: Array<{
+    role: ScoutAgentRole;
+    mountRoot: string;
+    artifactRoot: string;
+    readableRoots: string[];
+    writableRoots: string[];
+  }>;
+}): RunAppServerRootPlan["permissionProfiles"] {
+  const repoRoot = resolve(input.repoRoot);
+  const runsRoot = join(repoRoot, "run");
+  const logicalSkillRoot = join(repoRoot, "assets", "codex", "skills");
+  const canonicalSkillRoot = realpathSync(logicalSkillRoot);
+  const artifactRoots = input.roleRoots.map((role) => role.artifactRoot);
+  return Object.fromEntries(input.roleRoots.map((role) => [
+    role.role,
+    {
+      id: permissionProfileId(role.role),
+      mountRoot: resolve(role.mountRoot),
+      readableRoots: uniqueResolved([
+        role.mountRoot,
+        ...artifactRoots,
+        ...role.readableRoots,
+      ]),
+      writableRoots: uniqueResolved([
+        role.artifactRoot,
+        ...role.writableRoots,
+      ]),
+      deniedRoots: uniqueResolved([
+        runsRoot,
+        join(role.mountRoot, ".scout", "skills"),
+        logicalSkillRoot,
+        canonicalSkillRoot,
+      ]),
+    } satisfies RunAgentPermissionPlan,
+  ]));
+}
+
+function resolveRoleRuntimeReadableRoots(input: {
+  assetsRoot: string;
+  role: ScoutAgentRole;
+  profile: AgentProfile;
+  shellTools: ShellToolContract[];
+}): string[] {
+  const roots = [
+    ...readablePathVariants(join(input.assetsRoot, CodexAssetLayout.agentsMd)),
+    ...readablePathVariants(join(input.assetsRoot, roleAgentPath(input.role))),
+  ];
+  if (input.role !== ScoutAgentRoles.Coordinator) {
+    roots.push(...readablePathVariants(join(input.assetsRoot, CodexAssetLayout.workerAgent)));
+  }
+  for (const name of input.profile.customAgents) {
+    roots.push(...readablePathVariants(
+      join(input.assetsRoot, CodexAssetLayout.customAgentsRoot, `${name}.toml`),
+    ));
+  }
+  const pluginPaths = listPluginSourcePaths(join(input.assetsRoot, CodexAssetLayout.pluginsRoot));
+  const pluginsByName = new Map(pluginPaths.map((path) => [basename(path), path] as const));
+  for (const name of input.profile.plugins) {
+    const path = pluginsByName.get(name);
+    if (!path) throw new Error(`Agent profile references unknown plugin: ${name}`);
+    roots.push(...readablePathVariants(path));
+  }
+  const toolsById = new Map(input.shellTools.map((tool) => [tool.id, tool] as const));
+  for (const id of input.profile.shellTools ?? []) {
+    const tool = toolsById.get(id);
+    if (!tool) throw new Error(`Agent profile references unknown shell tool: ${id}`);
+    const command = resolveShellToolCommand(tool, input.assetsRoot);
+    if (command) roots.push(...readableExecutableRoots(command));
+    for (const argument of tool.args ?? []) {
+      if (!argument.startsWith("assets/")) continue;
+      roots.push(...readablePathVariants(resolveAssetArg(argument, input.assetsRoot), true));
+    }
+  }
+  return uniqueResolved(roots);
+}
+
+function readableExecutableRoots(path: string): string[] {
+  const logicalPath = resolve(path);
+  const canonicalPath = realpathSync(logicalPath);
+  const roots = readablePathVariants(logicalPath, true);
+  for (const executablePath of [logicalPath, canonicalPath]) {
+    if (isMinimalSystemExecutable(executablePath)) continue;
+    roots.push(dirname(dirname(executablePath)));
+    const cellarSegment = `${sep}Cellar${sep}`;
+    const cellarIndex = executablePath.indexOf(cellarSegment);
+    if (cellarIndex >= 0) {
+      const homebrewPrefix = executablePath.slice(0, cellarIndex);
+      roots.push(
+        join(homebrewPrefix, "Cellar"),
+        join(homebrewPrefix, "opt"),
+        join(homebrewPrefix, "etc"),
+      );
+    }
+  }
+  return uniqueResolved(roots);
+}
+
+function isMinimalSystemExecutable(path: string): boolean {
+  return ["/bin", "/sbin", "/usr/bin", "/usr/sbin"].some((root) =>
+    path === root || path.startsWith(`${root}/`)
+  );
+}
+
+function readablePathVariants(path: string, includeRuntimeDirectory = false): string[] {
+  const logicalPath = resolve(path);
+  const canonicalPath = realpathSync(logicalPath);
+  return includeRuntimeDirectory
+    ? uniqueResolved([dirname(logicalPath), dirname(canonicalPath)])
+    : uniqueResolved([logicalPath, canonicalPath]);
+}
+
+function listPluginSourcePaths(root: string): string[] {
+  if (!existsSync(root)) return [];
+  const paths: string[] = [];
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const path = join(root, entry.name);
+    if (existsSync(join(path, ".codex-plugin", "plugin.json"))) paths.push(path);
+    else paths.push(...listPluginSourcePaths(path));
+  }
+  return paths;
+}
+
+function permissionProfileId(role: ScoutAgentRole): string {
+  switch (role) {
+    case ScoutAgentRoles.Coordinator:
+      return ScoutAgentPermissionProfiles.Coordinator;
+    case ScoutAgentRoles.Researcher:
+      return ScoutAgentPermissionProfiles.Researcher;
+    case ScoutAgentRoles.Verifier:
+      return ScoutAgentPermissionProfiles.Verifier;
+    case ScoutAgentRoles.Validator:
+      return ScoutAgentPermissionProfiles.Validator;
+  }
 }
 
 function resolveProfileRoots(input: {

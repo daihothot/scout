@@ -88,8 +88,8 @@ export class MountContextBuilder {
       ? options.persistedIdentity.parentAssetCommitId
       : options.parentAssetCommitId;
     const mountId = options.persistedIdentity?.mountId ?? `m_${mountHash.slice(0, 16)}`;
-    const trustedRoots = resolveAgentProfileRoots({
-      roots: agentProfile.trustedRoots,
+    const readableRoots = resolveAgentProfileRoots({
+      roots: agentProfile.readableRoots,
       repoRoot,
       runRoot,
       mountRoot,
@@ -123,7 +123,7 @@ export class MountContextBuilder {
       assetCommitId,
       parentAssetCommitId,
       mountId,
-      trustedRoots,
+      readableRoots,
       writableRoots,
     };
   }

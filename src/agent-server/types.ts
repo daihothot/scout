@@ -5,7 +5,7 @@ export interface AgentServerPreflightReport {
     status: "passed" | "failed";
     roots: Array<{
       path: string;
-      access: "trusted" | "writable";
+      access: "readable" | "writable";
       status: "passed" | "failed";
       error?: string;
     }>;

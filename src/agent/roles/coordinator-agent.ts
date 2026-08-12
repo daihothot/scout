@@ -1,4 +1,8 @@
-import { ScoutAgentPhases, ScoutAgentRoles } from "../thread/types.js";
+import {
+  ScoutAgentPermissionProfiles,
+  ScoutAgentPhases,
+  ScoutAgentRoles,
+} from "../thread/types.js";
 import {
   ScoutAgent,
   type ScoutAgentOptions,
@@ -22,7 +26,7 @@ export class CoordinatorAgent extends ScoutAgent {
         phases: [ScoutAgentPhases.Coordinate],
         cwd: options.agentMount.mountRoot,
         approvalPolicy: "never",
-        sandbox: "workspace-write",
+        permissionProfile: ScoutAgentPermissionProfiles.Coordinator,
         contextBundleId: scope.contextBundle.contextBundleId,
         model: { ...options.agentMount.agentProfile.model },
         config: {

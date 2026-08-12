@@ -41,7 +41,7 @@ export type MountManifestInput = AssetInventoryInput & {
   parentAssetCommitId?: string;
   mountId: string;
   mountRoot: string;
-  trustedRoots: string[];
+  readableRoots: string[];
   writableRoots: string[];
   issues: MountMaterializationIssue[];
   resourceHash: string;
@@ -245,7 +245,7 @@ function buildMountManifestInternal(input: MountManifestInput): MountManifest {
     mountId: input.mountId,
     agentProfile: input.agentProfile,
     mountRoot: ".",
-    trustedRoots: input.trustedRoots.map((root) => relativeOrSelf(input.mountRoot, root)),
+    readableRoots: input.readableRoots.map((root) => relativeOrSelf(input.mountRoot, root)),
     writableRoots: input.writableRoots.map((root) => relativeOrSelf(input.mountRoot, root)),
     resourceHash: input.resourceHash,
     generatedAt: new Date().toISOString(),
@@ -268,7 +268,6 @@ function buildMountManifestInternal(input: MountManifestInput): MountManifest {
       args: server.args,
       cwd: server.cwd,
       env: server.env,
-      trustedRoots: server.trustedRoots,
       writableRoots: server.writableRoots,
       smoke: server.smoke,
     })),

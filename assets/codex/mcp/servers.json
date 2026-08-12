@@ -15,9 +15,6 @@
       "env": {
         "SCOUT_MCP_TARGET_PATH": "${SCOUT_REPO_ROOT}"
       },
-      "trustedRoots": [
-        "${SCOUT_REPO_ROOT}"
-      ],
       "writableRoots": [
         "${SCOUT_REPO_ROOT}/.codegraph"
       ],

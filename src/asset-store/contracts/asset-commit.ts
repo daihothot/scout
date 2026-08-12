@@ -22,7 +22,7 @@ export interface AssetCommit {
   artifactRoot: string;
   logsRoot: string;
   issues: MountMaterializationIssue[];
-  trustedRoots: string[];
+  readableRoots: string[];
   writableRoots: string[];
   shellTools: ShellToolContract[];
   mcpServers: MaterializedMcpServer[];

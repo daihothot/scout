@@ -14,7 +14,10 @@ import {
  */
 export class RunEnvironmentBuilder {
   constructor(
-    private readonly assetStore: Pick<AssetStore, "trustedRootsForMount" | "writableRootsForMount">,
+    private readonly assetStore: Pick<
+      AssetStore,
+      "readableRootsForMount" | "writableRootsForMount"
+    >,
   ) {}
 
   build(input: {
