@@ -154,6 +154,11 @@ function summarizeThreadResponse(agentId: string, value: unknown): object {
       && !Array.isArray(response.sandbox)
     ? response.sandbox as Record<string, unknown>
     : undefined;
+  const activePermissionProfile = typeof response.activePermissionProfile === "object"
+      && response.activePermissionProfile !== null
+      && !Array.isArray(response.activePermissionProfile)
+    ? response.activePermissionProfile as Record<string, unknown>
+    : undefined;
   const stringValue = (record: Record<string, unknown> | undefined, key: string) =>
     typeof record?.[key] === "string" ? record[key] : undefined;
   const stringArray = (record: Record<string, unknown>, key: string) =>
@@ -188,6 +193,14 @@ function summarizeThreadResponse(agentId: string, value: unknown): object {
     runtimeWorkspaceRoots: pathArray(response, "runtimeWorkspaceRoots"),
     instructionSources: pathArray(response, "instructionSources"),
     approvalPolicy: stringValue(response, "approvalPolicy"),
+    ...(activePermissionProfile
+      ? {
+          activePermissionProfile: {
+            id: stringValue(activePermissionProfile, "id"),
+            extends: stringValue(activePermissionProfile, "extends"),
+          },
+        }
+      : {}),
     ...(sandbox
       ? {
           sandbox: {

@@ -352,7 +352,7 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
       model: "gpt-5.5",
       modelProvider: "GuruOpenAI",
       approvalPolicy: "never",
-      sandbox: "workspace-write",
+      permissions: "scout-researcher",
       ephemeral: true,
       baseInstructions,
       developerInstructions,
@@ -538,7 +538,7 @@ test("AgentThreadRecorder marks coordinator inline instructions separately from 
     startInput: {
       cwd: "/run/agents/coordinator/mount",
       approvalPolicy: "never",
-      sandbox: "workspace-write",
+      permissions: "scout-coordinator",
       ephemeral: false,
       developerInstructions: "COORDINATOR_INLINE_BODY_MUST_NOT_BE_RECORDED",
     },

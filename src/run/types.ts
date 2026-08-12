@@ -19,7 +19,7 @@ export interface ResumeRunOptions extends ScoutRunOptions {
 /** Permission roots derived from the role mounts for one run. */
 export interface RunRootAccess {
   mountRoots: string[];
-  trustedRoots: string[];
+  readableRoots: string[];
   writableRoots: string[];
 }
 

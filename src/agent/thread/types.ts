@@ -19,6 +19,19 @@ export const ScoutAgentRoles = {
 /** Union of roles that can own a Scout thread. */
 export type ScoutAgentRole = typeof ScoutAgentRoles[keyof typeof ScoutAgentRoles];
 
+/** Stable Codex permission profile identifiers selected by each Scout role. */
+export const ScoutAgentPermissionProfiles = {
+  Coordinator: "scout-coordinator",
+  Researcher: "scout-researcher",
+  Verifier: "scout-verifier",
+  Validator: "scout-validator",
+} as const;
+
+/** Named permission profile id accepted by Scout Agent threads. */
+export type ScoutAgentPermissionProfile = typeof ScoutAgentPermissionProfiles[
+  keyof typeof ScoutAgentPermissionProfiles
+];
+
 /** Lifecycle phase assigned to a role's tools and Skills. */
 export const ScoutAgentPhases = {
   Coordinate: "coordinate",
@@ -36,7 +49,7 @@ export interface AgentThreadSpec {
   phases: ScoutAgentPhase[];
   cwd: string;
   approvalPolicy: "never";
-  sandbox: "read-only" | "workspace-write";
+  permissionProfile: ScoutAgentPermissionProfile;
   contextBundleId: string;
   model: CodexModelConfig;
   config?: Record<string, AgentJsonValue>;

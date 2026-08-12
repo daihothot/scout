@@ -51,7 +51,7 @@ export class MountMaterializer {
       artifactRoot: context.artifactRoot,
       logsRoot: context.logsRoot,
       issues: manifest.issues,
-      trustedRoots: context.trustedRoots,
+      readableRoots: context.readableRoots,
       writableRoots: context.writableRoots,
       shellTools: manifest.shellTools
         .map((tool) => shellToolsById.get(tool.id))
@@ -93,7 +93,7 @@ export class MountMaterializer {
       assetCommitId,
       parentAssetCommitId,
       mountId,
-      trustedRoots,
+      readableRoots,
       writableRoots,
     } = context;
     const shellToolsRegistryHash = sha256File(join(assetsRoot, CodexAssetLayout.shellTools));
@@ -211,7 +211,7 @@ export class MountMaterializer {
       parentAssetCommitId,
       mountId,
       mountRoot,
-      trustedRoots,
+      readableRoots,
       writableRoots,
       issues: shellBuild.issues,
       resourceHash,
@@ -240,7 +240,7 @@ export class MountMaterializer {
       artifactRoot,
       logsRoot,
       issues: shellBuild.issues,
-      trustedRoots,
+      readableRoots,
       writableRoots,
       shellTools: shellBuild.tools.map(({ contract }) => contract),
       mcpServers: materializedMcpServers,

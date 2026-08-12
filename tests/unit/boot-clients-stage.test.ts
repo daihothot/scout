@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readlinkSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -21,6 +22,12 @@ import {
   RunScope,
 } from "../../src/run/run-scope.js";
 import { createTestRunPersistence } from "../helpers/run-persistence.js";
+import {
+  ScoutAgentPermissionProfiles,
+  ScoutAgentRoles,
+  type ScoutAgentPermissionProfile,
+} from "../../src/agent/thread/types.js";
+import { AssetStore } from "../../src/asset-store/index.js";
 
 const repoRoot = process.cwd();
 
@@ -72,20 +79,131 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
 
   const coordinatorMount = resolve(fixtureRoot, "run", runId, "agents", "coordinator", "mount");
   const researcherMount = resolve(fixtureRoot, "run", runId, "agents", "researcher", "mount");
+  const runsRoot = resolve(fixtureRoot, "run");
+  const runRoot = resolve(fixtureRoot, "run", runId);
+  const coordinatorArtifact = resolve(runRoot, "agents", "coordinator", "artifacts");
+  const researcherArtifact = resolve(runRoot, "agents", "researcher", "artifacts");
+  const logicalSkillRoot = resolve(fixtureRoot, "assets", "codex", "skills");
+  const coordinatorPermissions = stage.rootPlan.permissionProfiles.coordinator;
+  const researcherPermissions = stage.rootPlan.permissionProfiles.researcher;
   assert.ok(stage.rootPlan.mountRoots.includes(coordinatorMount));
-  assert.ok(stage.rootPlan.trustedRoots.includes(resolve(fixtureRoot)));
-  assert.ok(stage.rootPlan.trustedRoots.includes(resolve(homedir(), ".guru", "knowledge")));
-  assert.ok(stage.rootPlan.defaultWritableRoots.includes(resolve(homedir(), ".guru", "codebase")));
+  assert.ok(stage.rootPlan.writableRoots.includes(resolve(homedir(), ".guru", "codebase")));
+  assert.equal(researcherPermissions?.id, ScoutAgentPermissionProfiles.Researcher);
+  assert.ok(researcherPermissions?.readableRoots.includes(researcherMount));
+  assert.ok(researcherPermissions?.readableRoots.includes(coordinatorArtifact));
+  assert.ok(researcherPermissions?.writableRoots.includes(researcherArtifact));
+  assert.ok(researcherPermissions?.deniedRoots.includes(runsRoot));
+  assert.ok(researcherPermissions?.deniedRoots.includes(join(researcherMount, ".scout", "skills")));
+  assert.ok(researcherPermissions?.deniedRoots.includes(logicalSkillRoot));
+  assert.ok(researcherPermissions?.deniedRoots.includes(realpathSync(logicalSkillRoot)));
+  assert.ok(coordinatorPermissions?.readableRoots.includes(
+    realpathSync(join(fixtureRoot, "assets", "codex", "agents", "AGENTS.md")),
+  ));
+  assert.ok(coordinatorPermissions?.readableRoots.includes(
+    realpathSync(join(fixtureRoot, "assets", "codex", "tools")),
+  ));
+  assert.ok(coordinatorPermissions?.readableRoots.includes(
+    resolve(process.execPath, "..", ".."),
+  ));
   const configToml = readFileSync(join(expectedCodexHome, "config.toml"), "utf8");
   assert.match(configToml, new RegExp(escapeRegExp(`[projects."${coordinatorMount}"]`)));
   assert.match(configToml, new RegExp(escapeRegExp(`[projects."${researcherMount}"]`)));
-  assert.match(configToml, new RegExp(escapeRegExp(`[projects."${resolve(fixtureRoot)}"]`)));
+  assert.doesNotMatch(configToml, new RegExp(escapeRegExp(`[projects."${resolve(fixtureRoot)}"]`)));
   assert.match(configToml, /^model = "gpt-5\.5"$/m);
   assert.match(configToml, /^model_reasoning_effort = "high"$/m);
   assert.match(configToml, /^model_reasoning_summary = "concise"$/m);
+  assert.match(configToml, /^default_permissions = ":read-only"$/m);
+  assert.match(
+    configToml,
+    new RegExp(escapeRegExp(`[permissions.${ScoutAgentPermissionProfiles.Researcher}.filesystem]`)),
+  );
+  assert.match(configToml, new RegExp(escapeRegExp(`"${runsRoot}" = "deny"`)));
+  assert.match(configToml, new RegExp(escapeRegExp(`"${researcherMount}" = "read"`)));
+  assert.match(configToml, new RegExp(escapeRegExp(`"${coordinatorArtifact}" = "read"`)));
+  assert.match(configToml, new RegExp(escapeRegExp(`"${researcherArtifact}" = "write"`)));
+  assert.match(configToml, new RegExp(escapeRegExp(`"${logicalSkillRoot}" = "deny"`)));
+  assert.doesNotMatch(configToml, /^sandbox_mode\s*=/m);
   assert.match(configToml, /^env_key = "CODEX_API_KEY"$/m);
   assert.doesNotMatch(configToml, /^experimental_bearer_token\s*=/m);
   assert.doesNotMatch(configToml, /source-device-bearer-token/);
+
+  const assetStore = new AssetStore();
+  const researcher = assetStore.materializeMount({
+    repoRoot: fixtureRoot,
+    runId,
+    agentId: ScoutAgentRoles.Researcher,
+  });
+  const coordinator = assetStore.materializeMount({
+    repoRoot: fixtureRoot,
+    runId,
+    agentId: ScoutAgentRoles.Coordinator,
+  });
+  const ownArtifactFile = join(researcher.artifactRoot, "own.txt");
+  const sharedArtifactFile = join(coordinator.artifactRoot, "shared.txt");
+  const ownLogsFile = join(researcher.logsRoot, "private.log");
+  const historicalRunFile = join(runsRoot, "historical-run", "secret.txt");
+  writeFileSync(ownArtifactFile, "own artifact\n", "utf8");
+  writeFileSync(sharedArtifactFile, "shared artifact\n", "utf8");
+  writeFileSync(ownLogsFile, "private log\n", "utf8");
+  mkdirSync(join(runsRoot, "historical-run"), { recursive: true });
+  writeFileSync(historicalRunFile, "historical run\n", "utf8");
+  const exec = async (
+    command: string[],
+    cwd = researcher.mountRoot,
+    permissionProfile: ScoutAgentPermissionProfile = ScoutAgentPermissionProfiles.Researcher,
+  ) => stage.appServerClient.client.request(
+    "command/exec",
+    {
+      command,
+      cwd,
+      permissionProfile,
+      timeoutMs: 10_000,
+    },
+  ) as Promise<{ exitCode: number; stdout: string; stderr: string }>;
+
+  const ownMountRead = await exec(["/bin/cat", join(researcher.mountRoot, "AGENTS.md")]);
+  assert.equal(ownMountRead.exitCode, 0, ownMountRead.stderr);
+  assert.equal((await exec(["/bin/cat", ownArtifactFile])).stdout, "own artifact\n");
+  assert.equal((await exec(["/bin/cat", sharedArtifactFile])).stdout, "shared artifact\n");
+  assert.equal(
+    (await exec(["/bin/cat", join(coordinator.mountRoot, "AGENTS.md")])).exitCode,
+    0,
+  );
+  assert.notEqual((await exec(["/bin/cat", coordinator.manifestPath])).exitCode, 0);
+  assert.notEqual((await exec(["/bin/cat", ownLogsFile])).exitCode, 0);
+  assert.notEqual((await exec(["/bin/cat", historicalRunFile])).exitCode, 0);
+  const mountedSkill = join(researcher.mountRoot, ".scout", "skills", "domain-validation-researcher", "SKILL.md");
+  assert.notEqual((await exec(["/bin/cat", mountedSkill])).exitCode, 0);
+  assert.notEqual(
+    (await exec(["/bin/cat", join(logicalSkillRoot, "domain-validation-researcher", "SKILL.md")])).exitCode,
+    0,
+  );
+  assert.notEqual((await exec(["/bin/cat", realpathSync(mountedSkill)])).exitCode, 0);
+  assert.notEqual(
+    (await exec(["/usr/bin/touch", join(coordinator.artifactRoot, "forbidden.txt")])).exitCode,
+    0,
+  );
+  assert.equal(
+    (await exec(["/usr/bin/touch", join(researcher.artifactRoot, "allowed.txt")])).exitCode,
+    0,
+  );
+  assert.notEqual(
+    (await exec(["/usr/bin/touch", join(researcher.mountRoot, "forbidden.txt")])).exitCode,
+    0,
+  );
+  const coordinatorOwnAgents = await exec(
+    ["/bin/cat", join(coordinator.mountRoot, "agents", "coordinator.AGENTS.md")],
+    coordinator.mountRoot,
+    ScoutAgentPermissionProfiles.Coordinator,
+  );
+  assert.equal(coordinatorOwnAgents.exitCode, 0, coordinatorOwnAgents.stderr);
+  const coordinatorTool = await exec(
+    [join(coordinator.mountRoot, "bin", "scout-assets"), "--smoke"],
+    coordinator.mountRoot,
+    ScoutAgentPermissionProfiles.Coordinator,
+  );
+  assert.equal(coordinatorTool.exitCode, 0, coordinatorTool.stderr);
+  assert.match(coordinatorTool.stdout, /SCOUT_ASSETS_OK/);
 
   await stage.stop();
   await stage.stop();
@@ -180,8 +298,20 @@ test("RunAppServerStage rebinds target Codex auth without retaining copied crede
     ".codex",
     "auth.json",
   );
+  const isolatedConfigPath = join(isolatedAuthPath, "..", "config.toml");
   mkdirSync(join(isolatedAuthPath, ".."), { recursive: true });
   writeFileSync(isolatedAuthPath, '{"OPENAI_API_KEY":"source-device-credential"}\n', "utf8");
+  writeFileSync(
+    isolatedConfigPath,
+    [
+      'default_permissions = "scout-coordinator"',
+      "[permissions.scout-coordinator.filesystem]",
+      '"/source-device/repository/run" = "deny"',
+      '"/source-device/repository/run/copied/agents/coordinator/mount" = "read"',
+      "",
+    ].join("\n"),
+    "utf8",
+  );
   const scope = new RunScope({
     runId,
     repoRoot: fixtureRoot,
@@ -206,6 +336,18 @@ test("RunAppServerStage rebinds target Codex auth without retaining copied crede
   assert.equal(
     JSON.parse(readFileSync(isolatedAuthPath, "utf8")).OPENAI_API_KEY,
     "target-device-credential",
+  );
+  const reboundConfig = readFileSync(isolatedConfigPath, "utf8");
+  assert.doesNotMatch(reboundConfig, /source-device/);
+  assert.match(
+    reboundConfig,
+    new RegExp(escapeRegExp(`"${join(fixtureRoot, "run")}" = "deny"`)),
+  );
+  assert.match(
+    reboundConfig,
+    new RegExp(escapeRegExp(
+      `"${join(fixtureRoot, "run", runId, "agents", "coordinator", "mount")}" = "read"`,
+    )),
   );
 });
 

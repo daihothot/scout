@@ -12,7 +12,7 @@ import {
 
 const repoRoot = process.cwd();
 
-test("AssetStore materializes per-agent trusted and writable roots from agent profile", () => {
+test("AssetStore materializes read and write roots from agent profile", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-asset-store-permissions-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
   cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
@@ -26,7 +26,7 @@ test("AssetStore materializes per-agent trusted and writable roots from agent pr
     agentId: "verifier",
   });
   const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as {
-    trustedRoots: string[];
+    readableRoots: string[];
     writableRoots: string[];
     agentProfile: AgentProfilesFile["profiles"][string] & {
       model: NonNullable<AgentProfilesFile["profiles"][string]["model"]>;
@@ -36,25 +36,19 @@ test("AssetStore materializes per-agent trusted and writable roots from agent pr
   const expectedArtifactRoot = join(fixtureRoot, "run", runId, "agents", "verifier", "artifacts");
 
   assert.equal(mount.mountRoot, expectedMountRoot);
-  assert.deepEqual(mount.trustedRoots.sort(), [
-    expectedMountRoot,
+  assert.deepEqual(mount.writableRoots.sort(), [
+    join(homedir(), ".guru", "codebase"),
+  ].sort());
+  assert.deepEqual(mount.readableRoots.sort(), [
     fixtureRoot,
     join(homedir(), ".guru", "knowledge"),
   ].sort());
-  assert.deepEqual(mount.writableRoots.sort(), [
-    expectedMountRoot,
-    expectedArtifactRoot,
-    join(homedir(), ".guru", "codebase"),
+  assert.deepEqual(manifest.writableRoots.sort(), [
+    relativeFromMount(expectedMountRoot, join(homedir(), ".guru", "codebase")),
   ].sort());
-  assert.deepEqual(manifest.trustedRoots.sort(), [
-    ".",
+  assert.deepEqual(manifest.readableRoots.sort(), [
     relativeFromMount(expectedMountRoot, fixtureRoot),
     relativeFromMount(expectedMountRoot, join(homedir(), ".guru", "knowledge")),
-  ].sort());
-  assert.deepEqual(manifest.writableRoots.sort(), [
-    ".",
-    relativeFromMount(expectedMountRoot, expectedArtifactRoot),
-    relativeFromMount(expectedMountRoot, join(homedir(), ".guru", "codebase")),
   ].sort());
   assert.equal(mount.mcpServers.some((server) => server.name === "codegraph"), false);
   assert.deepEqual(mount.agentProfile.model, {
@@ -166,38 +160,36 @@ test("AssetStore exposes effective permission roots", () => {
     agentId: "researcher",
   });
 
-  assert.ok(store.trustedRootsForMount(mount).includes(fixtureRoot));
-  assert.ok(store.trustedRootsForMount(mount).includes(join(homedir(), ".guru", "knowledge")));
-  assert.ok(store.trustedRootsForMount(mount).includes(mount.mountRoot));
+  assert.ok(store.readableRootsForMount(mount).includes(mount.mountRoot));
+  assert.ok(store.readableRootsForMount(mount).includes(fixtureRoot));
   assert.ok(store.writableRootsForMount(mount).includes(mount.artifactRoot));
   assert.ok(store.writableRootsForMount(mount).includes(join(homedir(), ".guru", "codebase")));
 });
 
-test("AssetStore gives the validator artifact and managed codebase write roots", () => {
+test("AssetStore keeps validator artifact ownership outside profile write roots", () => {
   const fixtureRoot = createCodexAssetFixture("scout-validator-permissions-");
   const runId = "run-validator-permission-test";
-  const mount = new AssetStore().materializeMount({
+  const store = new AssetStore();
+  const mount = store.materializeMount({
     repoRoot: fixtureRoot,
     runId,
     agentId: "validator",
   });
 
-  assert.deepEqual(mount.trustedRoots.sort(), [
-    mount.mountRoot,
-    join(fixtureRoot, "run", runId),
+  assert.deepEqual(mount.writableRoots, [
+    join(homedir(), ".guru", "codebase"),
+  ]);
+  assert.deepEqual(mount.readableRoots.sort(), [
     join(homedir(), ".guru", "knowledge"),
     join(homedir(), ".guru", "codebase"),
   ].sort());
-  assert.deepEqual(mount.writableRoots, [
-    mount.artifactRoot,
-    join(homedir(), ".guru", "codebase"),
-  ]);
+  assert.ok(store.writableRootsForMount(mount).includes(mount.artifactRoot));
 });
 
 test("AssetStore resolves local profile roots relative to the repo root", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-permissions-");
   updateAgentProfile(fixtureRoot, "coordinator", {
-    trustedRoots: ["local/trusted"],
+    readableRoots: ["local/readable"],
     writableRoots: ["local/writable"],
   });
 
@@ -207,7 +199,7 @@ test("AssetStore resolves local profile roots relative to the repo root", () => 
     agentId: "coordinator",
   });
 
-  assert.deepEqual(mount.trustedRoots, [join(fixtureRoot, "local", "trusted")]);
+  assert.deepEqual(mount.readableRoots, [join(fixtureRoot, "local", "readable")]);
   assert.deepEqual(mount.writableRoots, [join(fixtureRoot, "local", "writable")]);
 });
 

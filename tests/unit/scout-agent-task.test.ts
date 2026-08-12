@@ -846,7 +846,7 @@ async function createHarness(t: TestContext, input: {
     phases: [ScoutAgentPhases.Verify],
     cwd: "/repo",
     approvalPolicy: "never",
-    sandbox: "workspace-write",
+    permissionProfile: "scout-verifier",
     contextBundleId: "context-1",
     model: {
       id: "gpt-5.5",

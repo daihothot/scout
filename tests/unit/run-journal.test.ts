@@ -214,7 +214,7 @@ test("RunJournalWriter persists thread start, restart, resume and close lifecycl
     startInput: {
       cwd: "/repo",
       approvalPolicy: "never",
-      sandbox: "workspace-write",
+      permissions: "scout-researcher",
       ephemeral: false,
     },
     startResponse: { thread: { id: "thread-researcher" } },
@@ -241,6 +241,7 @@ test("RunJournalWriter persists thread start, restart, resume and close lifecycl
     resumeInput: {
       threadId: restarted.threadId,
       excludeTurns: true,
+      permissions: "scout-researcher",
     },
     resumeResponse: { thread: { id: restarted.threadId, turns: [] } },
   });
@@ -291,7 +292,7 @@ test("Run projection replaces a thread only when restart names the current snaps
     startInput: {
       cwd: "/repo",
       approvalPolicy: "never",
-      sandbox: "workspace-write",
+      permissions: "scout-validator",
       ephemeral: false,
     },
     startResponse: { thread: { id: "thread-validator-old" } },
@@ -334,7 +335,7 @@ test("Run projection rejects a restart whose previous thread is not current", as
     startInput: {
       cwd: "/repo",
       approvalPolicy: "never",
-      sandbox: "workspace-write",
+      permissions: "scout-verifier",
       ephemeral: false,
     },
     startResponse: { thread: { id: "thread-verifier-current" } },

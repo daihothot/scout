@@ -185,7 +185,6 @@ export class CoordinatorRunner extends AgentRunner {
     );
     const outcome = await this.host.runTurn({
       prompt,
-      sandbox: "workspaceWrite",
       outputContract: "coordinator_main_loop",
       onTurnStarted: () => {
         for (const message of messages) {

@@ -55,7 +55,6 @@ function printList(manifest) {
     mcpServers: (manifest.mcpServers ?? []).map((server) => ({
       name: server.name,
       wrapperPath: server.wrapperPath,
-      trustedRoots: server.trustedRoots ?? [],
       writableRoots: server.writableRoots ?? [],
       smoke: server.smoke,
     })),

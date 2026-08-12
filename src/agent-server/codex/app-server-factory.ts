@@ -12,9 +12,7 @@ export interface CreateCodexAppServerClientOptions {
   providerApiKey?: string;
   stderrLogPath: string;
   transportLogPath?: string;
-  defaultWritableRoots?: string[];
   mountRoots?: string[];
-  trustedRoots?: string[];
 }
 
 /** Client plus the isolated paths and effective roots needed by run stages. */
@@ -22,9 +20,7 @@ export interface CodexAppServerClientBundle {
   client: CodexAppServerClient;
   isolatedHome: string;
   isolatedCodexHome: string;
-  defaultWritableRoots: string[];
   mountRoots: string[];
-  trustedRoots: string[];
 }
 
 /** Writes the isolated Codex config and constructs the corresponding protocol client. */
@@ -46,8 +42,6 @@ export function createCodexAppServerClient(options: CreateCodexAppServerClientOp
     }),
     isolatedHome: options.isolatedHome,
     isolatedCodexHome: options.isolatedCodexHome,
-    defaultWritableRoots: options.defaultWritableRoots ?? [],
     mountRoots: options.mountRoots ?? [],
-    trustedRoots: options.trustedRoots ?? [],
   };
 }

@@ -473,9 +473,9 @@ test("AssetStore compares persisted manifest objects by semantics rather than ke
   });
   const manifest = JSON.parse(readFileSync(initial.manifestPath, "utf8")) as MountManifest;
   manifest.agentProfile = reverseObjectKeys(manifest.agentProfile);
-  manifest.agentProfile.trustedRoots?.reverse();
+  manifest.agentProfile.readableRoots?.reverse();
   manifest.agentProfile.writableRoots?.reverse();
-  manifest.trustedRoots.reverse();
+  manifest.readableRoots.reverse();
   manifest.writableRoots.reverse();
   manifest.skillCatalog = manifest.skillCatalog.map((entry) => ({
     ...reverseObjectKeys(entry),
@@ -486,7 +486,6 @@ test("AssetStore compares persisted manifest objects by semantics rather than ke
   manifest.mcpServers = manifest.mcpServers
     .map((server) => ({
       ...reverseObjectKeys(server),
-      trustedRoots: [...server.trustedRoots].reverse(),
       writableRoots: [...server.writableRoots].reverse(),
     }))
     .reverse();
@@ -1831,7 +1830,7 @@ function createMinimalLegacyShellFixture(): string {
         shellTools: ["assetTool", "deviceTool"],
         mcpServers: [],
         plugins: [],
-        trustedRoots: [],
+        readableRoots: [],
         writableRoots: [],
       },
     },
@@ -1890,7 +1889,7 @@ function computeMinimalLegacyResourceHash(input: {
     shellTools: ["assetTool", "deviceTool"],
     mcpServers: [],
     plugins: [],
-    trustedRoots: [],
+    readableRoots: [],
     writableRoots: [],
   };
   const parts = [

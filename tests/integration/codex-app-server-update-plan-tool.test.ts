@@ -44,7 +44,7 @@ test("real Codex app-server emits turn plan updates from update_plan tool", {
     const thread = await client.startThread({
       cwd: root,
       approvalPolicy: "never",
-      sandbox: "read-only",
+      permissions: ":read-only",
       baseInstructions: [
         "You are a Scout integration test agent.",
         "Do not run shell commands, read files, write files, or call external tools.",
@@ -76,7 +76,7 @@ test("real Codex app-server emits turn plan updates from update_plan tool", {
         "Then answer only SCOUT_UPDATE_PLAN_DONE.",
       ].join("\n"),
       timeoutMs: 120_000,
-      sandbox: "readOnly",
+      permissions: ":read-only",
     });
     const planEntries = client.timelineSince(beforeSeq, {
       threadId: thread.threadId,
@@ -168,7 +168,7 @@ test("real Codex app-server preserves update_plan state across turns", {
     const thread = await client.startThread({
       cwd: root,
       approvalPolicy: "never",
-      sandbox: "read-only",
+      permissions: ":read-only",
       baseInstructions: [
         "You are a Scout multi-turn update_plan integration test agent.",
         "Do not run shell commands, read files, write files, or call external tools.",
@@ -201,7 +201,7 @@ test("real Codex app-server preserves update_plan state across turns", {
         "After update_plan, answer exactly SCOUT_MULTI_TURN_DONE_1.",
       ].join("\n"),
       timeoutMs: 120_000,
-      sandbox: "readOnly",
+      permissions: ":read-only",
     });
     assert.match(turn1.finalResponse, /SCOUT_MULTI_TURN_DONE_1/, updatePlanReport({
       finalResponse: turn1.finalResponse,
@@ -219,7 +219,7 @@ test("real Codex app-server preserves update_plan state across turns", {
         "After update_plan, answer exactly SCOUT_MULTI_TURN_DONE_2.",
       ].join("\n"),
       timeoutMs: 120_000,
-      sandbox: "readOnly",
+      permissions: ":read-only",
     });
     assert.match(turn2.finalResponse, /SCOUT_MULTI_TURN_DONE_2/, updatePlanReport({
       finalResponse: turn2.finalResponse,
@@ -236,7 +236,7 @@ test("real Codex app-server preserves update_plan state across turns", {
         "After update_plan, answer exactly SCOUT_MULTI_TURN_DONE_3.",
       ].join("\n"),
       timeoutMs: 120_000,
-      sandbox: "readOnly",
+      permissions: ":read-only",
     });
     const planEntries = client.timelineSince(beforeSeq, {
       threadId: thread.threadId,

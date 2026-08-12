@@ -16,7 +16,7 @@ export interface MountManifest {
   mountId: string;
   agentProfile: AgentProfile;
   mountRoot: string;
-  trustedRoots: string[];
+  readableRoots: string[];
   writableRoots: string[];
   resourceHash: string;
   generatedAt: string;

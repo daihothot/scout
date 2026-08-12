@@ -28,8 +28,6 @@ export interface ScoutAgentTurnInput {
   prompt: string;
   outputContract?: string;
   timeoutMs?: number;
-  sandbox?: "readOnly" | "workspaceWrite";
-  writableRoots?: string[];
   onStatusMessage?: (message: string) => void;
   onTurnStarted?(invocationId: string): void | Promise<void>;
 }
@@ -202,8 +200,9 @@ export abstract class ScoutAgent {
       modelProvider: this.spec.model.provider,
       reasoningEffort: this.spec.model.reasoningEffort,
       cwd: this.spec.cwd,
+      runtimeWorkspaceRoots: [this.spec.cwd],
       approvalPolicy: this.spec.approvalPolicy,
-      sandbox: this.spec.sandbox,
+      permissions: this.spec.permissionProfile,
       ephemeral: false,
       config: this.spec.config,
       baseInstructions: this.spec.baseInstructions,
@@ -257,25 +256,10 @@ export abstract class ScoutAgent {
       cwd: this.spec.cwd,
       runtimeWorkspaceRoots: [this.spec.cwd],
       approvalPolicy: this.spec.approvalPolicy,
-      sandbox: this.spec.sandbox,
+      permissions: this.spec.permissionProfile,
       config: this.spec.config,
       baseInstructions: this.spec.baseInstructions,
       developerInstructions: this.spec.developerInstructions,
-    });
-    await this.appServer.updateThreadSettings({
-      threadId: input.thread.threadId,
-      cwd: this.spec.cwd,
-      approvalPolicy: this.spec.approvalPolicy,
-      sandboxPolicy: this.spec.sandbox === "read-only"
-        ? {
-          type: "readOnly",
-          networkAccess: false,
-        }
-        : {
-          type: "workspaceWrite",
-          writableRoots: this.defaultWritableRoots(),
-          networkAccess: false,
-        },
     });
     const {
       closedAt: _closedAt,
@@ -470,8 +454,7 @@ export abstract class ScoutAgent {
         reasoningEffort: this.spec.model.reasoningEffort,
         reasoningSummary: this.spec.model.reasoningSummary,
         timeoutMs: input.timeoutMs,
-        sandbox: input.sandbox,
-        writableRoots: input.writableRoots ?? this.defaultWritableRoots(),
+        permissions: this.spec.permissionProfile,
         onStatusMessage: input.onStatusMessage,
         onTurnStarted: (turnId) => this.bindOwnedTurnId(ownership, turnId),
       });
@@ -645,13 +628,6 @@ export abstract class ScoutAgent {
       })
       .catch(() => undefined);
     return this.threadPreflightPromise;
-  }
-
-  private defaultWritableRoots(): string[] {
-    return [...new Set([
-      ...this.agentMount.writableRoots,
-      this.agentMount.artifactRoot,
-    ])];
   }
 
   private nextInvocationId(threadId: string): string {

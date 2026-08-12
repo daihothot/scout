@@ -29,7 +29,7 @@ test("real Codex app-server produces timeline and completed turn", { skip: enabl
     const thread = await client.startThread({
       cwd: root,
       approvalPolicy: "never",
-      sandbox: "read-only",
+      permissions: ":read-only",
       baseInstructions: "你是 Scout 集成测试 agent。只回答用户要求的固定文本。",
       developerInstructions: "必须只输出：scout-app-server-smoke-ok",
     });
@@ -37,7 +37,7 @@ test("real Codex app-server produces timeline and completed turn", { skip: enabl
       threadId: thread.threadId,
       prompt: "输出 scout-app-server-smoke-ok，不要添加其它内容。",
       timeoutMs: 60000,
-      sandbox: "readOnly",
+      permissions: ":read-only",
     });
 
     assert.match(turn.finalResponse, /scout-app-server-smoke-ok/);

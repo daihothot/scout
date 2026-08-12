@@ -27,14 +27,8 @@
       ],
       "mcpServers": [],
       "plugins": [],
-      "trustedRoots": [
-        "${SCOUT_MOUNT_ROOT}",
-        "${SCOUT_RUN_ROOT}/codex-home/.codex"
-      ],
-      "writableRoots": [
-        "${SCOUT_MOUNT_ROOT}",
-        "${SCOUT_ARTIFACT_ROOT}"
-      ]
+      "readableRoots": [],
+      "writableRoots": []
     },
     "researcher": {
       "config": "config/base.config.toml",
@@ -73,14 +67,11 @@
       ],
       "mcpServers": [],
       "plugins": [],
-      "trustedRoots": [
-        "${SCOUT_MOUNT_ROOT}",
+      "readableRoots": [
         "${SCOUT_REPO_ROOT}",
         "~/.guru/knowledge"
       ],
       "writableRoots": [
-        "${SCOUT_MOUNT_ROOT}",
-        "${SCOUT_ARTIFACT_ROOT}",
         "~/.guru/codebase"
       ]
     },
@@ -129,14 +120,11 @@
       "plugins": [
         "scout-local-capability-plugin"
       ],
-      "trustedRoots": [
-        "${SCOUT_MOUNT_ROOT}",
+      "readableRoots": [
         "${SCOUT_REPO_ROOT}",
         "~/.guru/knowledge"
       ],
       "writableRoots": [
-        "${SCOUT_MOUNT_ROOT}",
-        "${SCOUT_ARTIFACT_ROOT}",
         "~/.guru/codebase"
       ]
     },
@@ -184,14 +172,11 @@
       ],
       "mcpServers": [],
       "plugins": [],
-      "trustedRoots": [
-        "${SCOUT_MOUNT_ROOT}",
-        "${SCOUT_RUN_ROOT}",
+      "readableRoots": [
         "~/.guru/knowledge",
         "~/.guru/codebase"
       ],
       "writableRoots": [
-        "${SCOUT_ARTIFACT_ROOT}",
         "~/.guru/codebase"
       ]
     }

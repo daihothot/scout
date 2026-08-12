@@ -157,7 +157,7 @@ function createAppServer(
         startInput: {
           cwd: options.cwd,
           approvalPolicy: "never",
-          sandbox: "workspace-write",
+          permissions: options.permissions,
           ephemeral: options.ephemeral ?? true,
         },
         response: { thread: { id: threadId } },
