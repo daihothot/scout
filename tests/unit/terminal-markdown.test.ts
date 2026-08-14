@@ -210,9 +210,9 @@ test("Subprocess progress accepts module-independent content and units", () => {
     maxBarWidth: 12,
   });
 
-  assert.equal(presentation.width, 12);
-  assert.equal(presentation.filled, "▬".repeat(5));
-  assert.equal(presentation.remaining, "▭".repeat(7));
+  assert.equal(presentation.width, 11);
+  assert.equal(presentation.filled, "▬▬ ▬▬ ");
+  assert.equal(presentation.remaining, "▭▭ ▭▭");
   assert.deepEqual(presentation.content, content);
   assert.equal(subprocessProgressStatusText(content), "▷ workspace  indexing  2/5");
   assert.equal(subprocessProgressStatusText(content, true), "workspace▷indexing 2/5");
@@ -256,8 +256,8 @@ test("Subprocess descriptor drives progress content and stable chrome rows", () 
     tone: "active",
     units: "8/14",
   });
-  assert.equal(presentation.filled, "▬".repeat(30));
-  assert.equal(presentation.remaining, "▭".repeat(23));
+  assert.equal(presentation.filled, "▬▬ ▬▬ ▬▬ ▬▬ ▬▬ ▬▬ ▬▬ ▬▬ ▬▬ ▬▬ ");
+  assert.equal(presentation.remaining, "▭▭ ▭▭ ▭▭ ▭▭ ▭▭ ▭▭ ▭▭ ▭▭");
   const preflight = buildSubprocessProgressPresentation({
     completedUnits: progress.completedUnits,
     totalUnits: progress.totalUnits,
@@ -435,8 +435,8 @@ test("Top chrome matches the full mount layout at normal and boundary widths", (
       assert.equal(lines[statusIndex + 6], "");
       assert.match(lines[statusIndex + 7] ?? "", /^› researcher  preflight  11\/24/);
       assert.equal(lines[statusIndex + 8], "");
-      assert.match(lines[statusIndex + 9] ?? "", /^  ▬▬/);
-      assert.equal(lines[statusIndex + 9]?.includes(" ", 2), false);
+      assert.match(lines[statusIndex + 9] ?? "", /^  ▬▬ ▬▬/);
+      assert.equal(terminalDisplayWidth(lines[statusIndex + 9] ?? ""), 55);
     }
   } finally {
     if (previousMotion === undefined) delete process.env.SCOUT_TUI_MOTION;
