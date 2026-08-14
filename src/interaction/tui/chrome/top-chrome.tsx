@@ -33,10 +33,12 @@ const SUBPROCESS_BOTTOM_GAP_ROWS = 1;
 const SUBPROCESS_TRACK_GAP_ROWS = 1;
 const SUBPROCESS_BAR_MAX_WIDTH = LIFECYCLE_PROGRESS_MAX_WIDTH;
 const SUBPROCESS_INDENT = 2;
-const PREPARING_STATUS_COLOR = "#f2db3f";
-const LIFECYCLE_PROGRESS_COLOR = "#e2b40b";
-/** Subprocess track stays in the gray/white family so cyan/green do not compete with preparing yellow. */
-const SUBPROCESS_PROGRESS_COLOR: ProgressTrackColor = "white";
+const BRAND_COLOR = "cyan";
+/** One preparing yellow for status, marker, and the lifecycle bar. */
+const PREPARING_STATUS_COLOR = "#e2b40b";
+const LIFECYCLE_PROGRESS_COLOR = PREPARING_STATUS_COLOR;
+/** Subprocess track stays gray/white so it does not compete with preparing yellow. */
+const SUBPROCESS_PROGRESS_COLOR: ProgressTrackColor = "gray";
 const RUNTIME_CARD_BORDER_COLOR = "#626262";
 const RUNTIME_CARD_COLUMN_GAP = 2;
 const RUNTIME_CARD_RUN_TAIL_WIDTH = 8;
@@ -106,8 +108,8 @@ export function TopChrome({
       <Box marginTop={compact ? 0 : 1} flexDirection="column" flexShrink={0}>
         <Text bold>scout</Text>
         {compact
-          ? <Text color="cyan" bold>SCOUT</Text>
-          : FULL_LOGO.map((line) => <Text key={line} color="cyan">{line}</Text>)}
+          ? <Text color={BRAND_COLOR} bold>SCOUT</Text>
+          : FULL_LOGO.map((line) => <Text key={line} color={BRAND_COLOR}>{line}</Text>)}
       </Box>
 
       <RuntimeCard
@@ -240,8 +242,8 @@ function RuntimeCard({
       flexShrink={0}
     >
       <Text wrap="truncate-end">
-        <Text bold>{">_ Scout"}</Text>
-        <Text>{` v${state.runtime.version} validation runtime`}</Text>
+        <Text color={BRAND_COLOR} bold>{">_ Scout"}</Text>
+        <Text dimColor>{` v${state.runtime.version} validation runtime`}</Text>
       </Text>
       {!compact && <Box height={1} flexShrink={0} />}
       {compact ? (
@@ -264,14 +266,12 @@ function RuntimeCard({
             <RuntimeCardField
               label="model"
               value={state.runtime.model}
-              valueColor="cyan"
               width={compactModelWidth}
               gap={RUNTIME_CARD_COLUMN_GAP}
             />
             <RuntimeCardField
               label="reasoning"
               value={state.runtime.reasoningEffort}
-              valueColor="cyan"
               width={Math.max(0, contentWidth - compactModelWidth)}
             />
           </Box>
@@ -279,7 +279,6 @@ function RuntimeCard({
             <RuntimeCardField
               label="activity"
               value={`${state.activities.length}`}
-              valueColor="cyan"
               suffix=" items"
               width={compactActivityWidth}
               gap={RUNTIME_CARD_COLUMN_GAP}
@@ -287,7 +286,6 @@ function RuntimeCard({
             <RuntimeCardField
               label="tasks"
               value={`${activeTasks}`}
-              valueColor="cyan"
               width={Math.max(0, contentWidth - compactActivityWidth)}
             />
           </Box>
@@ -312,14 +310,12 @@ function RuntimeCard({
             <RuntimeCardField
               label="model"
               value={state.runtime.model}
-              valueColor="cyan"
               width={fullModelWidth}
               gap={RUNTIME_CARD_COLUMN_GAP}
             />
             <RuntimeCardField
               label="reasoning"
               value={state.runtime.reasoningEffort}
-              valueColor="cyan"
               width={fullReasoningWidth}
             />
           </Box>
@@ -328,7 +324,6 @@ function RuntimeCard({
             <RuntimeCardField
               label="activity"
               value={`${state.activities.length}`}
-              valueColor="cyan"
               suffix=" items"
               width={activityColumnWidth}
               gap={RUNTIME_CARD_COLUMN_GAP}
@@ -336,7 +331,6 @@ function RuntimeCard({
             <RuntimeCardField
               label="tasks"
               value={`${activeTasks}`}
-              valueColor="cyan"
               width={tasksColumnWidth}
               gap={RUNTIME_CARD_COLUMN_GAP}
             />
