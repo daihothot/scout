@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: Guru knowledge evidence 模板目录与选择条件。
 artifact_type: TemplateIndex
 artifact_version: 1
 status: ready

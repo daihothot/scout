@@ -97,6 +97,7 @@ export class WorkerRunner extends AgentRunner {
     request: string;
   };
   private protocolCorrectionContext?: string;
+  private runningProtocolCorrectionSourceTurnId?: string;
   private activeTask?: AgentTaskState;
   private stopped = false;
 
@@ -413,6 +414,11 @@ export class WorkerRunner extends AgentRunner {
     };
   }
 
+  /** Source turn whose ready Skill selection may be reused by the active correction turn. */
+  currentProtocolCorrectionSourceTurnId(): string | undefined {
+    return this.runningProtocolCorrectionSourceTurnId;
+  }
+
   private takeTaskTurn(): AgentTaskState | undefined {
     const task = this.activeTask;
     if (!task) return undefined;
@@ -450,6 +456,14 @@ export class WorkerRunner extends AgentRunner {
 
     const protocolCorrectionContext = this.protocolCorrectionContext;
     const isProtocolCorrection = protocolCorrectionContext !== undefined;
+    let protocolCorrectionSourceTurnId: string | undefined;
+    if (isProtocolCorrection) {
+      const disposition = task.steps?.at(-1)?.disposition;
+      if (disposition?.kind !== AgentTaskDispositionKinds.ProtocolViolation) {
+        throw new Error(`Worker task ${taskId} correction has no source protocol violation.`);
+      }
+      protocolCorrectionSourceTurnId = disposition.turnId;
+    }
     const pendingMessages = isProtocolCorrection
       ? []
       : structuredClone(this.pendingMessages);
@@ -509,9 +523,15 @@ export class WorkerRunner extends AgentRunner {
     }
 
     const startedAt = Date.now();
-    const outcome = await this.host.runTurn({
-      prompt,
-    });
+    let outcome: ScoutAgentTurnOutcome;
+    this.runningProtocolCorrectionSourceTurnId = protocolCorrectionSourceTurnId;
+    try {
+      outcome = await this.host.runTurn({
+        prompt,
+      });
+    } finally {
+      this.runningProtocolCorrectionSourceTurnId = undefined;
+    }
     const durationMs = Date.now() - startedAt;
     const latest = this.getTask(taskId);
     if (latest.status === AgentTaskStatuses.Stopped) {

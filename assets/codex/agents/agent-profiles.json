@@ -14,10 +14,7 @@
       "maxThreads": 6,
       "maxDepth": 1,
       "customAgents": [],
-      "skills": [
-        "domain-validation-coordinator",
-        "internal-boundary-inspector"
-      ],
+      "phase": "coordinate",
       "shellTools": [
         "scoutAssets",
         "scoutMemory",
@@ -38,16 +35,7 @@
       "customAgents": [
         "scout-helper"
       ],
-      "skills": [
-        "domain-validation-researcher",
-        "domain-validation-research-pack",
-        "signal-unity-runtime-log",
-        "signal-unity-callback-event-by-runtime-log",
-        "signal-unity-local-storage",
-        "tool-guru-knowledge",
-        "tool-jarvis-codebase",
-        "internal-boundary-inspector"
-      ],
+      "phase": "research",
       "shellTools": [
         "scoutAssets",
         "scoutMemory",
@@ -68,7 +56,7 @@
       "mcpServers": [],
       "plugins": [],
       "readableRoots": [
-        "${SCOUT_REPO_ROOT}",
+        "${SCOUT_ROOT}",
         "~/.guru/knowledge"
       ],
       "writableRoots": [
@@ -83,16 +71,7 @@
       "customAgents": [
         "scout-helper"
       ],
-      "skills": [
-        "domain-validation-verifier",
-        "signal-unity-runtime-log",
-        "tool-unity-pipeline-cli",
-        "signal-unity-runtime-log-unity-pipeline-cli",
-        "signal-unity-callback-event-by-runtime-log",
-        "signal-unity-local-storage",
-        "tool-jarvis-codebase",
-        "internal-boundary-inspector"
-      ],
+      "phase": "verify",
       "shellTools": [
         "scoutAssets",
         "scoutMemory",
@@ -121,7 +100,7 @@
         "scout-local-capability-plugin"
       ],
       "readableRoots": [
-        "${SCOUT_REPO_ROOT}",
+        "${SCOUT_ROOT}",
         "~/.guru/knowledge"
       ],
       "writableRoots": [
@@ -136,19 +115,7 @@
       "customAgents": [
         "scout-helper"
       ],
-      "skills": [
-        "domain-validation-validator",
-        "domain-validation-research-pack",
-        "domain-validation-verifier",
-        "signal-unity-runtime-log",
-        "tool-unity-pipeline-cli",
-        "signal-unity-runtime-log-unity-pipeline-cli",
-        "signal-unity-callback-event-by-runtime-log",
-        "signal-unity-local-storage",
-        "tool-guru-knowledge",
-        "tool-jarvis-codebase",
-        "internal-boundary-inspector"
-      ],
+      "phase": "validate",
       "shellTools": [
         "scoutAssets",
         "scoutMemory",

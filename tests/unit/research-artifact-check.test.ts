@@ -5,14 +5,14 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const repoRoot = process.cwd();
-const checkerPath = join(repoRoot, "assets", "codex", "tools", "scout-research-artifact-check", "cli.cjs");
+const scoutRoot = process.cwd();
+const checkerPath = join(scoutRoot, "assets", "codex", "tools", "scout-research-artifact-check", "cli.cjs");
 
 test("scout-research-artifact-check accepts a replayable ready Research pack", () => {
   const packRoot = createReadyResearchPack();
 
   const output = execFileSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -33,7 +33,7 @@ test("scout-research-artifact-check rejects ready Manual with global human confi
   );
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -50,7 +50,7 @@ test("scout-research-artifact-check rejects ready Manual with verification point
   );
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -64,7 +64,7 @@ test("scout-research-artifact-check derives a partial Pack state from aggregate 
   replaceInFile(join(packRoot, "bdd-evidence.md"), "completion_state: complete", "completion_state: partial");
 
   const output = execFileSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -80,7 +80,7 @@ test("scout-research-artifact-check derives a blocked Pack state from aggregate 
   replaceInFile(join(packRoot, "bdd-evidence.md"), "blocking_items: none", "blocking_items: BDD source unavailable");
 
   const output = execFileSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -95,7 +95,7 @@ test("scout-research-artifact-check rejects a versioned Research pack directory"
   renameSync(packRoot, versionedPackRoot);
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", versionedPackRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -108,7 +108,7 @@ test("scout-research-artifact-check rejects undeclared Research pack root files"
   write(packRoot, "gate-followup.md", "# Gate Follow-up\n");
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -122,7 +122,7 @@ test("scout-research-artifact-check rejects the removed Pack index artifact", ()
   write(packRoot, "index.md", "# Removed Research Index\n");
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -140,7 +140,7 @@ test("scout-research-artifact-check rejects contradictory state and non-replayab
   replaceInFile(join(packRoot, "verification-manual.md"), "- E-KB-001", "- E-KB-999");
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -157,7 +157,7 @@ test("scout-research-artifact-check checks one evidence artifact independently",
   const evidencePath = join(packRoot, "evidence", "E-CODE-001.md");
 
   const output = execFileSync(process.execPath, [checkerPath, "evidence", evidencePath], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -178,7 +178,7 @@ status: ready
 `, "utf8");
 
   const result = spawnSync(process.execPath, [checkerPath, "evidence", evidencePath], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -191,7 +191,7 @@ test("scout-research-artifact-check rejects removed E-CG aggregate refs", () => 
   replaceInFile(join(packRoot, "verification-manual.md"), "- E-CODE-001", "- E-CG-001\n- E-CODE-001");
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -204,7 +204,7 @@ test("scout-research-artifact-check rejects removed E-API aggregate refs", () =>
   replaceInFile(join(packRoot, "verification-manual.md"), "- E-CODE-001", "- E-API-001\n- E-CODE-001");
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -217,7 +217,7 @@ test("scout-research-artifact-check accepts multiple independent Capability evid
   addSecondCapability(packRoot);
 
   const output = execFileSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -231,7 +231,7 @@ test("scout-research-artifact-check requires Availability and Platform to cover 
   replaceInFile(join(packRoot, "evidence", "E-AVAIL-001.md"), "- capability_refs: E-CAP-001, E-CAP-002", "- capability_refs: E-CAP-001");
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -245,7 +245,7 @@ test("scout-research-artifact-check rejects an independent E-KB artifact", () =>
   write(join(packRoot, "evidence"), "E-KB-001.md", evidence("E-KB-001", "knowledge", "ready", ["Artifact State"]));
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -258,7 +258,7 @@ test("scout-research-artifact-check rejects an independent E-BDD artifact", () =
   write(join(packRoot, "evidence"), "E-BDD-001.md", evidence("E-BDD-001", "bdd", "ready", ["Artifact State"]));
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -272,7 +272,7 @@ test("scout-research-artifact-check rejects non-singleton Availability and Platf
   write(join(packRoot, "evidence"), "E-PLATFORM-002.md", platformEvidence("E-PLATFORM-002"));
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -286,7 +286,7 @@ test("scout-research-artifact-check requires all 11 dimensions in every Capabili
   replaceInFile(join(packRoot, "evidence", "E-CAP-001.md"), "| 系统目标 | covered | 当前事实：系统目标 | CAPSRC-001 | none |\n", "");
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -300,7 +300,7 @@ test("scout-research-artifact-check rejects duplicate dimensions in Capability e
   replaceInFile(join(packRoot, "evidence", "E-CAP-001.md"), row, `${row}\n${row}`);
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -318,7 +318,7 @@ test("scout-research-artifact-check checks one aggregate artifact independently"
     "knowledge-evidence",
     aggregatePath,
   ], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -327,12 +327,90 @@ test("scout-research-artifact-check checks one aggregate artifact independently"
   assert.match(output, /aggregate_status=ready/);
 });
 
+test("scout-research-artifact-check rejects runtime control metadata in a Research pack", () => {
+  const packRoot = createReadyResearchPack();
+  replaceInFile(
+    join(packRoot, "bdd-evidence.md"),
+    "---\nartifact_type:",
+    "---\nscout:\n  resource:\n    requirement: required\nartifact_type:",
+  );
+
+  const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
+    cwd: scoutRoot,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /RUNTIME_CONTROL_METADATA_FORBIDDEN/);
+  assert.match(result.stderr, /bdd-evidence\.md/);
+});
+
+test("scout-research-artifact-check rejects runtime control metadata in independent evidence", () => {
+  const packRoot = createReadyResearchPack();
+  const evidencePath = join(packRoot, "evidence", "E-CODE-001.md");
+  replaceInFile(
+    evidencePath,
+    "---\nevidence_id:",
+    "---\nscout:\n  resource:\n    requirement: required\nevidence_id:",
+  );
+
+  const result = spawnSync(process.execPath, [checkerPath, "evidence", evidencePath], {
+    cwd: scoutRoot,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /RUNTIME_CONTROL_METADATA_FORBIDDEN/);
+  assert.match(result.stderr, /E-CODE-001\.md/);
+});
+
+test("scout-research-artifact-check rejects runtime control metadata in an independent aggregate", () => {
+  const packRoot = createReadyResearchPack();
+  const aggregatePath = join(packRoot, "knowledge-evidence.md");
+  replaceInFile(
+    aggregatePath,
+    "---\nartifact_type:",
+    "---\nscout:\n  resource:\n    requirement: required\nartifact_type:",
+  );
+
+  const result = spawnSync(process.execPath, [
+    checkerPath,
+    "aggregate",
+    "knowledge-evidence",
+    aggregatePath,
+  ], {
+    cwd: scoutRoot,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /RUNTIME_CONTROL_METADATA_FORBIDDEN/);
+  assert.match(result.stderr, /knowledge-evidence\.md/);
+});
+
+test("scout-research-artifact-check allows scout.resource text outside frontmatter", () => {
+  const packRoot = createReadyResearchPack();
+  const evidencePath = join(packRoot, "evidence", "E-CODE-001.md");
+  replaceInFile(
+    evidencePath,
+    "# E-CODE-001",
+    "# E-CODE-001\nscout:\n  resource:\n    requirement: required",
+  );
+
+  const output = execFileSync(process.execPath, [checkerPath, "evidence", evidencePath], {
+    cwd: scoutRoot,
+    encoding: "utf8",
+  });
+
+  assert.match(output, /evidence_valid=true/);
+});
+
 test("scout-research-artifact-check rejects an unregistered persona evidence ref", () => {
   const packRoot = createReadyResearchPack();
   replaceInFile(join(packRoot, "verification-manual.md"), "persona_evidence_ref: E-PERSONA-001", "persona_evidence_ref: E-PERSONA-999");
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -353,7 +431,7 @@ test("scout-research-artifact-check allows unknown Nice to Have persona fields",
   }
 
   const output = execFileSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -366,7 +444,7 @@ test("scout-research-artifact-check accepts a generic human confirmation record"
   writeFileSync(evidencePath, humanConfirmationEvidence(), "utf8");
 
   const output = execFileSync(process.execPath, [checkerPath, "evidence", evidencePath], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -379,7 +457,7 @@ test("scout-research-artifact-check rejects template instructions in ready artif
   replaceInFile(join(packRoot, "verification-manual.md"), "- product: GuruSdk", "- product: <填写经当前证据确认的产品名称>");
 
   const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -396,7 +474,7 @@ test("Research artifact template headings remain English", () => {
     "assets/codex/skills/domain-validation-validator/templates",
     "assets/codex/skills/internal-skill-creator/templates",
   ]) {
-    const templateRoot = join(repoRoot, relativeRoot);
+    const templateRoot = join(scoutRoot, relativeRoot);
     for (const file of readdirSync(templateRoot).filter((name) => name.endsWith(".md"))) {
       const headings = readFileSync(join(templateRoot, file), "utf8")
         .split("\n")
@@ -416,7 +494,7 @@ test("Artifact templates explain fillable fields in Chinese without fake example
     "assets/codex/skills/domain-validation-verifier/templates",
     "assets/codex/skills/domain-validation-validator/templates",
   ]) {
-    const templateRoot = join(repoRoot, relativeRoot);
+    const templateRoot = join(scoutRoot, relativeRoot);
     for (const file of readdirSync(templateRoot).filter((name) => name.endsWith(".md") && name !== "template-index.md")) {
       const text = readFileSync(join(templateRoot, file), "utf8");
       const unexplainedFields = text.split("\n")
@@ -433,7 +511,7 @@ test("Artifact templates explain fillable fields in Chinese without fake example
 
 test("Verification Manual template defines one reusable verification point block", () => {
   const text = readFileSync(join(
-    repoRoot,
+    scoutRoot,
     "assets/codex/skills/domain-validation-research-pack/templates/verification-manual.md",
   ), "utf8");
   assert.equal(text.match(/^### VP-\d+:/gm)?.length, 1);
@@ -443,7 +521,7 @@ test("Verification Manual template defines one reusable verification point block
 
 test("Verification Manual defines one generic Signal requirement", () => {
   const text = readFileSync(join(
-    repoRoot,
+    scoutRoot,
     "assets/codex/skills/domain-validation-research-pack/templates/verification-manual.md",
   ), "utf8");
 
@@ -473,7 +551,7 @@ test("Validation domain Skills do not branch on concrete Unity Signals", () => {
     "domain-validation-verifier",
     "domain-validation-validator",
   ]) {
-    const text = readFileSync(join(repoRoot, "assets/codex/skills", skill, "SKILL.md"), "utf8");
+    const text = readFileSync(join(scoutRoot, "assets/codex/skills", skill, "SKILL.md"), "utf8");
     assert.doesNotMatch(
       text,
       /signal-unity-runtime-log|signal-unity-runtime-log-unity-pipeline-cli|signal-unity-callback-event-by-runtime-log|signal-unity-local-storage|tool-unity-pipeline-cli/,
@@ -484,7 +562,7 @@ test("Validation domain Skills do not branch on concrete Unity Signals", () => {
 
 test("runtime-log Signal owns format and line positions but no Acquisition file facts", () => {
   const text = readFileSync(join(
-    repoRoot,
+    scoutRoot,
     "assets/codex/skills/signal-unity-runtime-log/SKILL.md",
   ), "utf8");
 
@@ -512,7 +590,7 @@ test("runtime-log Signal owns format and line positions but no Acquisition file 
 
 test("callback-event Signal declares one runtime-log Source Signal", () => {
   const text = readFileSync(join(
-    repoRoot,
+    scoutRoot,
     "assets/codex/skills/signal-unity-callback-event-by-runtime-log/SKILL.md",
   ), "utf8");
 
@@ -536,7 +614,7 @@ test("callback-event Signal declares one runtime-log Source Signal", () => {
 
 test("Unity Pipeline runtime-log Acquisition owns raw file export without Console fallback", () => {
   const text = readFileSync(join(
-    repoRoot,
+    scoutRoot,
     "assets/codex/skills/signal-unity-runtime-log-unity-pipeline-cli/SKILL.md",
   ), "utf8");
 
@@ -557,7 +635,7 @@ test("Unity Pipeline runtime-log Acquisition owns raw file export without Consol
 
 test("Unity Pipeline CLI Tool owns generic invocation without Signal semantics", () => {
   const skillRoot = join(
-    repoRoot,
+    scoutRoot,
     "assets/codex/skills/tool-unity-pipeline-cli/SKILL.md",
   );
   const text = readFileSync(skillRoot, "utf8");
@@ -600,7 +678,7 @@ test("Unity Pipeline CLI Tool owns generic invocation without Signal semantics",
 });
 
 test("Unity Pipeline CLI Tool conditionally owns a guarded macOS prefix patch resource", () => {
-  const skillRoot = join(repoRoot, "assets/codex/skills/tool-unity-pipeline-cli");
+  const skillRoot = join(scoutRoot, "assets/codex/skills/tool-unity-pipeline-cli");
   const reference = readFileSync(
     join(skillRoot, "references/pipeline-prefix-patch.md"),
     "utf8",
@@ -639,7 +717,7 @@ test("Unity Pipeline CLI Tool conditionally owns a guarded macOS prefix patch re
 
 test("local-storage Signal defines a direct snapshot Source Signal", () => {
   const text = readFileSync(join(
-    repoRoot,
+    scoutRoot,
     "assets/codex/skills/signal-unity-local-storage/SKILL.md",
   ), "utf8");
 

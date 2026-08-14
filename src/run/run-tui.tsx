@@ -1,7 +1,7 @@
 import { resumeRun, startRun } from "./index.js";
 import { startScoutTui } from "../interaction/tui/run-tui.js";
 import {
-  readAgentProfilesForRepo,
+  readAgentProfilesForScoutRoot,
   resolveDefaultAgentModel,
 } from "../asset-store/assets/agent-profiles.js";
 
@@ -10,7 +10,7 @@ export async function runScoutTui(input: {
   cwd: string;
   resume?: string;
 }): Promise<void> {
-  const defaultModel = resolveDefaultAgentModel(readAgentProfilesForRepo(input.cwd));
+  const defaultModel = resolveDefaultAgentModel(readAgentProfilesForScoutRoot(input.cwd));
   const tui = startScoutTui({
     cwd: input.cwd,
     version: process.env.npm_package_version ?? "0.1.0",

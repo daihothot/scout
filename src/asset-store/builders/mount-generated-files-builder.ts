@@ -62,10 +62,6 @@ export class MountGeneratedFilesBuilder {
           })),
         }),
       },
-      {
-        path: ".scout/skill-catalog.json",
-        content: renderJson(context.skillCatalog),
-      },
     ];
   }
 }

@@ -5,7 +5,7 @@ description: 定义或解释 Unity local storage 快照、SQLite store、记录�
 id: signal-unity-local-storage
 version: 0.1.2
 phase: [research, verify, validate]
-family: [validation, signal, unity-local-storage]
+family: [validation, unity, single, local, general, local-storage]
 tags: [signal, unity, local-storage, sqlite]
 devices: [any]
 summary: 定义 Unity local storage 的多 store 快照结构、记录语义、Signal 匹配契约、输出契约和解释限制。

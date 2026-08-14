@@ -25,6 +25,11 @@ import type {
 import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
 import type { AgentTaskNotAssignedEventPayload } from "../../src/agent/task/task-events.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
+import {
+  AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+  AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
+  AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+} from "../../src/agent/tools/agent-tools.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
@@ -89,7 +94,29 @@ test("TaskEventRecorder writes incremental task events without repeating task hi
         status: "completed",
         prompt: "Inspect current evidence",
         finalResponse: "Current response",
-        toolCalls: [],
+        toolCalls: [
+          {
+            namespace: AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+            tool: "FindSkills",
+            callId: "call-find",
+            arguments: {},
+            success: true,
+          },
+          {
+            namespace: AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
+            tool: "ReadSkillResource",
+            callId: "call-read",
+            arguments: { resource: "SKILL.md" },
+            success: true,
+          },
+          {
+            namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+            tool: "SubmitTask",
+            callId: "call-submit",
+            arguments: { outcome: "Current response" },
+            success: true,
+          },
+        ],
         startedAt: "2026-07-14T00:00:03.000Z",
         finishedAt: "2026-07-14T00:00:04.000Z",
       },
@@ -122,6 +149,9 @@ test("TaskEventRecorder writes incremental task events without repeating task hi
   assert.match(text, /initialPrompt: "Research current BDD evidence"/);
   assert.match(text, /prompt: "Inspect current evidence"/);
   assert.match(text, /finalResponse: "Current response"/);
+  assert.match(text, /tool: "SubmitTask"/);
+  assert.doesNotMatch(text, /tool: "FindSkills"/);
+  assert.doesNotMatch(text, /tool: "ReadSkillResource"/);
   assert.doesNotMatch(text, /Old prompt that must not be repeated/);
   assert.doesNotMatch(text, /Old response that must not be repeated/);
   assert.equal(text.match(/initialPrompt:/g)?.length, 1);
@@ -165,6 +195,8 @@ test("AgentSkillRecorder writes Skill event metadata to a dedicated log", async 
     selectionId: "skill-selection-1",
     skillId: "domain-validation-researcher",
     resource: "SKILL.md",
+    requirement: "required",
+    selectionState: "ready",
     digest: "sha256:abc",
     byteLength: 123,
   } satisfies AgentSkillReadCompletedEvent);
@@ -173,6 +205,7 @@ test("AgentSkillRecorder writes Skill event metadata to a dedicated log", async 
     callId: "call-read-failed",
     selectionId: "skill-selection-1",
     skillId: "domain-validation-researcher",
+    resource: "templates/missing.md",
     errorCode: "load_order_violation",
   } satisfies AgentSkillReadFailedEvent);
   recorder.stop();
@@ -186,6 +219,9 @@ test("AgentSkillRecorder writes Skill event metadata to a dedicated log", async 
   assert.match(text, /family:/);
   assert.match(text, /- "validation"/);
   assert.match(text, /digest: "sha256:abc"/);
+  assert.match(text, /requirement: "required"/);
+  assert.match(text, /selectionState: "ready"/);
+  assert.match(text, /resource: "templates\/missing\.md"/);
   assert.match(text, /errorCode: "load_order_violation"/);
   assert.doesNotMatch(text, /tags:/);
   assert.doesNotMatch(text, /SKILL_BODY_MUST_NOT_BE_RECORDED/);
@@ -376,6 +412,9 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
         turns: [{ body: "START_RESPONSE_TURN_MUST_NOT_BE_RECORDED" }],
       },
       cwd: "/source-device/run/run-thread-recorder/agents/researcher/mount",
+      activePermissionProfile: {
+        id: "scout-researcher",
+      },
     },
   };
   const startedBeforeRecording = structuredClone(started);
@@ -387,6 +426,7 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
     resumeInput: {
       threadId: started.threadId,
       excludeTurns: true as const,
+      permissions: "scout-researcher",
       baseInstructions: resumedBaseInstructions,
       developerInstructions: resumedDeveloperInstructions,
     },
@@ -408,9 +448,8 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
       model: "gpt-5.5",
       modelProvider: "GuruOpenAI",
       approvalPolicy: "never",
-      sandbox: {
-        type: "workspaceWrite",
-        writableRoots: ["WRITABLE_ROOT_BODY_MUST_NOT_BE_RECORDED"],
+      activePermissionProfile: {
+        id: "scout-researcher",
       },
     },
   };
@@ -498,7 +537,8 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
   assert.doesNotMatch(text, /source-device/);
   assert.doesNotMatch(text, /\/run\/run-thread-recorder/);
   assert.match(text, /runtimeWorkspaceRoots:/);
-  assert.match(text, /type: "workspaceWrite"/);
+  assert.match(text, /activePermissionProfile:/);
+  assert.match(text, /id: "scout-researcher"/);
   assert.match(text, /closeReason: "run_exit"/);
   assert.equal(text.match(/developerInstructions:/g)?.length, 2);
   assert.equal(text.match(/hasBaseInstructions: true/g)?.length, 2);
@@ -513,7 +553,6 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
   assert.doesNotMatch(text, /START_RESPONSE_TURN_MUST_NOT_BE_RECORDED/);
   assert.doesNotMatch(text, /RESUME_RESPONSE_PREVIEW_MUST_NOT_BE_RECORDED/);
   assert.doesNotMatch(text, /RESUME_RESPONSE_TURN_MUST_NOT_BE_RECORDED/);
-  assert.doesNotMatch(text, /WRITABLE_ROOT_BODY_MUST_NOT_BE_RECORDED/);
   assert.doesNotMatch(text, /threadPreflight/);
 });
 

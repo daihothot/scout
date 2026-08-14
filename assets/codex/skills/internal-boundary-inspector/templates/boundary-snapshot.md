@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: Agent mount 与运行边界快照模板。
 artifact_type: BoundarySnapshot
 artifact_version: 1
 status: draft
@@ -52,7 +56,7 @@ status: draft
 
 ## Roots
 
-- trusted roots:
+- readable roots:
 - writable roots:
 - artifact root:
 
@@ -88,7 +92,7 @@ status: draft
 - plugins:
 - linked files:
 - generated files:
-- trusted roots:
+- readable roots:
 - writable roots:
 - artifact root:
 - codexHome:

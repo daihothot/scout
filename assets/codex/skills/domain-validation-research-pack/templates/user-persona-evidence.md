@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: 用户画像证据模板。
 evidence_id: E-PERSONA-001
 evidence_type: user_persona
 status: candidate

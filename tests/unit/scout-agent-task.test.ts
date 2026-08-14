@@ -8,6 +8,7 @@ import { AgentTaskBackend } from "../../src/agent/backend/agent-task-backend.js"
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import { WorkerRunner } from "../../src/agent/runner/worker/worker-runner.js";
 import {
+  ScoutAgentPermissionProfiles,
   ScoutAgentRoles,
   ScoutAgentPhases,
   type AgentThreadSpec,
@@ -739,7 +740,7 @@ test("AgentTaskBackend reduces app-server plan timeline entries into task state"
   const runId = "run-task-backend-test";
   const scope = new RunScope({
     runId,
-    repoRoot: "/repo",
+    scoutRoot: "/repo",
     logger: {} as RunScope["logger"],
     eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
@@ -846,7 +847,7 @@ async function createHarness(t: TestContext, input: {
     phases: [ScoutAgentPhases.Verify],
     cwd: "/repo",
     approvalPolicy: "never",
-    permissionProfile: "scout-verifier",
+    permissionProfile: ScoutAgentPermissionProfiles.Verifier,
     contextBundleId: "context-1",
     model: {
       id: "gpt-5.5",

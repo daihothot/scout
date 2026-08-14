@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: optional
+    description: 仅在目标版本可用性需要聚合时使用的证据模板。
 evidence_id: E-AVAIL-001
 evidence_type: availability
 status: candidate

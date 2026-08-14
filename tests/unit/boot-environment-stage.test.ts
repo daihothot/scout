@@ -47,7 +47,7 @@ import {
   installTestRunScope,
 } from "../helpers/run-persistence.js";
 
-const repoRoot = process.cwd();
+const scoutRoot = process.cwd();
 
 test("PrepareEnvironmentStage materializes, preflights, and commits every agent mount", async (t) => {
   const fixtureRoot = createFixture("scout-boot-environment-");
@@ -87,7 +87,7 @@ test("PrepareEnvironmentStage materializes, preflights, and commits every agent 
   );
   const manifest = runtime.scope.manifestStore.read();
   const runRoot = join(fixtureRoot, "run", stage.runId);
-  assert.equal(manifest.version, 2);
+  assert.equal(manifest.version, 3);
   assert.equal("environment" in manifest, false);
   assert.equal("assetCommitId" in manifest, false);
   assert.deepEqual(Object.keys(manifest.agents ?? {}).sort(), [...roles].sort());
@@ -415,7 +415,7 @@ test("RestoreEnvironmentStage permits the ScoutRoot assets symlink", async (t) =
 
   const resumed = installTestRunScope(t, {
     runId,
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     appServer: {} as CodexAppServerClient,
     journal: initial.scope.journal,
     manifestStore: initial.scope.manifestStore,
@@ -425,7 +425,7 @@ test("RestoreEnvironmentStage permits the ScoutRoot assets symlink", async (t) =
   }).start();
 
   assert.equal(lstatSync(join(fixtureRoot, "assets")).isSymbolicLink(), true);
-  assert.equal(realpathSync(join(fixtureRoot, "assets")), realpathSync(join(repoRoot, "assets")));
+  assert.equal(realpathSync(join(fixtureRoot, "assets")), realpathSync(join(scoutRoot, "assets")));
   assert.equal(resumed.hasEnvironment, true);
 });
 
@@ -574,12 +574,12 @@ test("RestoreEnvironmentStage self-heals a partial mount without rebuilding comp
   assert.ok(failedSnapshot);
   assert.equal(failedSnapshot.descriptor.status.detail, "coordinator config");
   assert.equal(
-    existsSync(join(coordinatorRoot, ".scout", "skill-catalog.json")),
+    existsSync(join(coordinatorRoot, ".agents", "plugins", "marketplace.json")),
     false,
     "the injected failure should leave coordinator incomplete",
   );
   assert.equal(
-    existsSync(join(researcherRoot, ".scout", "skill-catalog.json")),
+    existsSync(join(researcherRoot, ".agents", "plugins", "marketplace.json")),
     true,
     "the parallel researcher rebuild should complete",
   );
@@ -706,7 +706,7 @@ test("RestoreEnvironmentStage upgrades an old resource inventory once and then r
 
   const resumed = installTestRunScope(t, {
     runId,
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     appServer: {} as CodexAppServerClient,
     journal: initial.scope.journal,
     manifestStore: initial.scope.manifestStore,
@@ -823,7 +823,7 @@ test("RestoreEnvironmentStage upgrades an old resource inventory once and then r
 function createFixture(prefix: string): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
   return fixtureRoot;
@@ -834,7 +834,7 @@ function createLinkedAssetsFixture(
   prefix: string,
 ): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
-  symlinkSync(join(repoRoot, "assets"), join(fixtureRoot, "assets"), "dir");
+  symlinkSync(join(scoutRoot, "assets"), join(fixtureRoot, "assets"), "dir");
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   return fixtureRoot;
 }
@@ -863,7 +863,7 @@ async function prepareLinkedEnvironment(
 
 function installEnvironmentScope(
   t: import("node:test").TestContext,
-  repoRoot: string,
+  scoutRoot: string,
   runId: string,
   interactionPort: RuntimeInteractionPort = new NoopRuntimeInteractionPort(),
 ): {
@@ -874,7 +874,7 @@ function installEnvironmentScope(
   const appServer = {} as CodexAppServerClient;
   const scope = new RunScope({
     runId,
-    repoRoot,
+    scoutRoot,
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort,
@@ -883,7 +883,13 @@ function installEnvironmentScope(
       name: "test",
       dynamicToolsForRole: () => [],
     },
-    ...createTestRunPersistence(t, runId, repoRoot),
+    ...createTestRunPersistence(
+      t,
+      runId,
+      scoutRoot,
+      undefined,
+      join(scoutRoot, "run", runId),
+    ),
     terminate: async () => undefined,
   });
   scope.setAppServer(appServer);
@@ -899,7 +905,7 @@ function installEnvironmentScope(
 }
 
 function installExistingEnvironmentScope(
-  repoRoot: string,
+  scoutRoot: string,
   runId: string,
   journal: RunJournal,
   manifestStore: RunManifestStore,
@@ -912,7 +918,8 @@ function installExistingEnvironmentScope(
   const appServer = {} as CodexAppServerClient;
   const scope = new RunScope({
     runId,
-    repoRoot,
+    scoutRoot,
+    runRoot: join(scoutRoot, "run", runId),
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort,

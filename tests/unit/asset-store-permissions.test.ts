@@ -10,18 +10,18 @@ import {
   resolveAgentProfile,
 } from "../../src/asset-store/index.js";
 
-const repoRoot = process.cwd();
+const scoutRoot = process.cwd();
 
 test("AssetStore materializes read and write roots from agent profile", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-asset-store-permissions-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
 
   const runId = "run-permission-test";
   const mount = new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId,
     agentId: "verifier",
   });
@@ -70,7 +70,7 @@ test("AssetStore materializes read and write roots from agent profile", () => {
 });
 
 test("Agent profiles reject invalid native subagent settings", () => {
-  const path = join(repoRoot, "assets", "codex", "agents", "agent-profiles.json");
+  const path = join(scoutRoot, "assets", "codex", "agents", "agent-profiles.json");
   const original = JSON.parse(readFileSync(path, "utf8")) as AgentProfilesFile;
   const cases: Array<{
     key: "multiAgent" | "maxThreads" | "maxDepth" | "customAgents";
@@ -93,6 +93,18 @@ test("Agent profiles reject invalid native subagent settings", () => {
   }
 });
 
+test("Agent profiles reject the removed skills allowlist", () => {
+  const path = join(scoutRoot, "assets", "codex", "agents", "agent-profiles.json");
+  const profiles = JSON.parse(readFileSync(path, "utf8")) as AgentProfilesFile;
+  const profile = profiles.profiles.researcher as unknown as Record<string, unknown>;
+  profile.skills = ["domain-validation-researcher"];
+
+  assert.throws(
+    () => resolveAgentProfile(profiles, "researcher"),
+    /must not define legacy skills; use phase/,
+  );
+});
+
 test("AssetStore rejects a profile that references an unknown custom agent", () => {
   const fixtureRoot = createCodexAssetFixture("scout-custom-agent-unknown-");
   updateAgentProfile(fixtureRoot, "researcher", {
@@ -100,7 +112,7 @@ test("AssetStore rejects a profile that references an unknown custom agent", () 
   });
 
   assert.throws(() => new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-custom-agent-unknown-test",
     agentId: "researcher",
   }), /unknown custom agent: missing-helper/);
@@ -118,7 +130,7 @@ test("AssetStore resolves a complete per-agent model override", () => {
   });
 
   const mount = new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-model-override-test",
     agentId: "coordinator",
   });
@@ -141,7 +153,7 @@ test("AssetStore rejects an incomplete per-agent model override", () => {
   });
 
   assert.throws(() => new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-incomplete-model-override-test",
     agentId: "coordinator",
   }), /model for agent coordinator\.reasoningEffort/);
@@ -150,12 +162,12 @@ test("AssetStore rejects an incomplete per-agent model override", () => {
 test("AssetStore exposes effective permission roots", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-asset-store-permissions-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
   const store = new AssetStore();
   const mount = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-effective-permission-test",
     agentId: "researcher",
   });
@@ -171,7 +183,7 @@ test("AssetStore keeps validator artifact ownership outside profile write roots"
   const runId = "run-validator-permission-test";
   const store = new AssetStore();
   const mount = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId,
     agentId: "validator",
   });
@@ -186,7 +198,7 @@ test("AssetStore keeps validator artifact ownership outside profile write roots"
   assert.ok(store.writableRootsForMount(mount).includes(mount.artifactRoot));
 });
 
-test("AssetStore resolves local profile roots relative to the repo root", () => {
+test("AssetStore resolves local profile roots relative to the Scout root", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-permissions-");
   updateAgentProfile(fixtureRoot, "coordinator", {
     readableRoots: ["local/readable"],
@@ -194,7 +206,7 @@ test("AssetStore resolves local profile roots relative to the repo root", () => 
   });
 
   const mount = new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-local-root-test",
     agentId: "coordinator",
   });
@@ -210,7 +222,7 @@ test("AssetStore treats omitted profile shellTools as an empty shell tool set", 
   });
 
   const mount = new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-omitted-shell-tools-test",
     agentId: "coordinator",
   });
@@ -222,7 +234,7 @@ test("AssetStore only exposes worker instructions to worker mounts", () => {
   const fixtureRoot = createCodexAssetFixture("scout-agent-instructions-");
   const store = new AssetStore();
   const coordinator = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-coordinator-instructions-test",
     agentId: "coordinator",
   });
@@ -247,7 +259,7 @@ test("AssetStore only exposes worker instructions to worker mounts", () => {
 
   for (const agentId of ["researcher", "verifier", "validator"]) {
     const worker = store.materializeMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId: `run-${agentId}-instructions-test`,
       agentId,
     });
@@ -274,7 +286,7 @@ test("AssetStore mounts scout-helper only for Worker profiles", () => {
   const fixtureRoot = createCodexAssetFixture("scout-custom-agent-mount-");
   const store = new AssetStore();
   const coordinator = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-coordinator-custom-agent-test",
     agentId: "coordinator",
   });
@@ -298,7 +310,7 @@ test("AssetStore mounts scout-helper only for Worker profiles", () => {
 
   for (const agentId of ["researcher", "verifier", "validator"]) {
     const worker = store.materializeMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId: `run-${agentId}-custom-agent-test`,
       agentId,
     });
@@ -331,12 +343,12 @@ test("Coordinator resource hash does not depend on worker instructions", () => {
   const fixtureRoot = createCodexAssetFixture("scout-agent-instructions-hash-");
   const store = new AssetStore();
   const coordinatorBefore = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-coordinator-hash-before-test",
     agentId: "coordinator",
   });
   const researcherBefore = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-researcher-hash-before-test",
     agentId: "researcher",
   });
@@ -348,12 +360,12 @@ test("Coordinator resource hash does not depend on worker instructions", () => {
   );
 
   const coordinatorAfter = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-coordinator-hash-after-test",
     agentId: "coordinator",
   });
   const researcherAfter = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-researcher-hash-after-test",
     agentId: "researcher",
   });
@@ -366,12 +378,12 @@ test("Coordinator resource hash does not depend on an unmounted custom agent", (
   const fixtureRoot = createCodexAssetFixture("scout-custom-agent-hash-");
   const store = new AssetStore();
   const coordinatorBefore = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-coordinator-custom-agent-hash-before-test",
     agentId: "coordinator",
   });
   const researcherBefore = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-researcher-custom-agent-hash-before-test",
     agentId: "researcher",
   });
@@ -383,12 +395,12 @@ test("Coordinator resource hash does not depend on an unmounted custom agent", (
   );
 
   const coordinatorAfter = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-coordinator-custom-agent-hash-after-test",
     agentId: "coordinator",
   });
   const researcherAfter = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-researcher-custom-agent-hash-after-test",
     agentId: "researcher",
   });
@@ -400,7 +412,7 @@ test("Coordinator resource hash does not depend on an unmounted custom agent", (
 function createCodexAssetFixture(prefix: string): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
   return fixtureRoot;

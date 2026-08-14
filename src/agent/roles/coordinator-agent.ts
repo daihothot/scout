@@ -1,6 +1,5 @@
 import {
   ScoutAgentPermissionProfiles,
-  ScoutAgentPhases,
   ScoutAgentRoles,
 } from "../thread/types.js";
 import {
@@ -23,7 +22,7 @@ export class CoordinatorAgent extends ScoutAgent {
       ...options,
       spec: {
         role: ScoutAgentRoles.Coordinator,
-        phases: [ScoutAgentPhases.Coordinate],
+        phases: [options.agentMount.agentProfile.phase],
         cwd: options.agentMount.mountRoot,
         approvalPolicy: "never",
         permissionProfile: ScoutAgentPermissionProfiles.Coordinator,

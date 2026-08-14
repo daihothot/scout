@@ -50,7 +50,6 @@ export type MountManifestInput = AssetInventoryInput & {
   shellWrappers: Array<{ id: string; wrapperPath: string }>;
   customAgentNames: string[];
   skillNames: string[];
-  skillCatalog: MountManifest["skillCatalog"];
   pluginNames: string[];
 };
 
@@ -218,7 +217,6 @@ function buildMountManifestInternal(input: MountManifestInput): MountManifest {
     ".codex/config.toml",
     ".codex/hooks.json",
     ".agents/plugins/marketplace.json",
-    ".scout/skill-catalog.json",
   ].map((path) => ({
     path,
     hash: sha256File(join(input.mountRoot, path)),
@@ -273,7 +271,6 @@ function buildMountManifestInternal(input: MountManifestInput): MountManifest {
     })),
     customAgents: input.customAgentNames,
     skills: input.skillNames,
-    skillCatalog: input.skillCatalog,
     plugins: input.pluginNames,
     ...(input.workerAgentPath ? { workerAgent: input.workerAgentPath } : {}),
     roleAgents: input.roleAgentPaths,

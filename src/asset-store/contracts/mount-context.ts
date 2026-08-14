@@ -8,7 +8,7 @@ import type { ScoutSkillCatalogEntry } from "./skill.js";
 
 /** Complete mount construction context derived before the mount root is touched. */
 export interface MountContext {
-  repoRoot: string;
+  scoutRoot: string;
   assetsRoot: string;
   runId: string;
   runRoot: string;

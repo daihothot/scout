@@ -8,7 +8,7 @@ import type { MountManifest } from "./manifest.js";
 
 /** Inputs that identify one role and control inspect/materialize observation. */
 export interface MaterializeOptions {
-  repoRoot: string;
+  scoutRoot: string;
   runId?: string;
   agentId: string;
   persistedManifest?: MountManifest;

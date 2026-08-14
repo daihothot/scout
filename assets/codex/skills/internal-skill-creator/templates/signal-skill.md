@@ -1,3 +1,10 @@
+---
+scout:
+  resource:
+    requirement: optional
+    description: 仅创建 signal 类型 Skill 时使用的结构模板。
+---
+
 # Signal Skill Template
 
 ## Selection
@@ -6,7 +13,7 @@
 
 ## Frontmatter Rules
 
-- 必须填写 `phase`。需要 Agent 按信号族精确锁定的 Signal 入口必须声明有序 `family`，例如 `[validation, signal, unity-runtime-log]`；只作为其它入口服务层时省略 `family` 并由 required dependency 带入。
+- 必须填写 `phase`。需要 Agent 精确锁定的 Signal 入口必须声明有序 `family`；路径层数和 token 完全由所属 domain 的稳定导航语义决定，通用模板不预置具体 Single leaf。只作为其它入口服务层时省略 `family` 并由 required dependency 带入。
 - `phase` 只表示哪些 Agent phase 可以选择或审计本 Signal contract，不在正文引入流程阶段。
 - `tags` 只表达 Signal 的对象、介质、格式或能力特征，不参与信号族路由。
 - `type` 在正文 `Skill Type` 中固定为 `signal`。

@@ -16,7 +16,7 @@ import {
 } from "../../../agent-server/codex/app-server-factory.js";
 import {
   resolveDefaultAgentModel,
-  readAgentProfilesForRepo,
+  readAgentProfilesForScoutRoot,
   resolveAgentProfile,
 } from "../../../asset-store/assets/agent-profiles.js";
 import {
@@ -101,16 +101,16 @@ export class RunAppServerStage implements RunStage {
   async start(): Promise<void> {
     const scope = currentRunScope();
     const rootPlan = scope.hasEnvironment
-      ? buildPreparedClientRootPlan(scope.environment, scope.repoRoot)
+      ? buildPreparedClientRootPlan(scope.environment, scope.scoutRoot)
       : buildClientRootPlan({
-        repoRoot: scope.repoRoot,
-        runId: scope.runId,
+        scoutRoot: scope.scoutRoot,
+        runRoot: scope.runRoot,
         agentRoles: this.options.agentRoles,
       });
     const defaultModel = scope.hasEnvironment
       ? scope.environment.agents[ScoutAgentRoles.Coordinator].mount.agentProfile.model
-      : resolveDefaultAgentModel(readAgentProfilesForRepo(scope.repoRoot));
-    const runRoot = join(resolve(scope.repoRoot), "run", scope.runId);
+      : resolveDefaultAgentModel(readAgentProfilesForScoutRoot(scope.scoutRoot));
+    const runRoot = resolve(scope.runRoot);
     const logsRoot = join(runRoot, "logs");
     const isolatedHome = join(runRoot, "codex-home");
     const isolatedCodexHome = join(isolatedHome, ".codex");
@@ -163,14 +163,14 @@ export class RunAppServerStage implements RunStage {
 }
 
 function buildClientRootPlan(options: {
-  repoRoot: string;
-  runId: string;
+  scoutRoot: string;
+  runRoot: string;
   agentRoles?: readonly ScoutAgentRole[];
 }): RunAppServerRootPlan {
-  const repoRoot = resolve(options.repoRoot);
-  const runRoot = join(repoRoot, "run", options.runId);
-  const assetsRoot = join(repoRoot, "assets", "codex");
-  const profiles = readAgentProfilesForRepo(repoRoot);
+  const scoutRoot = resolve(options.scoutRoot);
+  const runRoot = resolve(options.runRoot);
+  const assetsRoot = join(scoutRoot, "assets", "codex");
+  const profiles = readAgentProfilesForScoutRoot(scoutRoot);
   const mcpServers = readJsonFile<McpServersFile>(join(assetsRoot, CodexAssetLayout.mcpServers));
   const shellTools = readJsonFile<ShellToolsFile>(join(assetsRoot, CodexAssetLayout.shellTools));
   const agentRoles = options.agentRoles ?? Object.values(ScoutAgentRoles);
@@ -193,14 +193,14 @@ function buildClientRootPlan(options: {
     mountRoots.push(mountRoot);
     const profileReadableRoots = resolveProfileRoots({
       roots: profile.readableRoots,
-      repoRoot,
+      scoutRoot,
       runRoot,
       mountRoot,
       artifactRoot,
     });
     const profileWritableRoots = resolveProfileRoots({
       roots: profile.writableRoots,
-      repoRoot,
+      scoutRoot,
       runRoot,
       mountRoot,
       artifactRoot,
@@ -221,12 +221,12 @@ function buildClientRootPlan(options: {
       writableRoots: profileWritableRoots,
     });
     const dynamicValues = buildMountMacroValues({
-      repoRoot,
+      scoutRoot,
       runRoot,
       mountRoot,
       artifactRoot,
       assetCommitId: "",
-      runId: options.runId,
+      runId: basename(runRoot),
     });
     for (const serverName of profile.mcpServers) {
       const server = mcpServers.servers[serverName];
@@ -242,18 +242,18 @@ function buildClientRootPlan(options: {
     mountRoots: uniqueMountRoots,
     readableRoots: uniqueReadableRoots,
     writableRoots: uniqueWritableRoots,
-    permissionProfiles: buildPermissionProfiles({ repoRoot, roleRoots }),
+    permissionProfiles: buildPermissionProfiles({ scoutRoot, roleRoots }),
   };
 }
 
 function buildPreparedClientRootPlan(
   environment: RunEnvironment,
-  currentRepoRoot: string,
+  currentScoutRoot: string,
 ): RunAppServerRootPlan {
   const agents = Object.values(environment.agents);
   const mountRoots = uniqueResolved(environment.rootAccess.mountRoots);
-  const repoRoot = resolve(currentRepoRoot);
-  const assetsRoot = join(repoRoot, "assets", "codex");
+  const scoutRoot = resolve(currentScoutRoot);
+  const assetsRoot = join(scoutRoot, "assets", "codex");
   const shellTools = readJsonFile<ShellToolsFile>(join(assetsRoot, CodexAssetLayout.shellTools));
   const roleRoots = agents.map((agent) => ({
     role: agent.role,
@@ -278,7 +278,7 @@ function buildPreparedClientRootPlan(
     ]),
     writableRoots: uniqueResolved(environment.rootAccess.writableRoots),
     permissionProfiles: buildPermissionProfiles({
-      repoRoot,
+      scoutRoot,
       roleRoots,
     }),
   };
@@ -354,7 +354,7 @@ function buildClientConfig(input: {
 }
 
 function buildPermissionProfiles(input: {
-  repoRoot: string;
+  scoutRoot: string;
   roleRoots: Array<{
     role: ScoutAgentRole;
     mountRoot: string;
@@ -363,9 +363,9 @@ function buildPermissionProfiles(input: {
     writableRoots: string[];
   }>;
 }): RunAppServerRootPlan["permissionProfiles"] {
-  const repoRoot = resolve(input.repoRoot);
-  const runsRoot = join(repoRoot, "run");
-  const logicalSkillRoot = join(repoRoot, "assets", "codex", "skills");
+  const scoutRoot = resolve(input.scoutRoot);
+  const runsRoot = join(scoutRoot, "run");
+  const logicalSkillRoot = join(scoutRoot, "assets", "codex", "skills");
   const canonicalSkillRoot = realpathSync(logicalSkillRoot);
   const artifactRoots = input.roleRoots.map((role) => role.artifactRoot);
   return Object.fromEntries(input.roleRoots.map((role) => [
@@ -493,13 +493,13 @@ function permissionProfileId(role: ScoutAgentRole): string {
 
 function resolveProfileRoots(input: {
   roots?: string[];
-  repoRoot: string;
+  scoutRoot: string;
   runRoot: string;
   mountRoot: string;
   artifactRoot: string;
 }): string[] {
   const dynamicValues = buildMountMacroValues({
-    repoRoot: input.repoRoot,
+    scoutRoot: input.scoutRoot,
     runRoot: input.runRoot,
     mountRoot: input.mountRoot,
     artifactRoot: input.artifactRoot,
@@ -508,7 +508,7 @@ function resolveProfileRoots(input: {
   return (input.roots ?? [])
     .map((root) => resolveMountMacros(root, dynamicValues))
     .filter((root) => root.length > 0)
-    .map((root) => resolveProfileRoot(root, input.repoRoot));
+    .map((root) => resolveProfileRoot(root, input.scoutRoot));
 }
 
 function resolveDynamicRoots(
@@ -521,11 +521,11 @@ function resolveDynamicRoots(
     .map((root) => resolve(root));
 }
 
-function resolveProfileRoot(root: string, repoRoot: string): string {
+function resolveProfileRoot(root: string, scoutRoot: string): string {
   if (root === "~") return homedir();
   if (root.startsWith("~/")) return resolve(homedir(), root.slice(2));
   if (isAbsolute(root)) return root;
-  return resolve(repoRoot, root);
+  return resolve(scoutRoot, root);
 }
 
 function readHomeProviderConfig(providerName: string): {

@@ -138,7 +138,7 @@ export class ValidationDomain implements ScoutDomain {
     const agent = scope.environment.agents[role];
     const artifactRoot = resolve(agent.mount.artifactRoot);
     if (!existsSync(artifactRoot)) return;
-    const runRoot = resolve(scope.repoRoot, "run", scope.runId);
+    const runRoot = resolve(scope.runRoot);
     const entries = readdirSync(artifactRoot, { withFileTypes: true })
       .sort((left, right) => left.name.localeCompare(right.name))
       .filter((entry) => {

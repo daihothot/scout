@@ -1,3 +1,10 @@
+---
+scout:
+  resource:
+    requirement: optional
+    description: 仅创建 internal 类型 Skill 时使用的结构模板。
+---
+
 # Internal Skill Template
 
 ## Selection

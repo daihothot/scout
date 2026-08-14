@@ -11,14 +11,14 @@ export class InitializeRunStage implements RunStage {
     const createdAt = new Date().toISOString();
     scope.eventBus.publish(RunEvents.run.created, {
       runId: scope.runId,
-      repoRoot: scope.repoRoot,
+      scoutRoot: scope.scoutRoot,
       createdAt,
     }, {
       occurredAt: createdAt,
     });
     scope.manifestStore.create({
       runId: scope.runId,
-      repoRoot: scope.repoRoot,
+      scoutRoot: scope.scoutRoot,
       createdAt,
       checkpointSeq: scope.journal.lastSeq,
     });

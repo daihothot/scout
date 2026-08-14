@@ -44,8 +44,8 @@ export class ResumeClientsStage implements RunStage {
 /** Rejects copied Codex homes that escape the run root or contain symlinks. */
 function assertRunCodexHomeIsContained(): void {
   const scope = currentRunScope();
-  const repoRoot = resolve(scope.repoRoot);
-  const runRoot = resolve(repoRoot, "run", scope.runId);
+  const scoutRoot = resolve(scope.scoutRoot);
+  const runRoot = resolve(scope.runRoot);
   const codexRoot = join(runRoot, "codex-home", ".codex");
   const sessionsRoot = join(codexRoot, "sessions");
   const requireDirectoryChain = (
@@ -95,10 +95,10 @@ function assertRunCodexHomeIsContained(): void {
     assertInside(realpathSync(path), runRootReal, label);
   };
 
-  requireDirectoryChain(repoRoot, runRoot, "run root");
-  const repoRootReal = realpathSync(repoRoot);
+  requireDirectoryChain(scoutRoot, runRoot, "run root");
+  const scoutRootReal = realpathSync(scoutRoot);
   const runRootReal = realpathSync(runRoot);
-  assertInside(runRootReal, repoRootReal, "Run root");
+  assertInside(runRootReal, scoutRootReal, "Run root");
   requireDirectoryChain(runRoot, codexRoot, "Codex home");
   const codexRootReal = realpathSync(codexRoot);
   assertInside(codexRootReal, runRootReal, "Codex home");

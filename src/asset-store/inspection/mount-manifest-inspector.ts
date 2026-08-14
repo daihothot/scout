@@ -8,7 +8,6 @@ import {
 } from "../files/asset-paths.js";
 import type { MountContext } from "../contracts/mount-context.js";
 import {
-  sameSkillCatalog,
   sameUnorderedStrings,
   sameValue,
 } from "./comparison.js";
@@ -48,11 +47,6 @@ export class MountManifestInspector {
       )) {
       return "plugin inventory changed";
     }
-    if (!Array.isArray(manifest.skillCatalog)
-      || !sameSkillCatalog(manifest.skillCatalog, context.skillCatalog)) {
-      return "Skill catalog changed";
-    }
-
     const linkedIssue = this.checkLinkedInventory();
     if (linkedIssue) return linkedIssue;
     const expectedRoleAgents = {

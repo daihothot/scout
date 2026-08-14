@@ -62,12 +62,16 @@ export class PrepareEnvironmentStage implements RunStage {
     this.options = options;
   }
 
-  get repoRoot(): string {
-    return currentRunScope().repoRoot;
+  get scoutRoot(): string {
+    return currentRunScope().scoutRoot;
   }
 
   get runId(): string {
     return currentRunScope().runId;
+  }
+
+  get runRoot(): string {
+    return currentRunScope().runRoot;
   }
 
   get prepared(): boolean {
@@ -86,11 +90,11 @@ export class PrepareEnvironmentStage implements RunStage {
 
   async start(): Promise<void> {
     const scope = currentRunScope();
-    const repoRoot = resolve(scope.repoRoot);
-    const runRoot = resolve(repoRoot, "run", scope.runId);
+    const scoutRoot = resolve(scope.scoutRoot);
+    const runRoot = resolve(scope.runRoot);
     const roles = this.options.agentRoles ?? Object.values(ScoutAgentRoles);
-    assertMaterializationPath(repoRoot, runRoot);
-    assertMaterializationPath(repoRoot, join(runRoot, "agents"));
+    assertMaterializationPath(scoutRoot, runRoot);
+    assertMaterializationPath(scoutRoot, join(runRoot, "agents"));
 
     const assetStore = this.options.assetStore ?? new AssetStore();
     const preflightMount = this.options.preflightMount ?? ((mount: CodexMount) =>
@@ -104,10 +108,10 @@ export class PrepareEnvironmentStage implements RunStage {
     const inputs: EnvironmentRolePreparationInput[] = [];
     for (const role of roles) {
       const agentRoot = join(runRoot, "agents", role);
-      assertMaterializationPath(repoRoot, agentRoot);
+      assertMaterializationPath(scoutRoot, agentRoot);
       const artifactRoot = join(agentRoot, "artifacts");
       const preparationOptions: MaterializeOptions = {
-        repoRoot,
+        scoutRoot,
         runId: scope.runId,
         agentId: role,
         cleanRunRoot: false,
@@ -269,13 +273,13 @@ async function discloseMountRestoreFailure(
   }
 }
 
-function assertMaterializationPath(repoRoot: string, runRoot: string): void {
-  if (!isPathWithin(repoRoot, runRoot, { allowRoot: false })) {
+function assertMaterializationPath(scoutRoot: string, runRoot: string): void {
+  if (!isPathWithin(scoutRoot, runRoot, { allowRoot: false })) {
     throw new Error(`Run root escapes Scout root: ${runRoot}`);
   }
-  const repoRootReal = realpathSync(repoRoot);
-  let current = repoRoot;
-  const components = relative(repoRoot, runRoot).split(sep);
+  const scoutRootReal = realpathSync(scoutRoot);
+  let current = scoutRoot;
+  const components = relative(scoutRoot, runRoot).split(sep);
   for (const component of components) {
     current = join(current, component);
     if (!existsSync(current)) break;
@@ -287,7 +291,7 @@ function assertMaterializationPath(repoRoot: string, runRoot: string): void {
       throw new Error(`Expected startup run component to be a directory: ${current}`);
     }
     const real = realpathSync(current);
-    if (!isPathWithin(repoRootReal, real)) {
+    if (!isPathWithin(scoutRootReal, real)) {
       throw new Error(`Startup run component escapes Scout root: ${current}`);
     }
   }

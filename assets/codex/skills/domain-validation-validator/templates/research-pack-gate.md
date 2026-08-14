@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: optional
+    description: 仅执行 Research Pack Gate 时使用的报告模板。
 artifact_type: ResearchPackGate
 artifact_version: 1
 status: draft

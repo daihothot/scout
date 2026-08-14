@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: Verifier 唯一 Verification Report 模板。
 artifact_type: VerificationReport
 artifact_version: 1
 report_id: "<填写当前 Verification Report ID>"

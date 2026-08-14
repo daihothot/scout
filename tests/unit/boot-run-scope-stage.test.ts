@@ -28,7 +28,7 @@ test("RunScopeStage creates the Run-owned stores and releases the installed scop
   const eventBus = new InMemoryEventBus();
   const scope = new RunScope({
     runId,
-    repoRoot: "/repo",
+    scoutRoot: "/repo",
     logger: noopLogger(),
     eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
@@ -68,7 +68,7 @@ test("RunScopeStage remains available until every dependent stage stops", async 
   const eventBus = new InMemoryEventBus();
   const scope = new RunScope({
     runId: "boot-run-scope-order",
-    repoRoot: "/repo",
+    scoutRoot: "/repo",
     logger,
     eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
@@ -113,7 +113,7 @@ test("RunScopeStage does not record an attachment when another run owns the proc
   );
   const first = new RunScopeStage(new RunScope({
     runId: "run-scope-owner",
-    repoRoot: "/repo",
+    scoutRoot: "/repo",
     logger: noopLogger(),
     eventBus: firstEventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
@@ -134,7 +134,7 @@ test("RunScopeStage does not record an attachment when another run owns the proc
   );
   const second = new RunScopeStage(new RunScope({
     runId: "run-scope-rejected",
-    repoRoot: "/repo",
+    scoutRoot: "/repo",
     logger: noopLogger(),
     eventBus: secondEventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
@@ -170,7 +170,7 @@ test("RunScopeStage detaches normally after a previous Journal write failure", a
   const persistence = createTestRunPersistence(t, runId, "/repo", eventBus);
   const scopeStage = new RunScopeStage(new RunScope({
     runId,
-    repoRoot: "/repo",
+    scoutRoot: "/repo",
     logger: noopLogger(),
     eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),

@@ -11,19 +11,19 @@
       "args": [
         "assets/codex/mcp/codegraph/wrapper.cjs"
       ],
-      "cwd": "${SCOUT_REPO_ROOT}",
+      "cwd": "${SCOUT_ROOT}",
       "env": {
-        "SCOUT_MCP_TARGET_PATH": "${SCOUT_REPO_ROOT}"
+        "SCOUT_MCP_TARGET_PATH": "${SCOUT_ROOT}"
       },
       "writableRoots": [
-        "${SCOUT_REPO_ROOT}/.codegraph"
+        "${SCOUT_ROOT}/.codegraph"
       ],
       "smoke": {
         "tool": "codegraph_search",
         "arguments": {
           "query": "CodeGraph",
           "limit": 1,
-          "projectPath": "${SCOUT_REPO_ROOT}"
+          "projectPath": "${SCOUT_ROOT}"
         }
       }
     }

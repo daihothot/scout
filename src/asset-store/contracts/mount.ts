@@ -25,6 +25,7 @@ export interface CodexMount {
   assetCommitId: string;
   parentAssetCommitId?: string;
   mountId: string;
+  scoutRoot: string;
   mountRoot: string;
   runRoot: string;
   artifactRoot: string;

@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: optional
+    description: 仅在相关 Capability 被选中时使用的明细证据模板。
 evidence_id: E-CAP-001
 evidence_type: capability
 status: candidate

@@ -1,10 +1,10 @@
 ---
 assetKind: scout.skill
 name: internal-skill-creator
-description: 创建或修改 Scout Skill 的统一方法论，覆盖 identity、phase、family 路由、tags 特征、依赖、模板索引、profile 挂载和共同边界。
+description: 创建或修改 Scout Skill 的统一方法论，覆盖 identity、phase、family 路由、tags 特征、依赖、模板索引和 Runtime 投影边界。
 id: internal-skill-creator
-version: 0.6.0
-phase: [coordinate, research, verify, validate]
+version: 0.6.1
+phase: []
 family: [internal, skill-creator]
 tags: [scout, skill, asset, template, governance]
 devices: [any]
@@ -12,14 +12,14 @@ dependencies:
   shellTools:
     required: [scoutAssets]
     optional: [rg, find, sed, cat]
-summary: 规范 Scout Skill 的 identity、family 路由、特征 metadata、依赖闭包、模板索引和挂载边界。
+summary: 规范 Scout Skill 的 identity、phase 观察范围、family 路由、依赖闭包和模板索引。
 ---
 
 # Internal Skill Creator
 
 当任务要求创建、修改、评审或规范化 `assets/codex/skills/**/SKILL.md` 时使用本技能。
 
-本技能的目标是建立统一的 Scout Skill 系统：Scout Skill 负责沉淀方法论，Agent 负责读取并执行方法论，Asset Store / Runtime 负责 profile 挂载、mount、preflight 和运行记录。
+本技能的目标是建立统一的 Scout Skill 系统：Scout Skill 负责沉淀方法论，Agent 负责读取并执行方法论，Asset Store / Runtime 负责按 profile phase 投影、mount、preflight 和运行记录。
 
 ## Skill Type
 
@@ -35,7 +35,7 @@ Scout Skill 是 Scout 管理、采用 Codex Skill 文件形态的按需资源。
 assets/codex/skills/<skill-name>/SKILL.md
 ```
 
-Runtime 只把 profile 授权的 Skill 物化到 `.scout/skills`，不放入 Codex 原生 `.agents/skills` 自动发现目录；Agent 必须通过动态筛选和受限读取入口加载正文。
+Runtime 只把当前 profile phase 可观察的 Skill 及其 required dependency closure 物化到 `.scout/skills`，不放入 Codex 原生 `.agents/skills` 自动发现目录；Agent 必须通过动态筛选和受限读取入口加载正文。
 
 它可以定义：
 
@@ -43,7 +43,7 @@ Runtime 只把 profile 授权的 Skill 物化到 `.scout/skills`，不放入 Cod
 - 用于 Runtime 初筛的 phase，用于入口导航的可选 family，以及不参与路由的 tags 特征。
 - 由所选类型模板定义的输入、执行流程、输出和 enforcement rules。
 - 产物模板、引用关系、证据要求和 provenance。
-- Skill 与依赖、profile、mount 和 Runtime 的边界。
+- Skill 与依赖、phase、mount 和 Runtime 的边界。
 
 它不能定义：
 
@@ -91,6 +91,9 @@ assets/codex/skills/<skill-name>/
 - `SKILL.md` 负责主方法论、阶段、规则和使用边界。
 - `templates/` 负责 reusable artifact 形态、弱 schema、字段约束和输出布局。
 - `references/` 负责较长的稳定说明、术语表、读取地图或工具背景，不承载当前 run 状态。
+- `templates/**/*.md` 和 `references/**/*.md` 必须在自身首段 frontmatter 声明 `scout.resource.requirement: required | optional` 与非空 `scout.resource.description`；主 `SKILL.md` 不重复维护资源清单。
+- 只要入口被选择就必须读取的资源标为 `required`；仅服务条件分支、特定输出或故障场景的资源标为 `optional`，并在 description 与正文中说明选择条件。
+- `scout.resource` 只属于 Runtime 资源 catalog，不属于模板生成的 artifact contract；使用模板形成产物时不得复制该控制字段。
 - 当 `templates/` 下超过一个文件时，必须创建 `templates/template-index.md`。
 - 当 `references/` 下存在文件时，必须创建 `references/reference-index.md`。
 - `templates/template-index.md` 和 `references/reference-index.md` 只做导航、用途说明和读取顺序；不得写业务事实、证据事实、运行状态或当前 task 判断。
@@ -155,9 +158,10 @@ Metadata 字段规则：
 - Skill 重命名时必须同时修改目录、`name`、`id` 和全部显式引用，不保留旧 identity alias。
 - 后续只修改正文时不得改变 canonical Skill identity。
 - `version` 使用语义版本；首次创建用 `0.1.0`。
-- `phase` 是必填的非空 inline list，只允许 `coordinate`、`research`、`verify`、`validate`；它表示 Runtime 中可将本 Skill 作为候选读取的 Agent phase。
+- `phase` 是必填 inline list，只允许 `coordinate`、`research`、`verify`、`validate`；它表示 Runtime 中可将本 Skill 作为候选读取的 Agent phase。
+- `phase: []` 表示资产不参与任何 Runtime phase，不会进入 Agent mount 或 `FindSkills` 观察范围。
 - `phase` 不表示正文是否拥有编号阶段，也不由 Skill 类型决定；生产、消费或审计本 Skill contract 的 phase 都必须列出。
-- `family` 是可选的非空 inline list，表示 Agent 可从根节点逐级导航的唯一 canonical 入口路径；只有应被直接路由的入口 Skill 才能声明它。
+- `family` 是可选的非空 inline list，表示 Agent 可逐级发现或以完整 leaf 精确选择的唯一 canonical 入口路径；只有应被直接路由的入口 Skill 才能声明它。
 - 未声明 `family` 的 Skill 是 dependency-only 服务层，不能被 `FindSkills` 直接导航；它必须通过入口 Skill 的 `dependencies.skills.required` 进入 selection closure。
 - `tags` 是必填的非空 inline list，使用稳定、扁平的特征 token，不能写长句；它不参与 Runtime 路由、过滤或 selection 生成。
 - `devices` 没有明确设备限制时使用 `[any]`。
@@ -175,19 +179,19 @@ Dependencies 规则：
 - `plugins` 使用 `assets/codex/plugins/**/.codex-plugin/plugin.json` 中的真实 plugin name。
 - `required` 表示缺失时该 Skill 不应被认为可完整执行。
 - `optional` 表示可增强能力、可诊断能力或有条件 fallback；使用前仍必须通过当前 mount 能力查询确认。
-- Runtime 导航到 family 叶节点后，将该叶节点下当前 profile 授权的入口 Skill 纳入 selection，再按 `dependencies.skills.required` 递归形成 closure，并以 dependency-first `loadOrder` 交给 Agent。
-- required Skill 必须由同一 profile 授权且存在于当前 mount；不得通过依赖声明扩大 profile 能力边界。
+- Runtime 先从完整 catalog 中选择当前 profile phase 的可路由入口，再按 `dependencies.skills.required` 递归形成 closure，并以 dependency-first `loadOrder` 物化和交给 Agent。
+- required Skill 必须覆盖消费方的全部 phase；`phase: []` 的 Skill 不能成为 Runtime Skill 的 required dependency。
 - required Skill 的 `phase` 必须覆盖消费方的全部 `phase`。required Skill 不需要声明 `family`，也不继承消费方的 family 路径。
 
 ## Family 与 Tags 规范
 
-`family` 是 Runtime 唯一的 Skill 路由信息源。Agent 只能从 `FindSkills` 返回的直接子节点中选择一个 token，每次只在已确认 prefix 后追加一级，直到叶节点。
+`family` 是 Runtime 唯一的 Skill 路由信息源。完整 canonical leaf 已知时，Agent 可以直接提交整条路径并由 Runtime 按当前授权重新选择；未知时只能从 `FindSkills` 返回的直接子节点中选择一个 token，每次只在已确认 prefix 后追加一级，直到叶节点。
 
 Family 规则：
 
 - 路径使用小写 kebab-case token，不写展示文本、长句、空格或一次性任务名。
 - 第一级直接表达业务 domain 或 Scout 内部责任，例如 `validation`、`cyber-attack`、`market` 或 `internal`；不添加虚构的 `domain` 前缀。
-- 后续层级只表达稳定的业务导航路径，例如 `[validation, signal, unity-runtime-log]`。
+- 后续层级只表达所属业务定义的稳定导航路径；通用 Skill 不预置具体 domain、分类或 leaf token。
 - 一个入口 Skill 只有一条 canonical family path；多个入口 Skill 可以共享同一叶节点。
 - 工具、MCP server、plugin、通用研究包等服务层不为了可发现性声明 family；由入口 Skill 的 required dependencies 带入。
 - family 重命名是路由 contract 变更，必须同步更新所有显式约束，不保留 alias。
@@ -199,11 +203,10 @@ Tag catalog：
 - 系统与领域：`scout`、`validation`、`guru`、`jarvis`、`unity`。
 - 资产与业务对象：`skill`、`asset`、`template`、`knowledge`、`capability`、`codebase`、`signal`、`contract`、`boundary`、`memory`、`bdd`、`pack`、`manual`、`gate`。
 - 证据与检查：`evidence`、`source`、`audit`、`replay`、`codegraph`。
-- 信号与存储：`runtime`、`log`、`callback`、`event`、`local-storage`、`sqlite`。
 - 执行与设备：`pipeline`、`cli`、`shell-tool`、`automation`、`editor`、`desktop`、`player`、`mcp`、`plugin`。
 - 工作语义：`research`、`verification`、`workflow`、`governance`、`coordination`。
 
-优先复用 catalog 和当前仓库已经存在的稳定 tag。新增 tag 必须表达可复用的系统域、责任或能力，不能用于影响 Skill 路由或命中率。
+具体 Single 的对象、介质、格式或存储特征不在本通用 catalog 中枚举；由所属 domain 的 Skill 使用已经存在的稳定 tag，或在确认具有跨 Skill 复用价值后新增。新增 tag 必须表达可复用的系统域、责任或能力，不能用于影响 Skill 路由或命中率。
 
 禁止：
 
@@ -228,13 +231,13 @@ Tag catalog：
 创建或修改 Scout Skill 时按这个流程执行：
 
 1. 读取现有 `assets/codex/skills/*/SKILL.md`，确认当前风格、metadata 和命名。
-2. 读取 `assets/codex/agents/agent-profiles.json`，确认这个 Skill 是否需要被某个 profile 默认挂载。
+2. 读取 `assets/codex/agents/agent-profiles.json`，确认目标 Agent 的 Runtime phase。
 3. 确认任务目标适合沉淀为 Scout Skill，而不是 AGENTS 通用规则、可执行工具、plugin、外部资产或未经归纳的知识原文。
 4. 读取 `templates/template-index.md`；存在差异化结构时，按实际责任选择且只选择一个类型模板。
 5. 使用本 Skill 的通用骨架和适用的类型模板创建或更新 `assets/codex/skills/<skill-name>/SKILL.md`。
-6. 按 Runtime 适用性填写非空 `phase` 和特征 `tags`；只有直接可路由入口填写有序 `family`，dependency-only 服务层必须省略它。
+6. 按 Runtime 观察范围填写 `phase` 和特征 `tags`；不参与 Runtime 时明确填写 `phase: []`。只有直接可路由入口填写有序 `family`，dependency-only 服务层必须省略它。
 7. 按依赖规则填写 `dependencies`，只引用当前资产源中真实存在的 skill、shell tool、MCP server 或 plugin。
-8. 如果需要让 Agent 默认可见，单独修改对应 profile 的 `skills` 列表，并检查该 profile phase 与 Skill `phase` 相容。
+8. 确认 Skill 声明的每个 phase 都有完整 required dependency 与运行能力；Agent 可见性由 profile phase 自动投影，不维护 Skill 名称清单。
 9. 完成通用验证；选择了类型模板时，再执行该模板中的必检项。
 
 ## 使用场景
@@ -253,11 +256,9 @@ Tag catalog：
 - 还没有经过归纳的知识库原文、源码片段、聊天记录或开发过程事实。
 - 需要用户确认的业务判断或产品决策。
 
-## Profile 挂载规则
+## Phase 投影规则
 
-Scout Skill 源目录存在，不代表当前 Agent 可使用。
-
-如果任务要求某个 Agent 获得该 Skill 的访问授权，必须修改：
+Scout Skill 源目录存在，不代表当前 Agent 可观察。Runtime 使用以下 profile 字段建立观察范围：
 
 ```text
 assets/codex/agents/agent-profiles.json
@@ -265,14 +266,11 @@ assets/codex/agents/agent-profiles.json
 
 规则：
 
-- 先读取当前 profile 的真实责任和能力边界，不根据 Skill 名称或预设类别推断挂载目标。
-- 只挂载到实际需要该 Skill 的 profile；跨 profile 挂载必须具有相同的可复用责任。
-- Profile 只定义可访问集合，不表示其中所有 Skill 都应进入当前 task；Agent 必须先按 phase 初筛，再从 family 根节点每次导航一级。
-- Profile 挂载的每个无 `family` Skill，必须能在该 profile 适用的某个入口 Skill required dependency closure 中到达；否则它是无法读取的悬空挂载。
-- Skill 可以存在但未挂载；未挂载表示不会进入任何 profile 的授权集合，除非 Runtime 或某个 profile 显式挂载。
-- 新建 Skill 不自动修改 profile；只有任务明确要求对应 Agent 可访问时才更新 `agent-profiles.json`。
-
-修改 profile 后必须确认 `skills` 中的名字与目录名一致。
+- Profile 只声明一个 Runtime `phase`，不枚举 Skill 名称。
+- 声明该 phase 且具有 `family` 的 Skill 是可路由入口；Runtime 自动展开它们的 required dependency closure。
+- 无 `family` Skill 只能通过当前 phase 可路由入口的 required dependency closure 进入 mount，不得成为悬空资源。
+- `phase: []` 的 Skill 只保留在资产仓库中，永不进入 Runtime mount 或 `FindSkills`。
+- 修改 Skill phase 会改变对应 profile 的观察范围和 mount identity，恢复时由正常检查决定是否重建。
 
 ## 验证清单
 
@@ -280,20 +278,21 @@ assets/codex/agents/agent-profiles.json
 - `name`、`id` 和目录名完全一致。
 - `assetKind` 是 `scout.skill`。
 - canonical Skill identity 没有和其它 Skill 重复。
-- `phase` 是非空 inline list，值属于 Runtime phase 枚举，并覆盖所有合法生产、消费和审计场景；它不表示正文阶段顺序。
+- `phase` 是 inline list；参与 Runtime 时覆盖所有合法生产、消费和审计场景，不参与 Runtime 时明确为 `[]`。它不表示正文阶段顺序。
 - 直接可路由入口拥有唯一非空有序 `family`，每级是小写 kebab-case；dependency-only 服务层不存在 `family`。
 - `tags` 是扁平稳定的非路由特征 token。
 - `devices` 明确，通常是 `[any]`。
 - 非空 `dependencies` 引用都能在当前资产源中定位；没有依赖时不写空 block。
-- required Skill 依赖能够在同一 profile 授权集合中形成无环 selection closure，并覆盖消费方的全部 phase。
-- 每个 profile/phase 中挂载的 dependency-only Skill 都可从至少一个直接可路由入口的 required dependency closure 到达。
+- required Skill 依赖能够在完整 catalog 中形成无环 selection closure，并覆盖消费方的全部 phase。
+- 每个 supplementary Markdown resource 都拥有合法的 required/optional 标签和 description，且正文中的无条件/条件读取语义与标签一致。
+- 每个 phase 投影中的 dependency-only Skill 都可从至少一个直接可路由入口的 required dependency closure 到达。
 - 正文包含明确的触发场景、目标、职责和非目标。
 - 存在差异化结构时，已按照 `templates/template-index.md` 选择唯一类型模板并完成其必检项。
 - 完成态 `SKILL.md` 不存在模板填写说明或无说明的空字段。
 - `templates/` 多于一个文件时存在 `templates/template-index.md`；`references/` 存在文件时存在 `references/reference-index.md`。
 - template / reference index 只做导航和读取顺序，不承载业务事实、证据事实、运行状态或当前 task 判断。
 - 没有写入 Runtime 实现细节、当前 run 临时状态或未经归纳的外部事实。
-- 如果修改 profile，profile 引用的 skill 名称能在 `assets/codex/skills/` 中找到，且该 profile 的 Runtime phase 包含在 Skill `phase` 中。
+- Profile phase 值合法，且 phase 投影出的 Skill 与 dependency closure 和实际 mount 一致。
 
 ## 最小命令
 

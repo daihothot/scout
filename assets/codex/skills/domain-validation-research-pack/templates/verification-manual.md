@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: 下游运行验证手册模板。
 artifact_type: VerificationManual
 artifact_version: 1
 manual_id: "<填写当前 manual ID>"

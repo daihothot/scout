@@ -36,16 +36,20 @@ const testDomain: ScoutDomain = {
 export function createTestRunPersistence(
   t: TestContext,
   runId: string,
-  repoRoot = "/repo",
+  scoutRoot = "/repo",
   eventBus = new InMemoryEventBus(),
-): { journal: RunJournal; manifestStore: RunManifestStore } {
-  const root = mkdtempSync(join(tmpdir(), "scout-run-test-"));
-  const runRoot = join(root, runId);
+  runRootOverride?: string,
+): { runRoot: string; journal: RunJournal; manifestStore: RunManifestStore } {
+  const root = runRootOverride === undefined
+    ? mkdtempSync(join(tmpdir(), "scout-run-test-"))
+    : undefined;
+  const runRoot = runRootOverride ?? join(root!, runId);
   const journal = RunJournal.create({ runId, runRoot });
   const manifestStore = new RunManifestStore(runRoot);
   const scope = new RunScope({
     runId,
-    repoRoot,
+    scoutRoot,
+    runRoot,
     logger: noopLogger,
     eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
@@ -60,7 +64,7 @@ export function createTestRunPersistence(
   const createdAt = new Date().toISOString();
   eventBus.publish(
     RunEvents.run.created,
-    { runId, repoRoot, createdAt },
+    { runId, scoutRoot, createdAt },
     { occurredAt: createdAt },
   );
   if (journal.lastSeq !== 1) {
@@ -68,7 +72,7 @@ export function createTestRunPersistence(
   }
   manifestStore.create({
     runId,
-    repoRoot,
+    scoutRoot,
     createdAt,
     checkpointSeq: journal.lastSeq,
   });
@@ -76,16 +80,17 @@ export function createTestRunPersistence(
   t.after(() => {
     writer.stop();
     journal.close();
-    rmSync(root, { recursive: true, force: true });
+    if (root !== undefined) rmSync(root, { recursive: true, force: true });
   });
-  return { journal, manifestStore };
+  return { runRoot, journal, manifestStore };
 }
 
 export function installTestRunScope(
   t: TestContext,
   options: {
     runId: string;
-    repoRoot?: string;
+    scoutRoot?: string;
+    runRoot?: string;
     logger?: Logger;
     eventBus?: InMemoryEventBus;
     interactionPort?: RuntimeInteractionPort;
@@ -97,17 +102,18 @@ export function installTestRunScope(
     terminate?(reason: string): Promise<void>;
   },
 ): RunScope {
-  const repoRoot = options.repoRoot ?? "/repo";
+  const scoutRoot = options.scoutRoot ?? "/repo";
   const eventBus = options.eventBus ?? new InMemoryEventBus();
   const persistence = options.journal && options.manifestStore
     ? {
+      runRoot: options.runRoot ?? options.journal.runRoot,
       journal: options.journal,
       manifestStore: options.manifestStore,
     }
-    : createTestRunPersistence(t, options.runId, repoRoot, eventBus);
+    : createTestRunPersistence(t, options.runId, scoutRoot, eventBus, options.runRoot);
   const scope = new RunScope({
     runId: options.runId,
-    repoRoot,
+    scoutRoot,
     logger: options.logger ?? noopLogger,
     eventBus,
     interactionPort: options.interactionPort ?? new NoopRuntimeInteractionPort(),

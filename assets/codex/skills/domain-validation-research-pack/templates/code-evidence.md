@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: 当前版本代码证据聚合模板。
 artifact_type: CodeEvidencePack
 artifact_version: 1
 status: draft

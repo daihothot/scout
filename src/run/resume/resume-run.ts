@@ -48,7 +48,7 @@ export async function resumeRun(
       `Run directory ${runRoot} must be <ScoutRoot>/run/${manifest.runId}.`,
     );
   }
-  const repoRoot = dirname(runDirectory);
+  const scoutRoot = dirname(runDirectory);
   const interactionPort = options.interactionPort ?? new NoopRuntimeInteractionPort();
   const logger = new Logger({
     runId: manifest.runId,
@@ -61,7 +61,7 @@ export async function resumeRun(
     message: `Resuming Scout run ${manifest.runId} from ${runRoot}.`,
     data: {
       runRoot,
-      repoRoot,
+      scoutRoot,
       checkpointSeq: manifest.checkpointSeq,
     },
   });
@@ -74,7 +74,8 @@ export async function resumeRun(
   });
   const runScope = new RunScope({
     runId: manifest.runId,
-    repoRoot,
+    scoutRoot,
+    runRoot,
     logger,
     eventBus,
     interactionPort,
@@ -114,7 +115,7 @@ export async function resumeRun(
     });
     scope.manifestStore.update((current) => ({
       ...current,
-      repoRoot: scope.repoRoot,
+      scoutRoot: scope.scoutRoot,
       runtime: {
         status: "ready",
         mode: "resume",

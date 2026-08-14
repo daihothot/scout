@@ -57,8 +57,7 @@ export class RestoreAgentsStage implements RunStage {
       })
       .map((thread) => thread.threadId);
     const rolloutPaths = locatePersistedRollouts({
-      repoRoot: scope.repoRoot,
-      runId: scope.runId,
+      runRoot: scope.runRoot,
       threadIds: persistedThreadIds,
       requiredThreadIds: requiredRolloutThreadIds,
     });
@@ -183,18 +182,13 @@ export class RestoreAgentsStage implements RunStage {
  * missing rollout is fatal only for a thread whose journal has resumable work.
  */
 function locatePersistedRollouts(input: {
-  repoRoot: string;
-  runId: string;
+  runRoot: string;
   threadIds: string[];
   requiredThreadIds: string[];
 }): ReadonlyMap<string, string> {
   if (input.threadIds.length === 0) return new Map();
 
-  const runRoot = resolve(
-    input.repoRoot,
-    "run",
-    input.runId,
-  );
+  const runRoot = resolve(input.runRoot);
   const codexHome = resolve(
     runRoot,
     "codex-home",

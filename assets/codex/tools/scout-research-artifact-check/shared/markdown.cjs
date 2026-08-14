@@ -9,7 +9,16 @@ function readMarkdown(path, displayRoot, issues) {
     return undefined;
   }
   try {
-    return parseMarkdown(path, readFileSync(path, "utf8"));
+    const document = parseMarkdown(path, readFileSync(path, "utf8"));
+    if (document.hasRuntimeControlMetadata) {
+      addIssue(
+        issues,
+        "RUNTIME_CONTROL_METADATA_FORBIDDEN",
+        displayPath(path, displayRoot),
+        "Runtime-owned scout.resource metadata must not appear in Research artifacts.",
+      );
+    }
+    return document;
   } catch (error) {
     addIssue(issues, "ARTIFACT_READ_FAILED", displayPath(path, displayRoot), error instanceof Error ? error.message : String(error));
     return undefined;
@@ -19,13 +28,23 @@ function readMarkdown(path, displayRoot, issues) {
 function parseMarkdown(path, text) {
   const lines = text.split(/\r?\n/);
   const frontMatter = {};
+  let hasRuntimeControlMetadata = false;
   let bodyStart = 0;
   if (lines[0] === "---") {
     const end = lines.indexOf("---", 1);
     if (end > 0) {
+      const keyPath = [];
       for (const line of lines.slice(1, end)) {
-        const match = line.match(/^([A-Za-z0-9_]+):\s*(.*?)\s*$/);
-        if (match) frontMatter[match[1]] = stripQuotes(match[2]);
+        const match = line.match(/^(\s*)([A-Za-z0-9_]+):\s*(.*?)\s*$/);
+        if (!match) continue;
+
+        const indent = match[1].length;
+        while (keyPath.at(-1)?.indent >= indent) keyPath.pop();
+        keyPath.push({ indent, key: match[2] });
+        if (keyPath[0]?.key === "scout" && keyPath[1]?.key === "resource") {
+          hasRuntimeControlMetadata = true;
+        }
+        if (indent === 0) frontMatter[match[2]] = stripQuotes(match[3]);
       }
       bodyStart = end + 1;
     }
@@ -37,7 +56,7 @@ function parseMarkdown(path, text) {
     const match = bodyLines[index].match(/^(#{1,6})\s+(.+?)\s*$/);
     if (match) headings.push({ level: match[1].length, title: match[2], lineIndex: index });
   }
-  return { path, text, bodyLines, frontMatter, headings };
+  return { path, text, bodyLines, frontMatter, headings, hasRuntimeControlMetadata };
 }
 
 function sectionByTitle(document, level, title) {
