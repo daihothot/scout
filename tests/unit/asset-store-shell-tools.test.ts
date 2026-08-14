@@ -31,7 +31,7 @@ import {
 } from "../../src/asset-store/index.js";
 import { MountInspector } from "../../src/asset-store/inspection/mount-inspector.js";
 
-const repoRoot = process.cwd();
+const scoutRoot = process.cwd();
 
 test("AssetStore reports unresolved shell tools as issues and excludes them from mount outputs", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-shell-tools-");
@@ -60,7 +60,7 @@ test("AssetStore reports unresolved shell tools as issues and excludes them from
   ]);
 
   const mount = new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-shell-tool-materialization-test",
     agentId: "coordinator",
   });
@@ -108,7 +108,7 @@ test("AssetStore rejects asset-local paths that escape the assets root", () => {
 
   assert.throws(
     () => new AssetStore().inspectMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId: "run-asset-path-boundary",
       agentId: "coordinator",
     }),
@@ -131,7 +131,7 @@ test("AssetStore rejects shell and MCP names that are not single path segments",
   updateCoordinatorShellTools(shellAssetsRoot, ["escapingName"]);
   assert.throws(
     () => new AssetStore().inspectMount({
-      repoRoot: shellFixture,
+      scoutRoot: shellFixture,
       runId: "run-shell-name-boundary",
       agentId: "coordinator",
     }),
@@ -148,7 +148,7 @@ test("AssetStore rejects shell and MCP names that are not single path segments",
   updateCoordinatorMcpServers(mcpAssetsRoot, ["../escaping-server"]);
   assert.throws(
     () => new AssetStore().inspectMount({
-      repoRoot: mcpFixture,
+      scoutRoot: mcpFixture,
       runId: "run-mcp-name-boundary",
       agentId: "coordinator",
     }),
@@ -166,7 +166,7 @@ test("AssetStore rejects dot agent ids before materializing a mount", () => {
   ] as const) {
     assert.throws(
       () => store.materializeMount({
-        repoRoot: fixtureRoot,
+        scoutRoot: fixtureRoot,
         runId,
         agentId,
       }),
@@ -184,7 +184,7 @@ test("AssetStore rejects run ids that escape the run directory", () => {
   for (const runId of [`../${escapedRunName}`, `../../${escapedRunName}`] as const) {
     assert.throws(
       () => store.materializeMount({
-        repoRoot: fixtureRoot,
+        scoutRoot: fixtureRoot,
         runId,
         agentId: "coordinator",
       }),
@@ -199,7 +199,7 @@ test("AssetStore reuses a valid mount without touching mountRoot", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-mount-reuse-");
   const store = new AssetStore();
   const initial = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-reuse",
     agentId: "coordinator",
   });
@@ -207,7 +207,7 @@ test("AssetStore reuses a valid mount without touching mountRoot", () => {
   writeFileSync(sentinelPath, "preserve\n", "utf8");
 
   const prepared = store.prepareMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-reuse",
     agentId: "coordinator",
     persistedIdentity: {
@@ -226,14 +226,14 @@ test("AssetStore reuses a valid mount without touching mountRoot", () => {
 test("materialize facade preserves the inspect-to-prepare reuse handoff", () => {
   const fixtureRoot = createCodexAssetFixture("scout-mount-facade-reuse-");
   const initial = materializeCodexMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-facade-reuse",
     agentId: "coordinator",
   });
   const sentinelPath = join(initial.mountRoot, "sentinel.txt");
   writeFileSync(sentinelPath, "preserve\n", "utf8");
   const options = {
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-facade-reuse",
     agentId: "coordinator",
     persistedIdentity: {
@@ -256,12 +256,12 @@ test("AssetStore does not repeat mount inspection when prepare adds a step obser
   const fixtureRoot = createCodexAssetFixture("scout-mount-inspection-cache-");
   const store = new AssetStore();
   const initial = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-inspection-cache",
     agentId: "coordinator",
   });
   const options = {
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-inspection-cache",
     agentId: "coordinator",
     persistedIdentity: {
@@ -291,12 +291,12 @@ test("AssetStore rechecks a cached inspection when the mount changes before prep
   const fixtureRoot = createCodexAssetFixture("scout-mount-inspection-drift-");
   const store = new AssetStore();
   const initial = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-inspection-drift",
     agentId: "coordinator",
   });
   const options = {
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-inspection-drift",
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -337,12 +337,12 @@ test("AssetStore rechecks cached inspection when artifact or log roots change", 
       const fixtureRoot = createCodexAssetFixture(`scout-mount-${rootName}-drift-`);
       const store = new AssetStore();
       const initial = store.materializeMount({
-        repoRoot: fixtureRoot,
+        scoutRoot: fixtureRoot,
         runId: `run-mount-${rootName}-drift`,
         agentId: "coordinator",
       });
       const options = {
-        repoRoot: fixtureRoot,
+        scoutRoot: fixtureRoot,
         runId: `run-mount-${rootName}-drift`,
         agentId: "coordinator",
         cleanRunRoot: false,
@@ -367,17 +367,17 @@ test("AssetStore rechecks cached inspection when the Scout assets link changes",
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-assets-link-drift-"));
   const assetSource = join(fixtureRoot, "asset-source");
   const assetAlias = join(fixtureRoot, "asset-alias");
-  cpSync(join(repoRoot, "assets"), assetSource, { recursive: true });
+  cpSync(join(scoutRoot, "assets"), assetSource, { recursive: true });
   symlinkSync(assetSource, assetAlias);
   symlinkSync(assetSource, join(fixtureRoot, "assets"));
   const store = new AssetStore();
   const initial = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-assets-link-drift",
     agentId: "coordinator",
   });
   const options = {
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-assets-link-drift",
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -435,12 +435,12 @@ test("AssetStore rechecks cached inspection when current-device command binding 
     process.env.PATH = `${firstBin}:${secondBin}`;
     const store = new AssetStore();
     const initial = store.materializeMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId: "run-runtime-binding-cache",
       agentId: "coordinator",
     });
     const options = {
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId: "run-runtime-binding-cache",
       agentId: "coordinator",
       cleanRunRoot: false,
@@ -467,7 +467,7 @@ test("AssetStore compares persisted manifest objects by semantics rather than ke
   const fixtureRoot = createCodexAssetFixture("scout-mount-semantic-comparison-");
   const store = new AssetStore();
   const initial = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-semantic-comparison",
     agentId: "coordinator",
   });
@@ -477,11 +477,6 @@ test("AssetStore compares persisted manifest objects by semantics rather than ke
   manifest.agentProfile.writableRoots?.reverse();
   manifest.readableRoots.reverse();
   manifest.writableRoots.reverse();
-  manifest.skillCatalog = manifest.skillCatalog.map((entry) => ({
-    ...reverseObjectKeys(entry),
-    phase: [...entry.phase].reverse(),
-    tags: [...entry.tags].reverse(),
-  }));
   manifest.roleAgents = reverseObjectKeys(manifest.roleAgents);
   manifest.mcpServers = manifest.mcpServers
     .map((server) => ({
@@ -492,7 +487,7 @@ test("AssetStore compares persisted manifest objects by semantics rather than ke
   writeManifest(initial.manifestPath, manifest);
 
   const inspection = store.inspectMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-semantic-comparison",
     agentId: "coordinator",
     persistedManifest: manifest,
@@ -511,7 +506,7 @@ test("AssetStore validates config assignments instead of matching path substring
   const fixtureRoot = createCodexAssetFixture("scout-mount-config-structure-");
   const store = new AssetStore();
   const initial = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-config-structure",
     agentId: "coordinator",
   });
@@ -536,7 +531,7 @@ test("AssetStore validates config assignments instead of matching path substring
   writeManifest(initial.manifestPath, manifest);
 
   const inspection = store.inspectMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-config-structure",
     agentId: "coordinator",
     persistedManifest: manifest,
@@ -556,7 +551,7 @@ test("AssetStore reports the failing generated file and errno during inspection"
   const fixtureRoot = createCodexAssetFixture("scout-mount-inspection-diagnostic-");
   const store = new AssetStore();
   const initial = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-inspection-diagnostic",
     agentId: "coordinator",
   });
@@ -564,7 +559,7 @@ test("AssetStore reports the failing generated file and errno during inspection"
   unlinkSync(hooksPath);
 
   const inspection = store.inspectMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-inspection-diagnostic",
     agentId: "coordinator",
     persistedIdentity: {
@@ -586,14 +581,14 @@ test("AssetStore rebuilds an invalid mount manifest with its parse diagnostic", 
   const fixtureRoot = createCodexAssetFixture("scout-invalid-mount-manifest-");
   const store = new AssetStore();
   const initial = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-invalid-mount-manifest",
     agentId: "coordinator",
   });
   writeFileSync(initial.manifestPath, "{ invalid json\n", "utf8");
 
   const prepared = store.prepareMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-invalid-mount-manifest",
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -634,7 +629,7 @@ for (const runtimeResource of [
     const runId = `run-${runtimeResource.name.replace(" ", "-")}-canonical`;
     const store = new AssetStore();
     const initial = store.materializeMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId,
       agentId: runtimeResource.agentId,
     });
@@ -648,7 +643,7 @@ for (const runtimeResource of [
     generated.hash = sha256FileForTest(wrapperPath);
     writeManifest(initial.manifestPath, manifest);
     const options = {
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId,
       agentId: runtimeResource.agentId,
       cleanRunRoot: false,
@@ -671,7 +666,7 @@ for (const runtimeResource of [
     const runId = `run-${runtimeResource.name.replace(" ", "-")}-mode`;
     const store = new AssetStore();
     const initial = store.materializeMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId,
       agentId: runtimeResource.agentId,
     });
@@ -679,7 +674,7 @@ for (const runtimeResource of [
     chmodSync(join(initial.mountRoot, runtimeResource.wrapperPath(manifest)), 0o644);
 
     const inspection = store.inspectMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId,
       agentId: runtimeResource.agentId,
       persistedIdentity: mountIdentity(initial),
@@ -693,14 +688,13 @@ for (const runtimeResource of [
 for (const relativePath of [
   ".codex/hooks.json",
   ".agents/plugins/marketplace.json",
-  ".scout/skill-catalog.json",
 ] as const) {
   test(`AssetStore rejects canonical ${relativePath} drift even when its manifest hash also changed`, () => {
     const fixtureRoot = createCodexAssetFixture("scout-generated-file-canonical-");
     const runId = `run-generated-${relativePath.split("/").at(-1)}`;
     const store = new AssetStore();
     const initial = store.materializeMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId,
       agentId: "coordinator",
     });
@@ -713,7 +707,7 @@ for (const relativePath of [
     writeManifest(initial.manifestPath, manifest);
 
     const inspection = store.inspectMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId,
       agentId: "coordinator",
       persistedIdentity: mountIdentity(initial),
@@ -728,14 +722,14 @@ test("AssetStore rebuilds only a damaged mount and preserves its identity", () =
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-mount-rebuild-");
   const store = new AssetStore();
   const initial = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-rebuild",
     agentId: "coordinator",
   });
   writeFileSync(join(initial.mountRoot, ".codex", "config.toml"), "damaged\n", "utf8");
 
   const prepared = store.prepareMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-rebuild",
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -757,7 +751,7 @@ test("AssetStore rebuilds when persisted mount inventory loses a profiled skill"
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-inventory-");
   const store = new AssetStore();
   const initial = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-inventory",
     agentId: "coordinator",
   });
@@ -766,7 +760,7 @@ test("AssetStore rebuilds when persisted mount inventory loses a profiled skill"
   writeFileSync(initial.manifestPath, JSON.stringify(manifest, null, 2) + "\\n", "utf8");
 
   const prepared = store.prepareMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-mount-inventory",
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -808,7 +802,7 @@ for (const mutation of [
     const fixtureRoot = createCodexAssetFixture(`scout-asset-store-${mutation.name.replace(" ", "-")}-`);
     const store = new AssetStore();
     const initial = store.materializeMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId: `run-mount-${mutation.name.replace(" ", "-")}`,
       agentId: "coordinator",
     });
@@ -819,7 +813,7 @@ for (const mutation of [
     writeManifest(initial.manifestPath, manifest);
 
     const prepared = store.prepareMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId: `run-mount-${mutation.name.replace(" ", "-")}`,
       agentId: "coordinator",
       cleanRunRoot: false,
@@ -840,7 +834,7 @@ test("AssetStore ignores only the shell-tools registry hash when reusing a mount
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-shell-registry-reuse-");
   const store = new AssetStore();
   const initial = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-shell-registry-reuse",
     agentId: "coordinator",
   });
@@ -851,7 +845,7 @@ test("AssetStore ignores only the shell-tools registry hash when reusing a mount
   writeManifest(initial.manifestPath, manifest);
 
   const prepared = store.prepareMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-shell-registry-reuse",
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -873,7 +867,7 @@ test("AssetStore exposes scout-memory for all agent mounts", () => {
 
   for (const agentId of ["coordinator", "researcher", "verifier", "validator"]) {
     const mount = store.materializeMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId: `run-shell-tool-${agentId}-test`,
       agentId,
     });
@@ -888,7 +882,7 @@ test("AssetStore exposes scout-memory for all agent mounts", () => {
 test("AssetStore exposes mounted Skill readers to the coordinator", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-coordinator-readers-");
   const mount = new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-shell-tool-coordinator-readers-test",
     agentId: "coordinator",
   });
@@ -913,7 +907,7 @@ test("AssetStore exposes profiled Validation Domain Skills outside Codex Skill d
 
   for (const [agentId, skill] of Object.entries(expectedSkills)) {
     const mount = store.materializeMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId: `run-validation-skill-${agentId}-test`,
       agentId,
     });
@@ -932,23 +926,27 @@ test("AssetStore exposes profiled Validation Domain Skills outside Codex Skill d
   }
 });
 
-test("AssetStore writes the profiled Skill catalog into the mount and manifest", () => {
+test("AssetStore keeps the profiled Skill catalog in memory without exposing it in the mount", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-skill-catalog-");
-  const mount = new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+  const store = new AssetStore();
+  const mount = store.materializeMount({
+    scoutRoot: fixtureRoot,
     runId: "run-skill-catalog-test",
     agentId: "researcher",
   });
-  const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
+  const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest & {
+    skillCatalog?: unknown;
+  };
   const catalogPath = join(mount.mountRoot, ".scout", "skill-catalog.json");
-  const catalog = JSON.parse(readFileSync(catalogPath, "utf8")) as typeof mount.skillCatalog;
 
-  assert.deepEqual(catalog, mount.skillCatalog);
-  assert.deepEqual(manifest.skillCatalog, mount.skillCatalog);
-  assert.deepEqual(catalog.map((skill) => skill.name), mount.skills);
+  assert.equal(existsSync(catalogPath), false);
+  assert.equal("skillCatalog" in manifest, false);
+  assert.deepEqual(mount.skillCatalog.map((skill) => skill.name), mount.skills);
   assert.deepEqual(readdirSync(join(mount.mountRoot, ".agents", "skills")), []);
-  const entrySkill = catalog.find((skill) => skill.name === "domain-validation-researcher");
-  const serviceSkill = catalog.find((skill) => skill.name === "domain-validation-research-pack");
+  const entrySkill = mount.skillCatalog.find((skill) => skill.name === "domain-validation-researcher");
+  const serviceSkill = mount.skillCatalog.find((skill) =>
+    skill.name === "domain-validation-research-pack"
+  );
   assert.ok(entrySkill);
   assert.deepEqual(entrySkill.family, ["validation", "workflow", "researcher"]);
   assert.deepEqual(entrySkill.tags, ["scout", "validation", "bdd", "research", "workflow"]);
@@ -962,87 +960,34 @@ test("AssetStore writes the profiled Skill catalog into the mount and manifest",
     "evidence",
     "manual",
   ]);
-  assert.ok(catalog.every((skill) =>
+  assert.ok(mount.skillCatalog.every((skill) =>
     skill.path === `.scout/skills/${skill.name}/SKILL.md`
     && existsSync(join(mount.mountRoot, skill.path))
   ));
 
-  for (const skill of catalog) {
+  for (const skill of mount.skillCatalog) {
     assert.equal(
       realpathSync(join(mount.mountRoot, ".scout", "skills", skill.name)),
       realpathSync(join(fixtureRoot, "assets", "codex", "skills", skill.name)),
     );
   }
 
-  const catalogFile = manifest.generatedFiles.find((file) =>
-    file.path === ".scout/skill-catalog.json"
-  );
-  assert.ok(catalogFile);
-  assert.equal(
-    catalogFile.hash,
-    createHash("sha256").update(readFileSync(catalogPath, "utf8")).digest("hex"),
-  );
-});
-
-for (const orderingMutation of [
-  {
-    name: "Skill catalog",
-    apply(manifest: MountManifest): void {
-      manifest.skillCatalog.reverse();
-    },
-  },
-  {
-    name: "Skill family",
-    apply(manifest: MountManifest): void {
-      const entry = manifest.skillCatalog.find((skill) =>
-        skill.name === "domain-validation-researcher"
-      );
-      assert.ok(entry?.family && entry.family.length > 1);
-      entry.family.reverse();
-    },
-  },
-  {
-    name: "required Skill dependency",
-    apply(manifest: MountManifest): void {
-      const entry = manifest.skillCatalog.find((skill) =>
-        skill.name === "domain-validation-research-pack"
-      );
-      assert.ok(entry && entry.requiredSkills.length > 1);
-      entry.requiredSkills.reverse();
-    },
-  },
-] as const) {
-  test(`AssetStore preserves ${orderingMutation.name} order when deciding reuse`, () => {
-    const suffix = orderingMutation.name.replaceAll(" ", "-");
-    const fixtureRoot = createCodexAssetFixture(`scout-${suffix}-order-`);
-    const runId = `run-${suffix}-order`;
-    const store = new AssetStore();
-    const initial = store.materializeMount({
-      repoRoot: fixtureRoot,
-      runId,
-      agentId: "researcher",
-    });
-    const manifest = JSON.parse(readFileSync(initial.manifestPath, "utf8")) as MountManifest;
-    orderingMutation.apply(manifest);
-    writeManifest(initial.manifestPath, manifest);
-
-    const inspection = store.inspectMount({
-      repoRoot: fixtureRoot,
-      runId,
-      agentId: "researcher",
-      persistedIdentity: mountIdentity(initial),
-    });
-
-    assert.equal(inspection.decision, "rebuild");
-    assert.match(inspection.reason ?? "", /Skill catalog changed/);
+  const reused = store.prepareMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-skill-catalog-test",
+    agentId: "researcher",
+    cleanRunRoot: false,
+    persistedIdentity: mountIdentity(mount),
   });
-}
+  assert.equal(reused.decision, "reused");
+  assert.deepEqual(reused.mount.skillCatalog, mount.skillCatalog);
+});
 
 test("Skill resource hashes cover the complete profiled Skill directory", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-skill-resource-hash-");
   const store = new AssetStore();
   const before = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-skill-resource-hash-before-test",
     agentId: "researcher",
   });
@@ -1067,7 +1012,7 @@ test("Skill resource hashes cover the complete profiled Skill directory", () => 
   writeFileSync(templatePath, `${readFileSync(templatePath, "utf8")}\nresource hash probe\n`, "utf8");
 
   const after = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-skill-resource-hash-after-test",
     agentId: "researcher",
   });
@@ -1089,7 +1034,7 @@ test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
 
   for (const agentId of ["researcher", "verifier", "validator"]) {
     const mount = store.materializeMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId: `run-unity-signals-${agentId}-test`,
       agentId,
     });
@@ -1109,7 +1054,7 @@ test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
   }
 
   const coordinatorMount = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-unity-signals-coordinator-test",
     agentId: "coordinator",
   });
@@ -1125,7 +1070,7 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
   const acquisitionSkill = "signal-unity-runtime-log-unity-pipeline-cli";
 
   const verifierMount = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-runtime-log-acquisition-verifier-test",
     agentId: "verifier",
   });
@@ -1149,7 +1094,7 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
   assert.equal(existsSync(join(verifierMount.mountRoot, "bin", "unity")), true);
 
   const validatorMount = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-runtime-log-acquisition-validator-test",
     agentId: "validator",
   });
@@ -1159,7 +1104,7 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
 
   for (const agentId of ["coordinator", "researcher"]) {
     const mount = store.materializeMount({
-      repoRoot: fixtureRoot,
+      scoutRoot: fixtureRoot,
       runId: `run-runtime-log-acquisition-${agentId}-test`,
       agentId,
     });
@@ -1170,7 +1115,7 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
 });
 
 test("Every Skill name and id match its directory name", () => {
-  const skillsRoot = join(repoRoot, "assets", "codex", "skills");
+  const skillsRoot = join(scoutRoot, "assets", "codex", "skills");
   const skillNames = readdirSync(skillsRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
@@ -1196,7 +1141,7 @@ test("Every Skill name and id match its directory name", () => {
 test("AssetStore exposes Research artifact checking and git tools to the researcher", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-research-tools-");
   const mount = new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-shell-tool-domain-validation-researcher-test",
     agentId: "researcher",
   });
@@ -1225,7 +1170,7 @@ test("AssetStore exposes Research artifact checking and git tools to the researc
 test("AssetStore gives the validator producer contracts, code inspection tools, and a neutral digest tool", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-validator-tools-");
   const mount = new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-shell-tool-validator-gate-test",
     agentId: "validator",
   });
@@ -1249,7 +1194,7 @@ test("AssetStore gives the validator producer contracts, code inspection tools, 
   }), /SCOUT_ARTIFACT_DIGEST_OK/);
 });
 
-test("AssetStore resolves asset-local shell tool commands against the repo root", () => {
+test("AssetStore resolves asset-local shell tool commands against the Scout root", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-shell-tools-");
   const assetsRoot = join(fixtureRoot, "assets", "codex");
   const toolPath = join(assetsRoot, "tools", "asset-local-tool");
@@ -1268,7 +1213,7 @@ test("AssetStore resolves asset-local shell tool commands against the repo root"
   updateCoordinatorShellTools(assetsRoot, ["assetLocalTool"]);
 
   const mount = new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-asset-local-shell-tool-test",
     agentId: "coordinator",
   });
@@ -1302,7 +1247,7 @@ test("Shell tool registry changes do not change new asset identity", () => {
 
   const store = new AssetStore();
   const before = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-shell-tool-registry-hash-test",
     agentId: "coordinator",
   });
@@ -1316,7 +1261,7 @@ test("Shell tool registry changes do not change new asset identity", () => {
     }],
   });
   const after = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-shell-tool-registry-hash-test",
     agentId: "coordinator",
   });
@@ -1350,7 +1295,7 @@ test("AssetStore rebuilds a reused mount when a shell contract binding changes",
   updateCoordinatorShellTools(assetsRoot, ["deviceTool"]);
   const store = new AssetStore();
   const initial = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-shell-tool-reuse-binding",
     agentId: "coordinator",
   });
@@ -1366,7 +1311,7 @@ test("AssetStore rebuilds a reused mount when a shell contract binding changes",
   });
   const manifest = JSON.parse(readFileSync(initial.manifestPath, "utf8")) as MountManifest;
   const prepared = store.prepareMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-shell-tool-reuse-binding",
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -1404,13 +1349,13 @@ test("Asset-local shell tool scripts remain part of the resource hash", () => {
 
   const store = new AssetStore();
   const before = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-shell-tool-script-hash-test",
     agentId: "coordinator",
   });
   writeExecutable(toolPath, "AFTER_TOOL_OK");
   const after = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-shell-tool-script-hash-test",
     agentId: "coordinator",
   });
@@ -1432,7 +1377,7 @@ test("AssetStore rematerializes current paths while preserving portable persiste
   const targetRoot = createCodexAssetFixture("scout-persisted-mount-target-");
   const runId = "run-persisted-mount-identity-test";
   const source = new AssetStore().materializeMount({
-    repoRoot: sourceRoot,
+    scoutRoot: sourceRoot,
     runId,
     agentId: "coordinator",
   });
@@ -1443,7 +1388,7 @@ test("AssetStore rematerializes current paths while preserving portable persiste
     resourceHash: source.resourceHash,
   };
   const target = new AssetStore().materializeMount({
-    repoRoot: targetRoot,
+    scoutRoot: targetRoot,
     runId,
     agentId: "coordinator",
     persistedIdentity: {
@@ -1460,6 +1405,7 @@ test("AssetStore rematerializes current paths while preserving portable persiste
   assert.equal(target.parentAssetCommitId, persistedIdentity.parentAssetCommitId);
   assert.equal(target.mountId, persistedIdentity.mountId);
   assert.equal(target.resourceHash, persistedIdentity.resourceHash);
+  assert.equal(target.scoutRoot, targetRoot);
   assert.equal(manifest.assetCommitId, persistedIdentity.assetCommitId);
   assert.equal(manifest.parentAssetCommitId, persistedIdentity.parentAssetCommitId);
   assert.equal(manifest.mountId, persistedIdentity.mountId);
@@ -1479,7 +1425,7 @@ test("AssetStore rebuilds a copied run once, then reuses the current mount", () 
   const runId = "run-copied-mount-reuse-test";
   const sourceStore = new AssetStore();
   const source = sourceStore.materializeMount({
-    repoRoot: sourceRoot,
+    scoutRoot: sourceRoot,
     runId,
     agentId: "coordinator",
   });
@@ -1495,7 +1441,7 @@ test("AssetStore rebuilds a copied run once, then reuses the current mount", () 
   };
   const targetStore = new AssetStore();
   const relocated = targetStore.prepareMount({
-    repoRoot: targetRoot,
+    scoutRoot: targetRoot,
     runId,
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -1503,6 +1449,7 @@ test("AssetStore rebuilds a copied run once, then reuses the current mount", () 
     persistedIdentity: identity,
   });
   assert.equal(relocated.decision, "rebuild");
+  assert.equal(relocated.mount.scoutRoot, targetRoot);
   assert.equal(relocated.mount.assetCommitId, identity.assetCommitId);
   assert.equal(relocated.mount.mountId, identity.mountId);
   const relocatedConfig = readFileSync(join(relocated.mount.mountRoot, ".codex", "config.toml"), "utf8");
@@ -1511,7 +1458,7 @@ test("AssetStore rebuilds a copied run once, then reuses the current mount", () 
 
   const currentManifest = JSON.parse(readFileSync(relocated.mount.manifestPath, "utf8")) as MountManifest;
   const reused = targetStore.prepareMount({
-    repoRoot: targetRoot,
+    scoutRoot: targetRoot,
     runId,
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -1522,6 +1469,7 @@ test("AssetStore rebuilds a copied run once, then reuses the current mount", () 
     },
   });
   assert.equal(reused.decision, "reused");
+  assert.equal(reused.mount.scoutRoot, targetRoot);
   assert.equal(reused.mount.mountRoot, relocated.mount.mountRoot);
 });
 
@@ -1544,7 +1492,7 @@ test("AssetStore migrates verifiable legacy identity without hashing device shel
   };
   const store = new AssetStore();
   const original = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-legacy-resource-identity",
     agentId: "coordinator",
     persistedIdentity,
@@ -1554,7 +1502,7 @@ test("AssetStore migrates verifiable legacy identity without hashing device shel
 
   writeMinimalLegacyShellRegistry(assetsRoot, "node");
   const relocated = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-legacy-resource-identity",
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -1574,7 +1522,7 @@ test("AssetStore migrates verifiable legacy identity without hashing device shel
   const persistedManifestText = readFileSync(relocated.manifestPath, "utf8");
   writeExecutable(toolPath, "ASSET_LOCAL_TOOL_CHANGED");
   assert.throws(() => store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-legacy-resource-identity",
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -1596,14 +1544,14 @@ test("AssetStore permits one explicit migration for an unreconstructable legacy 
   const store = new AssetStore();
 
   assert.throws(() => store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-unreconstructable-legacy-resource-identity",
     agentId: "coordinator",
     persistedIdentity,
   }), /Persisted resource identity does not match current assets for coordinator/);
 
   const migrated = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-unreconstructable-legacy-resource-identity",
     agentId: "coordinator",
     persistedIdentity,
@@ -1623,7 +1571,7 @@ test("AssetStore permits one explicit migration for an unreconstructable legacy 
 
   writeExecutable(toolPath, "ASSET_LOCAL_TOOL_CHANGED_AFTER_MIGRATION");
   assert.throws(() => store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-unreconstructable-legacy-resource-identity",
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -1636,7 +1584,7 @@ test("AssetStore permits one explicit migration for an unreconstructable legacy 
   }), /Persisted resource identity does not match current assets for coordinator/);
 });
 
-test("AssetStore resolves asset-local MCP commands against the repo root", () => {
+test("AssetStore resolves asset-local MCP commands against the Scout root", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-mcp-command-");
   const assetsRoot = join(fixtureRoot, "assets", "codex");
   const commandPath = join(assetsRoot, "tools", "asset-local-mcp");
@@ -1655,7 +1603,7 @@ test("AssetStore resolves asset-local MCP commands against the repo root", () =>
 
   const store = new AssetStore();
   const mount = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-asset-local-mcp-command-test",
     agentId: "coordinator",
   });
@@ -1682,7 +1630,7 @@ test("AssetStore resolves asset-local MCP commands against the repo root", () =>
 
   writeExecutable(commandPath, "ASSET_LOCAL_MCP_CHANGED");
   assert.throws(() => store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-asset-local-mcp-command-test",
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -1694,7 +1642,7 @@ test("AssetStore resolves asset-local MCP commands against the repo root", () =>
     },
   }), /Persisted resource identity does not match current assets for coordinator/);
   const changed = store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-asset-local-mcp-command-changed-test",
     agentId: "coordinator",
   });
@@ -1702,7 +1650,7 @@ test("AssetStore resolves asset-local MCP commands against the repo root", () =>
 
   writeFileSync(vendorPath, "module.exports = 'after';\n", "utf8");
   assert.throws(() => store.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: "run-asset-local-mcp-command-changed-test",
     agentId: "coordinator",
     cleanRunRoot: false,
@@ -1729,7 +1677,7 @@ test("Asset-local shell and MCP references fail closed when missing", () => {
   });
   updateCoordinatorShellTools(shellAssetsRoot, ["missingAssetTool"]);
   assert.throws(() => new AssetStore().materializeMount({
-    repoRoot: shellFixtureRoot,
+    scoutRoot: shellFixtureRoot,
     runId: "run-missing-shell-resource",
     agentId: "coordinator",
   }), /Asset-local resource is missing: assets\/codex\/tools\/missing-asset-tool/);
@@ -1746,7 +1694,7 @@ test("Asset-local shell and MCP references fail closed when missing", () => {
   });
   updateCoordinatorMcpServers(mcpAssetsRoot, ["missingAsset"]);
   assert.throws(() => new AssetStore().materializeMount({
-    repoRoot: mcpFixtureRoot,
+    scoutRoot: mcpFixtureRoot,
     runId: "run-missing-mcp-resource",
     agentId: "coordinator",
   }), /Asset-local resource is missing: assets\/codex\/mcp\/missing-server\.cjs/);
@@ -1756,7 +1704,7 @@ test("scout-memory reports run-level codex memory files without reading sqlite c
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-shell-tools-");
   const runId = "run-shell-tool-memory-test";
   const mount = new AssetStore().materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId,
     agentId: "coordinator",
   });
@@ -1766,7 +1714,7 @@ test("scout-memory reports run-level codex memory files without reading sqlite c
   writeFileSync(join(codexHome, "state_5.sqlite-wal"), "state-wal-placeholder", "utf8");
   writeFileSync(join(codexHome, "ignored.txt"), "not memory", "utf8");
 
-  const scriptPath = join(repoRoot, "assets", "codex", "tools", "scout-memory.cjs");
+  const scriptPath = join(scoutRoot, "assets", "codex", "tools", "scout-memory.cjs");
   const smoke = execFileSync(process.execPath, [scriptPath, "--smoke"], {
     cwd: mount.mountRoot,
     encoding: "utf8",
@@ -1826,7 +1774,7 @@ function createMinimalLegacyShellFixture(): string {
         maxThreads: 1,
         maxDepth: 0,
         customAgents: [],
-        skills: [],
+        phase: "coordinate",
         shellTools: ["assetTool", "deviceTool"],
         mcpServers: [],
         plugins: [],
@@ -1885,7 +1833,7 @@ function computeMinimalLegacyResourceHash(input: {
       reasoningEffort: "high",
       reasoningSummary: "concise",
     },
-    skills: [],
+    phase: "coordinate",
     shellTools: ["assetTool", "deviceTool"],
     mcpServers: [],
     plugins: [],
@@ -1936,7 +1884,7 @@ function reverseObjectKeys<T>(value: T): T {
 function createCodexAssetFixture(prefix: string): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
   return fixtureRoot;

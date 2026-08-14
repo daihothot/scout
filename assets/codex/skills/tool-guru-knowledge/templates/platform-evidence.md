@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: optional
+    description: 仅在目标平台差异需要聚合时使用的证据模板。
 evidence_id: E-PLATFORM-001
 evidence_type: platform_knowledge
 status: candidate

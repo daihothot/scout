@@ -1,18 +1,57 @@
-import { readFileSync } from "node:fs";
-import { basename, dirname, join, posix } from "node:path";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+} from "node:fs";
+import {
+  basename,
+  dirname,
+  extname,
+  join,
+  posix,
+  relative,
+  sep,
+  win32,
+} from "node:path";
 import {
   ScoutAgentPhases,
   type ScoutAgentPhase,
 } from "../../agent/thread/types.js";
-import type { ScoutSkillCatalogEntry } from "../contracts/skill.js";
+import {
+  ScoutSkillResourceRequirements,
+  type ScoutSkillCatalogEntry,
+  type ScoutSkillResourceCatalogEntry,
+  type ScoutSkillResourceRequirement,
+} from "../contracts/skill.js";
 
 interface FrontmatterField {
   path: string[];
   value: string;
+  lineIndex: number;
+  indent: number;
+}
+
+interface FrontmatterLine {
+  text: string;
+  ending: string;
+}
+
+interface FrontmatterDocument {
+  frontmatter: string;
+  opening: string;
+  closing: string;
+  remainder: string;
+  lines: FrontmatterLine[];
 }
 
 const SKILL_TOKEN_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SCOUT_AGENT_PHASES = new Set<ScoutAgentPhase>(Object.values(ScoutAgentPhases));
+const SCOUT_SKILL_RESOURCE_REQUIREMENTS = new Set<ScoutSkillResourceRequirement>(
+  Object.values(ScoutSkillResourceRequirements),
+);
+const SKILL_RESOURCE_ROOTS = ["templates", "references"] as const;
+const MAX_SKILL_RESOURCE_PATH_LENGTH = 512;
 
 /** Reads selected Skill files, parses their metadata, and validates the complete catalog. */
 export function buildScoutSkillCatalog(input: {
@@ -22,10 +61,12 @@ export function buildScoutSkillCatalog(input: {
   const catalog = input.skillPaths.map((skillPath) => {
     const sourcePath = join(input.assetsRoot, skillPath);
     const expectedName = basename(dirname(sourcePath));
+    const resources = buildScoutSkillResourceCatalog(dirname(sourcePath));
     return parseScoutSkillMetadata({
       text: readFileSync(sourcePath, "utf8"),
       expectedName,
       sourcePath,
+      resources,
     });
   });
   validateScoutSkillCatalog(catalog);
@@ -37,6 +78,7 @@ export function parseScoutSkillMetadata(input: {
   text: string;
   expectedName: string;
   sourcePath?: string;
+  resources: ScoutSkillResourceCatalogEntry[];
 }): ScoutSkillCatalogEntry {
   const label = input.sourcePath ?? input.expectedName;
   const frontmatter = extractFrontmatter(input.text, label);
@@ -53,7 +95,10 @@ export function parseScoutSkillMetadata(input: {
     throw new Error(`Scout Skill ${label} name and id must match ${input.expectedName}.`);
   }
 
-  const phase = requireTokenList(fields, ["phase"], label).map((value) => {
+  if (!findField(fields, ["phase"])) {
+    throw new Error(`Scout Skill ${label} must define phase.`);
+  }
+  const phase = optionalTokenList(fields, ["phase"], label).map((value) => {
     if (!SCOUT_AGENT_PHASES.has(value as ScoutAgentPhase)) {
       throw new Error(`Scout Skill ${label} has unsupported phase: ${value}`);
     }
@@ -79,6 +124,124 @@ export function parseScoutSkillMetadata(input: {
     tags,
     requiredSkills,
     path: posix.join(".scout", "skills", name, "SKILL.md"),
+    resources: input.resources,
+  };
+}
+
+/** Parses the namespaced metadata owned by one supplementary Markdown resource. */
+export function parseScoutSkillResourceMetadata(input: {
+  text: string;
+  path: string;
+  sourcePath?: string;
+}): ScoutSkillResourceCatalogEntry {
+  return parseScoutSkillResourceDocument(input).metadata;
+}
+
+/** Removes runtime-owned control metadata after proving it matches the catalog entry. */
+export function projectScoutSkillResourceText(input: {
+  text: string;
+  path: string;
+  expected: ScoutSkillResourceCatalogEntry;
+  sourcePath?: string;
+}): string {
+  const parsed = parseScoutSkillResourceDocument({
+    text: input.text,
+    path: input.path,
+    sourcePath: input.sourcePath,
+  });
+  const expectedPath = validateSkillResourcePath(
+    input.expected.path,
+    `${input.sourcePath ?? input.expected.path} catalog entry`,
+  );
+  if (parsed.metadata.path !== expectedPath) {
+    throw new Error(
+      `Scout Skill ${parsed.label} path does not match its catalog entry: expected ${expectedPath}, actual ${parsed.metadata.path}.`,
+    );
+  }
+  if (parsed.metadata.requirement !== input.expected.requirement) {
+    throw new Error(
+      `Scout Skill ${parsed.label} requirement does not match its catalog entry: expected ${input.expected.requirement}, actual ${parsed.metadata.requirement}.`,
+    );
+  }
+  if (parsed.metadata.description !== input.expected.description) {
+    throw new Error(
+      `Scout Skill ${parsed.label} description does not match its catalog entry.`,
+    );
+  }
+
+  const scoutField = findField(parsed.fields, ["scout"]);
+  const resourceField = findField(parsed.fields, ["scout", "resource"]);
+  if (!scoutField || !resourceField) {
+    throw new Error(`Scout Skill ${parsed.label} control metadata cannot be projected.`);
+  }
+  const subtreeEnd = (field: FrontmatterField): number => {
+    for (let index = field.lineIndex + 1; index < parsed.document.lines.length; index += 1) {
+      const line = parsed.document.lines[index]?.text ?? "";
+      if (line.trim().length === 0 || line.trimStart().startsWith("#")) continue;
+      const indent = /^( *)/.exec(line)?.[1]?.length ?? 0;
+      if (indent <= field.indent) return index;
+    }
+    return parsed.document.lines.length;
+  };
+  const resourceEnd = subtreeEnd(resourceField);
+  const scoutEnd = subtreeEnd(scoutField);
+  const scoutHasRemainingContent = parsed.document.lines.some((line, index) =>
+    index > scoutField.lineIndex
+    && index < scoutEnd
+    && (index < resourceField.lineIndex || index >= resourceEnd)
+    && line.text.trim().length > 0
+    && !line.text.trimStart().startsWith("#")
+  );
+  const removeStart = scoutHasRemainingContent ? resourceField.lineIndex : scoutField.lineIndex;
+  const removeEnd = scoutHasRemainingContent ? resourceEnd : scoutEnd;
+  const projectedFrontmatter = parsed.document.lines
+    .filter((_, index) => index < removeStart || index >= removeEnd)
+    .map((line) => line.text + line.ending)
+    .join("");
+  return parsed.document.opening
+    + projectedFrontmatter
+    + parsed.document.closing
+    + parsed.document.remainder;
+}
+
+function parseScoutSkillResourceDocument(input: {
+  text: string;
+  path: string;
+  sourcePath?: string;
+}): {
+  metadata: ScoutSkillResourceCatalogEntry;
+  label: string;
+  document: FrontmatterDocument;
+  fields: FrontmatterField[];
+} {
+  const path = validateSkillResourcePath(input.path, input.sourcePath ?? input.path);
+  const label = `resource ${input.sourcePath ?? path}`;
+  const document = extractFrontmatterDocument(input.text, label);
+  const fields = parseFrontmatterFields(document.frontmatter, label);
+  const requirement = requireScalar(
+    fields,
+    ["scout", "resource", "requirement"],
+    label,
+  );
+  if (!SCOUT_SKILL_RESOURCE_REQUIREMENTS.has(requirement as ScoutSkillResourceRequirement)) {
+    throw new Error(
+      `Scout Skill ${label} has unsupported scout.resource.requirement: ${requirement}`,
+    );
+  }
+  const description = requireScalar(
+    fields,
+    ["scout", "resource", "description"],
+    label,
+  );
+  return {
+    metadata: {
+      path,
+      requirement: requirement as ScoutSkillResourceRequirement,
+      description,
+    },
+    label,
+    document,
+    fields,
   };
 }
 
@@ -118,6 +281,7 @@ export function validateScoutSkillCatalog(catalog: ScoutSkillCatalogEntry[]): vo
       throw new Error(`Duplicate Scout Skill catalog entry: ${skill.name}`);
     }
     names.add(skill.name);
+    validateSkillResources(skill);
   }
   const byName = new Map(catalog.map((skill) => [skill.name, skill] as const));
   for (const skill of catalog) {
@@ -141,11 +305,153 @@ export function validateScoutSkillCatalog(catalog: ScoutSkillCatalogEntry[]): vo
   validateDependencyOnlySkillReachability(catalog);
 }
 
+function buildScoutSkillResourceCatalog(skillRoot: string): ScoutSkillResourceCatalogEntry[] {
+  const resources: ScoutSkillResourceCatalogEntry[] = [];
+  const paths = new Set<string>();
+
+  const visit = (directory: string): void => {
+    for (const name of readdirSync(directory).sort()) {
+      const sourcePath = join(directory, name);
+      const stat = lstatSync(sourcePath);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Scout Skill resource path must not be a symbolic link: ${sourcePath}`);
+      }
+      if (stat.isDirectory()) {
+        visit(sourcePath);
+        continue;
+      }
+      if (!stat.isFile()) {
+        throw new Error(`Scout Skill resource path must be a regular file: ${sourcePath}`);
+      }
+      if (extname(name) !== ".md") continue;
+
+      const resourcePath = relative(skillRoot, sourcePath).split(sep).join(posix.sep);
+      const resource = parseScoutSkillResourceMetadata({
+        text: readFileSync(sourcePath, "utf8"),
+        path: resourcePath,
+        sourcePath,
+      });
+      if (paths.has(resource.path)) {
+        throw new Error(`Duplicate Scout Skill resource path: ${resource.path}`);
+      }
+      paths.add(resource.path);
+      resources.push(resource);
+    }
+  };
+
+  for (const rootName of SKILL_RESOURCE_ROOTS) {
+    const resourceRoot = join(skillRoot, rootName);
+    if (!existsSync(resourceRoot)) continue;
+    const stat = lstatSync(resourceRoot);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Scout Skill resource root must not be a symbolic link: ${resourceRoot}`);
+    }
+    if (!stat.isDirectory()) {
+      throw new Error(`Scout Skill resource root must be a directory: ${resourceRoot}`);
+    }
+    visit(resourceRoot);
+  }
+  return resources.sort((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0
+  );
+}
+
+function validateSkillResources(skill: ScoutSkillCatalogEntry): void {
+  if (!Array.isArray(skill.resources)) {
+    throw new Error(`Scout Skill ${skill.name} must define resources.`);
+  }
+  const paths = new Set<string>();
+  for (const resource of skill.resources) {
+    if (!resource || typeof resource !== "object") {
+      throw new Error(`Scout Skill ${skill.name} contains an invalid resource entry.`);
+    }
+    const path = validateSkillResourcePath(
+      resource.path,
+      `${skill.name} resource catalog entry`,
+    );
+    if (paths.has(path)) {
+      throw new Error(`Scout Skill ${skill.name} contains duplicate resource path: ${path}`);
+    }
+    paths.add(path);
+    if (!SCOUT_SKILL_RESOURCE_REQUIREMENTS.has(resource.requirement)) {
+      throw new Error(
+        `Scout Skill ${skill.name} resource ${path} has unsupported requirement: ${String(resource.requirement)}`,
+      );
+    }
+    if (typeof resource.description !== "string" || resource.description.trim().length === 0) {
+      throw new Error(`Scout Skill ${skill.name} resource ${path} must define description.`);
+    }
+  }
+}
+
+function validateSkillResourcePath(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`Scout Skill ${label} must define a resource path.`);
+  }
+  if (value.length > MAX_SKILL_RESOURCE_PATH_LENGTH) {
+    throw new Error(
+      `Scout Skill ${label} resource path exceeds ${MAX_SKILL_RESOURCE_PATH_LENGTH} characters.`,
+    );
+  }
+  if (
+    value.includes("\0")
+    || value.includes("\\")
+    || posix.isAbsolute(value)
+    || win32.isAbsolute(value)
+  ) {
+    throw new Error(`Scout Skill ${label} resource path must be a POSIX relative path.`);
+  }
+  const segments = value.split("/");
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
+    throw new Error(
+      `Scout Skill ${label} resource path cannot contain empty, dot, or parent segments.`,
+    );
+  }
+  if (!SKILL_RESOURCE_ROOTS.includes(segments[0] as typeof SKILL_RESOURCE_ROOTS[number])) {
+    throw new Error(
+      `Scout Skill ${label} resource path must be under templates/ or references/.`,
+    );
+  }
+  if (posix.extname(value) !== ".md" || posix.normalize(value) !== value) {
+    throw new Error(`Scout Skill ${label} resource path must be a normalized Markdown path.`);
+  }
+  return value;
+}
+
 /** Extracts the YAML-like frontmatter section required by every Scout Skill. */
 function extractFrontmatter(text: string, label: string): string {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
-  if (!match?.[1]) throw new Error(`Scout Skill ${label} must contain YAML frontmatter.`);
-  return match[1];
+  return extractFrontmatterDocument(text, label).frontmatter;
+}
+
+function extractFrontmatterDocument(text: string, label: string): FrontmatterDocument {
+  const match = /^(---)(\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/.exec(text);
+  const frontmatter = match?.[3];
+  if (!match || !frontmatter) {
+    throw new Error(`Scout Skill ${label} must contain YAML frontmatter.`);
+  }
+  return {
+    frontmatter,
+    opening: (match[1] ?? "---") + (match[2] ?? "\n"),
+    closing: match[4] ?? "\n---\n",
+    remainder: text.slice(match[0].length),
+    lines: splitFrontmatterLines(frontmatter),
+  };
+}
+
+function splitFrontmatterLines(frontmatter: string): FrontmatterLine[] {
+  const lines: FrontmatterLine[] = [];
+  const newlinePattern = /\r?\n/g;
+  let cursor = 0;
+  for (const match of frontmatter.matchAll(newlinePattern)) {
+    const index = match.index;
+    lines.push({
+      text: frontmatter.slice(cursor, index),
+      ending: match[0],
+    });
+    cursor = index + match[0].length;
+  }
+  lines.push({ text: frontmatter.slice(cursor), ending: "" });
+  return lines;
 }
 
 /** Parses nested scalar field paths while rejecting tabs and duplicate declarations. */
@@ -153,7 +459,7 @@ function parseFrontmatterFields(frontmatter: string, label: string): Frontmatter
   const fields: FrontmatterField[] = [];
   const fieldPaths = new Set<string>();
   const parents: Array<{ indent: number; key: string }> = [];
-  for (const rawLine of frontmatter.split(/\r?\n/)) {
+  for (const [lineIndex, rawLine] of frontmatter.split(/\r?\n/).entries()) {
     if (rawLine.trim().length === 0 || rawLine.trimStart().startsWith("#")) continue;
     if (/^\s*\t/.test(rawLine)) {
       throw new Error(`Scout Skill ${label} frontmatter must use spaces for indentation.`);
@@ -172,7 +478,7 @@ function parseFrontmatterFields(frontmatter: string, label: string): Frontmatter
       throw new Error(`Scout Skill ${label} frontmatter contains duplicate field: ${serializedPath}`);
     }
     fieldPaths.add(serializedPath);
-    fields.push({ path, value });
+    fields.push({ path, value, lineIndex, indent });
     if (value.length === 0) parents.push({ indent, key });
   }
   return fields;

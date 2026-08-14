@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: 唯一 BDD 聚合证据模板。
 artifact_type: BDDEvidence
 artifact_version: 1
 evidence_id: E-BDD-001

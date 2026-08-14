@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: domain-validation-researcher
 description: Scout Researcher 在 Validation Domain 中接收 BDD 定位输入、调用适用研究方法，并形成可供 Research Pack Gate 检查的可追溯 handoff 时使用。
 id: domain-validation-researcher
-version: 0.5.8
+version: 0.5.9
 phase: [research]
 family: [validation, workflow, researcher]
 tags: [scout, validation, bdd, research, workflow]

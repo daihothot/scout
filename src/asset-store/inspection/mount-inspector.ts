@@ -125,7 +125,7 @@ export class MountInspector {
       mountRoot: this.context.mountRoot,
       assetsRoot: this.context.assetsRoot,
       dynamicValues: buildMountMacroValues({
-        repoRoot: this.context.repoRoot,
+        scoutRoot: this.context.scoutRoot,
         runRoot: this.context.runRoot,
         mountRoot: this.context.mountRoot,
         artifactRoot: this.context.artifactRoot,

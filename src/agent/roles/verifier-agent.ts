@@ -2,7 +2,6 @@ import type { ScoutAgentOptions } from "../core/scout-agent.js";
 import { WorkerAgent } from "./worker-agent.js";
 import {
   ScoutAgentPermissionProfiles,
-  ScoutAgentPhases,
   ScoutAgentRoles,
 } from "../thread/types.js";
 import { readWorkerRoleInstructions } from "./instructions.js";
@@ -16,7 +15,7 @@ export class VerifierAgent extends WorkerAgent {
       ...options,
       spec: {
         role: ScoutAgentRoles.Verifier,
-        phases: [ScoutAgentPhases.Verify],
+        phases: [options.agentMount.agentProfile.phase],
         cwd: options.agentMount.mountRoot,
         approvalPolicy: "never",
         permissionProfile: ScoutAgentPermissionProfiles.Verifier,

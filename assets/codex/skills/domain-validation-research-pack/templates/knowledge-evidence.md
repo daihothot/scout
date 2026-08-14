@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: Guru knowledge 聚合证据模板。
 artifact_type: KnowledgeEvidencePack
 artifact_version: 1
 evidence_id: E-KB-001

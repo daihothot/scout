@@ -1,3 +1,10 @@
+---
+scout:
+  resource:
+    requirement: optional
+    description: 仅排查 macOS Pipeline listener prefix 兼容问题时读取。
+---
+
 # Pipeline Prefix Patch
 
 本 reference 只处理 macOS Unity Editor 中，`com.unity.pipeline` 使用 `HttpListener` wildcard prefix 时出现的已知连接兼容问题。连接失败本身不是使用本 reference 的充分条件。

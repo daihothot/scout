@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: 当前代码符号与仓库来源证据模板。
 evidence_id: E-CODE-001
 evidence_type: source_code
 status: candidate

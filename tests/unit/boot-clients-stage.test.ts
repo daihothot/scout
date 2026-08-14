@@ -29,13 +29,13 @@ import {
 } from "../../src/agent/thread/types.js";
 import { AssetStore } from "../../src/asset-store/index.js";
 
-const repoRoot = process.cwd();
+const scoutRoot = process.cwd();
 
 test("RunAppServerStage creates the isolated app-server session and owns its stop", async (t) => {
   installTestCodexHome(t, true, "bearer");
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-boot-clients-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
   const staleAuthPath = join(
@@ -52,12 +52,12 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   const runId = "boot-clients-test";
   const scope = new RunScope({
     runId,
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
     domain: testDomain(),
-    ...createTestRunPersistence(t, runId, fixtureRoot),
+    ...createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
     terminate: async () => undefined,
   });
   const releaseScope = installRunScope(scope);
@@ -129,12 +129,12 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
 
   const assetStore = new AssetStore();
   const researcher = assetStore.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId,
     agentId: ScoutAgentRoles.Researcher,
   });
   const coordinator = assetStore.materializeMount({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId,
     agentId: ScoutAgentRoles.Coordinator,
   });
@@ -214,18 +214,18 @@ test("RunAppServerStage preserves its owned client when a second start cannot in
   installTestCodexHome(t);
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-boot-clients-failure-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
   const runId = "boot-clients-failure";
   const scope = new RunScope({
     runId,
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
     domain: testDomain(),
-    ...createTestRunPersistence(t, runId, fixtureRoot),
+    ...createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
     terminate: async () => undefined,
   });
   const releaseScope = installRunScope(scope);
@@ -249,18 +249,18 @@ test("RunAppServerStage rejects a missing target model provider without falling 
   installTestCodexHome(t, false);
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-boot-clients-provider-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
   const runId = "boot-clients-provider-missing";
   const scope = new RunScope({
     runId,
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
     domain: testDomain(),
-    ...createTestRunPersistence(t, runId, fixtureRoot),
+    ...createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
     terminate: async () => undefined,
   });
   const releaseScope = installRunScope(scope);
@@ -286,7 +286,7 @@ test("RunAppServerStage rebinds target Codex auth without retaining copied crede
   const targetAuthPath = installTestCodexHome(t, true, "auth");
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-boot-clients-auth-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
   const runId = "boot-clients-auth-rebind";
@@ -314,12 +314,12 @@ test("RunAppServerStage rebinds target Codex auth without retaining copied crede
   );
   const scope = new RunScope({
     runId,
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
     domain: testDomain(),
-    ...createTestRunPersistence(t, runId, fixtureRoot),
+    ...createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
     terminate: async () => undefined,
   });
   const releaseScope = installRunScope(scope);

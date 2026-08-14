@@ -10,14 +10,14 @@ import { generateCodexConfig } from "../../src/asset-store/builders/codex-config
 
 test("mount macros build a single canonical value map", () => {
   const values = buildMountMacroValues({
-    repoRoot: "/repo",
+    scoutRoot: "/repo",
     runRoot: "/repo/run/run-1",
     mountRoot: "/repo/run/run-1/agents/verifier/mount",
     artifactRoot: "/repo/run/run-1/agents/verifier/artifacts",
     assetCommitId: "ac_1",
   });
 
-  assert.equal(values[MountMacros.RepoRoot], "/repo");
+  assert.equal(values[MountMacros.ScoutRoot], "/repo");
   assert.equal(values[MountMacros.RunRoot], "/repo/run/run-1");
   assert.equal(values[MountMacros.MountRoot], "/repo/run/run-1/agents/verifier/mount");
   assert.equal(values[MountMacros.ArtifactRoot], "/repo/run/run-1/agents/verifier/artifacts");
@@ -27,7 +27,7 @@ test("mount macros build a single canonical value map", () => {
 
 test("mount macros resolve placeholders and drop unknown placeholders to empty string", () => {
   const values = buildMountMacroValues({
-    repoRoot: "/repo",
+    scoutRoot: "/repo",
     runRoot: "/repo/run/run-1",
     mountRoot: "/repo/run/run-1/agents/researcher/mount",
     artifactRoot: "/repo/run/run-1/agents/researcher/artifacts",

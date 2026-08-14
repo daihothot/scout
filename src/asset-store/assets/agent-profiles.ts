@@ -9,6 +9,10 @@ import type {
   CodexReasoningEffort,
   CodexReasoningSummary,
 } from "../../agent-server/codex/model-config.js";
+import {
+  ScoutAgentPhases,
+  type ScoutAgentPhase,
+} from "../../agent/thread/types.js";
 import { readJsonFile } from "../../core/fs.js";
 import { CodexAssetLayout } from "./asset-layout.js";
 import type {
@@ -34,10 +38,11 @@ const reasoningSummaries = new Set<CodexReasoningSummary>([
   "detailed",
   "none",
 ]);
+const agentPhases = new Set<ScoutAgentPhase>(Object.values(ScoutAgentPhases));
 
-/** Loads the agent profile document rooted at `repoRoot/assets/codex`. */
-export function readAgentProfilesForRepo(repoRoot: string): AgentProfilesFile {
-  const assetsRoot = join(resolve(repoRoot), "assets", "codex");
+/** Loads the agent profile document rooted at `scoutRoot/assets/codex`. */
+export function readAgentProfilesForScoutRoot(scoutRoot: string): AgentProfilesFile {
+  const assetsRoot = join(resolve(scoutRoot), "assets", "codex");
   return readJsonFile<AgentProfilesFile>(join(assetsRoot, CodexAssetLayout.agentProfiles));
 }
 
@@ -65,6 +70,9 @@ function cloneAgentProfile(
   profile: AgentProfileDefinition,
   model: CodexModelConfig,
 ): AgentProfile {
+  if (Object.hasOwn(profile, "skills")) {
+    throw new Error("Agent profile must not define legacy skills; use phase.");
+  }
   if (
     !Array.isArray(profile.customAgents)
     || profile.customAgents.some((name) => typeof name !== "string" || name.trim().length === 0)
@@ -78,13 +86,20 @@ function cloneAgentProfile(
     maxDepth: requireInteger(profile.maxDepth, "agent profile maxDepth", 0),
     customAgents: profile.customAgents.map((name) => name.trim()),
     model,
-    skills: [...profile.skills],
+    phase: requireAgentPhase(profile.phase),
     shellTools: [...(profile.shellTools ?? [])],
     mcpServers: [...profile.mcpServers],
     plugins: [...profile.plugins],
     readableRoots: [...(profile.readableRoots ?? [])],
     writableRoots: [...(profile.writableRoots ?? [])],
   };
+}
+
+function requireAgentPhase(value: unknown): ScoutAgentPhase {
+  if (typeof value !== "string" || !agentPhases.has(value as ScoutAgentPhase)) {
+    throw new Error("Missing or invalid agent profile phase.");
+  }
+  return value as ScoutAgentPhase;
 }
 
 function requireBoolean(value: unknown, label: string): boolean {

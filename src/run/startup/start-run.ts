@@ -35,8 +35,8 @@ export async function startRun(
 ): Promise<ScoutRunSummary> {
   const interactionPort = options.interactionPort ?? new NoopRuntimeInteractionPort();
   const runId = buildRunId();
-  const repoRoot = resolve(options.cwd);
-  const runRoot = join(repoRoot, "run", runId);
+  const scoutRoot = resolve(options.cwd);
+  const runRoot = join(scoutRoot, "run", runId);
   const runtimeLogger = new Logger({
     runId,
     logsRoot: join(runRoot, "logs"),
@@ -49,8 +49,8 @@ export async function startRun(
   runtimeLogger.info({
     module: "run.lifecycle",
     event: "run_started",
-    message: `Created Scout run ${runId} in ${repoRoot}.`,
-    data: { cwd: repoRoot },
+    message: `Created Scout run ${runId} in ${scoutRoot}.`,
+    data: { cwd: scoutRoot },
   });
 
   const executor = new RunStageExecutor({
@@ -60,7 +60,8 @@ export async function startRun(
   });
   const runScope = new RunScope({
     runId,
-    repoRoot,
+    scoutRoot,
+    runRoot,
     logger: runtimeLogger,
     eventBus,
     interactionPort,

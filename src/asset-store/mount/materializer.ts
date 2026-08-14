@@ -46,6 +46,7 @@ export class MountMaterializer {
       assetCommitId: context.assetCommitId,
       parentAssetCommitId: context.parentAssetCommitId,
       mountId: context.mountId,
+      scoutRoot: context.scoutRoot,
       mountRoot: context.mountRoot,
       runRoot: context.runRoot,
       artifactRoot: context.artifactRoot,
@@ -62,7 +63,7 @@ export class MountMaterializer {
       })),
       customAgents: manifest.customAgents,
       skills: manifest.skills,
-      skillCatalog: manifest.skillCatalog,
+      skillCatalog: context.skillCatalog,
       plugins: manifest.plugins,
       manifestPath: join(context.mountRoot, "mount-manifest.json"),
       resourceHash: context.resourceHash,
@@ -73,7 +74,7 @@ export class MountMaterializer {
   materialize(options: MaterializeOptions): CodexMount {
     const context = this.context;
     const {
-      repoRoot,
+      scoutRoot,
       assetsRoot,
       runId,
       runRoot,
@@ -134,7 +135,7 @@ export class MountMaterializer {
       mountRoot,
       assetsRoot,
       dynamicValues: buildMountMacroValues({
-        repoRoot,
+        scoutRoot,
         runRoot,
         mountRoot,
         artifactRoot,
@@ -175,10 +176,6 @@ export class MountMaterializer {
 
     const customAgentNames = materializeCustomAgents(assetsRoot, mountRoot, profiledCustomAgentPaths);
     const skillNames = materializeSkills(assetsRoot, mountRoot, profiledSkillPaths);
-    writeTextFile(
-      join(mountRoot, ".scout", "skill-catalog.json"),
-      generatedContent(".scout/skill-catalog.json"),
-    );
     options.onMaterializationStep?.("skills");
     const pluginNames = materializePlugins(assetsRoot, mountRoot, profiledPluginPaths);
     options.onMaterializationStep?.("plugins");
@@ -223,7 +220,6 @@ export class MountMaterializer {
       })),
       customAgentNames,
       skillNames,
-      skillCatalog,
       pluginNames,
     });
     const manifestPath = join(mountRoot, "mount-manifest.json");
@@ -235,6 +231,7 @@ export class MountMaterializer {
       assetCommitId,
       parentAssetCommitId,
       mountId,
+      scoutRoot,
       mountRoot,
       runRoot,
       artifactRoot,

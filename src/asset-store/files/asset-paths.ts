@@ -9,8 +9,8 @@ export function resolveAssetArg(argument: string, assetsRoot: string): string {
 
 /** Resolves an asset-local command path and rejects traversal outside `assetsRoot`. */
 export function resolveAssetLocalPath(assetPath: string, assetsRoot: string): string {
-  const repoRoot = resolve(assetsRoot, "..", "..");
-  const resolvedPath = resolve(repoRoot, assetPath);
+  const scoutRoot = resolve(assetsRoot, "..", "..");
+  const resolvedPath = resolve(scoutRoot, assetPath);
   const relativePath = relative(resolve(assetsRoot), resolvedPath);
   if (
     relativePath.length > 0

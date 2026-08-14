@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: Code evidence 模板目录与读取规则。
 artifact_type: TemplateIndex
 artifact_version: 1
 status: ready

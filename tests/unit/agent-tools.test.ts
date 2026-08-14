@@ -24,7 +24,7 @@ import {
 } from "../../src/agent/tools/agent-tools.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 
-const repoRoot = process.cwd();
+const scoutRoot = process.cwd();
 
 test("agent dynamic tool specs expose stable namespaces and required fields", () => {
   const assignTaskTool = buildAssignTaskDynamicTool();
@@ -45,9 +45,14 @@ test("agent dynamic tool specs expose stable namespaces and required fields", ()
   assert.equal(submitTaskTool.namespace, AGENT_SUBMIT_TASK_TOOL_NAMESPACE);
   assert.equal(archiveTaskTool.namespace, AGENT_ARCHIVE_TASK_TOOL_NAMESPACE);
   assert.deepEqual(readRequired(assignTaskTool.inputSchema), ["description", "subagent_type", "prompt"]);
-  assert.deepEqual(readRequired(findSkillsTool.inputSchema), ["phase"]);
+  assert.deepEqual(readRequired(findSkillsTool.inputSchema), []);
+  assert.equal(hasSchemaProperty(findSkillsTool.inputSchema, "phase"), false);
   assert.deepEqual(readRequired(readSkillResourceTool.inputSchema), ["selection_id", "skill_id", "resource"]);
   assert.equal(readSchemaProperty(findSkillsTool.inputSchema, "family").minItems, 1);
+  assert.deepEqual(readSchemaProperty(findSkillsTool.inputSchema, "detail").enum, [
+    "names",
+    "metadata",
+  ]);
   assert.equal(hasSchemaProperty(findSkillsTool.inputSchema, "domain"), false);
   assert.equal(hasSchemaProperty(findSkillsTool.inputSchema, "tags"), false);
   assert.equal(readSchemaProperty(readSkillResourceTool.inputSchema, "resource").maxLength, 512);
@@ -69,11 +74,18 @@ test("agent dynamic tool specs expose stable namespaces and required fields", ()
   assert.match(submitTaskTool.description, /必须在本轮结束前调用/);
   assert.match(submitTaskTool.description, /漏调会使 task 保持 running/);
   assert.match(submitTaskTool.description, /不得重复调用或再调用 RequestHumanInput/);
-  assert.match(submitTaskTool.description, /先将当前 task 置为 done，再把 Markdown outcome 投递给 Coordinator/);
-  assert.match(findSkillsTool.description, /family 逐级定位/);
-  assert.match(findSkillsTool.description, /每次导航只能前进一步/);
+  assert.match(submitTaskTool.description, /不存在未完成 discovery/);
+  assert.match(submitTaskTool.description, /全部 selection.*已 ready/);
+  assert.match(submitTaskTool.description, /协议修正 turn 只能.*上一 turn 的全部 ready selections/);
+  assert.match(submitTaskTool.description, /先将 task 置为 done，再把 Markdown outcome 投递给 Coordinator/);
+  assert.match(findSkillsTool.description, /未知入口时.*每次只前进一步/);
+  assert.match(findSkillsTool.description, /已知完整 canonical leaf 时可直接提交完整 family/);
+  assert.match(findSkillsTool.description, /为本 turn 重新签发 selection/);
   assert.match(findSkillsTool.description, /tags 只作为结果特征，不参与筛选/);
-  assert.match(readSkillResourceTool.description, /不能跨 thread、turn 或 profile/);
+  assert.match(findSkillsTool.description, /metadata.*安全 Skill frontmatter/);
+  assert.match(readSkillResourceTool.description, /任一 FindSkills selection/);
+  assert.match(readSkillResourceTool.description, /新 selection 不会撤销.*既有 selection/);
+  assert.match(readSkillResourceTool.description, /不能跨 agent、task、thread、turn、phase 或 asset commit/);
 });
 
 test("agent tool parser validates and normalizes each tool payload", () => {
@@ -124,12 +136,16 @@ test("agent tool parser validates and normalizes each tool payload", () => {
     task_id: "task-1",
   });
   assert.deepEqual(parseAgentDynamicToolCall("FindSkills", {
-    phase: "validate",
-    family: [" Validation ", " Signal ", " Unity-Runtime-Log "],
+    family: [" Validation ", " Platform ", " Single ", " Local ", " General ", " Runtime-Log "],
+    detail: "metadata",
   }), {
     tool: "FindSkills",
-    phase: "validate",
-    family: ["validation", "signal", "unity-runtime-log"],
+    family: ["validation", "platform", "single", "local", "general", "runtime-log"],
+    detail: "metadata",
+  });
+  assert.deepEqual(parseAgentDynamicToolCall("FindSkills", { detail: "names" }), {
+    tool: "FindSkills",
+    detail: "names",
   });
   assert.deepEqual(parseAgentDynamicToolCall("ReadSkillResource", {
     selection_id: " selection-1 ",
@@ -162,16 +178,17 @@ test("agent tool parser rejects malformed tool payloads", () => {
     task_id: " ",
   }), /ArchiveTask task_id/);
   assert.throws(() => parseAgentDynamicToolCall("FindSkills", {
-    phase: "deploy",
-  }), /FindSkills phase/);
-  assert.throws(() => parseAgentDynamicToolCall("FindSkills", {
     phase: "research",
+  }), /no longer accepts phase/);
+  assert.throws(() => parseAgentDynamicToolCall("FindSkills", {
     family: [],
   }), /FindSkills family/);
   assert.throws(() => parseAgentDynamicToolCall("FindSkills", {
-    phase: "research",
     family: ["validation", "bad_family"],
   }), /FindSkills family token/);
+  assert.throws(() => parseAgentDynamicToolCall("FindSkills", {
+    detail: "full",
+  }), /FindSkills detail/);
   assert.throws(() => parseAgentDynamicToolCall("ReadSkillResource", {
     selection_id: "selection-1",
     skill_id: "domain-validation-researcher",
@@ -194,8 +211,8 @@ test("agent tools are hard-bound to their registered namespaces", () => {
 });
 
 test("common rules own Skill selection transport while Worker rules own lifecycle controls", () => {
-  const agentRoot = join(repoRoot, "assets", "codex", "agents");
-  const skillRoot = join(repoRoot, "assets", "codex", "skills");
+  const agentRoot = join(scoutRoot, "assets", "codex", "agents");
+  const skillRoot = join(scoutRoot, "assets", "codex", "skills");
   const commonRules = readFileSync(join(agentRoot, "AGENTS.md"), "utf8");
   const workerRules = readFileSync(join(agentRoot, "worker.AGENTS.md"), "utf8");
   for (const toolName of ["FindSkills", "ReadSkillResource"]) {

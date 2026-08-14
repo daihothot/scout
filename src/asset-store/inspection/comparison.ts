@@ -3,7 +3,6 @@ import type {
   AgentProfile,
 } from "../contracts/profile.js";
 import type { MaterializedMcpServer } from "../contracts/resources.js";
-import type { ScoutSkillCatalogEntry } from "../contracts/skill.js";
 
 /** Compares JSON-shaped values without making object property order significant. */
 export function sameValue(actual: unknown, expected: unknown): boolean {
@@ -27,14 +26,6 @@ export function sameAgentProfile(actual: AgentProfile, expected: AgentProfile): 
   return sameValue(normalizeAgentProfile(actual), normalizeAgentProfile(expected));
 }
 
-/** Preserves catalog, family, and dependency order while normalizing metadata sets. */
-export function sameSkillCatalog(
-  actual: ScoutSkillCatalogEntry[],
-  expected: ScoutSkillCatalogEntry[],
-): boolean {
-  return sameValue(actual.map(normalizeSkill), expected.map(normalizeSkill));
-}
-
 /** Compares one resolved MCP contract, preserving argument order but not object/root order. */
 export function sameMcpServer(
   actual: MaterializedMcpServer,
@@ -55,14 +46,6 @@ function normalizeAgentProfile(profile: AgentProfile): AgentProfile {
     ...profile,
     readableRoots: [...(profile.readableRoots ?? [])].sort(),
     writableRoots: [...(profile.writableRoots ?? [])].sort(),
-  };
-}
-
-function normalizeSkill(entry: ScoutSkillCatalogEntry): ScoutSkillCatalogEntry {
-  return {
-    ...entry,
-    phase: [...entry.phase].sort(),
-    tags: [...entry.tags].sort(),
   };
 }
 

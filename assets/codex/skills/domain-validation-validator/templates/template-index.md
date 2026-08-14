@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: Validator 两类 Gate 模板的目录与选择规则。
 artifact_type: TemplateIndex
 artifact_version: 1
 status: ready

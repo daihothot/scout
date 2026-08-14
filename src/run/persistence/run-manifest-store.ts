@@ -19,9 +19,9 @@ export interface RunAgentManifestEntry {
 
 /** Versioned run identity, runtime state, checkpoint, and role index. */
 export interface RunManifest {
-  version: 2;
+  version: 3;
   runId: string;
-  repoRoot: string;
+  scoutRoot: string;
   createdAt: string;
   updatedAt: string;
   runtime: {
@@ -47,14 +47,14 @@ export class RunManifestStore {
 
   create(input: {
     runId: string;
-    repoRoot: string;
+    scoutRoot: string;
     createdAt: string;
     checkpointSeq: number;
   }): RunManifest {
     const manifest: RunManifest = {
-      version: 2,
+      version: 3,
       runId: input.runId,
-      repoRoot: resolve(input.repoRoot),
+      scoutRoot: resolve(input.scoutRoot),
       createdAt: input.createdAt,
       updatedAt: input.createdAt,
       runtime: { status: "created" },
@@ -66,7 +66,8 @@ export class RunManifestStore {
 
   read(): RunManifest {
     const manifest = JSON.parse(readFileSync(this.path, "utf8")) as RunManifest;
-    if (manifest.version !== 2 || typeof manifest.runId !== "string") {
+    if (manifest.version !== 3 || typeof manifest.runId !== "string"
+      || typeof manifest.scoutRoot !== "string") {
       throw new Error(`Unsupported run manifest: ${this.path}`);
     }
     return structuredClone(manifest);

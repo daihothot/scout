@@ -1,6 +1,6 @@
 import type { AgentDynamicToolSpec, AgentJsonValue } from "./types.js";
-import type { ScoutAgentPhase, ScoutAgentRole } from "../thread/types.js";
-import { ScoutAgentPhases, ScoutAgentRoles } from "../thread/types.js";
+import type { ScoutAgentRole } from "../thread/types.js";
+import { ScoutAgentRoles } from "../thread/types.js";
 
 /**
  * Declares the typed dynamic-tool protocol exposed to Scout agents. This
@@ -95,8 +95,8 @@ export interface ArchiveTaskToolCall {
 /** Input contract for phase-scoped skill family navigation. */
 export interface FindSkillsToolCall {
   tool: "FindSkills";
-  phase: ScoutAgentPhase;
   family?: string[];
+  detail?: "names" | "metadata";
 }
 
 /** Input contract for reading a resource from a selected skill. */
@@ -124,18 +124,17 @@ export function buildFindSkillsDynamicTool(): AgentDynamicToolSpec {
     namespace: AGENT_FIND_SKILLS_TOOL_NAMESPACE,
     name: "FindSkills",
     description: [
-      "在当前 profile 授权边界内按 family 逐级定位可路由的 Scout Skill；profile 只表示可访问，不表示全部适用于当前 task。",
-      "每次导航只能前进一步：先只传当前 phase 取得一级 family，再把上次 family 前缀与一个返回的直接子节点原样组成 family 继续调用。",
+      "在 Runtime 为当前 Agent phase 建立的 Skill 观察范围内，按 family 发现或精确选择可路由的 Scout Skill。",
+      "未知入口时先省略 family 取得一级 family，再把上次 family 前缀与一个返回的直接子节点原样组成 family，每次只前进一步。",
+      "已知完整 canonical leaf 时可直接提交完整 family；Runtime 只接受当前 phase mount 中精确存在的 leaf，并为本 turn 重新签发 selection。",
+      "如果返回 reason=family_navigation_reset，说明请求路径没有当前 turn 的连续 discovery 状态；丢弃 requestedFamily，从 facets 返回的根节点重新开始。",
       "中间节点只返回下一层 family；到达叶节点后才返回 selectionId 和 dependency-first loadOrder。",
+      "detail 默认为 names；metadata 额外返回当前 family 范围的安全 Skill frontmatter，但不包含正文或授予资源读取权。",
       "无 family 的服务 Skill 不参与导航，只能由入口 Skill 的 requiredSkills 自动带入 selection；tags 只作为结果特征，不参与筛选。",
-      "Runtime 只限制当前 Agent phase、当前 profile 以及同一 agent/thread/turn/asset commit 内的导航连续性，不按当前 Run domain 过滤。",
+      "逐级发现受同一 agent/thread/turn/phase/asset commit 的导航连续性约束；精确选择也会按当前 phase mount 和 asset commit 重新授权。",
+      "叶节点同时返回该 selection 的 required/optional resource catalog 和完整性状态；同一 scope 的任一 selection required 未全部读取时不能开始新的 Skill discovery 或 SubmitTask。",
     ].join("\n"),
     inputSchema: objectSchema({
-      phase: {
-        type: "string",
-        enum: Object.values(ScoutAgentPhases),
-        description: "当前 Agent phase；只能使用 Runtime 分配给当前 Agent 的 phase。",
-      },
       family: {
         type: "array",
         minItems: 1,
@@ -143,18 +142,23 @@ export function buildFindSkillsDynamicTool(): AgentDynamicToolSpec {
           type: "string",
           pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$",
         },
-        description: "按顺序组成的 family 前缀。首次调用省略；后续调用必须在上次前缀后准确追加一个上次返回的直接子节点。",
+        description: "按顺序组成的 family 路径。未知入口时首次省略，后续每次准确追加一个返回的直接子节点；已知完整 canonical leaf 时可直接提交完整路径。",
       },
-    }, ["phase"]),
+      detail: {
+        type: "string",
+        enum: ["names", "metadata"],
+        description: "候选投影。默认 names 只返回紧凑名称；metadata 额外返回当前 family 范围内的安全 Skill frontmatter，不包含正文。",
+      },
+    }, []),
   };
 }
 
-/** Builds the schema for reading a resource from the latest skill selection. */
+/** Builds the schema for reading a resource from a current-turn Skill selection. */
 export function buildReadSkillResourceDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
     name: "ReadSkillResource",
-    description: "读取本 turn 最近一次 FindSkills 精筛 selection 中的 Skill 文本资源。先按 loadOrder 读取各 Skill 的 SKILL.md，再只读取正文明确要求的 templates/references；selection 不能跨 thread、turn 或 profile 使用，禁止绝对路径和路径穿越。",
+    description: "读取本 task/thread/turn 中任一 FindSkills selection 已声明的 Skill 文本资源。新 selection 不会撤销同一 scope 的既有 selection；每个 Skill 的 SKILL.md 必须等待其 required Skill 的 SKILL.md，无依赖关系的 Skill 可以并行。某个 Skill 的 SKILL.md 读完后，它声明的 supplementary resources 可以并行读取；全部 required 内容读取成功后该 selection 才 ready，optional 按 description 或正文适用条件读取。selection 不能跨 agent、task、thread、turn、phase 或 asset commit 使用，禁止读取未声明资源、绝对路径和路径穿越。",
     inputSchema: objectSchema({
       selection_id: {
         type: "string",
@@ -262,7 +266,7 @@ export function buildSubmitTaskDynamicTool(): AgentDynamicToolSpec {
   return {
     namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
     name: "SubmitTask",
-    description: "仅供 Worker 正式交回当前一轮工作。当前 outcome 已符合适用 handoff contract 时，必须在本轮结束前调用；普通回复、SendMessage、artifact 写入或完成 plan 都不构成提交，漏调会使 task 保持 running。同一 step 不得重复调用或再调用 RequestHumanInput。Runtime 接受 outcome 时会把当前 Worker 的 ${SCOUT_ARTIFACT_ROOT} 引用绑定为带 owner 的 run-scoped ref；在当前 step 完成后先将 task 置为 done，再把 Markdown outcome 投递给 Coordinator。",
+    description: "仅供 Worker 正式交回当前一轮工作。普通 turn 必须先用 FindSkills 签发当前 turn 的 Skill selection，并读取全部 required resources；只有不存在未完成 discovery、当前 task/thread/turn 的全部 selection 都与当前 phase/asset commit 一致且已 ready 时才能提交。Runtime 协议修正 turn 只能精确复用触发修正的上一 turn 的全部 ready selections，不得重新发现或选择 Skill。当前 outcome 符合适用 handoff contract 时，必须在本轮结束前调用。普通回复、SendMessage、artifact 写入或完成 plan 都不构成提交，漏调会使 task 保持 running。同一 step 不得重复调用或再调用 RequestHumanInput。Runtime 接受 outcome 时会把当前 Worker 的 ${SCOUT_ARTIFACT_ROOT} 引用绑定为带 owner 的 run-scoped ref；在当前 step 完成后先将 task 置为 done，再把 Markdown outcome 投递给 Coordinator。",
     inputSchema: objectSchema({
       outcome: {
         type: "string",
@@ -385,12 +389,14 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
       };
     }
     case "FindSkills": {
-      if ("domain" in input || "tags" in input) {
-        throw new Error("FindSkills no longer accepts domain or tags; use the returned family path.");
+      if ("phase" in input || "domain" in input || "tags" in input) {
+        throw new Error(
+          "FindSkills no longer accepts phase, domain, or tags; Runtime supplies phase and returns family paths.",
+        );
       }
-      const phase = input.phase;
-      if (!Object.values(ScoutAgentPhases).includes(phase as ScoutAgentPhase)) {
-        throw new Error("FindSkills phase must be coordinate, research, verify, or validate.");
+      const detail = input.detail;
+      if (detail !== undefined && detail !== "names" && detail !== "metadata") {
+        throw new Error("FindSkills detail must be names or metadata when provided.");
       }
       const family = input.family;
       if (family !== undefined) {
@@ -399,13 +405,13 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
         }
         return {
           tool: "FindSkills",
-          phase: phase as ScoutAgentPhase,
           family: family.map((token) => validateSkillToken(token, "FindSkills family token")),
+          ...(detail === undefined ? {} : { detail }),
         };
       }
       return {
         tool: "FindSkills",
-        phase: phase as ScoutAgentPhase,
+        ...(detail === undefined ? {} : { detail }),
       };
     }
     case "ReadSkillResource": {

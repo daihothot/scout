@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: Skill 类型模板目录与选择规则。
 artifact_type: TemplateIndex
 artifact_version: 1
 status: ready

@@ -157,6 +157,24 @@ test("Run projection rebuilds pending messages, human gate and interrupted turn"
   );
 });
 
+test("RunManifestStore rejects version 2 without a compatibility path", (t) => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-run-manifest-v2-"));
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  const runId = "run-manifest-v2";
+  const runRoot = join(fixtureRoot, "run", runId);
+  mkdirSync(runRoot, { recursive: true });
+  writeFileSync(join(runRoot, "run.json"), `${JSON.stringify({
+    version: 2,
+    runId,
+    scoutRoot: fixtureRoot,
+  })}\n`, "utf8");
+
+  assert.throws(
+    () => new RunManifestStore(runRoot).read(),
+    /Unsupported run manifest/,
+  );
+});
+
 test("Run projection keeps the original thread snapshot across resume lifecycles", () => {
   const started = {
     agentId: ScoutAgentRoles.Researcher,
@@ -907,7 +925,7 @@ test("RestoreAgentsStage resumes a persisted thread even when it has no turns", 
     appServer,
   });
   writePersistedRollout({
-    repoRoot: zeroTurn.fixtureRoot,
+    scoutRoot: zeroTurn.fixtureRoot,
     runId: zeroTurn.scope.runId,
     threadId: zeroTurn.thread.threadId,
   });
@@ -959,7 +977,7 @@ test("RestoreAgentsStage restarts a current zero-turn thread after an older turn
   });
   const oldThread = fixture.thread;
   writePersistedRollout({
-    repoRoot: fixture.fixtureRoot,
+    scoutRoot: fixture.fixtureRoot,
     runId: fixture.scope.runId,
     threadId: oldThread.threadId,
   });
@@ -1019,13 +1037,13 @@ test("RestoreAgentsStage restarts a current zero-turn thread after an older turn
 test("RestoreAgentsStage rejects duplicate persisted rollouts", async (t) => {
   const duplicate = await installRolloutLocatorFixture(t, "duplicate");
   writePersistedRollout({
-    repoRoot: duplicate.fixtureRoot,
+    scoutRoot: duplicate.fixtureRoot,
     runId: duplicate.scope.runId,
     threadId: duplicate.thread.threadId,
     fileName: "rollout-first.jsonl",
   });
   writePersistedRollout({
-    repoRoot: duplicate.fixtureRoot,
+    scoutRoot: duplicate.fixtureRoot,
     runId: duplicate.scope.runId,
     threadId: duplicate.thread.threadId,
     fileName: "rollout-second.jsonl",
@@ -1041,7 +1059,7 @@ test("RestoreAgentsStage rejects duplicate persisted rollouts", async (t) => {
 test("RestoreAgentsStage trusts rollout session metadata instead of its file name", async (t) => {
   const mismatched = await installRolloutLocatorFixture(t, "filename-mismatch");
   writePersistedRollout({
-    repoRoot: mismatched.fixtureRoot,
+    scoutRoot: mismatched.fixtureRoot,
     runId: mismatched.scope.runId,
     threadId: "different-thread-id",
     fileName: `rollout-${mismatched.thread.threadId}.jsonl`,
@@ -1153,7 +1171,8 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   const initialEventBus = new InMemoryEventBus();
   const initialScope = new RunScope({
     runId,
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
+    runRoot,
     logger: noopLogger(),
     eventBus: initialEventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
@@ -1350,7 +1369,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   initialJournal.close();
   assert.equal(existsSync(join(runRoot, ".run.lock")), false);
   const researcherRolloutPath = writePersistedRollout({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId,
     threadId: researcherThread.threadId,
     fileName: "rollout-with-unrelated-file-name.jsonl",
@@ -1464,7 +1483,8 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   });
   const scope = new RunScope({
     runId,
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
+    runRoot,
     logger: noopLogger(),
     eventBus: resumedEventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
@@ -1506,7 +1526,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   await resumedTurnsStarted;
 
   const restoredManifest = resumedManifestStore.read();
-  assert.equal(restoredManifest.version, 2);
+  assert.equal(restoredManifest.version, 3);
   assert.equal("environment" in restoredManifest, false);
   assert.equal("assetCommitId" in restoredManifest, false);
   assert.deepEqual(
@@ -1649,7 +1669,8 @@ test("ValidationDomain records artifacts after an accepted task outcome event", 
   const eventBus = new InMemoryEventBus();
   const scope = installTestRunScope(t, {
     runId,
-    repoRoot: fixtureRoot,
+    runRoot: join(fixtureRoot, "run", runId),
+    scoutRoot: fixtureRoot,
     eventBus,
     domain: new ValidationDomain(),
   });
@@ -1705,7 +1726,8 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
   });
   const scope = new RunScope({
     runId,
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
+    runRoot,
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
@@ -1746,7 +1768,7 @@ function buildPlannedResumePacket(
 }
 
 function writePersistedRollout(input: {
-  repoRoot: string;
+  scoutRoot: string;
   runId: string;
   threadId: string;
   fileName?: string;
@@ -1759,7 +1781,7 @@ function writePersistedRollout(input: {
     input.fileName ?? `rollout-${input.threadId}.jsonl`,
   );
   const codexHome = join(
-    input.repoRoot,
+    input.scoutRoot,
     "run",
     input.runId,
     "codex-home",
@@ -1824,7 +1846,8 @@ async function assertThreadRestoreFailure(
   } as unknown as CodexAppServerClient;
   const scope = installTestRunScope(t, {
     runId: "thread-restore-failure",
-    repoRoot: fixtureRoot,
+    runRoot: join(fixtureRoot, "run", "thread-restore-failure"),
+    scoutRoot: fixtureRoot,
     eventBus,
     appServer,
     domain: new ValidationDomain(),
@@ -1870,7 +1893,7 @@ async function assertThreadRestoreFailure(
     startedAt: "2026-07-22T00:00:01.000Z",
   });
   writePersistedRollout({
-    repoRoot: fixtureRoot,
+    scoutRoot: fixtureRoot,
     runId: scope.runId,
     threadId: thread.threadId,
   });
@@ -1913,7 +1936,8 @@ async function installRolloutLocatorFixture(
   const eventBus = new InMemoryEventBus();
   const scope = installTestRunScope(t, {
     runId: `rollout-${suffix}`,
-    repoRoot: fixtureRoot,
+    runRoot: join(fixtureRoot, "run", `rollout-${suffix}`),
+    scoutRoot: fixtureRoot,
     eventBus,
     appServer: options.appServer ?? ({} as CodexAppServerClient),
     domain: new ValidationDomain(),
@@ -1951,8 +1975,8 @@ async function installRolloutLocatorFixture(
   return { fixtureRoot, scope, thread };
 }
 
-function makeFixtureShellToolsResolvable(repoRoot: string): void {
-  const path = join(repoRoot, "assets", "codex", "tools", "shell-tools.json");
+function makeFixtureShellToolsResolvable(scoutRoot: string): void {
+  const path = join(scoutRoot, "assets", "codex", "tools", "shell-tools.json");
   const registry = JSON.parse(readFileSync(path, "utf8")) as {
     tools: Array<{ id: string; command: string }>;
   };
@@ -1980,7 +2004,7 @@ function scoutEvent<TPayload>(
 function journalEvents(...inputs: ScoutEvent[]): RunJournalEvent[] {
   const created = scoutEvent(RunEvents.run.created, {
     runId: "run-resume-test",
-    repoRoot: "/repo",
+    scoutRoot: "/repo",
     createdAt: "2026-07-22T00:00:00.000Z",
   });
   return [created, ...inputs].map((input, index) => ({

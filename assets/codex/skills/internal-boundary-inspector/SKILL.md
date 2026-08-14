@@ -34,7 +34,7 @@ summary: 用 scout-assets 与 scout-memory 查询当前 Agent 可见边界，并
 - 当前 mount 的 manifest 总览和完整内容。
 - 当前 mount 暴露的 skills、shell tools、MCP servers 和 plugins。
 - 当前 run 级共享记忆摘要。
-- 当前 mount root、trusted roots、writable roots、artifact 写入线索和 replay 线索。
+- 当前 mount root、readable roots、writable roots、artifact 写入线索和 replay 线索。
 
 不使用本技能处理：
 
@@ -217,7 +217,6 @@ scout-assets plugins
 - `assets`
 - `linkedFiles`
 - `generatedFiles`
-- `trustedRoots`
 - `writableRoots`
 - `skills`
 - `shellTools`
@@ -226,7 +225,7 @@ scout-assets plugins
 
 注意事项：
 
-- `trusted roots`、`writable roots`、`assets`、`linkedFiles`、`generatedFiles` 来自 `scout-assets raw`。
+- `writable roots`、`assets`、`linkedFiles`、`generatedFiles` 来自 `scout-assets raw`。
 - `skills` 来自 `scout-assets skills` 或 manifest 的 `skills` 字段。
 - `shell tools` 来自 `scout-assets tools` 或 manifest 的 `shellTools` 字段。
 - `MCP servers` 来自 `scout-assets mcp` 或 manifest 的 `mcpServers` 字段。

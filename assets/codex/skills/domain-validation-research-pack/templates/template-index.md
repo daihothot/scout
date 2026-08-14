@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: Research Pack 模板目录与必读资源索引。
 artifact_type: TemplateIndex
 artifact_version: 1
 status: ready

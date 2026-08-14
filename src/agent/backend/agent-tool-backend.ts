@@ -10,7 +10,9 @@ import {
   type AssignTaskToolCall,
   AGENT_TOOL_NAMESPACES,
   assertAgentToolNamespace,
+  type FindSkillsToolCall,
   parseAgentDynamicToolCall,
+  type ReadSkillResourceToolCall,
   type RequestHumanInputToolCall,
   type RespondHumanInputToolCall,
   type SendMessageToolCall,
@@ -24,10 +26,17 @@ import { agent } from "../context/agent-attachments.js";
 import { attachments } from "../context/attachments.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
-import { AgentSkillBackend } from "./agent-skill-backend.js";
+import type { AgentSkillBackend } from "./agent-skill-backend.js";
+import {
+  agentSkillErrorCode,
+  type AgentSkillEventContext,
+  type AgentSkillFindCompletedEvent,
+  type AgentSkillRuntimeScope,
+} from "../skill/index.js";
 
 /** Dependencies required to dispatch agent-owned dynamic tools. */
 export interface AgentToolBackendOptions {
+  skillBackend: AgentSkillBackend;
   taskBackend: AgentTaskBackend;
 }
 
@@ -68,7 +77,7 @@ export class AgentToolBackend {
     this.domain = scope.domain;
     this.humanInputStore = scope.humanInputStore;
     this.eventBus = scope.eventBus;
-    this.skillBackend = new AgentSkillBackend();
+    this.skillBackend = options.skillBackend;
   }
 
   async handleDynamicToolCall(input: DynamicToolCallInput): Promise<DynamicToolCallResponse> {
@@ -189,6 +198,10 @@ export class AgentToolBackend {
       threadId: delivery.threadId,
       turnId: delivery.turnId,
     });
+    this.skillBackend.assertReadyForTaskSubmission(
+      currentSkillRuntimeScope(caller, delivery),
+      caller.runner?.currentProtocolCorrectionSourceTurnId(),
+    );
     const submitted = await caller.submitTask({
       outcome: call.outcome,
       turnId: delivery.turnId,
@@ -443,11 +456,96 @@ export class AgentToolBackend {
     };
   }
 
+  private handleFindSkillsToolCall(
+    call: FindSkillsToolCall,
+    caller: ScoutAgent,
+    delivery: DynamicToolCallInput,
+  ): import("../skill/types.js").AgentSkillFindResponse {
+    const phase = caller.mount.agentProfile.phase;
+    try {
+      caller.assertOwnsActiveTurn({
+        threadId: delivery.threadId,
+        turnId: delivery.turnId,
+      });
+      const found = this.skillBackend.findSkills({
+        scope: currentSkillRuntimeScope(caller, delivery),
+        mount: caller.mount,
+        role: caller.role,
+        ...(call.family === undefined ? {} : { family: call.family }),
+        ...(call.detail === undefined ? {} : { detail: call.detail }),
+      });
+      this.publishSkillFindCompleted(caller, delivery, {
+        ...found.telemetry,
+        phase,
+      });
+      return found.response;
+    } catch (error) {
+      this.eventBus.publish(AgentEvents.skill.findFailed, {
+        ...skillEventContext(caller, delivery),
+        phase,
+        family: [...(call.family ?? [])],
+        errorCode: agentSkillErrorCode(error),
+      });
+      throw error;
+    }
+  }
+
+  private handleReadSkillResourceToolCall(
+    call: ReadSkillResourceToolCall,
+    caller: ScoutAgent,
+    delivery: DynamicToolCallInput,
+  ): import("../skill/types.js").AgentSkillReadResponse {
+    try {
+      caller.assertOwnsActiveTurn({
+        threadId: delivery.threadId,
+        turnId: delivery.turnId,
+      });
+      const result = this.skillBackend.readSkillResource({
+        scope: currentSkillRuntimeScope(caller, delivery),
+        mount: caller.mount,
+        selectionId: call.selection_id,
+        skillId: call.skill_id,
+        resource: call.resource,
+      });
+      this.eventBus.publish(AgentEvents.skill.readCompleted, {
+        ...skillEventContext(caller, delivery),
+        selectionId: call.selection_id,
+        skillId: call.skill_id,
+        resource: result.response.resource,
+        requirement: result.requirement,
+        selectionState: result.response.selectionState,
+        digest: result.response.digest,
+        byteLength: result.response.byteLength,
+      });
+      return result.response;
+    } catch (error) {
+      this.eventBus.publish(AgentEvents.skill.readFailed, {
+        ...skillEventContext(caller, delivery),
+        selectionId: call.selection_id,
+        skillId: call.skill_id,
+        resource: call.resource,
+        errorCode: agentSkillErrorCode(error),
+      });
+      throw error;
+    }
+  }
+
+  private publishSkillFindCompleted(
+    caller: ScoutAgent,
+    delivery: DynamicToolCallInput,
+    data: Omit<AgentSkillFindCompletedEvent, keyof AgentSkillEventContext>,
+  ): void {
+    this.eventBus.publish(AgentEvents.skill.findCompleted, {
+      ...skillEventContext(caller, delivery),
+      ...data,
+    });
+  }
+
   private async dispatchAgentDynamicToolCall(
     call: AgentDynamicToolCall,
     caller: ScoutAgent,
     delivery: DynamicToolCallInput,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<unknown> {
     switch (call.tool) {
       case "AssignTask":
         return this.handleAssignTaskToolCall(call);
@@ -462,9 +560,9 @@ export class AgentToolBackend {
       case "ArchiveTask":
         return this.handleArchiveTaskToolCall(call, caller);
       case "FindSkills":
-        return this.skillBackend.handleFindSkills(call, caller, delivery);
+        return this.handleFindSkillsToolCall(call, caller, delivery);
       case "ReadSkillResource":
-        return this.skillBackend.handleReadSkillResource(call, caller, delivery);
+        return this.handleReadSkillResourceToolCall(call, caller, delivery);
       default:
         throw new Error(`Unsupported agent tool: ${String((call as { tool?: unknown }).tool)}`);
     }
@@ -482,6 +580,34 @@ export class AgentToolBackend {
     return worker;
   }
 
+}
+
+function skillEventContext(
+  caller: ScoutAgent,
+  delivery: DynamicToolCallInput,
+): AgentSkillEventContext {
+  return {
+    agentId: caller.agentId,
+    role: caller.role,
+    taskId: caller.snapshot().activeTask?.taskId,
+    threadId: delivery.threadId,
+    turnId: delivery.turnId,
+    callId: delivery.callId,
+  };
+}
+
+function currentSkillRuntimeScope(
+  caller: ScoutAgent,
+  delivery: DynamicToolCallInput,
+): AgentSkillRuntimeScope {
+  return {
+    agentId: caller.agentId,
+    taskId: caller.snapshot().activeTask?.taskId,
+    threadId: delivery.threadId,
+    turnId: delivery.turnId,
+    assetCommitId: caller.mount.assetCommitId,
+    phase: caller.mount.agentProfile.phase,
+  };
 }
 
 function dynamicToolSuccess(value: unknown): DynamicToolCallResponse {

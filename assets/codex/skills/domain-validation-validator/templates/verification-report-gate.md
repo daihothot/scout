@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: optional
+    description: 仅执行 Verification Report Gate 时使用的报告模板。
 artifact_type: VerificationReportGate
 artifact_version: 1
 status: draft

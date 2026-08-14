@@ -94,7 +94,7 @@ export class MountFilesystemInspector {
       }
       const stat = lstatSync(target);
       if (!stat.isSymbolicLink()) return `linked file is not a symlink: ${linked.path}`;
-      const expected = resolve(this.context.repoRoot, linked.sourcePath);
+      const expected = resolve(this.context.scoutRoot, linked.sourcePath);
       if (!isPathWithin(this.context.assetsRoot, expected)) {
         return `linked source escapes assets root: ${linked.sourcePath}`;
       }

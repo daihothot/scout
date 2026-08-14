@@ -2,6 +2,7 @@ import type {
   AppServerTimelineEntry,
 } from "../../agent-server/codex/app-server-event-store.js";
 import { AgentActivityBackend } from "./agent-activity-backend.js";
+import { AgentSkillBackend } from "./agent-skill-backend.js";
 import { AgentTaskBackend } from "./agent-task-backend.js";
 import { AgentToolBackend } from "./agent-tool-backend.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
@@ -15,6 +16,7 @@ import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 export class AgentBackend {
   readonly registry: RunScope["agentRegistry"];
   readonly activity: AgentActivityBackend;
+  readonly skill: AgentSkillBackend;
   readonly task: AgentTaskBackend;
   readonly tool: AgentToolBackend;
   readonly domain: RunScope["domain"];
@@ -28,8 +30,10 @@ export class AgentBackend {
     this.domain = scope.domain;
     this.registry = scope.agentRegistry;
     this.activity = new AgentActivityBackend();
+    this.skill = new AgentSkillBackend();
     this.task = new AgentTaskBackend();
     this.tool = new AgentToolBackend({
+      skillBackend: this.skill,
       taskBackend: this.task,
     });
   }

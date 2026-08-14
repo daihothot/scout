@@ -1,10 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildScoutSkillCatalog,
   parseScoutSkillMetadata,
+  parseScoutSkillResourceMetadata,
+  projectScoutSkillResourceText,
   resolveSkillDependencyLoadOrder,
   validateScoutSkillCatalog,
   type AgentProfilesFile,
@@ -12,11 +23,10 @@ import {
 } from "../../src/asset-store/index.js";
 import {
   ScoutAgentPhases,
-  type ScoutAgentRole,
 } from "../../src/agent/thread/types.js";
 
-const repoRoot = process.cwd();
-const assetsRoot = join(repoRoot, "assets", "codex");
+const scoutRoot = process.cwd();
+const assetsRoot = join(scoutRoot, "assets", "codex");
 
 const expectedMetadata: Record<
   string,
@@ -62,28 +72,28 @@ const expectedMetadata: Record<
     tags: ["scout", "asset", "boundary", "memory", "audit", "workflow"],
   },
   "internal-skill-creator": {
-    phase: ["coordinate", "research", "verify", "validate"],
+    phase: [],
     family: ["internal", "skill-creator"],
     tags: ["scout", "skill", "asset", "template", "governance"],
   },
   "signal-unity-callback-event-by-runtime-log": {
     phase: ["research", "verify", "validate"],
-    family: ["validation", "signal", "unity-callback-event"],
+    family: ["validation", "unity", "single", "local", "general", "callback-event"],
     tags: ["signal", "unity", "callback", "event", "runtime", "log"],
   },
   "signal-unity-local-storage": {
     phase: ["research", "verify", "validate"],
-    family: ["validation", "signal", "unity-local-storage"],
+    family: ["validation", "unity", "single", "local", "general", "local-storage"],
     tags: ["signal", "unity", "local-storage", "sqlite"],
   },
   "signal-unity-runtime-log": {
     phase: ["research", "verify", "validate"],
-    family: ["validation", "signal", "unity-runtime-log"],
+    family: ["validation", "unity", "single", "local", "general", "runtime-log"],
     tags: ["signal", "unity", "runtime", "log"],
   },
   "signal-unity-runtime-log-unity-pipeline-cli": {
     phase: ["verify", "validate"],
-    family: ["validation", "signal", "unity-runtime-log"],
+    family: ["validation", "unity", "single", "local", "general", "runtime-log"],
     tags: [
       "signal",
       "unity",
@@ -137,10 +147,316 @@ test("Every Scout Skill has canonical phase, optional family, and feature tags",
     assert.ok(skill.description.length > 0);
     assert.ok(skill.summary.length > 0);
     assert.equal(skill.path, `.scout/skills/${skill.name}/SKILL.md`);
+    assert.ok(Array.isArray(skill.resources));
+    assert.ok(skill.resources.every((resource) =>
+      (resource.path.startsWith("templates/") || resource.path.startsWith("references/"))
+      && resource.path.endsWith(".md")
+      && (resource.requirement === "required" || resource.requirement === "optional")
+      && resource.description.length > 0
+    ));
   }
 });
 
-test("Every profiled Skill supports its agent phase", () => {
+test("Scout Skill resources declare requirement and description in their own frontmatter", () => {
+  assert.deepEqual(parseScoutSkillResourceMetadata({
+    path: "templates/report.md",
+    text: [
+      "---",
+      "scout:",
+      "  resource:",
+      "    requirement: required",
+      "    description: Canonical report structure.",
+      "artifact_type: Report",
+      "---",
+      "",
+      "# Report",
+    ].join("\n"),
+  }), {
+    path: "templates/report.md",
+    requirement: "required",
+    description: "Canonical report structure.",
+  });
+  assert.deepEqual(parseScoutSkillResourceMetadata({
+    path: "references/remediation.md",
+    text: [
+      "---",
+      "scout:",
+      "  resource:",
+      "    requirement: optional",
+      "    description: Conditional remediation reference.",
+      "---",
+    ].join("\n"),
+  }).requirement, "optional");
+});
+
+test("Scout Skill resource projection removes only matching control metadata", () => {
+  const path = "templates/report.md";
+  const expected = {
+    path,
+    requirement: "required" as const,
+    description: "Canonical report structure.",
+  };
+  const text = [
+    "---",
+    "scout:",
+    "  resource:",
+    "    requirement: required",
+    "    description: Canonical report structure.",
+    "  visibility: internal",
+    "artifact_type: Report",
+    "---",
+    "",
+    "# Report",
+  ].join("\n");
+
+  assert.equal(projectScoutSkillResourceText({ text, path, expected }), [
+    "---",
+    "scout:",
+    "  visibility: internal",
+    "artifact_type: Report",
+    "---",
+    "",
+    "# Report",
+  ].join("\n"));
+});
+
+test("Scout Skill resource projection removes an empty scout tree and preserves CRLF", () => {
+  const path = "references/detail.md";
+  const expected = {
+    path,
+    requirement: "optional" as const,
+    description: "Conditional detail.",
+  };
+  const text = [
+    "---",
+    "scout:",
+    "  resource:",
+    "    requirement: optional",
+    "    description: Conditional detail.",
+    "artifact_type: Detail",
+    "---",
+    "",
+    "Detail body.",
+  ].join("\r\n");
+
+  assert.equal(projectScoutSkillResourceText({ text, path, expected }), [
+    "---",
+    "artifact_type: Detail",
+    "---",
+    "",
+    "Detail body.",
+  ].join("\r\n"));
+});
+
+test("Scout Skill resource projection rejects catalog metadata mismatches", () => {
+  const path = "templates/report.md";
+  const text = [
+    "---",
+    "scout:",
+    "  resource:",
+    "    requirement: required",
+    "    description: Canonical report structure.",
+    "---",
+  ].join("\n");
+  const expected = {
+    path,
+    requirement: "required" as const,
+    description: "Canonical report structure.",
+  };
+
+  assert.throws(
+    () => projectScoutSkillResourceText({
+      text,
+      path: "references/report.md",
+      expected,
+    }),
+    /path does not match its catalog entry/,
+  );
+  assert.throws(
+    () => projectScoutSkillResourceText({
+      text,
+      path,
+      expected: { ...expected, requirement: "optional" },
+    }),
+    /requirement does not match its catalog entry/,
+  );
+  assert.throws(
+    () => projectScoutSkillResourceText({
+      text,
+      path,
+      expected: { ...expected, description: "Different description." },
+    }),
+    /description does not match its catalog entry/,
+  );
+});
+
+test("Scout Skill resource metadata rejects missing, invalid, duplicate, and unsafe fields", () => {
+  const resource = (metadata: string[], path = "templates/report.md"): unknown =>
+    parseScoutSkillResourceMetadata({
+      path,
+      text: `---\n${metadata.join("\n")}\n---\n`,
+    });
+  assert.throws(
+    () => resource(["scout:", "  resource:", "    description: Report."]),
+    /must define scout\.resource\.requirement/,
+  );
+  assert.throws(
+    () => resource([
+      "scout:",
+      "  resource:",
+      "    requirement: conditional",
+      "    description: Report.",
+    ]),
+    /unsupported scout\.resource\.requirement: conditional/,
+  );
+  assert.throws(
+    () => resource(["scout:", "  resource:", "    requirement: required"]),
+    /must define scout\.resource\.description/,
+  );
+  assert.throws(
+    () => resource([
+      "scout:",
+      "  resource:",
+      "    requirement: required",
+      "    requirement: optional",
+      "    description: Report.",
+    ]),
+    /duplicate field: scout\.resource\.requirement/,
+  );
+  for (const path of [
+    "report.md",
+    "templates/../report.md",
+    "templates\\report.md",
+    "/templates/report.md",
+    "templates/report.txt",
+  ]) {
+    assert.throws(
+      () => resource([
+        "scout:",
+        "  resource:",
+        "    requirement: required",
+        "    description: Report.",
+      ], path),
+      /resource path/,
+      path,
+    );
+  }
+});
+
+test("Scout Skill catalog recursively discovers resources and rejects unlabelled resources", () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-skill-resources-"));
+  const skillRoot = join(fixtureRoot, "skills", "example");
+  const skillPath = join(skillRoot, "SKILL.md");
+  const writeResource = (
+    path: string,
+    requirement: "required" | "optional",
+    description: string,
+  ): void => {
+    mkdirSync(join(skillRoot, ...path.split("/").slice(0, -1)), { recursive: true });
+    writeFileSync(join(skillRoot, ...path.split("/")), [
+      "---",
+      "scout:",
+      "  resource:",
+      `    requirement: ${requirement}`,
+      `    description: ${description}`,
+      "---",
+    ].join("\n"));
+  };
+
+  try {
+    mkdirSync(skillRoot, { recursive: true });
+    writeFileSync(skillPath, scoutSkillText("example"));
+    writeResource("templates/report.md", "required", "Report template.");
+    writeResource("references/nested/remediation.md", "optional", "Remediation reference.");
+    assert.deepEqual(
+      buildScoutSkillCatalog({
+        assetsRoot: fixtureRoot,
+        skillPaths: [join("skills", "example", "SKILL.md")],
+      })[0]?.resources,
+      [
+        {
+          path: "references/nested/remediation.md",
+          requirement: "optional",
+          description: "Remediation reference.",
+        },
+        {
+          path: "templates/report.md",
+          requirement: "required",
+          description: "Report template.",
+        },
+      ],
+    );
+
+    writeFileSync(join(skillRoot, "templates", "unlabelled.md"), "# Missing metadata\n");
+    assert.throws(
+      () => buildScoutSkillCatalog({
+        assetsRoot: fixtureRoot,
+        skillPaths: [join("skills", "example", "SKILL.md")],
+      }),
+      /must contain YAML frontmatter/,
+    );
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("Scout Skill catalog rejects resource symlinks and duplicate resource paths", () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-skill-resource-symlink-"));
+  const skillRoot = join(fixtureRoot, "skills", "example");
+  try {
+    mkdirSync(join(skillRoot, "templates"), { recursive: true });
+    writeFileSync(join(skillRoot, "SKILL.md"), scoutSkillText("example"));
+    writeFileSync(join(skillRoot, "target.md"), "target\n");
+    symlinkSync(join(skillRoot, "target.md"), join(skillRoot, "templates", "linked.md"));
+    assert.throws(
+      () => buildScoutSkillCatalog({
+        assetsRoot: fixtureRoot,
+        skillPaths: [join("skills", "example", "SKILL.md")],
+      }),
+      /resource path must not be a symbolic link/,
+    );
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+
+  const entry = parseMetadata("duplicate-resource");
+  entry.resources = [
+    {
+      path: "templates/report.md",
+      requirement: "required",
+      description: "First declaration.",
+    },
+    {
+      path: "templates/report.md",
+      requirement: "optional",
+      description: "Second declaration.",
+    },
+  ];
+  assert.throws(
+    () => validateScoutSkillCatalog([entry]),
+    /contains duplicate resource path: templates\/report\.md/,
+  );
+
+  const legacyEntry = parseMetadata("legacy-resource-catalog") as Partial<ScoutSkillCatalogEntry>;
+  delete legacyEntry.resources;
+  assert.throws(
+    () => validateScoutSkillCatalog([legacyEntry as ScoutSkillCatalogEntry]),
+    /must define resources/,
+  );
+
+  const invalidEntry = parseMetadata("invalid-resource-catalog");
+  invalidEntry.resources = [{
+    path: "templates/report.md",
+    requirement: "conditional" as "required",
+    description: "Report template.",
+  }];
+  assert.throws(
+    () => validateScoutSkillCatalog([invalidEntry]),
+    /has unsupported requirement: conditional/,
+  );
+});
+
+test("Each profile phase projects its routable Skills and dependency closure", () => {
   const profiles = JSON.parse(readFileSync(
     join(assetsRoot, "agents", "agent-profiles.json"),
     "utf8",
@@ -149,28 +465,65 @@ test("Every profiled Skill supports its agent phase", () => {
     join("skills", name, "SKILL.md")
   );
   const catalog = buildScoutSkillCatalog({ assetsRoot, skillPaths });
-  const byName = new Map(catalog.map((skill) => [skill.name, skill] as const));
-  const phases: Record<ScoutAgentRole, ScoutSkillCatalogEntry["phase"][number]> = {
-    coordinator: ScoutAgentPhases.Coordinate,
-    researcher: ScoutAgentPhases.Research,
-    verifier: ScoutAgentPhases.Verify,
-    validator: ScoutAgentPhases.Validate,
+  const expectedInventories: Record<string, string[]> = {
+    coordinator: ["domain-validation-coordinator", "internal-boundary-inspector"],
+    researcher: [
+      "domain-validation-research-pack",
+      "domain-validation-researcher",
+      "internal-boundary-inspector",
+      "signal-unity-callback-event-by-runtime-log",
+      "signal-unity-local-storage",
+      "signal-unity-runtime-log",
+      "tool-guru-knowledge",
+      "tool-jarvis-codebase",
+    ],
+    verifier: [
+      "domain-validation-verifier",
+      "internal-boundary-inspector",
+      "signal-unity-callback-event-by-runtime-log",
+      "signal-unity-local-storage",
+      "signal-unity-runtime-log",
+      "signal-unity-runtime-log-unity-pipeline-cli",
+      "tool-jarvis-codebase",
+      "tool-unity-pipeline-cli",
+    ],
+    validator: [
+      "domain-validation-research-pack",
+      "domain-validation-validator",
+      "domain-validation-verifier",
+      "internal-boundary-inspector",
+      "signal-unity-callback-event-by-runtime-log",
+      "signal-unity-local-storage",
+      "signal-unity-runtime-log",
+      "signal-unity-runtime-log-unity-pipeline-cli",
+      "tool-guru-knowledge",
+      "tool-jarvis-codebase",
+      "tool-unity-pipeline-cli",
+    ],
   };
 
   for (const [role, profile] of Object.entries(profiles.profiles)) {
-    for (const name of profile.skills) {
-      const skill = byName.get(name);
-      assert.ok(skill, `${role} profile references unknown Skill ${name}`);
-      assert.ok(skill.phase.includes(phases[role as ScoutAgentRole]));
-    }
+    const projected = resolveSkillDependencyLoadOrder(
+      catalog,
+      catalog
+        .filter((skill) => skill.family !== undefined && skill.phase.includes(profile.phase))
+        .map((skill) => skill.name),
+    );
+    assert.deepEqual(
+      projected.map((skill) => skill.name).sort(),
+      expectedInventories[role]?.sort(),
+    );
+    assert.ok(projected.every((skill) => skill.phase.includes(profile.phase)));
+    assert.equal(projected.some((skill) => skill.name === "internal-skill-creator"), false);
   }
 });
 
 test("Scout Skill metadata rejects missing, unsupported, invalid, and duplicate selection tokens", () => {
   assert.throws(
     () => parseMetadata("missing-phase", { phase: null }),
-    /must define non-empty phase/,
+    /must define phase/,
   );
+  assert.deepEqual(parseMetadata("off-runtime", { phase: "[]" }).phase, []);
   assert.throws(
     () => parseMetadata("missing-tags", { tags: null }),
     /must define non-empty tags/,
@@ -266,8 +619,8 @@ test("family paths are routable leaves while family-less Skills require an entry
     parseMetadata("entry", { requiredSkills: "[service]" }),
   ]));
   assert.doesNotThrow(() => validateScoutSkillCatalog([
-    parseMetadata("entry-one", { family: "[validation, signal, runtime-log]" }),
-    parseMetadata("entry-two", { family: "[validation, signal, runtime-log]" }),
+    parseMetadata("entry-one", { family: "[catalog, arbitrary-depth]" }),
+    parseMetadata("entry-two", { family: "[catalog, arbitrary-depth]" }),
   ]));
   assert.throws(
     () => validateScoutSkillCatalog([
@@ -278,10 +631,10 @@ test("family paths are routable leaves while family-less Skills require an entry
   );
   assert.throws(
     () => validateScoutSkillCatalog([
-      parseMetadata("parent", { family: "[validation, signal]" }),
-      parseMetadata("child", { family: "[validation, signal, runtime-log]" }),
+      parseMetadata("parent", { family: "[catalog, branch]" }),
+      parseMetadata("child", { family: "[catalog, branch, leaf, with, arbitrary, depth]" }),
     ]),
-    /family \[validation, signal\] must be a leaf/,
+    /family \[catalog, branch\] must be a leaf/,
   );
 });
 
@@ -313,5 +666,23 @@ function parseMetadata(
   return parseScoutSkillMetadata({
     text: `---\n${lines.join("\n")}\n---\n`,
     expectedName: name,
+    resources: [],
   });
+}
+
+function scoutSkillText(name: string): string {
+  return [
+    "---",
+    "assetKind: scout.skill",
+    `name: ${name}`,
+    "description: Test Scout Skill metadata.",
+    `id: ${name}`,
+    "version: 1.0.0",
+    "phase: [research]",
+    `family: [validation, ${name}]`,
+    "tags: [test]",
+    "summary: Test metadata.",
+    "---",
+    "",
+  ].join("\n");
 }

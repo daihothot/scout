@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: optional
+    description: 仅在人工确认事实需要登记时使用的证据模板。
 evidence_id: E-HUMAN-001
 evidence_type: human_confirmation
 status: candidate

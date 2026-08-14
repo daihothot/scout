@@ -61,8 +61,8 @@ export class RestoreEnvironmentStage implements RunStage {
   /** Restores all role mounts, commits artifacts/index updates, and publishes completion. */
   async start(): Promise<void> {
     const scope = currentRunScope();
-    const repoRoot = resolve(scope.repoRoot);
-    const runRoot = resolve(repoRoot, "run", scope.runId);
+    const scoutRoot = resolve(scope.scoutRoot);
+    const runRoot = resolve(scope.runRoot);
     const roles = Object.values(ScoutAgentRoles);
     const assetStore = this.options.assetStore ?? new AssetStore();
     const preflightMount = this.options.preflightMount ?? ((mount: CodexMount) =>
@@ -75,8 +75,8 @@ export class RestoreEnvironmentStage implements RunStage {
     let snapshot: EnvironmentSnapshot;
     try {
       snapshot = new EnvironmentSnapshotLoader({
-        repoRoot,
-        runId: scope.runId,
+        scoutRoot,
+        runRoot,
         manifest: scope.manifestStore.read(),
         roles,
       }).load();
@@ -93,7 +93,7 @@ export class RestoreEnvironmentStage implements RunStage {
     const inputs: EnvironmentRolePreparationInput[] = snapshot.agents.map((persisted) => {
       const agentRoot = join(runRoot, "agents", persisted.role);
       const options: MaterializeOptions = {
-        repoRoot,
+        scoutRoot,
         runId: scope.runId,
         agentId: persisted.role,
         persistedManifest: persisted.mountManifest,

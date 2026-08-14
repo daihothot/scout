@@ -236,13 +236,13 @@ function summarizePortablePath(agentId: string, value: string): string {
   const scope = currentRunScope();
   const agent = scope.agentRegistry.findAgent(agentId);
   const mount = agent?.mount;
-  const runRoot = join(scope.repoRoot, "run", scope.runId);
+  const runRoot = scope.runRoot;
   const roots = [
     [mount?.mountRoot, "${SCOUT_MOUNT_ROOT}"],
     [mount?.artifactRoot, "${SCOUT_ARTIFACT_ROOT}"],
     [mount?.runRoot, "${SCOUT_RUN_ROOT}"],
     [runRoot, "${SCOUT_RUN_ROOT}"],
-    [scope.repoRoot, "${SCOUT_REPO_ROOT}"],
+    [scope.scoutRoot, "${SCOUT_ROOT}"],
   ] as const;
   for (const [root, label] of roots) {
     if (!root || !isPathWithin(root, value)) continue;

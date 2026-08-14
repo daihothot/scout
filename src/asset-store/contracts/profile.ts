@@ -3,6 +3,7 @@
  * mount construction. Validation and default resolution belong to assets.
  */
 import type { CodexModelConfig } from "../../agent-server/codex/model-config.js";
+import type { ScoutAgentPhase } from "../../agent/thread/types.js";
 
 /** Parsed repository profile document containing defaults and named roles. */
 export interface AgentProfilesFile {
@@ -20,7 +21,7 @@ export interface AgentProfileDefinition {
   maxDepth: number;
   customAgents: string[];
   model?: CodexModelConfig;
-  skills: string[];
+  phase: ScoutAgentPhase;
   shellTools?: string[];
   mcpServers: string[];
   plugins: string[];

@@ -26,7 +26,7 @@ const execFileAsync = promisify(execFile);
  */
 export function summarizeAgentServerPreflight(
   report: AgentServerPreflightReport,
-  mount: Pick<CodexMount, "runRoot" | "mountRoot" | "artifactRoot">,
+  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
 ): AgentServerPreflightReport {
   const summary: AgentServerPreflightReport = {
     status: report.status,
@@ -330,14 +330,14 @@ function readBoolean(object: Record<string, unknown> | undefined, key: string): 
 
 function portablePreflightPath(
   path: string,
-  mount: Pick<CodexMount, "runRoot" | "mountRoot" | "artifactRoot">,
+  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
 ): string {
   const normalizedPath = resolve(path);
   const roots: Array<[string, string]> = [
     [mount.mountRoot, "${SCOUT_MOUNT_ROOT}"],
     [mount.artifactRoot, "${SCOUT_ARTIFACT_ROOT}"],
     [mount.runRoot, "${SCOUT_RUN_ROOT}"],
-    [dirname(mount.runRoot), "${SCOUT_REPO_ROOT}"],
+    [mount.scoutRoot, "${SCOUT_ROOT}"],
   ];
   roots.sort(([left], [right]) => right.length - left.length);
   for (const [root, macro] of roots) {
@@ -354,7 +354,7 @@ function portablePreflightPath(
 
 function summarizeConfigLayers(
   layers: unknown[],
-  mount: Pick<CodexMount, "runRoot" | "mountRoot" | "artifactRoot">,
+  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
 ): unknown[] {
   return layers.map((layer) => {
     const object = readObjectOrUndefined(layer);
@@ -381,7 +381,7 @@ function summarizeConfigLayers(
 
 function summarizeSkillsList(
   response: unknown,
-  mount: Pick<CodexMount, "runRoot" | "mountRoot" | "artifactRoot">,
+  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
 ): unknown {
   const root = readObjectOrUndefined(response);
   const data = readArrayOrUndefined(root?.data) ?? [];
@@ -485,7 +485,7 @@ function summarizePluginEntry(value: unknown): Array<{
 
 function summarizeHooksList(
   response: unknown,
-  mount: Pick<CodexMount, "runRoot" | "mountRoot" | "artifactRoot">,
+  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
 ): unknown {
   const root = readObjectOrUndefined(response);
   const data = readArrayOrUndefined(root?.data) ?? [];

@@ -1,6 +1,8 @@
 import { event } from "../../core/events/index.js";
 import { AgentEvents } from "../events/catalog.js";
 import type { ScoutAgentPhase, ScoutAgentRole } from "../thread/types.js";
+import type { ScoutSkillResourceRequirement } from "../../asset-store/contracts/skill.js";
+import type { AgentSkillFamilyFacet } from "./types.js";
 
 /** Identity linking a Skill event to its authorized agent turn. */
 export interface AgentSkillEventContext {
@@ -10,12 +12,6 @@ export interface AgentSkillEventContext {
   threadId: string;
   turnId: string;
   callId: string;
-}
-
-/** One direct family choice and the number of matching catalog entries. */
-export interface AgentSkillFamilyFacet {
-  value: string;
-  count: number;
 }
 
 /** Successful FindSkills result, including refinement or dependency order. */
@@ -41,6 +37,8 @@ export interface AgentSkillReadCompletedEvent extends AgentSkillEventContext {
   selectionId: string;
   skillId: string;
   resource: string;
+  requirement: ScoutSkillResourceRequirement;
+  selectionState: "loading" | "ready";
   digest: string;
   byteLength: number;
 }
@@ -49,6 +47,7 @@ export interface AgentSkillReadCompletedEvent extends AgentSkillEventContext {
 export interface AgentSkillReadFailedEvent extends AgentSkillEventContext {
   selectionId: string;
   skillId: string;
+  resource: string;
   errorCode: string;
 }
 

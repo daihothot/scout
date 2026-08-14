@@ -1,6 +1,7 @@
 import type { CodexAppServerClient } from "../agent-server/codex/app-server-client.js";
 import { AgentRegistry } from "../agent/core/agent-registry.js";
 import { AgentHumanInputStore } from "../agent/human-input/index.js";
+import { AgentSkillStore } from "../agent/skill/index.js";
 import { AgentTaskStore } from "../agent/task/agent-task-store.js";
 import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
@@ -16,7 +17,8 @@ import type { RunManifestStore } from "./persistence/index.js";
 /** Dependencies and lifecycle callbacks required to own one active run. */
 export interface RunScopeOptions {
   runId: string;
-  repoRoot: string;
+  scoutRoot: string;
+  runRoot: string;
   logger: Logger;
   eventBus: EventBus;
   interactionPort: RuntimeInteractionPort;
@@ -33,11 +35,13 @@ export interface RunScopeOptions {
  */
 export class RunScope {
   readonly runId: string;
-  readonly repoRoot: string;
+  readonly scoutRoot: string;
+  readonly runRoot: string;
   readonly logger: Logger;
   readonly eventBus: EventBus;
   readonly interactionPort: RuntimeInteractionPort;
   readonly agentRegistry = new AgentRegistry();
+  readonly skillStore = new AgentSkillStore();
   readonly taskStore = new AgentTaskStore();
   readonly humanInputStore: AgentHumanInputStore;
   readonly domain: ScoutDomain;
@@ -49,7 +53,8 @@ export class RunScope {
 
   constructor(options: RunScopeOptions) {
     this.runId = options.runId;
-    this.repoRoot = options.repoRoot;
+    this.scoutRoot = options.scoutRoot;
+    this.runRoot = options.runRoot;
     this.logger = options.logger;
     this.eventBus = options.eventBus;
     this.interactionPort = options.interactionPort;

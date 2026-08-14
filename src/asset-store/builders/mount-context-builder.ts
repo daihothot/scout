@@ -27,10 +27,13 @@ import {
   resolveMountMacros,
 } from "../mount/macros.js";
 import {
-  readAgentProfilesForRepo,
+  readAgentProfilesForScoutRoot,
   resolveAgentProfile,
 } from "../assets/agent-profiles.js";
-import { buildScoutSkillCatalog } from "../assets/skill-catalog.js";
+import {
+  buildScoutSkillCatalog,
+  resolveSkillDependencyLoadOrder,
+} from "../assets/skill-catalog.js";
 
 /**
  * Derives the immutable per-role runtime description from the Scout checkout.
@@ -41,16 +44,16 @@ export class MountContextBuilder {
 
   build(): MountContext {
     const options = this.options;
-    const repoRoot = resolve(options.repoRoot);
-    const assetsRoot = join(repoRoot, "assets", "codex");
+    const scoutRoot = resolve(options.scoutRoot);
+    const assetsRoot = join(scoutRoot, "assets", "codex");
     const runId = normalizeRunId(options.runId);
-    const runRoot = join(repoRoot, "run", runId);
+    const runRoot = join(scoutRoot, "run", runId);
     const agentId = sanitizeAgentId(options.agentId);
     const agentRoot = join(runRoot, "agents", agentId);
     const artifactRoot = join(agentRoot, "artifacts");
     const logsRoot = join(agentRoot, "logs");
     const mountRoot = join(agentRoot, "mount");
-    const agentProfile = resolveAgentProfile(readAgentProfilesForRepo(repoRoot), agentId);
+    const agentProfile = resolveAgentProfile(readAgentProfilesForScoutRoot(scoutRoot), agentId);
     const mcpServers = readJsonFile<McpServersFile>(join(assetsRoot, CodexAssetLayout.mcpServers));
     const shellTools = readJsonFile<{ tools: ShellToolContract[] }>(
       join(assetsRoot, CodexAssetLayout.shellTools),
@@ -62,9 +65,21 @@ export class MountContextBuilder {
       listCustomAgentPaths(assetsRoot),
       agentProfile.customAgents,
     );
-    const profiledSkillPaths = filterSkills(listSkillPaths(assetsRoot), agentProfile.skills);
+    const skillPaths = listSkillPaths(assetsRoot);
+    const fullSkillCatalog = buildScoutSkillCatalog({ assetsRoot, skillPaths });
+    const skillCatalog = resolveSkillDependencyLoadOrder(
+      fullSkillCatalog,
+      fullSkillCatalog
+        .filter((skill) =>
+          skill.family !== undefined && skill.phase.includes(agentProfile.phase)
+        )
+        .map((skill) => skill.name),
+    );
+    const profiledSkillPaths = filterSkills(
+      skillPaths,
+      skillCatalog.map((skill) => skill.name),
+    );
     const profiledPluginPaths = filterPlugins(listPluginPaths(assetsRoot), agentProfile.plugins);
-    const skillCatalog = buildScoutSkillCatalog({ assetsRoot, skillPaths: profiledSkillPaths });
     const computedResourceHash = computeResourceHash({
       assetsRoot,
       agentId,
@@ -90,20 +105,20 @@ export class MountContextBuilder {
     const mountId = options.persistedIdentity?.mountId ?? `m_${mountHash.slice(0, 16)}`;
     const readableRoots = resolveAgentProfileRoots({
       roots: agentProfile.readableRoots,
-      repoRoot,
+      scoutRoot,
       runRoot,
       mountRoot,
       artifactRoot,
     });
     const writableRoots = resolveAgentProfileRoots({
       roots: agentProfile.writableRoots,
-      repoRoot,
+      scoutRoot,
       runRoot,
       mountRoot,
       artifactRoot,
     });
     return {
-      repoRoot,
+      scoutRoot,
       assetsRoot,
       runId,
       runRoot,
@@ -257,13 +272,13 @@ function assertUnique(values: string[], label: string): void {
 
 function resolveAgentProfileRoots(input: {
   roots?: string[];
-  repoRoot: string;
+  scoutRoot: string;
   runRoot: string;
   mountRoot: string;
   artifactRoot: string;
 }): string[] {
   const dynamicValues = buildMountMacroValues({
-    repoRoot: input.repoRoot,
+    scoutRoot: input.scoutRoot,
     runRoot: input.runRoot,
     mountRoot: input.mountRoot,
     artifactRoot: input.artifactRoot,
@@ -272,14 +287,14 @@ function resolveAgentProfileRoots(input: {
   return uniqueStrings((input.roots ?? [])
     .map((root) => resolveMountMacros(root, dynamicValues))
     .filter((root) => root.length > 0)
-    .map((root) => resolveProfileRoot(root, input.repoRoot)));
+    .map((root) => resolveProfileRoot(root, input.scoutRoot)));
 }
 
-function resolveProfileRoot(root: string, repoRoot: string): string {
+function resolveProfileRoot(root: string, scoutRoot: string): string {
   if (root === "~") return homedir();
   if (root.startsWith("~/")) return resolve(homedir(), root.slice(2));
   if (isAbsolute(root)) return root;
-  return resolve(repoRoot, root);
+  return resolve(scoutRoot, root);
 }
 
 function uniqueStrings(values: string[]): string[] {

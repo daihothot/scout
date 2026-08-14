@@ -1,5 +1,6 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   mkdtempSync,
   mkdirSync,
@@ -28,9 +29,9 @@ import {
   AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
 } from "../../src/agent/tools/agent-tools.js";
 import {
+  ScoutAgentPermissionProfiles,
   ScoutAgentRoles,
   ScoutAgentPhases,
-  ScoutAgentPermissionProfiles,
   type AgentThreadSnapshot,
   type ScoutAgentRole,
 } from "../../src/agent/thread/types.js";
@@ -52,10 +53,11 @@ import type {
   CodexAppServerClient,
   ThreadStartOptions,
 } from "../../src/agent-server/codex/app-server-client.js";
-import type {
-  AssetCommit,
-  CodexMount,
-  ScoutSkillCatalogEntry,
+import {
+  resolveSkillDependencyLoadOrder,
+  type AssetCommit,
+  type CodexMount,
+  type ScoutSkillCatalogEntry,
 } from "../../src/asset-store/index.js";
 import type { ScoutDomain } from "../../src/domain/index.js";
 import type { ScoutDomainDynamicToolCall } from "../../src/domain/types.js";
@@ -219,7 +221,7 @@ test("Validator turns use the role permission profile", async () => {
   const validator = new AgentBuilder().buildWorker(ScoutAgentRoles.Validator);
 
   assert.ok(validator instanceof ValidatorAgent);
-  assert.equal(validator.spec.permissionProfile, "scout-validator");
+  assert.equal(validator.spec.permissionProfile, ScoutAgentPermissionProfiles.Validator);
   await validator.startThread();
   assert.deepEqual(validator.threadSnapshot?.startInput.config, {
     features: {
@@ -233,10 +235,13 @@ test("Validator turns use the role permission profile", async () => {
   });
   await validator.runTurn({ prompt: "Write the Research Pack Gate." });
 
-  assert.equal(appServer.turnInputs[0]?.permissions, ScoutAgentPermissionProfiles.Validator);
+  assert.equal(
+    appServer.turnInputs[0]?.permissions,
+    ScoutAgentPermissionProfiles.Validator,
+  );
 });
 
-test("Worker turns keep the role permission profile independent of mount write roots", async () => {
+test("Worker turns select one stable profile independently of write-root order", async () => {
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("builder-worker-write-root-order", { appServer });
   const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
@@ -257,7 +262,10 @@ test("Worker turns keep the role permission profile independent of mount write r
   await researcher.startThread();
   await researcher.runTurn({ prompt: "Inspect the Research inputs." });
 
-  assert.equal(appServer.turnInputs[0]?.permissions, ScoutAgentPermissionProfiles.Researcher);
+  assert.equal(
+    appServer.turnInputs[0]?.permissions,
+    ScoutAgentPermissionProfiles.Researcher,
+  );
 });
 
 for (const status of ["failed", "interrupted"] as const) {
@@ -526,6 +534,7 @@ test("ScoutAgent restarts a journaled thread as a distinct lifecycle fact", asyn
     closeReason: "runtime_detached",
     startInput: {
       cwd: agent.spec.cwd,
+      runtimeWorkspaceRoots: [agent.spec.cwd],
       approvalPolicy: agent.spec.approvalPolicy,
       permissions: agent.spec.permissionProfile,
       ephemeral: false,
@@ -1132,16 +1141,19 @@ test("Unknown threads remain unauthorized for domain dynamic tools", async () =>
   assert.match(result.contentItems[0]?.text ?? "", /Unknown dynamic tool caller thread: thread-unknown/);
 });
 
-test("Skill tools navigate family one level at a time, then read the dependency closure in order", async () => {
+test("Skill tools select contracts, implementations, and dependency-only tools", async () => {
   const skillEvents: ScoutEvent[] = [];
   const responses = new Map<string, DynamicToolCallResponse>();
-  let researcher: ResearcherAgent | undefined;
-  let workflowLink = "";
+  let validator: ValidatorAgent | undefined;
+  let activeMount: CodexMount | undefined;
+  let collectorImplementationLink = "";
   let replacementRoot = "";
   const appServer = createFakeAppServer({
     onRunTurn: async () => {
       const handler = appServer.handler;
-      if (!handler || !researcher?.threadId) throw new Error("Expected an active Skill tool caller.");
+      if (!handler || !validator?.threadId || !activeMount) {
+        throw new Error("Expected an active Skill tool caller and mount.");
+      }
       const call = async (
         key: string,
         namespace: string,
@@ -1150,7 +1162,7 @@ test("Skill tools navigate family one level at a time, then read the dependency 
         turnId = "turn-test",
       ): Promise<DynamicToolCallResponse> => {
         const response = await handler({
-          threadId: researcher?.threadId ?? "",
+          threadId: validator?.threadId ?? "",
           turnId,
           callId: `call-${key}`,
           namespace,
@@ -1161,108 +1173,199 @@ test("Skill tools navigate family one level at a time, then read the dependency 
         return response;
       };
 
-      await call("wrong-phase", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
-        phase: ScoutAgentPhases.Verify,
+      const directSelectedResponse = await call(
+        "direct-selected",
+        AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+        "FindSkills",
+        {
+          family: ["catalog", "runtime", "contract", "source", "shared", "collection"],
+          detail: "metadata",
+        },
+      );
+      const directSelectionId = readDynamicToolOutput(directSelectedResponse).selectionId;
+      assert.equal(typeof directSelectionId, "string");
+      await call("direct-interface", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: directSelectionId,
+        skill_id: "base-contract",
+        resource: "SKILL.md",
       });
+      await call("direct-rejected", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        family: ["private", "research", "contract"],
+      });
+      await call("direct-tool", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: directSelectionId,
+        skill_id: "collector-tool",
+        resource: "SKILL.md",
+      });
+      await call("direct-implementation", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: directSelectionId,
+        skill_id: "collector-implementation",
+        resource: "SKILL.md",
+      });
+      await call("direct-reference", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: directSelectionId,
+        skill_id: "collector-implementation",
+        resource: "references/detail.md",
+      });
+      const resignedResponse = await call(
+        "direct-resigned",
+        AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+        "FindSkills",
+        {
+          family: ["catalog", "runtime", "contract", "source", "shared", "collection"],
+        },
+      );
+      const resignedSelectionId = readDynamicToolOutput(resignedResponse).selectionId;
+      assert.equal(typeof resignedSelectionId, "string");
+      await call("direct-retained", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: directSelectionId,
+        skill_id: "base-contract",
+        resource: "SKILL.md",
+      });
+      await call("resigned-interface", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: resignedSelectionId,
+        skill_id: "base-contract",
+        resource: "SKILL.md",
+      });
+      await call("resigned-tool", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: resignedSelectionId,
+        skill_id: "collector-tool",
+        resource: "SKILL.md",
+      });
+      await call("resigned-implementation", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: resignedSelectionId,
+        skill_id: "collector-implementation",
+        resource: "SKILL.md",
+      });
+      await call("resigned-reference", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: resignedSelectionId,
+        skill_id: "collector-implementation",
+        resource: "references/detail.md",
+      });
+
       await call("without-discovery", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
-        phase: ScoutAgentPhases.Research,
         family: ["validation"],
       });
-      await call("phase", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
-        phase: ScoutAgentPhases.Research,
+      await call("off-phase-direct", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        family: ["catalog", "research", "contract"],
+      });
+      await call("unauthorized-direct", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        family: ["private", "research", "contract"],
+      });
+      await call("phase", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {});
+      await call("skip-known-leaf", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        family: ["catalog", "runtime", "contract", "source", "shared", "collection"],
       });
       await call("skip-level", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
-        phase: ScoutAgentPhases.Research,
-        family: ["validation", "research"],
+        family: ["catalog", "research"],
       });
       await call("unknown-child", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
-        phase: ScoutAgentPhases.Research,
         family: ["internal"],
       });
       await call("cross-domain", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
-        phase: ScoutAgentPhases.Research,
         family: ["market"],
       });
       await call("restart", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
-        phase: ScoutAgentPhases.Research,
+        detail: "names",
       });
-      await call("validation", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
-        phase: ScoutAgentPhases.Research,
-        family: ["validation"],
+      await call("catalog", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        family: ["catalog"],
+        detail: "metadata",
       });
-      await call("research", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
-        phase: ScoutAgentPhases.Research,
-        family: ["validation", "research"],
+      await call("runtime", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        family: ["catalog", "runtime"],
+      });
+      await call("contract", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        family: ["catalog", "runtime", "contract"],
+      });
+      await call("source", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        family: ["catalog", "runtime", "contract", "source"],
+      });
+      await call("shared", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        family: ["catalog", "runtime", "contract", "source", "shared"],
+        detail: "metadata",
       });
       const selectedResponse = await call("selected", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
-        phase: ScoutAgentPhases.Research,
-        family: ["validation", "research", "workflow"],
+        family: ["catalog", "runtime", "contract", "source", "shared", "collection"],
       });
       const selectionId = readDynamicToolOutput(selectedResponse).selectionId;
       assert.equal(typeof selectionId, "string");
 
       await call("stale-turn", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
         selection_id: selectionId,
-        skill_id: "foundation",
+        skill_id: "base-contract",
         resource: "SKILL.md",
       }, "turn-stale");
-      await call("wrong-order", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+      await call("implementation-first", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
         selection_id: selectionId,
-        skill_id: "workflow",
+        skill_id: "collector-implementation",
         resource: "SKILL.md",
       });
-      await call("foundation", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+      await call("rediscover-incomplete", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        family: ["catalog", "runtime", "contract", "source", "shared", "collection"],
+      });
+      await call("interface", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
         selection_id: selectionId,
-        skill_id: "foundation",
+        skill_id: "base-contract",
         resource: "SKILL.md",
       });
-      await call("workflow", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+      await call("collector-tool", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
         selection_id: selectionId,
-        skill_id: "workflow",
+        skill_id: "collector-tool",
         resource: "SKILL.md",
       });
-      await call("workflow-companion", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+      await call("implementation", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
         selection_id: selectionId,
-        skill_id: "workflow-companion",
+        skill_id: "collector-implementation",
         resource: "SKILL.md",
       });
       await call("reference", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
         selection_id: selectionId,
-        skill_id: "workflow",
+        skill_id: "collector-implementation",
         resource: "references/detail.md",
       });
       await call("binary", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
         selection_id: selectionId,
-        skill_id: "workflow",
-        resource: "references/binary.txt",
+        skill_id: "collector-implementation",
+        resource: "references/binary.md",
       });
       await call("too-large", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
         selection_id: selectionId,
-        skill_id: "workflow",
-        resource: "references/too-large.txt",
+        skill_id: "collector-implementation",
+        resource: "references/too-large.md",
       });
       await call("traversal", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
         selection_id: selectionId,
-        skill_id: "workflow",
+        skill_id: "collector-implementation",
         resource: "../outside.md",
       });
 
-      unlinkSync(workflowLink);
-      symlinkSync(replacementRoot, workflowLink, "dir");
+      unlinkSync(collectorImplementationLink);
+      symlinkSync(replacementRoot, collectorImplementationLink, "dir");
       await call("replaced-root", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
         selection_id: selectionId,
-        skill_id: "workflow",
+        skill_id: "collector-implementation",
         resource: "SKILL.md",
       });
 
-      await call("rediscover", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
-        phase: ScoutAgentPhases.Research,
-      });
-      await call("invalidated", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+      await call("rediscover", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {});
+      await call("retained-after-discovery", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
         selection_id: selectionId,
-        skill_id: "foundation",
+        skill_id: "base-contract",
         resource: "SKILL.md",
       });
+
+      const originalAssetCommitId = activeMount.assetCommitId;
+      activeMount.assetCommitId = "ac_relocated";
+      await call("asset-commit-stale", AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE, "ReadSkillResource", {
+        selection_id: resignedSelectionId,
+        skill_id: "base-contract",
+        resource: "SKILL.md",
+      });
+      await call("asset-commit-reselected", AGENT_FIND_SKILLS_TOOL_NAMESPACE, "FindSkills", {
+        family: ["catalog", "runtime", "contract", "source", "shared", "collection"],
+      });
+      activeMount.assetCommitId = originalAssetCommitId;
     },
   });
   const fixture = createAgentFixture("skill-tool-selection", {
@@ -1272,74 +1375,205 @@ test("Skill tools navigate family one level at a time, then read the dependency 
   fixture.eventBus.subscribe(AgentEvents.skill, (event) => {
     skillEvents.push(event);
   });
-  const mount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  const mount = createMount(fixture.root, ScoutAgentRoles.Validator);
   const installed = installTestSkillCatalog(fixture.root, mount, [
-    testSkill("foundation", {
-      family: null,
-      tags: ["evidence", "producer"],
-      content: "# Foundation\n\nFOUNDATION_BODY_DO_NOT_LOG\n",
+    testSkill("base-contract", {
+      phase: [ScoutAgentPhases.Research, ScoutAgentPhases.Verify, ScoutAgentPhases.Validate],
+      family: ["catalog", "runtime", "contract", "source", "shared", "collection"],
+      tags: ["base", "contract"],
+      content: "# Base contract\n\nBASE_CONTRACT_BODY_DO_NOT_LOG\n",
     }),
-    testSkill("workflow", {
-      family: ["validation", "research", "workflow"],
-      tags: ["research", "workflow"],
-      requiredSkills: ["foundation"],
-      content: "# Workflow\n\nWORKFLOW_BODY_DO_NOT_LOG\n",
+    testSkill("collector-tool", {
+      phase: [ScoutAgentPhases.Verify, ScoutAgentPhases.Validate],
+      family: null,
+      tags: ["tool", "collection"],
+      content: "# Collector tool\n\nCOLLECTOR_TOOL_BODY_DO_NOT_LOG\n",
+    }),
+    testSkill("collector-implementation", {
+      phase: [ScoutAgentPhases.Verify, ScoutAgentPhases.Validate],
+      family: ["catalog", "runtime", "contract", "source", "shared", "collection"],
+      tags: ["contract", "collection"],
+      requiredSkills: ["base-contract", "collector-tool"],
+      content: "# Collector implementation\n\nCOLLECTOR_IMPLEMENTATION_BODY_DO_NOT_LOG\n",
       resources: {
-        "references/detail.md": "REFERENCE_BODY_DO_NOT_LOG\n",
-        "references/binary.txt": "binary\0content",
-        "references/too-large.txt": "x".repeat((256 * 1024) + 1),
+        "references/detail.md": {
+          content: "REFERENCE_BODY_DO_NOT_LOG\n",
+          requirement: "required",
+          description: "Required collection reference.",
+        },
+        "references/binary.md": {
+          content: "binary\0content",
+          requirement: "optional",
+          description: "Optional invalid binary fixture.",
+        },
+        "references/too-large.md": {
+          content: "x".repeat((256 * 1024) + 1),
+          requirement: "optional",
+          description: "Optional oversized fixture.",
+        },
       },
     }),
-    testSkill("workflow-companion", {
-      family: ["validation", "research", "workflow"],
-      tags: ["companion", "metadata-only"],
-      content: "# Workflow companion\n\nWORKFLOW_COMPANION_BODY_DO_NOT_LOG\n",
+    testSkill("derived-contract", {
+      phase: [ScoutAgentPhases.Research, ScoutAgentPhases.Verify, ScoutAgentPhases.Validate],
+      family: ["catalog", "runtime", "contract", "source", "shared", "derived-collection"],
+      tags: ["derived", "contract"],
+      requiredSkills: ["base-contract"],
+      content: "# Derived contract\n\nDERIVED_CONTRACT_BODY_DO_NOT_LOG\n",
     }),
-    testSkill("other-workflow", {
-      family: ["market", "research", "workflow"],
-      tags: ["research", "other"],
-      content: "# Other workflow\n",
+    testSkill("alternate-contract", {
+      phase: [ScoutAgentPhases.Research, ScoutAgentPhases.Verify, ScoutAgentPhases.Validate],
+      family: ["market", "research", "contract"],
+      tags: ["alternate", "contract"],
+      content: "# Alternate contract\n",
     }),
     testSkill("off-phase", {
-      phase: [ScoutAgentPhases.Verify],
-      family: ["validation", "verify", "workflow"],
+      phase: [ScoutAgentPhases.Research],
+      family: ["catalog", "research", "contract"],
       tags: ["off-phase"],
       content: "# Off phase\n",
     }),
+    testSkill("phase-hidden", {
+      phase: [],
+      family: ["private", "research", "contract"],
+      tags: ["phase-hidden"],
+      content: "# Profile hidden\n",
+    }),
   ]);
-  workflowLink = installed.links.get("workflow") ?? "";
-  replacementRoot = installed.sources.get("other-workflow") ?? "";
-  prepareAgent(fixture, ScoutAgentRoles.Researcher, mount, createAssetCommit(mount));
-  researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher) as ResearcherAgent;
+  activeMount = mount;
+  collectorImplementationLink = installed.links.get("collector-implementation") ?? "";
+  replacementRoot = installed.sources.get("alternate-contract") ?? "";
+  prepareAgent(fixture, ScoutAgentRoles.Validator, mount, createAssetCommit(mount));
+  validator = new AgentBuilder().buildWorker(ScoutAgentRoles.Validator) as ValidatorAgent;
   new AgentBackend().start();
-  await researcher.startThread();
-  await researcher.runTurn({ prompt: "Select and load the research workflow." });
+  await validator.startThread();
+  await validator.runTurn({ prompt: "Select and load the contract collection." });
 
-  assert.equal(responses.get("wrong-phase")?.success, false);
-  assert.match(readDynamicToolText(responses.get("wrong-phase")), /phase_mismatch/);
   assert.deepEqual(readDynamicToolOutput(responses.get("without-discovery")), {
     status: "refine_required",
     refineRequired: true,
-    reason: "family_discovery_required",
+    reason: "family_navigation_reset",
     scope: {
-      agentId: ScoutAgentRoles.Researcher,
-      role: ScoutAgentRoles.Researcher,
-      phase: ScoutAgentPhases.Research,
-      assetCommitId: `ac_${ScoutAgentRoles.Researcher}`,
+      agentId: ScoutAgentRoles.Validator,
+      role: ScoutAgentRoles.Validator,
+      phase: ScoutAgentPhases.Validate,
+      assetCommitId: `ac_${ScoutAgentRoles.Validator}`,
     },
     family: [],
-    total: 3,
+    requestedFamily: ["validation"],
+    navigation: {
+      state: "reset",
+      restartFamily: [],
+    },
+    total: 4,
     facets: {
       families: [
+        { value: "catalog", count: 3 },
         { value: "market", count: 1 },
-        { value: "validation", count: 2 },
       ],
     },
   });
+  assert.match(readDynamicToolText(responses.get("off-phase-direct")), /family_navigation_mismatch/);
+  assert.match(readDynamicToolText(responses.get("unauthorized-direct")), /family_navigation_mismatch/);
+  const directSelected = readDynamicToolOutput(responses.get("direct-selected"));
+  const directResigned = readDynamicToolOutput(responses.get("direct-resigned"));
+  assert.equal(directSelected.status, "selected");
+  assert.deepEqual(
+    directSelected.family,
+    ["catalog", "runtime", "contract", "source", "shared", "collection"],
+  );
+  assert.deepEqual(directSelected.selectedSkillIds, ["base-contract", "collector-implementation"]);
+  assert.deepEqual(
+    directSelected.loadOrder,
+    ["base-contract", "collector-tool", "collector-implementation"],
+  );
+  assert.equal(directSelected.selectionState, "loading");
+  assert.deepEqual(directSelected.resources, {
+    required: [
+      {
+        skillId: "base-contract",
+        resource: "SKILL.md",
+        description: "base-contract description",
+      },
+      {
+        skillId: "collector-tool",
+        resource: "SKILL.md",
+        description: "collector-tool description",
+      },
+      {
+        skillId: "collector-implementation",
+        resource: "SKILL.md",
+        description: "collector-implementation description",
+      },
+      {
+        skillId: "collector-implementation",
+        resource: "references/detail.md",
+        description: "Required collection reference.",
+      },
+    ],
+    optional: [
+      {
+        skillId: "collector-implementation",
+        resource: "references/binary.md",
+        description: "Optional invalid binary fixture.",
+      },
+      {
+        skillId: "collector-implementation",
+        resource: "references/too-large.md",
+        description: "Optional oversized fixture.",
+      },
+    ],
+  });
+  const directSelectedSkills = directSelected.skills as Array<Record<string, unknown>>;
+  const collectorTool = directSelectedSkills.find(
+    (skill) => skill.skillId === "collector-tool"
+  );
+  const implementationSkill = directSelectedSkills.find(
+    (skill) => skill.skillId === "collector-implementation"
+  );
+  assert.ok(collectorTool);
+  assert.equal("family" in collectorTool, false);
+  assert.deepEqual(collectorTool.tags, ["tool", "collection"]);
+  assert.equal(collectorTool.selectionReason, "required_dependency");
+  assert.equal("path" in collectorTool, false);
+  assert.ok(implementationSkill);
+  assert.deepEqual(implementationSkill.tags, ["contract", "collection"]);
+  assert.equal(implementationSkill.selectionReason, "family_match");
+  assert.doesNotMatch(JSON.stringify(directSelectedSkills), /BODY_DO_NOT_LOG/);
+  assert.equal(
+    (directSelected.scope as Record<string, unknown>).assetCommitId,
+    `ac_${ScoutAgentRoles.Validator}`,
+  );
+  assert.notEqual(directResigned.selectionId, directSelected.selectionId);
+  assert.match(
+    readDynamicToolText(responses.get("direct-interface")),
+    /BASE_CONTRACT_BODY_DO_NOT_LOG/,
+  );
+  assert.equal(responses.get("direct-rejected")?.success, false);
+  assert.match(readDynamicToolText(responses.get("direct-rejected")), /selection_incomplete/);
+  assert.match(
+    readDynamicToolText(responses.get("direct-implementation")),
+    /COLLECTOR_IMPLEMENTATION_BODY_DO_NOT_LOG/,
+  );
+  assert.ok([
+    "direct-tool",
+    "direct-implementation",
+    "direct-reference",
+  ].some((key) => readDynamicToolOutput(responses.get(key)).selectionState === "ready"));
+  assert.equal(
+    readDynamicToolOutput(responses.get("direct-retained")).selectionId,
+    directSelected.selectionId,
+  );
+  assert.match(
+    readDynamicToolText(responses.get("direct-retained")),
+    /BASE_CONTRACT_BODY_DO_NOT_LOG/,
+  );
   const phase = readDynamicToolOutput(responses.get("phase"));
   assert.equal(phase.status, "refine_required");
-  assert.equal(phase.total, 3);
+  assert.equal(phase.total, 4);
   assert.equal("candidates" in phase, false);
+  assert.equal("candidates" in readDynamicToolOutput(responses.get("restart")), false);
+  assert.equal(responses.get("skip-known-leaf")?.success, false);
+  assert.match(readDynamicToolText(responses.get("skip-known-leaf")), /family_navigation_mismatch/);
   assert.equal(responses.get("skip-level")?.success, false);
   assert.match(readDynamicToolText(responses.get("skip-level")), /family_navigation_mismatch/);
   assert.equal(responses.get("unknown-child")?.success, false);
@@ -1347,38 +1581,109 @@ test("Skill tools navigate family one level at a time, then read the dependency 
   assert.deepEqual(readDynamicToolOutput(responses.get("cross-domain")).facets, {
     families: [{ value: "research", count: 1 }],
   });
-  assert.deepEqual(readDynamicToolOutput(responses.get("validation")).facets, {
-    families: [{ value: "research", count: 2 }],
+  assert.deepEqual(readDynamicToolOutput(responses.get("catalog")).facets, {
+    families: [{ value: "runtime", count: 3 }],
   });
-  assert.deepEqual(readDynamicToolOutput(responses.get("research")).facets, {
-    families: [{ value: "workflow", count: 2 }],
+  const catalogCandidates = readDynamicToolOutput(responses.get("catalog"))
+    .candidates as Array<Record<string, unknown>>;
+  assert.deepEqual(
+    catalogCandidates.map((skill) => skill.skillId),
+    ["base-contract", "collector-implementation", "derived-contract"],
+  );
+  assert.deepEqual(
+    catalogCandidates.map((skill) => skill.description),
+    [
+      "base-contract description",
+      "collector-implementation description",
+      "derived-contract description",
+    ],
+  );
+  assert.ok(catalogCandidates.every((skill) => !("path" in skill) && !("content" in skill)));
+  assert.deepEqual(readDynamicToolOutput(responses.get("runtime")).facets, {
+    families: [{ value: "contract", count: 3 }],
   });
+  assert.deepEqual(readDynamicToolOutput(responses.get("contract")).facets, {
+    families: [{ value: "source", count: 3 }],
+  });
+  assert.deepEqual(readDynamicToolOutput(responses.get("source")).facets, {
+    families: [{ value: "shared", count: 3 }],
+  });
+  const shared = readDynamicToolOutput(responses.get("shared"));
+  assert.equal(shared.reason, "family_child_required");
+  assert.deepEqual(shared.facets, {
+    families: [
+      { value: "collection", count: 2 },
+      { value: "derived-collection", count: 1 },
+    ],
+  });
+  assert.deepEqual(
+    (shared.candidates as Array<Record<string, unknown>>).map((skill) => skill.skillId),
+    ["base-contract", "collector-implementation", "derived-contract"],
+  );
 
   const selected = readDynamicToolOutput(responses.get("selected"));
-  assert.deepEqual(selected.family, ["validation", "research", "workflow"]);
-  assert.deepEqual(selected.selectedSkillIds, ["workflow", "workflow-companion"]);
-  assert.deepEqual(selected.loadOrder, ["foundation", "workflow", "workflow-companion"]);
-  const selectedSkills = selected.skills as Array<Record<string, unknown>>;
-  const foundationSkill = selectedSkills.find((skill) => skill.skillId === "foundation");
-  const companionSkill = selectedSkills.find((skill) => skill.skillId === "workflow-companion");
-  assert.ok(foundationSkill);
-  assert.equal("family" in foundationSkill, false);
-  assert.deepEqual(foundationSkill.tags, ["evidence", "producer"]);
-  assert.equal(foundationSkill.selectionReason, "required_dependency");
-  assert.ok(companionSkill);
-  assert.deepEqual(companionSkill.tags, ["companion", "metadata-only"]);
-  assert.equal(companionSkill.selectionReason, "family_match");
+  assert.deepEqual(
+    selected.family,
+    ["catalog", "runtime", "contract", "source", "shared", "collection"],
+  );
+  assert.deepEqual(selected.selectedSkillIds, ["base-contract", "collector-implementation"]);
+  assert.deepEqual(
+    selected.loadOrder,
+    ["base-contract", "collector-tool", "collector-implementation"],
+  );
+  assert.equal("skills" in selected, false);
+  assert.equal(selected.selectionState, "loading");
   assert.match(readDynamicToolText(responses.get("stale-turn")), /owns active app-server turn turn-test/);
-  assert.match(readDynamicToolText(responses.get("wrong-order")), /load_order_violation/);
-  assert.match(readDynamicToolText(responses.get("foundation")), /FOUNDATION_BODY_DO_NOT_LOG/);
-  assert.match(readDynamicToolText(responses.get("workflow")), /WORKFLOW_BODY_DO_NOT_LOG/);
-  assert.match(readDynamicToolText(responses.get("workflow-companion")), /WORKFLOW_COMPANION_BODY_DO_NOT_LOG/);
-  assert.match(readDynamicToolText(responses.get("reference")), /REFERENCE_BODY_DO_NOT_LOG/);
+  assert.match(
+    readDynamicToolText(responses.get("implementation-first")),
+    /load_order_violation/,
+  );
+  assert.match(readDynamicToolText(responses.get("rediscover-incomplete")), /selection_incomplete/);
+  assert.match(
+    readDynamicToolText(responses.get("interface")),
+    /BASE_CONTRACT_BODY_DO_NOT_LOG/,
+  );
+  assert.match(
+    readDynamicToolText(responses.get("collector-tool")),
+    /COLLECTOR_TOOL_BODY_DO_NOT_LOG/,
+  );
+  assert.match(
+    readDynamicToolText(responses.get("implementation")),
+    /COLLECTOR_IMPLEMENTATION_BODY_DO_NOT_LOG/,
+  );
+  const referenceOutput = readDynamicToolOutput(responses.get("reference"));
+  const referenceContent = String(referenceOutput.content);
+  assert.match(referenceContent, /REFERENCE_BODY_DO_NOT_LOG/);
+  assert.match(referenceContent, /^artifact_type: TestSkillResource$/m);
+  assert.match(referenceContent, /^artifact_version: 1$/m);
+  assert.match(referenceContent, /^evidence_id: E-TEST-001$/m);
+  assert.doesNotMatch(referenceContent, /^scout:$/m);
+  assert.doesNotMatch(referenceContent, /requirement:|description:/);
+  const referenceBytes = Buffer.from(referenceContent, "utf8");
+  assert.equal(referenceOutput.byteLength, referenceBytes.byteLength);
+  assert.equal(
+    referenceOutput.digest,
+    `sha256:${createHash("sha256").update(referenceBytes).digest("hex")}`,
+  );
+  assert.equal(referenceOutput.selectionState, "ready");
   assert.match(readDynamicToolText(responses.get("binary")), /resource_not_text/);
   assert.match(readDynamicToolText(responses.get("too-large")), /resource_too_large/);
   assert.match(readDynamicToolText(responses.get("traversal")), /invalid_resource_path/);
   assert.match(readDynamicToolText(responses.get("replaced-root")), /resource_path_escape/);
-  assert.match(readDynamicToolText(responses.get("invalidated")), /unknown_selection/);
+  assert.equal(
+    readDynamicToolOutput(responses.get("retained-after-discovery")).selectionId,
+    selected.selectionId,
+  );
+  assert.match(
+    readDynamicToolText(responses.get("retained-after-discovery")),
+    /BASE_CONTRACT_BODY_DO_NOT_LOG/,
+  );
+  assert.match(readDynamicToolText(responses.get("asset-commit-stale")), /selection_scope_mismatch/);
+  assert.equal(
+    (readDynamicToolOutput(responses.get("asset-commit-reselected")).scope as Record<string, unknown>)
+      .assetCommitId,
+    "ac_relocated",
+  );
 
   const findEvents = skillEvents.filter(AgentEvents.skill.findCompleted.is);
   const readEvents = skillEvents.filter(AgentEvents.skill.readCompleted.is);
@@ -1386,15 +1691,548 @@ test("Skill tools navigate family one level at a time, then read the dependency 
   const readFailures = skillEvents.filter(AgentEvents.skill.readFailed.is);
   assert.ok(findEvents.some((event) =>
     event.payload.status === "selected"
-    && event.payload.loadOrder?.join(",") === "foundation,workflow,workflow-companion"
+    && event.payload.loadOrder?.join(",")
+      === "base-contract,collector-tool,collector-implementation"
   ));
   assert.ok(readEvents.some((event) =>
-    event.payload.skillId === "workflow"
+    event.payload.skillId === "collector-implementation"
     && event.payload.resource === "references/detail.md"
   ));
-  assert.ok(findFailures.some((event) => event.payload.errorCode === "phase_mismatch"));
+  assert.ok(findFailures.some((event) => event.payload.errorCode === "family_navigation_mismatch"));
   assert.ok(readFailures.some((event) => event.payload.errorCode === "resource_too_large"));
   assert.doesNotMatch(JSON.stringify(skillEvents), /BODY_DO_NOT_LOG/);
+  assert.doesNotMatch(JSON.stringify(skillEvents), /base-contract description/);
+});
+
+test("SubmitTask requires all current Skill selections ready and no unfinished discovery", async () => {
+  let researcher: ResearcherAgent | undefined;
+  let activeMount: CodexMount | undefined;
+  let missingSubmission: DynamicToolCallResponse | undefined;
+  let incompleteSubmission: DynamicToolCallResponse | undefined;
+  let staleSubmission: DynamicToolCallResponse | undefined;
+  let discoverySubmission: DynamicToolCallResponse | undefined;
+  let secondIncompleteSubmission: DynamicToolCallResponse | undefined;
+  let blockedDiscovery: DynamicToolCallResponse | undefined;
+  let retainedOptionalRead: DynamicToolCallResponse | undefined;
+  let completedSubmission: DynamicToolCallResponse | undefined;
+  let requiredReadOutputs: Record<string, unknown>[] = [];
+  const appServer = createFakeAppServer({
+    onRunTurn: async () => {
+      const handler = appServer.handler;
+      if (!handler || !researcher?.threadId) {
+        throw new Error("Expected an active Researcher Skill caller.");
+      }
+      const invoke = async (
+        callId: string,
+        namespace: string,
+        tool: string,
+        args: Record<string, unknown>,
+      ): Promise<DynamicToolCallResponse> => await handler({
+        threadId: researcher?.threadId ?? "",
+        turnId: "turn-test",
+        callId,
+        namespace,
+        tool,
+        arguments: args,
+      });
+
+      missingSubmission = await invoke(
+        "call-submit-without-selection",
+        AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        "SubmitTask",
+        { outcome: "## Outcome\n\n- Must require Skill discovery." },
+      );
+      const selected = await invoke(
+        "call-find-research-workflow",
+        AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+        "FindSkills",
+        { family: ["validation", "workflow", "researcher"] },
+      );
+      const selectionId = readDynamicToolOutput(selected).selectionId;
+      assert.equal(typeof selectionId, "string");
+
+      incompleteSubmission = await invoke(
+        "call-submit-incomplete",
+        AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        "SubmitTask",
+        { outcome: "## Outcome\n\n- Must remain blocked." },
+      );
+      if (!activeMount) throw new Error("Expected an active Researcher mount.");
+      const selectedAssetCommitId = activeMount.assetCommitId;
+      activeMount.assetCommitId = "ac_relocated_during_turn";
+      staleSubmission = await invoke(
+        "call-submit-stale-selection",
+        AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        "SubmitTask",
+        { outcome: "## Outcome\n\n- Must reselect after asset drift." },
+      );
+      activeMount.assetCommitId = selectedAssetCommitId;
+      const requiredReads = await Promise.all([
+        invoke(
+          "call-read-skill",
+          AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
+          "ReadSkillResource",
+          {
+            selection_id: selectionId,
+            skill_id: "research-workflow",
+            resource: "SKILL.md",
+          },
+        ),
+        invoke(
+          "call-read-template",
+          AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
+          "ReadSkillResource",
+          {
+            selection_id: selectionId,
+            skill_id: "research-workflow",
+            resource: "templates/required.md",
+          },
+        ),
+      ]);
+      requiredReadOutputs = requiredReads.map(readDynamicToolOutput);
+      await invoke(
+        "call-restart-discovery",
+        AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+        "FindSkills",
+        {},
+      );
+      discoverySubmission = await invoke(
+        "call-submit-after-restart",
+        AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        "SubmitTask",
+        { outcome: "## Outcome\n\n- Unfinished discovery must block submission." },
+      );
+      for (const family of [
+        ["catalog"],
+        ["catalog", "secondary"],
+      ]) {
+        await invoke(
+          `call-refine-${family.at(-1)}`,
+          AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+          "FindSkills",
+          { family },
+        );
+      }
+      const secondarySelected = await invoke(
+        "call-select-secondary-contract",
+        AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+        "FindSkills",
+        { family: ["catalog", "secondary", "contract"] },
+      );
+      const secondarySelectionId = readDynamicToolOutput(secondarySelected).selectionId;
+      assert.equal(typeof secondarySelectionId, "string");
+      secondIncompleteSubmission = await invoke(
+        "call-submit-secondary-incomplete",
+        AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        "SubmitTask",
+        { outcome: "## Outcome\n\n- Every issued selection must be ready." },
+      );
+      blockedDiscovery = await invoke(
+        "call-discover-while-secondary-incomplete",
+        AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+        "FindSkills",
+        {},
+      );
+      retainedOptionalRead = await invoke(
+        "call-read-retained-workflow-optional",
+        AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
+        "ReadSkillResource",
+        {
+          selection_id: selectionId,
+          skill_id: "research-workflow",
+          resource: "templates/optional.md",
+        },
+      );
+      await invoke(
+        "call-read-secondary-contract",
+        AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
+        "ReadSkillResource",
+        {
+          selection_id: secondarySelectionId,
+          skill_id: "secondary-contract",
+          resource: "SKILL.md",
+        },
+      );
+      completedSubmission = await invoke(
+        "call-submit-ready",
+        AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        "SubmitTask",
+        { outcome: "## Outcome\n\n- Required Skill content loaded." },
+      );
+      return [{
+        namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        tool: "SubmitTask",
+        callId: "call-submit-ready",
+        arguments: { outcome: "## Outcome\n\n- Required Skill content loaded." },
+        success: completedSubmission.success,
+      }];
+    },
+  });
+  const fixture = createAgentFixture("skill-submit-readiness", {
+    appServer,
+    domain: createStaticDomain("validation", []),
+  });
+  const mount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  activeMount = mount;
+  installTestSkillCatalog(fixture.root, mount, [
+    testSkill("research-workflow", {
+      family: ["validation", "workflow", "researcher"],
+      content: "# Research workflow\n",
+      resources: {
+        "templates/required.md": {
+          content: "# Required template\n",
+          requirement: "required",
+          description: "Required output template.",
+        },
+        "templates/optional.md": {
+          content: "# Optional template\n",
+          requirement: "optional",
+          description: "Optional branch template.",
+        },
+      },
+    }),
+    testSkill("secondary-contract", {
+      family: ["catalog", "secondary", "contract"],
+      content: "# Secondary contract\n",
+    }),
+  ]);
+  prepareAgent(fixture, ScoutAgentRoles.Researcher, mount, createAssetCommit(mount));
+  researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher) as ResearcherAgent;
+  new AgentBackend().start();
+  await researcher.startThread();
+  const assignment = await researcher.assignTask({
+    description: "Verify Skill readiness before submission",
+    subagentType: ScoutAgentRoles.Researcher,
+    prompt: agent.turn.message("Load the Research workflow and submit the task."),
+    isBackgrounded: true,
+  });
+  assert.equal(assignment.ok, true);
+  if (!assignment.ok || !researcher.runner) {
+    throw new Error("Expected the Researcher task assignment to succeed.");
+  }
+
+  await researcher.runner.runTasksToIdle();
+
+  assert.equal(missingSubmission?.success, false);
+  assert.match(readDynamicToolText(missingSubmission), /selection_required/);
+  assert.equal(incompleteSubmission?.success, false);
+  assert.match(readDynamicToolText(incompleteSubmission), /selection_incomplete/);
+  assert.equal(staleSubmission?.success, false);
+  assert.match(readDynamicToolText(staleSubmission), /selection_scope_mismatch/);
+  assert.ok(requiredReadOutputs.some((output) => output.selectionState === "loading"));
+  assert.ok(requiredReadOutputs.some((output) => output.selectionState === "ready"));
+  assert.equal(discoverySubmission?.success, false);
+  assert.match(readDynamicToolText(discoverySubmission), /discovery_incomplete/);
+  assert.equal(secondIncompleteSubmission?.success, false);
+  assert.match(readDynamicToolText(secondIncompleteSubmission), /selection_incomplete/);
+  assert.equal(blockedDiscovery?.success, false);
+  assert.match(readDynamicToolText(blockedDiscovery), /selection_incomplete/);
+  assert.equal(retainedOptionalRead?.success, true);
+  assert.match(readDynamicToolText(retainedOptionalRead), /Optional template/);
+  assert.equal(completedSubmission?.success, true);
+  assert.equal(researcher.runner.snapshot().activeTask?.status, AgentTaskStatuses.Done);
+});
+
+test("Protocol correction reuses only its source turn ready Skill selection", async () => {
+  let researcher: ResearcherAgent | undefined;
+  let correctionSubmission: DynamicToolCallResponse | undefined;
+  const appServer = createFakeAppServer({
+    turnIdForTurn: (turn) => turn.prompt?.includes("运行时协议修正")
+      ? "turn-correction"
+      : "turn-source",
+    onRunTurn: async (turn) => {
+      const handler = appServer.handler;
+      if (!handler || !researcher?.threadId) {
+        throw new Error("Expected an active Researcher correction caller.");
+      }
+      if (turn.prompt?.includes("运行时协议修正")) {
+        correctionSubmission = await handler({
+          threadId: researcher.threadId,
+          turnId: "turn-correction",
+          callId: "call-correction-submit",
+          namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+          tool: "SubmitTask",
+          arguments: { outcome: "## Outcome\n\n- Reused the source turn selection." },
+        });
+        return [{
+          namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+          tool: "SubmitTask",
+          callId: "call-correction-submit",
+          arguments: { outcome: "## Outcome\n\n- Reused the source turn selection." },
+          success: correctionSubmission.success,
+        }];
+      }
+
+      const selected = await handler({
+        threadId: researcher.threadId,
+        turnId: "turn-source",
+        callId: "call-source-find",
+        namespace: AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+        tool: "FindSkills",
+        arguments: { family: ["validation", "correction-ready"] },
+      });
+      const selectionId = readDynamicToolOutput(selected).selectionId;
+      assert.equal(typeof selectionId, "string");
+      const loaded = await handler({
+        threadId: researcher.threadId,
+        turnId: "turn-source",
+        callId: "call-source-read",
+        namespace: AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
+        tool: "ReadSkillResource",
+        arguments: {
+          selection_id: selectionId,
+          skill_id: "correction-ready",
+          resource: "SKILL.md",
+        },
+      });
+      assert.equal(readDynamicToolOutput(loaded).selectionState, "ready");
+      return [];
+    },
+  });
+  const fixture = createAgentFixture("skill-correction-source-ready", {
+    appServer,
+    domain: createStaticDomain("validation", []),
+  });
+  const mount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  installTestSkillCatalog(fixture.root, mount, [
+    testSkill("correction-ready", {
+      family: ["validation", "correction-ready"],
+      content: "# Correction ready\n",
+    }),
+  ]);
+  prepareAgent(fixture, ScoutAgentRoles.Researcher, mount, createAssetCommit(mount));
+  const builder = new AgentBuilder();
+  const coordinator = builder.buildCoordinator();
+  await coordinator.startThread();
+  fixture.registry.bindThread(coordinator.agentId, "thread-coordinator");
+  researcher = builder.buildWorker(ScoutAgentRoles.Researcher) as ResearcherAgent;
+  await researcher.startThread();
+  new AgentBackend().start();
+  const assignment = await researcher.assignTask({
+    description: "Submit from a bounded correction turn",
+    subagentType: ScoutAgentRoles.Researcher,
+    prompt: agent.turn.message("Load the Skill but omit the lifecycle disposition."),
+    isBackgrounded: true,
+  });
+  assert.equal(assignment.ok, true);
+  if (!assignment.ok || !researcher.runner) {
+    throw new Error("Expected the correction task assignment to succeed.");
+  }
+
+  await researcher.runner.runTasksToIdle();
+
+  assert.equal(correctionSubmission?.success, true);
+  assert.equal(researcher.runner.snapshot().activeTask?.status, AgentTaskStatuses.Done);
+  assert.equal(appServer.turnInputs.length >= 2, true);
+  await coordinator.runner.stop();
+});
+
+test("Protocol correction rejects current-turn Skill activity instead of replacing its source", async () => {
+  let researcher: ResearcherAgent | undefined;
+  let currentIncompleteSubmission: DynamicToolCallResponse | undefined;
+  let currentReadySubmission: DynamicToolCallResponse | undefined;
+  let correctionSubmission: DynamicToolCallResponse | undefined;
+  const appServer = createFakeAppServer({
+    turnIdForTurn: (turn) => turn.prompt?.includes("运行时协议修正")
+      ? "turn-correction-incomplete"
+      : "turn-source-ready",
+    onRunTurn: async (turn) => {
+      const handler = appServer.handler;
+      if (!handler || !researcher?.threadId) {
+        throw new Error("Expected an active Researcher correction caller.");
+      }
+      const turnId = turn.prompt?.includes("运行时协议修正")
+        ? "turn-correction-incomplete"
+        : "turn-source-ready";
+      const selected = await handler({
+        threadId: researcher.threadId,
+        turnId,
+        callId: `call-find-${turnId}`,
+        namespace: AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+        tool: "FindSkills",
+        arguments: { family: ["validation", "correction-current"] },
+      });
+      const selectionId = readDynamicToolOutput(selected).selectionId;
+      assert.equal(typeof selectionId, "string");
+
+      if (!turn.prompt?.includes("运行时协议修正")) {
+        const loaded = await handler({
+          threadId: researcher.threadId,
+          turnId,
+          callId: "call-read-source-ready",
+          namespace: AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
+          tool: "ReadSkillResource",
+          arguments: {
+            selection_id: selectionId,
+            skill_id: "correction-current",
+            resource: "SKILL.md",
+          },
+        });
+        assert.equal(readDynamicToolOutput(loaded).selectionState, "ready");
+        return [];
+      }
+
+      currentIncompleteSubmission = await handler({
+        threadId: researcher.threadId,
+        turnId,
+        callId: "call-submit-current-incomplete",
+        namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        tool: "SubmitTask",
+        arguments: { outcome: "## Outcome\n\n- Must not fall back to the source selection." },
+      });
+      const loaded = await handler({
+        threadId: researcher.threadId,
+        turnId,
+        callId: "call-read-correction-current",
+        namespace: AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
+        tool: "ReadSkillResource",
+        arguments: {
+          selection_id: selectionId,
+          skill_id: "correction-current",
+          resource: "SKILL.md",
+        },
+      });
+      assert.equal(readDynamicToolOutput(loaded).selectionState, "ready");
+      currentReadySubmission = await handler({
+        threadId: researcher.threadId,
+        turnId,
+        callId: "call-submit-current-ready",
+        namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        tool: "SubmitTask",
+        arguments: { outcome: "## Outcome\n\n- Must reuse the source turn instead." },
+      });
+      const discovery = await handler({
+        threadId: researcher.threadId,
+        turnId,
+        callId: "call-start-correction-discovery",
+        namespace: AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+        tool: "FindSkills",
+        arguments: { family: ["unknown"] },
+      });
+      assert.equal(readDynamicToolOutput(discovery).status, "refine_required");
+      assert.equal(
+        readDynamicToolOutput(discovery).reason,
+        "family_navigation_reset",
+      );
+      correctionSubmission = await handler({
+        threadId: researcher.threadId,
+        turnId,
+        callId: "call-submit-current-discovery",
+        namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        tool: "SubmitTask",
+        arguments: { outcome: "## Outcome\n\n- Unfinished correction discovery must block submission." },
+      });
+      return [{
+        namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        tool: "SubmitTask",
+        callId: "call-submit-current-discovery",
+        arguments: { outcome: "## Outcome\n\n- Unfinished correction discovery must block submission." },
+        success: correctionSubmission.success,
+      }];
+    },
+  });
+  const fixture = createAgentFixture("skill-correction-current-incomplete", {
+    appServer,
+    domain: createStaticDomain("validation", []),
+  });
+  const mount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  installTestSkillCatalog(fixture.root, mount, [
+    testSkill("correction-current", {
+      family: ["validation", "correction-current"],
+      content: "# Correction current\n",
+    }),
+  ]);
+  prepareAgent(fixture, ScoutAgentRoles.Researcher, mount, createAssetCommit(mount));
+  const builder = new AgentBuilder();
+  const coordinator = builder.buildCoordinator();
+  await coordinator.startThread();
+  fixture.registry.bindThread(coordinator.agentId, "thread-coordinator");
+  researcher = builder.buildWorker(ScoutAgentRoles.Researcher) as ResearcherAgent;
+  await researcher.startThread();
+  new AgentBackend().start();
+  const assignment = await researcher.assignTask({
+    description: "Reject an incomplete correction selection",
+    subagentType: ScoutAgentRoles.Researcher,
+    prompt: agent.turn.message("Load the source Skill but omit the lifecycle disposition."),
+    isBackgrounded: true,
+  });
+  assert.equal(assignment.ok, true);
+  if (!assignment.ok || !researcher.runner) {
+    throw new Error("Expected the correction task assignment to succeed.");
+  }
+
+  await researcher.runner.runTasksToIdle();
+
+  assert.equal(currentIncompleteSubmission?.success, false);
+  assert.match(readDynamicToolText(currentIncompleteSubmission), /selection_incomplete/);
+  assert.equal(currentReadySubmission?.success, false);
+  assert.match(readDynamicToolText(currentReadySubmission), /correction_selection_not_allowed/);
+  assert.equal(correctionSubmission?.success, false);
+  assert.match(readDynamicToolText(correctionSubmission), /discovery_incomplete/);
+  assert.equal(researcher.runner.snapshot().activeTask?.status, AgentTaskStatuses.Failed);
+  await coordinator.runner.stop();
+});
+
+test("Protocol correction rejects SubmitTask when its source turn has no Skill selection", async () => {
+  let researcher: ResearcherAgent | undefined;
+  let correctionSubmission: DynamicToolCallResponse | undefined;
+  const appServer = createFakeAppServer({
+    turnIdForTurn: (turn) => turn.prompt?.includes("运行时协议修正")
+      ? "turn-correction-empty"
+      : "turn-source-empty",
+    onRunTurn: async (turn) => {
+      if (!turn.prompt?.includes("运行时协议修正")) return [];
+      const handler = appServer.handler;
+      if (!handler || !researcher?.threadId) {
+        throw new Error("Expected an active Researcher correction caller.");
+      }
+      correctionSubmission = await handler({
+        threadId: researcher.threadId,
+        turnId: "turn-correction-empty",
+        callId: "call-correction-submit-without-source",
+        namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        tool: "SubmitTask",
+        arguments: { outcome: "## Outcome\n\n- Must remain blocked." },
+      });
+      return [{
+        namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+        tool: "SubmitTask",
+        callId: "call-correction-submit-without-source",
+        arguments: { outcome: "## Outcome\n\n- Must remain blocked." },
+        success: correctionSubmission.success,
+      }];
+    },
+  });
+  const fixture = createAgentFixture("skill-correction-source-missing", {
+    appServer,
+    domain: createStaticDomain("validation", []),
+  });
+  const mount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  prepareAgent(fixture, ScoutAgentRoles.Researcher, mount, createAssetCommit(mount));
+  const builder = new AgentBuilder();
+  const coordinator = builder.buildCoordinator();
+  await coordinator.startThread();
+  fixture.registry.bindThread(coordinator.agentId, "thread-coordinator");
+  researcher = builder.buildWorker(ScoutAgentRoles.Researcher) as ResearcherAgent;
+  await researcher.startThread();
+  new AgentBackend().start();
+  const assignment = await researcher.assignTask({
+    description: "Reject an unqualified correction submission",
+    subagentType: ScoutAgentRoles.Researcher,
+    prompt: agent.turn.message("Omit Skill discovery and lifecycle disposition."),
+    isBackgrounded: true,
+  });
+  assert.equal(assignment.ok, true);
+  if (!assignment.ok || !researcher.runner) {
+    throw new Error("Expected the correction task assignment to succeed.");
+  }
+
+  await researcher.runner.runTasksToIdle();
+
+  assert.equal(correctionSubmission?.success, false);
+  assert.match(readDynamicToolText(correctionSubmission), /selection_required/);
+  assert.equal(researcher.runner.snapshot().activeTask?.status, AgentTaskStatuses.Failed);
+  await coordinator.runner.stop();
 });
 
 test("SendMessage reports an undelivered message when the target Worker has no runner", async () => {
@@ -1514,11 +2352,43 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   let submitSucceeded = false;
   let staleRequestError = "";
   let staleSubmitError = "";
+  let missingReselectionError = "";
   const appServer = createFakeAppServer({
+    turnIdForTurn: (turn) => turn.prompt?.includes("<human-response>")
+      ? "turn-human-response-worker"
+      : "turn-human-request-worker",
     onRunTurn: async (turn) => {
       const prompt = turn.prompt ?? "";
       if (!verifier || !appServer.handler) return;
+      const selectAndRead = async (turnId: string): Promise<void> => {
+        const selected = await appServer.handler?.({
+          threadId: verifier?.threadId ?? "",
+          turnId,
+          callId: `call-find-${turnId}`,
+          namespace: AGENT_FIND_SKILLS_TOOL_NAMESPACE,
+          tool: "FindSkills",
+          arguments: { family: ["validation", "human-lifecycle"] },
+        });
+        if (!selected) throw new Error("Expected a Skill selection response.");
+        const selectionId = readDynamicToolOutput(selected).selectionId;
+        assert.equal(typeof selectionId, "string");
+        const loaded = await appServer.handler?.({
+          threadId: verifier?.threadId ?? "",
+          turnId,
+          callId: `call-read-${turnId}`,
+          namespace: AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
+          tool: "ReadSkillResource",
+          arguments: {
+            selection_id: selectionId,
+            skill_id: "human-lifecycle",
+            resource: "SKILL.md",
+          },
+        });
+        if (!loaded) throw new Error("Expected a Skill resource response.");
+        assert.equal(readDynamicToolOutput(loaded).selectionState, "ready");
+      };
       if (prompt.includes("<message>\nPerform lifecycle handoff.\n</message>")) {
+        await selectAndRead("turn-human-request-worker");
         const stale = await appServer.handler({
           threadId: verifier.threadId ?? "",
           turnId: "turn-stale-request",
@@ -1532,7 +2402,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
         staleRequestError = stale.contentItems[0]?.text ?? "";
         const result = await appServer.handler({
           threadId: verifier.threadId ?? "",
-          turnId: "turn-test",
+          turnId: "turn-human-request-worker",
           callId: "call-wait-for-human-input",
           namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
           tool: "RequestHumanInput",
@@ -1563,9 +2433,21 @@ test("Human input tools deliver through Coordinator and update the bound task", 
           },
         });
         staleSubmitError = stale.contentItems[0]?.text ?? "";
+        const missingReselection = await appServer.handler({
+          threadId: verifier.threadId ?? "",
+          turnId: "turn-human-response-worker",
+          callId: "call-submit-without-human-reselection",
+          namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+          tool: "SubmitTask",
+          arguments: {
+            outcome: "Must not reuse the prior human-request turn selection.",
+          },
+        });
+        missingReselectionError = missingReselection.contentItems[0]?.text ?? "";
+        await selectAndRead("turn-human-response-worker");
         const result = await appServer.handler({
           threadId: verifier.threadId ?? "",
-          turnId: "turn-test",
+          turnId: "turn-human-response-worker",
           callId: "call-submit-task",
           namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
           tool: "SubmitTask",
@@ -1580,6 +2462,13 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   const domain = createStaticDomain("domain-worker-lifecycle-tools", []);
   const fixture = createAgentFixture("worker-lifecycle-tools", { appServer, domain });
   const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
+  installTestSkillCatalog(fixture.root, verifierMount, [
+    testSkill("human-lifecycle", {
+      phase: [ScoutAgentPhases.Verify],
+      family: ["validation", "human-lifecycle"],
+      content: "# Human lifecycle\n",
+    }),
+  ]);
   const verifierCommit = createAssetCommit(verifierMount);
   new AgentBackend().start();
   prepareAgent(fixture, ScoutAgentRoles.Verifier, verifierMount, verifierCommit);
@@ -1602,7 +2491,10 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   await runner.runTasksToIdle();
 
   assert.equal(requestSucceeded, true);
-  assert.match(staleRequestError, /owns active app-server turn turn-test, not turn-stale-request/);
+  assert.match(
+    staleRequestError,
+    /owns active app-server turn turn-human-request-worker, not turn-stale-request/,
+  );
   assert.equal(runner.snapshot().activeTask?.status, AgentTaskStatuses.Running);
   assert.deepEqual(runner.snapshot().activeTask?.steps?.[0]?.humanInputRequest, {
     body: "Need target account.",
@@ -1658,7 +2550,11 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   await runner.runTasksToIdle();
 
   assert.equal(submitSucceeded, true);
-  assert.match(staleSubmitError, /owns active app-server turn turn-test, not turn-stale-submit/);
+  assert.match(
+    staleSubmitError,
+    /owns active app-server turn turn-human-response-worker, not turn-stale-submit/,
+  );
+  assert.match(missingReselectionError, /selection_required/);
   assert.equal(runner.snapshot().activeTask?.status, AgentTaskStatuses.Done);
   assert.deepEqual(runner.snapshot().activeTask?.steps?.[1]?.humanInputResponse, {
     body: "Use staging account.",
@@ -1892,7 +2788,8 @@ function createAgentFixture(
   } as RunEnvironment["agents"];
   const scope = new RunScope({
     runId,
-    repoRoot: root,
+    scoutRoot: root,
+    runRoot,
     logger,
     eventBus,
     interactionPort: input.interactionPort ?? new NoopRuntimeInteractionPort(),
@@ -1917,12 +2814,12 @@ function createAgentFixture(
   const createdAt = new Date().toISOString();
   eventBus.publish(
     RunEvents.run.created,
-    { runId, repoRoot: root, createdAt },
+    { runId, scoutRoot: root, createdAt },
     { occurredAt: createdAt },
   );
   manifestStore.create({
     runId,
-    repoRoot: root,
+    scoutRoot: root,
     createdAt,
     checkpointSeq: journal.lastSeq,
   });
@@ -1981,6 +2878,12 @@ interface TestSkillFixture {
   resources: Record<string, string>;
 }
 
+interface TestSkillResourceFixture {
+  content: string;
+  requirement: ScoutSkillCatalogEntry["resources"][number]["requirement"];
+  description: string;
+}
+
 function testSkill(
   name: string,
   options: {
@@ -1989,9 +2892,14 @@ function testSkill(
     tags?: string[];
     requiredSkills?: string[];
     content: string;
-    resources?: Record<string, string>;
+    resources?: Record<string, TestSkillResourceFixture>;
   },
 ): TestSkillFixture {
+  const resources = Object.entries(options.resources ?? {}).map(([path, resource]) => ({
+    path,
+    requirement: resource.requirement,
+    description: resource.description,
+  }));
   return {
     entry: {
       name,
@@ -2004,14 +2912,28 @@ function testSkill(
       tags: options.tags ?? [name],
       requiredSkills: options.requiredSkills ?? [],
       path: `.scout/skills/${name}/SKILL.md`,
+      resources,
     },
     content: options.content,
-    resources: options.resources ?? {},
+    resources: Object.fromEntries(
+      Object.entries(options.resources ?? {}).map(([path, resource]) => [path, [
+        "---",
+        "scout:",
+        "  resource:",
+        `    requirement: ${resource.requirement}`,
+        `    description: ${resource.description}`,
+        "artifact_type: TestSkillResource",
+        "artifact_version: 1",
+        "evidence_id: E-TEST-001",
+        "---",
+        resource.content,
+      ].join("\n")]),
+    ),
   };
 }
 
 function installTestSkillCatalog(
-  repoRoot: string,
+  scoutRoot: string,
   mount: CodexMount,
   skills: TestSkillFixture[],
 ): {
@@ -2020,7 +2942,7 @@ function installTestSkillCatalog(
 } {
   const links = new Map<string, string>();
   const sources = new Map<string, string>();
-  const sourceRoot = join(repoRoot, "assets", "codex", "skills");
+  const sourceRoot = join(scoutRoot, "assets", "codex", "skills");
   const mountedRoot = join(mount.mountRoot, ".scout", "skills");
   mkdirSync(sourceRoot, { recursive: true });
   mkdirSync(mountedRoot, { recursive: true });
@@ -2040,9 +2962,17 @@ function installTestSkillCatalog(
     sources.set(skill.entry.name, source);
   }
 
-  mount.agentProfile.skills = skills.map((skill) => skill.entry.name);
-  mount.skills = skills.map((skill) => skill.entry.name);
-  mount.skillCatalog = skills.map((skill) => structuredClone(skill.entry));
+  const catalog = skills.map((skill) => structuredClone(skill.entry));
+  const projected = resolveSkillDependencyLoadOrder(
+    catalog,
+    catalog
+      .filter((skill) =>
+        skill.family !== undefined && skill.phase.includes(mount.agentProfile.phase)
+      )
+      .map((skill) => skill.name),
+  );
+  mount.skills = projected.map((skill) => skill.name);
+  mount.skillCatalog = projected;
   return { links, sources };
 }
 
@@ -2057,7 +2987,7 @@ function readDynamicToolOutput(
   return JSON.parse(readDynamicToolText(response)) as Record<string, unknown>;
 }
 
-function createMount(root: string, role: string): CodexMount {
+function createMount(root: string, role: ScoutAgentRole): CodexMount {
   const mountRoot = join(root, role, "mount");
   const artifactRoot = join(root, role, "artifacts");
   const logsRoot = join(root, role, "logs");
@@ -2088,12 +3018,18 @@ function createMount(root: string, role: string): CodexMount {
         reasoningEffort: "high",
         reasoningSummary: "concise",
       },
-      skills: [],
+      phase: {
+        [ScoutAgentRoles.Coordinator]: ScoutAgentPhases.Coordinate,
+        [ScoutAgentRoles.Researcher]: ScoutAgentPhases.Research,
+        [ScoutAgentRoles.Verifier]: ScoutAgentPhases.Verify,
+        [ScoutAgentRoles.Validator]: ScoutAgentPhases.Validate,
+      }[role],
       mcpServers: [],
       plugins: [],
     },
     assetCommitId: `ac_${role}`,
     mountId: `mount-${role}`,
+    scoutRoot: root,
     mountRoot,
     runRoot: root,
     artifactRoot,
@@ -2277,6 +3213,8 @@ function createFakeAppServer(options: {
   finalResponse?: string;
   turnStatus?: "completed" | "failed" | "interrupted";
   turnError?: unknown;
+  turnIds?: string[];
+  turnIdForTurn?: (turn: { prompt?: string }, index: number) => string;
   resolveTimelineEntry?: (entry: AppServerTimelineEntry) => AppServerResolvedTimelineEntry;
   parentThreadIds?: Record<string, string | null>;
   threadSnapshot?: (threadId: string) => AppServerThreadState | undefined;
@@ -2294,6 +3232,8 @@ function createFakeAppServer(options: {
     model?: string;
     modelProvider?: string;
     reasoningEffort?: string;
+    permissions?: string;
+    runtimeWorkspaceRoots?: string[];
   }>;
   interruptInputs: Array<{ threadId: string; turnId: string }>;
   cancelTurnWaitInputs: Array<{ threadId: string; error: string }>;
@@ -2312,6 +3252,8 @@ function createFakeAppServer(options: {
       model?: string;
       modelProvider?: string;
       reasoningEffort?: string;
+      permissions?: string;
+      runtimeWorkspaceRoots?: string[];
     }>,
     interruptInputs: [] as Array<{ threadId: string; turnId: string }>,
     cancelTurnWaitInputs: [] as Array<{ threadId: string; error: string }>,
@@ -2368,6 +3310,7 @@ function createFakeAppServer(options: {
         threadId: "thread-test",
         startInput: {
           cwd: threadInput.cwd,
+          runtimeWorkspaceRoots: threadInput.runtimeWorkspaceRoots,
           model: threadInput.model,
           modelProvider: threadInput.modelProvider,
           approvalPolicy: threadInput.approvalPolicy ?? "never",
@@ -2426,17 +3369,21 @@ function createFakeAppServer(options: {
       permissions?: string;
       onTurnStarted?: (turnId: string) => void;
     }) => {
+      const turnIndex = appServer.turnInputs.length;
+      const turnId = options.turnIdForTurn?.(turnInput, turnIndex)
+        ?? options.turnIds?.[turnIndex]
+        ?? "turn-test";
       appServer.turnInputs.push(turnInput);
       await options.onBeforeTurnStarted?.(turnInput);
-      turnInput.onTurnStarted?.("turn-test");
+      turnInput.onTurnStarted?.(turnId);
       const toolCalls = await options.onRunTurn?.(turnInput);
       return {
-        turnId: "turn-test",
+        turnId,
         finalResponse: options.finalResponse ?? "",
         response: {},
         turnSnapshot: options.turnStatus
           ? {
-            id: "turn-test",
+            id: turnId,
             threadId: "thread-test",
             status: options.turnStatus,
             error: options.turnError,

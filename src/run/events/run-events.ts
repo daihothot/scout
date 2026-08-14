@@ -6,7 +6,7 @@ import {
 /** Fact emitted when a run directory and initial identity are created. */
 export interface RunCreatedEvent {
   runId: string;
-  repoRoot: string;
+  scoutRoot: string;
   createdAt: string;
 }
 

@@ -5,8 +5,8 @@ import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const repoRoot = process.cwd();
-const digestTool = join(repoRoot, "assets", "codex", "tools", "scout-artifact-digest.cjs");
+const scoutRoot = process.cwd();
+const digestTool = join(scoutRoot, "assets", "codex", "tools", "scout-artifact-digest.cjs");
 
 test("scout-artifact-digest produces a location-independent directory digest", () => {
   const first = createPack("scout-artifact-digest-first-");
@@ -28,7 +28,7 @@ test("scout-artifact-digest rejects symbolic links", () => {
   symlinkSync(join(pack, "index.md"), join(pack, "linked-index.md"));
 
   const result = spawnSync(process.execPath, [digestTool, pack], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
 
@@ -47,7 +47,7 @@ function createPack(prefix: string): string {
 
 function readDigest(target: string): string {
   const output = execFileSync(process.execPath, [digestTool, target], {
-    cwd: repoRoot,
+    cwd: scoutRoot,
     encoding: "utf8",
   });
   return output.match(/^digest=(sha256:[a-f0-9]{64})$/m)?.[1] ?? "";

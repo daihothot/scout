@@ -4,6 +4,7 @@ import {
   realpathSync,
 } from "node:fs";
 import {
+  basename,
   join,
   relative,
   resolve,
@@ -51,28 +52,28 @@ export class EnvironmentSnapshotLoadError extends Error {
 export class EnvironmentSnapshotLoader {
   constructor(
     private readonly input: {
-      readonly repoRoot: string;
-      readonly runId: string;
+      readonly scoutRoot: string;
+      readonly runRoot: string;
       readonly manifest: RunManifest;
       readonly roles: readonly ScoutAgentRole[];
     },
   ) {}
 
   load(): EnvironmentSnapshot {
-    const repoRoot = resolve(this.input.repoRoot);
-    const runRoot = resolve(repoRoot, "run", this.input.runId);
-    const repoRootReal = realpathSync(repoRoot);
+    const scoutRoot = resolve(this.input.scoutRoot);
+    const runRoot = resolve(this.input.runRoot);
+    const scoutRootReal = realpathSync(scoutRoot);
     const runRootReal = requireContainedPath({
-      root: repoRoot,
-      rootReal: repoRootReal,
+      root: scoutRoot,
+      rootReal: scoutRootReal,
       path: runRoot,
       label: "run root",
       kind: "directory",
     });
     const manifest = this.input.manifest;
-    if (manifest.runId !== this.input.runId) {
+    if (manifest.runId !== basename(runRoot)) {
       throw new Error(
-        `Persisted environment run id ${manifest.runId} does not match ${this.input.runId}.`,
+        `Persisted environment run id ${manifest.runId} does not match ${runRoot}.`,
       );
     }
     const manifestAgents = manifest.agents;
@@ -198,7 +199,7 @@ export class EnvironmentSnapshotLoader {
     });
     const allowLegacyResourceIdentityMigration = isLegacyResourceInventory(mountManifest);
     if (allowLegacyResourceIdentityMigration) {
-      assertPersistedAssets(resolve(this.input.repoRoot), role, mountManifest);
+      assertPersistedAssets(resolve(this.input.scoutRoot), role, mountManifest);
     }
 
     return {
@@ -242,11 +243,11 @@ function assertPersistedIdentity(input: {
 }
 
 function assertPersistedAssets(
-  repoRoot: string,
+  scoutRoot: string,
   role: ScoutAgentRole,
   mountManifest: MountManifest,
 ): void {
-  const assetsRoot = join(resolve(repoRoot), "assets", "codex");
+  const assetsRoot = join(resolve(scoutRoot), "assets", "codex");
   for (const asset of mountManifest.assets) {
     if (isCanonicalShellToolsRegistryAsset(asset)) continue;
     const sourcePath = resolveAssetLocalPath(asset.sourcePath, assetsRoot);

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -22,12 +22,12 @@ import type { Logger } from "../../src/core/logging/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
 import { createTestRunPersistence } from "../helpers/run-persistence.js";
 
-const repoRoot = process.cwd();
+const scoutRoot = process.cwd();
 
 test("AgentsStage starts all role threads in parallel on the installed RunScope", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-boot-agents-"));
   mkdirSync(join(root, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(root, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "codex"), join(root, "assets", "codex"), {
     recursive: true,
   });
   const runId = "boot-agents-test";
@@ -42,12 +42,12 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
   });
   const scope = new RunScope({
     runId,
-    repoRoot: root,
+    scoutRoot: root,
     logger: createNoopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
     domain: createStaticDomain(),
-    ...createTestRunPersistence(t, runId, root),
+    ...createTestRunPersistence(t, runId, root, undefined, join(root, "run", runId)),
     terminate: async () => undefined,
   });
   scope.setAppServer(appServer);
@@ -60,6 +60,7 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
     await stage.stop("test_cleanup");
     scope.clearAppServer(appServer);
     releaseScope();
+    rmSync(root, { recursive: true, force: true });
   });
 
   await environment.start();
@@ -98,7 +99,7 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
 test("AgentsStage closes started threads when another Agent fails to start", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-boot-agents-failure-"));
   mkdirSync(join(root, "assets"), { recursive: true });
-  cpSync(join(repoRoot, "assets", "codex"), join(root, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "codex"), join(root, "assets", "codex"), {
     recursive: true,
   });
   const runId = "boot-agents-failure-test";
@@ -111,12 +112,12 @@ test("AgentsStage closes started threads when another Agent fails to start", asy
   });
   const scope = new RunScope({
     runId,
-    repoRoot: root,
+    scoutRoot: root,
     logger: createNoopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
     domain: createStaticDomain(),
-    ...createTestRunPersistence(t, runId, root),
+    ...createTestRunPersistence(t, runId, root, undefined, join(root, "run", runId)),
     terminate: async () => undefined,
   });
   scope.setAppServer(appServer);
@@ -129,6 +130,7 @@ test("AgentsStage closes started threads when another Agent fails to start", asy
     await stage.stop("test_cleanup");
     scope.clearAppServer(appServer);
     releaseScope();
+    rmSync(root, { recursive: true, force: true });
   });
 
   await environment.start();

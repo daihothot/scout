@@ -59,7 +59,7 @@ export class MountPreparation {
       || cached.persistedManifestFingerprint !== persistedManifestFingerprint) {
       context = new MountContextBuilder(options).build();
       ({ existingManifest, inspection } = inspectMountState(context, options));
-    } else if (captureAssetsLinkFingerprint(cached.context.repoRoot)
+    } else if (captureAssetsLinkFingerprint(cached.context.scoutRoot)
       !== cached.assetsLinkFingerprint
       || capturePathFingerprint(cached.context.assetsRoot) !== cached.assetsFingerprint) {
       context = new MountContextBuilder(options).build();
@@ -122,7 +122,7 @@ export class MountPreparation {
       persistedManifestFingerprint: mountManifestFingerprint(options.persistedManifest),
       manifestFileFingerprint: mountManifestFileFingerprint(manifestFile),
       runtimeBindingFingerprint: runtimeBindingFingerprint(context),
-      assetsLinkFingerprint: captureAssetsLinkFingerprint(context.repoRoot),
+      assetsLinkFingerprint: captureAssetsLinkFingerprint(context.scoutRoot),
       assetsFingerprint: capturePathFingerprint(context.assetsRoot),
       mountFingerprint: capturePathFingerprint(context.mountRoot),
       artifactFingerprint: captureRootFingerprint(context.artifactRoot),
@@ -134,7 +134,7 @@ export class MountPreparation {
 
 function materializeOptionsFingerprint(options: MaterializeOptions): string {
   return stableJson({
-    repoRoot: resolve(options.repoRoot),
+    scoutRoot: resolve(options.scoutRoot),
     runId: options.runId,
     agentId: options.agentId,
     parentAssetCommitId: options.parentAssetCommitId,
@@ -225,8 +225,8 @@ function captureRootFingerprint(root: string): string {
 }
 
 /** Captures the ScoutRoot assets entry and its resolved target without walking it. */
-function captureAssetsLinkFingerprint(repoRoot: string): string {
-  const path = join(repoRoot, "assets");
+function captureAssetsLinkFingerprint(scoutRoot: string): string {
+  const path = join(scoutRoot, "assets");
   try {
     const stat = lstatSync(path);
     return sha256Text(stableJson({

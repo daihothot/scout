@@ -1,4 +1,8 @@
 ---
+scout:
+  resource:
+    requirement: required
+    description: Research Pack 证据引用注册表模板。
 artifact_type: EvidenceRegistry
 artifact_version: 1
 status: draft
