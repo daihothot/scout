@@ -6,9 +6,6 @@ import type { SubprocessProgressText } from "../../protocol/port.js";
 const DEFAULT_MAX_BAR_WIDTH = 42;
 const FILLED_TRACK = "▬";
 const REMAINING_TRACK = "▭";
-/** Match the lifecycle bar pitch: 2-col cell + 1-col gap. */
-const SUBPROCESS_CELL_WIDTH = 2;
-const SUBPROCESS_SEPARATOR = " ";
 const TRACK_SEPARATOR = "";
 
 /** Ink color accepted by progress tracks and status markers. */
@@ -80,8 +77,7 @@ export function buildSubprocessProgressPresentation(input: {
     maxWidth: Math.max(1, input.maxBarWidth ?? DEFAULT_MAX_BAR_WIDTH),
     filledCell: FILLED_TRACK,
     remainingCell: REMAINING_TRACK,
-    cellWidth: SUBPROCESS_CELL_WIDTH,
-    separator: SUBPROCESS_SEPARATOR,
+    cellWidth: 1,
   });
   return {
     ...track,
