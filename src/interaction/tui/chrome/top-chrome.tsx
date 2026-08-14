@@ -35,7 +35,8 @@ const SUBPROCESS_BAR_MAX_WIDTH = LIFECYCLE_PROGRESS_MAX_WIDTH;
 const SUBPROCESS_INDENT = 2;
 const PREPARING_STATUS_COLOR = "#f2db3f";
 const LIFECYCLE_PROGRESS_COLOR = "#e2b40b";
-const SUBPROCESS_PROGRESS_COLOR = "#ddd83b";
+/** Subprocess track stays in the gray/white family so cyan/green do not compete with preparing yellow. */
+const SUBPROCESS_PROGRESS_COLOR: ProgressTrackColor = "white";
 const RUNTIME_CARD_BORDER_COLOR = "#626262";
 const RUNTIME_CARD_COLUMN_GAP = 2;
 const RUNTIME_CARD_RUN_TAIL_WIDTH = 8;
@@ -452,7 +453,7 @@ function SubprocessProgressStrip({ progress, width }: {
     >
       <SubprocessProgressBar
         presentation={presentation}
-        markerColor={subprocessToneColor(content.tone)}
+        markerColor={subprocessToneColor(content.tone, PREPARING_STATUS_COLOR)}
         trackColor={subprocessToneColor(content.tone, SUBPROCESS_PROGRESS_COLOR)}
         trackIndent={SUBPROCESS_INDENT}
         trackGapRows={SUBPROCESS_TRACK_GAP_ROWS}
@@ -466,9 +467,19 @@ function SubprocessStatusDetail({ descriptor, compact = false }: {
   compact?: boolean;
 }) {
   const detail = descriptor.detail ?? "";
+  const parts = detail.length > 0 ? detail.split(" · ") : [];
   return (
     <Text wrap="truncate-end">
-      {detail && <Text color="white">{compact ? ` · ${detail}` : `  ${detail}`}</Text>}
+      {parts.length > 0 && <Text dimColor>{compact ? " · " : "  "}</Text>}
+      {parts.map((part, index) => (
+        <Text key={`${index}:${part}`}>
+          {index > 0 && <Text dimColor>{" · "}</Text>}
+          {/* Second segment is the active step; keep Mount / role dim. */}
+          <Text color={index === 1 ? "white" : undefined} dimColor={index !== 1}>
+            {part}
+          </Text>
+        </Text>
+      ))}
       {descriptor.units && <Text dimColor>{` · ${descriptor.units}`}</Text>}
     </Text>
   );
