@@ -3,34 +3,34 @@ import type {
   SubprocessProgressDescriptor,
   SubprocessProgressSnapshot,
 } from "../../../interaction/protocol/port.js";
-import type { MountRestoreProgressState } from "./restore-state.js";
+import type { MountPreparationProgressState } from "./preparation-state.js";
 import { createSubprocessProgressPublisher } from "../subprocess-progress.js";
 
 /**
- * Adapts the transport-neutral mount restore state to the generic subprocess
- * progress channel. Restore stages own all state transitions and sequencing.
+ * Adapts transport-neutral mount preparation state to the generic subprocess
+ * progress channel. Lifecycle stages own all state transitions and sequencing.
  */
-export function createMountRestoreProgressPublisher(
+export function createMountPreparationProgressPublisher(
   interactionPort: RuntimeInteractionPort,
   options: {
     id?: string;
-    describe?: (progress: MountRestoreProgressState) => SubprocessProgressDescriptor;
+    describe?: (progress: MountPreparationProgressState) => SubprocessProgressDescriptor;
   } = {},
-): (progress: MountRestoreProgressState) => Promise<void> {
+): (progress: MountPreparationProgressState) => Promise<void> {
   const publisher = createSubprocessProgressPublisher(interactionPort);
   return (progress) => publisher.publish(toSubprocessProgressSnapshot(
     progress,
-    options.id ?? "mount-restore",
-    options.describe ?? describeMountRestoreProgress,
+    options.id ?? "mount-preparation",
+    options.describe ?? describeMountPreparationProgress,
   ));
 }
 
 /** Converts a mutable stage progress state into an immutable interaction snapshot. */
 export function toSubprocessProgressSnapshot(
-  progress: MountRestoreProgressState,
-  id = "mount-restore",
-  describe: (progress: MountRestoreProgressState) => SubprocessProgressDescriptor =
-    describeMountRestoreProgress,
+  progress: MountPreparationProgressState,
+  id = "mount-preparation",
+  describe: (progress: MountPreparationProgressState) => SubprocessProgressDescriptor =
+    describeMountPreparationProgress,
 ): SubprocessProgressSnapshot {
   return {
     id,
@@ -43,14 +43,14 @@ export function toSubprocessProgressSnapshot(
   };
 }
 
-/** Builds the default interaction descriptor for mount restore progress. */
-export function describeMountRestoreProgress(
-  progress: MountRestoreProgressState,
+/** Builds the default interaction descriptor for mount preparation progress. */
+export function describeMountPreparationProgress(
+  progress: MountPreparationProgressState,
 ): SubprocessProgressDescriptor {
   const status = progress.phase === "failed"
     ? {
       marker: "!",
-      label: "Mount restore failed",
+      label: "Mount preparation failed",
       detail: `${progress.activeRole ?? "mount"}${progress.activeStep ? ` ${progress.activeStep}` : ""}`,
       tone: "failed" as const,
     }
@@ -75,7 +75,7 @@ export function describeMountRestoreProgress(
   };
 }
 
-function mountStatusDetail(progress: MountRestoreProgressState): string {
+function mountStatusDetail(progress: MountPreparationProgressState): string {
   if (progress.phase === "rebuild") {
     return `Mount · ${progress.activeStep ?? "rebuilding"}${progress.activeRole ? ` · ${progress.activeRole}` : ""}`;
   }
@@ -91,6 +91,6 @@ function mountStatusDetail(progress: MountRestoreProgressState): string {
     : "Mount · verifying";
 }
 
-function reusableRoleCount(progress: MountRestoreProgressState): number {
+function reusableRoleCount(progress: MountPreparationProgressState): number {
   return progress.roles.filter((role) => role.decision === "reused").length;
 }

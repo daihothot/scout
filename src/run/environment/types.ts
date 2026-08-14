@@ -26,8 +26,6 @@ export interface PersistedEnvironmentAgent {
   readonly mountManifest: MountManifest;
   readonly assetCommit: AssetCommit;
   readonly preflight: AgentServerPreflightReport;
-  /** Legacy inventories are migrated only after the caller commits metadata. */
-  readonly allowLegacyResourceIdentityMigration: boolean;
 }
 
 /** A validated persisted environment, independent of the lifecycle stage that

@@ -33,7 +33,6 @@ export class MountInspector {
     private readonly context: MountContext,
     private readonly existingManifest: MountManifest | undefined,
     private readonly persistedIdentity?: PersistedMountIdentity,
-    private readonly allowLegacyResourceIdentityMigration = false,
   ) {}
 
   /** Returns a reuse/rebuild decision and the first actionable mismatch. */
@@ -44,8 +43,6 @@ export class MountInspector {
     if (
       this.existingManifest
       && !reusable.reusable
-      && this.existingManifest.resourceInventoryVersion === 1
-      && !this.allowLegacyResourceIdentityMigration
       && (this.persistedIdentity?.resourceHash ?? this.existingManifest.resourceHash)
         !== this.context.resourceHash
     ) {
@@ -77,7 +74,6 @@ export class MountInspector {
           this.context,
           manifest,
           this.persistedIdentity,
-          this.allowLegacyResourceIdentityMigration,
         ),
       },
       {

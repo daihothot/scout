@@ -15,7 +15,6 @@ export class MountIdentityInspector {
     private readonly context: MountContext,
     private readonly manifest: MountManifest,
     private readonly persistedIdentity?: PersistedMountIdentity,
-    private readonly allowLegacyResourceIdentityMigration = false,
   ) {}
 
   /** Returns the first identity mismatch, preserving the field that changed. */
@@ -56,8 +55,7 @@ export class MountIdentityInspector {
     }
 
     if (this.persistedIdentity
-      && this.persistedIdentity.resourceHash !== context.resourceHash
-      && !this.allowLegacyResourceIdentityMigration) {
+      && this.persistedIdentity.resourceHash !== context.resourceHash) {
       return `persisted resource hash changed: persisted=${this.persistedIdentity.resourceHash}`
         + ` current=${context.resourceHash}`;
     }

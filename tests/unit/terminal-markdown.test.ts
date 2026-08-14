@@ -220,7 +220,7 @@ test("Subprocess progress accepts module-independent content and units", () => {
 
 test("Subprocess descriptor drives progress content and stable chrome rows", () => {
   const progress = {
-    id: "mount-restore",
+    id: "mount-preparation",
     phase: "running" as const,
     completedUnits: 8,
     totalUnits: 14,
@@ -291,13 +291,13 @@ test("Subprocess descriptor drives progress content and stable chrome rows", () 
   assert.deepEqual(
     buildSubprocessStatusPresentation({
       marker: "!",
-      label: "Mount restore failed",
+      label: "Mount preparation failed",
       detail: "validator preflight",
       tone: "failed",
     }),
     {
       marker: "!",
-      label: "Mount restore failed",
+      label: "Mount preparation failed",
       detail: "validator preflight",
       color: "red",
     },
@@ -355,8 +355,8 @@ test("Subprocess descriptor drives progress content and stable chrome rows", () 
 });
 
 test("Top chrome matches the full mount layout at normal and boundary widths", () => {
-  const mountRestore = {
-    id: "mount-restore",
+  const mountPreparation = {
+    id: "mount-preparation",
     phase: "running" as const,
     completedUnits: 11,
     totalUnits: 24,
@@ -392,7 +392,7 @@ test("Top chrome matches the full mount layout at normal and boundary widths", (
       totalStages: 9,
       stages: [],
     },
-    subprocessProgress: mountRestore,
+    subprocessProgress: mountPreparation,
   });
   const previousMotion = process.env.SCOUT_TUI_MOTION;
   process.env.SCOUT_TUI_MOTION = "0";

@@ -22,18 +22,18 @@ import {
   type EnvironmentRoleStep,
   type EnvironmentSnapshot,
 } from "../../environment/index.js";
-import type { MountRestoreStep } from "../../progress/mount/index.js";
+import type { MountPreparationStep } from "../../progress/mount/index.js";
 import {
   applyMountMaterializationStep,
   applyMountPreflightStep,
   applyMountPreparationDecision,
   beginMountPreflightStep,
   completeMountRole,
-  createMountRestoreProgress,
-  createMountRestoreProgressPublisher,
+  createMountPreparationProgress,
+  createMountPreparationProgressPublisher,
   failMountRole,
-  finishMountRestore,
-  planMountRestore,
+  finishMountPreparation,
+  planMountPreparation,
 } from "../../progress/mount/index.js";
 
 /** Injectable environment dependencies used by tests and alternate runtimes. */
@@ -68,8 +68,8 @@ export class RestoreEnvironmentStage implements RunStage {
     const preflightMount = this.options.preflightMount ?? ((mount: CodexMount) =>
       preflightCodexAppServerMount({ mount, appServer: scope.appServer })
     );
-    const progress = createMountRestoreProgress(roles);
-    const publishProgress = createMountRestoreProgressPublisher(scope.interactionPort);
+    const progress = createMountPreparationProgress(roles);
+    const publishProgress = createMountPreparationProgressPublisher(scope.interactionPort);
     await publishProgress(progress);
 
     let snapshot: EnvironmentSnapshot;
@@ -88,7 +88,6 @@ export class RestoreEnvironmentStage implements RunStage {
       throw error;
     }
 
-    const persistedByRole = new Map(snapshot.agents.map((agent) => [agent.role, agent] as const));
     const plansByRole = new Map<ScoutAgentRole, EnvironmentRolePlan>();
     const inputs: EnvironmentRolePreparationInput[] = snapshot.agents.map((persisted) => {
       const agentRoot = join(runRoot, "agents", persisted.role);
@@ -104,8 +103,6 @@ export class RestoreEnvironmentStage implements RunStage {
           mountId: persisted.assetCommit.mountId,
           resourceHash: persisted.assetCommit.resourceHash,
         },
-        allowLegacyResourceIdentityMigration:
-          persisted.allowLegacyResourceIdentityMigration,
         onPreparationDecision: (decision, reason) => {
           const planned = plansByRole.get(persisted.role)?.inspection.decision;
           if (planned && planned !== decision) {
@@ -142,7 +139,7 @@ export class RestoreEnvironmentStage implements RunStage {
       throw error;
     }
     for (const plan of plans) plansByRole.set(plan.role, plan);
-    planMountRestore(
+    planMountPreparation(
       progress,
       new Map(plans.map((plan) => [plan.role, plan.inspection] as const)),
     );
@@ -186,57 +183,19 @@ export class RestoreEnvironmentStage implements RunStage {
         runId: scope.runId,
         agents,
       });
-      const changedRoles = roles.filter((role) => {
-        const persisted = persistedByRole.get(role);
-        const current = result[role];
-        return Boolean(
-          persisted
-          && current
-          && persisted.assetCommit.resourceHash !== current.assetCommit.resourceHash,
-        );
-      });
       const transaction = new EnvironmentMetadataTransaction({
         rollback,
-        commitIndex: changedRoles.length > 0
-          ? (nextAgents) => updateResourceHashes(scope, nextAgents, roles)
-          : undefined,
       });
       metadataTransactionStarted = true;
       transaction.commit(result);
       scope.setEnvironment(environment);
-      finishMountRestore(progress);
+      finishMountPreparation(progress);
       await publishProgress(progress);
     } catch (error) {
       if (!metadataTransactionStarted) restoreWithoutMasking(error, rollback);
       throw error;
     }
   }
-}
-
-/** Commits portable resource identities back to the persisted run index. */
-function updateResourceHashes(
-  scope: ReturnType<typeof currentRunScope>,
-  agents: EnvironmentRoleRunnerResult,
-  roles: readonly ScoutAgentRole[],
-): void {
-  scope.manifestStore.update((current) => {
-    if (!current.agents) {
-      throw new Error(`Run ${current.runId} has no persisted agent index.`);
-    }
-    const nextAgents = { ...current.agents };
-    for (const role of roles) {
-      const agent = agents[role];
-      const entry = nextAgents[role];
-      if (!agent || !entry) {
-        throw new Error(`Run manifest has no environment entry for ${role}.`);
-      }
-      nextAgents[role] = {
-        ...entry,
-        resourceHash: agent.assetCommit.resourceHash,
-      };
-    }
-    return { ...current, agents: nextAgents };
-  });
 }
 
 /** Attempts metadata rollback while retaining the original operation failure. */
@@ -257,8 +216,8 @@ function restoreWithoutMasking(error: unknown, rollback: EnvironmentMetadataRoll
 /** Publishes one mount failure and discloses it once at the interaction boundary. */
 async function reportMountFailure(
   scope: ReturnType<typeof currentRunScope>,
-  progress: ReturnType<typeof createMountRestoreProgress>,
-  publishProgress: (progress: ReturnType<typeof createMountRestoreProgress>) => Promise<void>,
+  progress: ReturnType<typeof createMountPreparationProgress>,
+  publishProgress: (progress: ReturnType<typeof createMountPreparationProgress>) => Promise<void>,
   role: ScoutAgentRole | undefined,
   step: EnvironmentRoleStep,
   error: unknown,
@@ -266,25 +225,25 @@ async function reportMountFailure(
   if (!role) return;
   const reason = error instanceof Error ? error.message : String(error);
   const wasFailed = progress.phase === "failed";
-  failMountRole(progress, role, step as MountRestoreStep, reason);
+  failMountRole(progress, role, step as MountPreparationStep, reason);
   await publishProgress(progress);
   if (!wasFailed) {
-    await discloseMountRestoreFailure(scope, role, step as MountRestoreStep, reason);
+    await discloseMountPreparationFailure(scope, role, step as MountPreparationStep, reason);
   }
 }
 
-async function discloseMountRestoreFailure(
+async function discloseMountPreparationFailure(
   scope: ReturnType<typeof currentRunScope>,
   role: ScoutAgentRole,
-  step: MountRestoreStep,
+  step: MountPreparationStep,
   reason: string,
 ): Promise<void> {
   const detail = reason.split("\n", 1)[0]?.slice(0, 180);
   try {
     await scope.interactionPort.disclose({
       level: "error",
-      source: "run.mount-restore",
-      message: `Mount restore failed · ${role} ${step}${detail ? `: ${detail}` : ""}`,
+      source: "run.mount-preparation",
+      message: `Mount preparation failed · ${role} ${step}${detail ? `: ${detail}` : ""}`,
     });
   } catch {
     // Disclosure is observational; preserve the original stage failure.

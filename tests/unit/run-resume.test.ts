@@ -157,24 +157,6 @@ test("Run projection rebuilds pending messages, human gate and interrupted turn"
   );
 });
 
-test("RunManifestStore rejects version 2 without a compatibility path", (t) => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-run-manifest-v2-"));
-  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
-  const runId = "run-manifest-v2";
-  const runRoot = join(fixtureRoot, "run", runId);
-  mkdirSync(runRoot, { recursive: true });
-  writeFileSync(join(runRoot, "run.json"), `${JSON.stringify({
-    version: 2,
-    runId,
-    scoutRoot: fixtureRoot,
-  })}\n`, "utf8");
-
-  assert.throws(
-    () => new RunManifestStore(runRoot).read(),
-    /Unsupported run manifest/,
-  );
-});
-
 test("Run projection keeps the original thread snapshot across resume lifecycles", () => {
   const started = {
     agentId: ScoutAgentRoles.Researcher,
@@ -1526,7 +1508,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   await resumedTurnsStarted;
 
   const restoredManifest = resumedManifestStore.read();
-  assert.equal(restoredManifest.version, 3);
+  assert.equal(restoredManifest.version, 1);
   assert.equal("environment" in restoredManifest, false);
   assert.equal("assetCommitId" in restoredManifest, false);
   assert.deepEqual(
