@@ -76,7 +76,7 @@ test("TuiStore projects Run lifecycle snapshots into runtime state", () => {
 test("TuiStore projects and clones subprocess progress", () => {
   const store = createStore();
   const progress: SubprocessProgressSnapshot = {
-    id: "mount-restore",
+    id: "mount-preparation",
     phase: "running",
     completedUnits: 7,
     totalUnits: 8,

@@ -14,7 +14,6 @@ export interface MaterializeOptions {
   persistedManifest?: MountManifest;
   parentAssetCommitId?: string;
   persistedIdentity?: PersistedMountIdentity;
-  allowLegacyResourceIdentityMigration?: boolean;
   cleanRunRoot?: boolean;
   onPreparationDecision?(decision: MountPreparationDecision, reason?: string): void;
   onMaterializationStep?(step: MountMaterializationStep): void;

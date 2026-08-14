@@ -8,7 +8,7 @@ import type { MountMaterializationIssue } from "./mount.js";
 
 /** Portable manifest used to verify and reconstruct a role mount later. */
 export interface MountManifest {
-  resourceInventoryVersion?: 1;
+  resourceInventoryVersion: 1;
   agentId: string;
   assetCommitId: string;
   parentAssetCommitId?: string;

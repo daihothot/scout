@@ -1,5 +1,4 @@
 import {
-  existsSync,
   lstatSync,
   realpathSync,
 } from "node:fs";
@@ -13,17 +12,13 @@ import {
 import type { AgentServerPreflightReport } from "../../agent-server/types.js";
 import {
   type AssetCommit,
-  CodexAssetLayout,
   type MountManifest,
-  resolveAssetLocalPath,
 } from "../../asset-store/index.js";
 import {
   type ScoutAgentRole,
 } from "../../agent/thread/types.js";
 import {
-  hashDirectory,
   readJsonFile,
-  sha256File,
 } from "../../core/fs.js";
 import { isPathWithin } from "../../core/path.js";
 import type { RunManifest } from "../persistence/index.js";
@@ -46,8 +41,7 @@ export class EnvironmentSnapshotLoadError extends Error {
 /**
  * Loads the persisted role facts required by resume after proving that every
  * reference resolves to its canonical regular file beneath the current run.
- * It detects legacy inventories and validates their source assets, but leaves
- * migration and metadata commits to the resume stage.
+ * Resource reuse and drift decisions belong to the mount inspection pipeline.
  */
 export class EnvironmentSnapshotLoader {
   constructor(
@@ -197,11 +191,6 @@ export class EnvironmentSnapshotLoader {
       mountManifest,
       assetCommit,
     });
-    const allowLegacyResourceIdentityMigration = isLegacyResourceInventory(mountManifest);
-    if (allowLegacyResourceIdentityMigration) {
-      assertPersistedAssets(resolve(this.input.scoutRoot), role, mountManifest);
-    }
-
     return {
       role,
       mountManifestPath,
@@ -210,7 +199,6 @@ export class EnvironmentSnapshotLoader {
       mountManifest,
       assetCommit,
       preflight,
-      allowLegacyResourceIdentityMigration,
     };
   }
 }
@@ -242,52 +230,11 @@ function assertPersistedIdentity(input: {
   }
 }
 
-function assertPersistedAssets(
-  scoutRoot: string,
-  role: ScoutAgentRole,
-  mountManifest: MountManifest,
-): void {
-  const assetsRoot = join(resolve(scoutRoot), "assets", "codex");
-  for (const asset of mountManifest.assets) {
-    if (isCanonicalShellToolsRegistryAsset(asset)) continue;
-    const sourcePath = resolveAssetLocalPath(asset.sourcePath, assetsRoot);
-    assertInsideRoot(assetsRoot, sourcePath, "asset source");
-    requirePath(sourcePath, `asset source ${asset.id}`);
-    const actualHash = asset.type === "plugin"
-      || asset.type === "skill"
-      || asset.type === "mcp_server_vendor"
-      ? hashDirectory(sourcePath)
-      : sha256File(sourcePath);
-    if (actualHash !== asset.hash) {
-      throw new Error(`Persisted asset changed for ${role}: ${asset.sourcePath}`);
-    }
-  }
-}
-
-function isCanonicalShellToolsRegistryAsset(asset: MountManifest["assets"][number]): boolean {
-  return asset.id === "codex.shell_tools"
-    && asset.type === "shell_tool_contract"
-    && asset.sourcePath === join("assets", "codex", CodexAssetLayout.shellTools);
-}
-
-function isLegacyResourceInventory(mountManifest: MountManifest): boolean {
-  if (mountManifest.resourceInventoryVersion !== undefined) return false;
-  return !mountManifest.assets.some((asset) =>
-    asset.type === "shell_tool_resource"
-    || asset.type === "mcp_server_resource"
-    || asset.type === "mcp_server_vendor"
-  );
-}
-
 function resolveRunRef(runRoot: string, ref: string, label: string): string {
   const path = resolve(runRoot, ref);
   assertInsideRun(runRoot, path);
   if (path === runRoot) throw new Error(`Persisted ${label} does not name a file: ${ref}`);
   return path;
-}
-
-function requirePath(path: string, label: string): void {
-  if (!existsSync(path)) throw new Error(`Run ${label} is missing: ${path}`);
 }
 
 function requireCanonicalRunRef(path: string, expectedPath: string, label: string): void {

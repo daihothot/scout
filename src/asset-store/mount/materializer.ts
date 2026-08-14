@@ -100,7 +100,6 @@ export class MountMaterializer {
     const shellToolsRegistryHash = sha256File(join(assetsRoot, CodexAssetLayout.shellTools));
     if (
       options.persistedIdentity
-      && !options.allowLegacyResourceIdentityMigration
       && options.persistedIdentity.resourceHash !== computedResourceHash
     ) {
       throw new Error(
@@ -109,9 +108,7 @@ export class MountMaterializer {
         + ` portable=${computedResourceHash}.`,
       );
     }
-    const resourceHash = options.allowLegacyResourceIdentityMigration
-      ? computedResourceHash
-      : options.persistedIdentity?.resourceHash ?? computedResourceHash;
+    const resourceHash = options.persistedIdentity?.resourceHash ?? computedResourceHash;
 
     ensureDir(runRoot);
     ensureDir(join(runRoot, "agents"));

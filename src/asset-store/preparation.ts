@@ -139,7 +139,6 @@ function materializeOptionsFingerprint(options: MaterializeOptions): string {
     agentId: options.agentId,
     parentAssetCommitId: options.parentAssetCommitId,
     persistedIdentity: options.persistedIdentity,
-    allowLegacyResourceIdentityMigration: options.allowLegacyResourceIdentityMigration,
     cleanRunRoot: options.cleanRunRoot,
   });
 }
@@ -178,7 +177,6 @@ function inspectMountState(
       context,
       manifestFile.manifest,
       options.persistedIdentity,
-      options.allowLegacyResourceIdentityMigration,
     ).inspect(),
   };
 }

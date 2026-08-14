@@ -27,18 +27,18 @@ import {
   type EnvironmentRolePreparationInput,
   type EnvironmentRoleStep,
 } from "../../environment/index.js";
-import type { MountRestoreStep } from "../../progress/mount/index.js";
+import type { MountPreparationStep } from "../../progress/mount/index.js";
 import {
   applyMountMaterializationStep,
   applyMountPreflightStep,
   applyMountPreparationDecision,
   beginMountPreflightStep,
   completeMountRole,
-  createMountRestoreProgress,
-  createMountRestoreProgressPublisher,
+  createMountPreparationProgress,
+  createMountPreparationProgressPublisher,
   failMountRole,
-  finishMountRestore,
-  planMountRestore,
+  finishMountPreparation,
+  planMountPreparation,
 } from "../../progress/mount/index.js";
 
 /** Dependency overrides used to exercise startup environment orchestration. */
@@ -100,8 +100,8 @@ export class PrepareEnvironmentStage implements RunStage {
     const preflightMount = this.options.preflightMount ?? ((mount: CodexMount) =>
       preflightCodexAppServerMount({ mount, appServer: scope.appServer })
     );
-    const progress = createMountRestoreProgress(roles);
-    const publishProgress = createMountRestoreProgressPublisher(scope.interactionPort);
+    const progress = createMountPreparationProgress(roles);
+    const publishProgress = createMountPreparationProgressPublisher(scope.interactionPort);
     await publishProgress(progress);
 
     const plansByRole = new Map<ScoutAgentRole, EnvironmentRolePlan>();
@@ -159,7 +159,7 @@ export class PrepareEnvironmentStage implements RunStage {
     }
     for (const plan of plans) plansByRole.set(plan.role, plan);
 
-    planMountRestore(
+    planMountPreparation(
       progress,
       new Map(plans.map((plan) => [plan.role, plan.inspection] as const)),
     );
@@ -211,7 +211,7 @@ export class PrepareEnvironmentStage implements RunStage {
       throw new Error(`Scout run preflight failed: ${failures.join("; ")}.`);
     }
 
-    finishMountRestore(progress);
+    finishMountPreparation(progress);
     await publishProgress(progress);
   }
 }
@@ -239,8 +239,8 @@ function buildManifestAgents(
 
 async function reportMountFailure(
   scope: ReturnType<typeof currentRunScope>,
-  progress: ReturnType<typeof createMountRestoreProgress>,
-  publishProgress: (progress: ReturnType<typeof createMountRestoreProgress>) => Promise<void>,
+  progress: ReturnType<typeof createMountPreparationProgress>,
+  publishProgress: (progress: ReturnType<typeof createMountPreparationProgress>) => Promise<void>,
   role: ScoutAgentRole | undefined,
   step: EnvironmentRoleStep,
   error: unknown,
@@ -248,25 +248,25 @@ async function reportMountFailure(
   if (!role) return;
   const reason = errorText(error);
   const wasFailed = progress.phase === "failed";
-  failMountRole(progress, role, step as MountRestoreStep, reason);
+  failMountRole(progress, role, step as MountPreparationStep, reason);
   await publishProgress(progress);
   if (!wasFailed) {
-    await discloseMountRestoreFailure(scope, role, step as MountRestoreStep, reason);
+    await discloseMountPreparationFailure(scope, role, step as MountPreparationStep, reason);
   }
 }
 
-async function discloseMountRestoreFailure(
+async function discloseMountPreparationFailure(
   scope: ReturnType<typeof currentRunScope>,
   role: ScoutAgentRole,
-  step: MountRestoreStep,
+  step: MountPreparationStep,
   reason: string,
 ): Promise<void> {
   const detail = reason.split("\n", 1)[0]?.slice(0, 180);
   try {
     await scope.interactionPort.disclose({
       level: "error",
-      source: "run.mount-restore",
-      message: `Mount restore failed · ${role} ${step}${detail ? `: ${detail}` : ""}`,
+      source: "run.mount-preparation",
+      message: `Mount preparation failed · ${role} ${step}${detail ? `: ${detail}` : ""}`,
     });
   } catch {
     // Disclosure is observational; preserve the original stage failure.

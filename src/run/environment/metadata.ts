@@ -50,26 +50,19 @@ export class EnvironmentMetadataRollback {
   }
 }
 
-/**
- * Coordinates artifact writes with an injected run-index commit. The injected
- * callback is deliberately the only persistence policy here: resume can
- * update legacy resource hashes, while startup can write a new role index and
- * checkpoint without introducing a mode flag into this capability.
- */
+/** Coordinates artifact writes with rollback of the persisted role metadata. */
 export class EnvironmentMetadataTransaction {
   private readonly writer = new EnvironmentArtifactWriter();
 
   constructor(
     private readonly input: {
       readonly rollback: EnvironmentMetadataRollback;
-      readonly commitIndex?: (agents: EnvironmentRoleRunnerResult) => void;
     },
   ) {}
 
   commit(agents: EnvironmentRoleRunnerResult): void {
     try {
       this.writer.write(agents);
-      this.input.commitIndex?.(agents);
     } catch (error) {
       try {
         this.input.rollback.restore();
