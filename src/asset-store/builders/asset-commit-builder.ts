@@ -27,7 +27,6 @@ export function buildAssetCommit(options: BuildAssetCommitOptions): AssetCommit 
     mcpServers: options.mount.mcpServers,
     customAgents: options.mount.customAgents,
     skills: options.mount.skills,
-    skillCatalog: options.mount.skillCatalog,
     plugins: options.mount.plugins,
     manifestPath: options.mount.manifestPath,
     resourceHash: options.mount.resourceHash,

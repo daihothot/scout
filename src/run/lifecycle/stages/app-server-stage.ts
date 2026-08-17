@@ -20,6 +20,11 @@ import {
   resolveAgentProfile,
 } from "../../../asset-store/assets/agent-profiles.js";
 import {
+  buildScoutSkillCatalog,
+  listScoutSkillPaths,
+  resolveScoutSkillsForPhase,
+} from "../../../asset-store/assets/skill-catalog.js";
+import {
   CodexAssetLayout,
   roleAgentPath,
 } from "../../../asset-store/assets/asset-layout.js";
@@ -294,11 +299,16 @@ function buildClientConfig(input: {
   const mountRoots = uniqueResolved(input.mountRoots);
   const providerLines = [
     `[model_providers.${input.model.provider}]`,
-    `name = "${escapeToml(input.model.provider)}"`,
-    `base_url = "${escapeToml(homeConfig.baseUrl)}"`,
+    `name = "${escapeToml(homeConfig.name ?? input.model.provider)}"`,
   ];
+  if (homeConfig.baseUrl !== undefined) {
+    providerLines.push(`base_url = "${escapeToml(homeConfig.baseUrl)}"`);
+  }
   if (homeConfig.requiresOpenaiAuth !== undefined) {
     providerLines.push(`requires_openai_auth = ${homeConfig.requiresOpenaiAuth}`);
+  }
+  if (homeConfig.supportsWebsockets !== undefined) {
+    providerLines.push(`supports_websockets = ${homeConfig.supportsWebsockets}`);
   }
   const providerEnvKey = homeConfig.experimentalBearerToken
     ? "CODEX_API_KEY"
@@ -318,6 +328,8 @@ function buildClientConfig(input: {
     `model_reasoning_summary = "${input.model.reasoningSummary}"`,
     "",
     "[features]",
+    "apps = false",
+    "remote_plugin = false",
     "shell_snapshot = false",
     "",
     ...providerLines,
@@ -384,7 +396,6 @@ function buildPermissionProfiles(input: {
       ]),
       deniedRoots: uniqueResolved([
         runsRoot,
-        join(role.mountRoot, ".scout", "skills"),
         logicalSkillRoot,
         canonicalSkillRoot,
       ]),
@@ -404,6 +415,15 @@ function resolveRoleRuntimeReadableRoots(input: {
   ];
   if (input.role !== ScoutAgentRoles.Coordinator) {
     roots.push(...readablePathVariants(join(input.assetsRoot, CodexAssetLayout.workerAgent)));
+  }
+  const skillCatalog = buildScoutSkillCatalog({
+    assetsRoot: input.assetsRoot,
+    skillPaths: listScoutSkillPaths(input.assetsRoot),
+  });
+  for (const skill of resolveScoutSkillsForPhase(skillCatalog, input.profile.phase)) {
+    roots.push(...readablePathVariants(
+      join(input.assetsRoot, CodexAssetLayout.skillsRoot, skill.name),
+    ));
   }
   for (const name of input.profile.customAgents) {
     roots.push(...readablePathVariants(
@@ -529,10 +549,12 @@ function resolveProfileRoot(root: string, scoutRoot: string): string {
 }
 
 function readHomeProviderConfig(providerName: string): {
-  baseUrl: string;
+  name?: string;
+  baseUrl?: string;
   envKey?: string;
   experimentalBearerToken?: string;
   requiresOpenaiAuth?: boolean;
+  supportsWebsockets?: boolean;
   wireApi?: string;
   authPath?: string;
 } {
@@ -555,24 +577,34 @@ function readHomeProviderConfig(providerName: string): {
     );
   }
 
-  const baseUrl = block.match(/^base_url\s*=\s*"([^"]*)"/m)?.[1]?.trim();
-  if (!baseUrl) {
+  const nameMatch = block.match(/^name\s*=\s*"([^"]*)"/m);
+  const name = nameMatch?.[1]?.trim();
+  if (nameMatch && !name) {
     throw new Error(
-      `Codex model provider "${providerName}" must define a non-empty base_url.`,
+      `Codex model provider "${providerName}" has an empty name.`,
     );
   }
-  let parsedBaseUrl: URL;
-  try {
-    parsedBaseUrl = new URL(baseUrl);
-  } catch {
+  const baseUrlAssignment = /^base_url\s*=/m.test(block);
+  const baseUrl = block.match(/^base_url\s*=\s*"([^"]*)"/m)?.[1]?.trim();
+  if (baseUrlAssignment && !baseUrl) {
     throw new Error(
       `Codex model provider "${providerName}" has an invalid base_url.`,
     );
   }
-  if (parsedBaseUrl.protocol !== "http:" && parsedBaseUrl.protocol !== "https:") {
-    throw new Error(
-      `Codex model provider "${providerName}" base_url must use http or https.`,
-    );
+  if (baseUrl) {
+    let parsedBaseUrl: URL;
+    try {
+      parsedBaseUrl = new URL(baseUrl);
+    } catch {
+      throw new Error(
+        `Codex model provider "${providerName}" has an invalid base_url.`,
+      );
+    }
+    if (parsedBaseUrl.protocol !== "http:" && parsedBaseUrl.protocol !== "https:") {
+      throw new Error(
+        `Codex model provider "${providerName}" base_url must use http or https.`,
+      );
+    }
   }
 
   const envKeyMatch = block.match(/^env_key\s*=\s*"([^"]*)"/m);
@@ -603,6 +635,18 @@ function readHomeProviderConfig(providerName: string): {
   const requiresOpenaiAuth = requiresOpenaiAuthValue === undefined
     ? undefined
     : requiresOpenaiAuthValue === "true";
+  const supportsWebsocketsAssignment = /^supports_websockets\s*=/m.test(block);
+  const supportsWebsocketsValue = block.match(
+    /^supports_websockets\s*=\s*(true|false)\s*(?:#.*)?$/m,
+  )?.[1];
+  if (supportsWebsocketsAssignment && supportsWebsocketsValue === undefined) {
+    throw new Error(
+      `Codex model provider "${providerName}" has an invalid supports_websockets value.`,
+    );
+  }
+  const supportsWebsockets = supportsWebsocketsValue === undefined
+    ? undefined
+    : supportsWebsocketsValue === "true";
 
   const hasConfiguredEnvironmentCredential = envKey !== undefined
     && Boolean(process.env[envKey]?.trim());
@@ -637,10 +681,12 @@ function readHomeProviderConfig(providerName: string): {
   }
 
   return {
+    name,
     baseUrl,
     envKey,
     experimentalBearerToken,
     requiresOpenaiAuth,
+    supportsWebsockets,
     wireApi: block.match(/^wire_api\s*=\s*"([^"]*)"/m)?.[1],
     authPath: !experimentalBearerToken?.trim()
         && !hasConfiguredEnvironmentCredential

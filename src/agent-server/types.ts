@@ -31,6 +31,7 @@ export interface AgentServerPreflightReport {
   shellSmoke?: Array<{
     command: string;
     status: "passed" | "failed";
+    durationMs: number;
     stdout?: string;
     stderr?: string;
     error?: string;
@@ -42,7 +43,6 @@ export interface AgentServerPreflightReport {
 export interface ThreadPreflightReport {
   status: "passed" | "failed";
   threadId: string;
-  mcpServerStatus?: unknown;
   mcpSmoke?: Array<{
     server: string;
     tool?: string;

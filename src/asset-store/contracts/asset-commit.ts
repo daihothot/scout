@@ -8,7 +8,7 @@ import type {
   ShellToolContract,
 } from "./resources.js";
 import type { MountMaterializationIssue } from "./mount.js";
-import type { ScoutSkillCatalogEntry } from "./skill.js";
+import type { MaterializedSkill } from "./skill.js";
 
 /** Persisted mount identity and preflight status written into run artifacts. */
 export interface AssetCommit {
@@ -27,8 +27,7 @@ export interface AssetCommit {
   shellTools: ShellToolContract[];
   mcpServers: MaterializedMcpServer[];
   customAgents: string[];
-  skills: string[];
-  skillCatalog: ScoutSkillCatalogEntry[];
+  skills: MaterializedSkill[];
   plugins: string[];
   manifestPath: string;
   resourceHash: string;

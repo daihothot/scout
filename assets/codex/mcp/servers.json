@@ -4,7 +4,13 @@
       "command": "node",
       "args": [
         "assets/codex/plugins/mock/scout-local-capability-plugin/mcp/scout-local-capability.cjs"
-      ]
+      ],
+      "smoke": {
+        "tool": "scout_capability_echo",
+        "arguments": {
+          "message": "preflight"
+        }
+      }
     },
     "codegraph": {
       "command": "node",

@@ -5,6 +5,7 @@ description: Scout Agent 从 Guru Knowledge 定位 Behavior、Domain、Module、
 id: tool-guru-knowledge
 version: 0.11.2
 phase: [research, validate]
+family: [tool, guru]
 tags: [guru, knowledge, bdd, capability, evidence, source]
 devices: [any]
 dependencies:

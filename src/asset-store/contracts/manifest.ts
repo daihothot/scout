@@ -5,6 +5,7 @@
 import type { AgentProfile } from "./profile.js";
 import type { MaterializedMcpServer } from "./resources.js";
 import type { MountMaterializationIssue } from "./mount.js";
+import type { MaterializedSkill } from "./skill.js";
 
 /** Portable manifest used to verify and reconstruct a role mount later. */
 export interface MountManifest {
@@ -41,11 +42,15 @@ export interface MountManifest {
     wrapperPath: string;
     command: string;
     required: boolean;
-    marker?: string;
+    smoke?: {
+      scope: "mount" | "run";
+      args: string[];
+      marker?: string;
+    };
   }>;
   mcpServers: MaterializedMcpServer[];
   customAgents: string[];
-  skills: string[];
+  skills: MaterializedSkill[];
   plugins: string[];
   workerAgent?: string;
   roleAgents: Record<string, string>;

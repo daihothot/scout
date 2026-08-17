@@ -5,12 +5,12 @@ description: Scout Validator 对 Research Pack 或 Verification Report 执行独
 id: domain-validation-validator
 version: 0.6.3
 phase: [validate]
-family: [validation, workflow, validator]
+family: [validation, workflow]
 tags: [scout, validation, research, verification, gate, evidence, audit, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [domain-validation-research-pack, domain-validation-verifier, tool-guru-knowledge, tool-jarvis-codebase]
+    required: [domain-validation-research-pack, domain-validation-verifier, tool-guru-knowledge, tool-jarvis-codebase, internal-single-skill-reader]
   shellTools:
     required: [scoutAssets, scoutArtifactDigest]
     optional: [rg, sed, find, cat]
@@ -52,6 +52,14 @@ summary: 独立形成 Research Pack Gate 或 Verification Report Gate。
 - 为上游 Worker 选择 Acquisition、采集信号或判断具体采集实现支持哪些环境。
 - 把上游 Worker 的自检结果直接当作独立 Gate。
 - 使用同一个 Validator task 先后执行 Research Pack Gate 和 Verification Report Gate。
+
+## Single Consumption
+
+- 本领域当前 Single 根目录为 `.scout/skill/validation/single/unity/local/`。
+- 开始语义检查前，先按 `internal-single-skill-reader` 完整读取 `general/` 下当前 validate phase 可见的全部 Single，包括接口 contract 与相关实现 contract。
+- 根据候选 artifact 明确引用的 Capability 选择 capability 目录；一旦选择，必须在检查相关内容前完整读取该 capability 目录下当前 phase 可见的全部 Single。
+- 完整读取用于建立检查 contract；Validator 只检查候选 artifact 实际涉及的 requirement、Signal 与 Acquisition，不执行采集、不重做 Research，也不因已读而扩大 gate 范围。
+- 任一集合未完整读取时，按受影响检查范围形成真实 gate 缺口；不生成 coverage 或 applicability 记录。
 
 ## Validation Gate Model
 

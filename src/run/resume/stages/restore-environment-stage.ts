@@ -1,4 +1,4 @@
-import { preflightCodexAppServerMount } from "../../../agent-server/codex/app-server-preflight.js";
+import { createCodexAppServerMountPreflight } from "../../../agent-server/codex/app-server-preflight.js";
 import type { AgentServerPreflightReport } from "../../../agent-server/types.js";
 import { join, resolve } from "node:path";
 import { AssetStore, type CodexMount, type MaterializeOptions } from "../../../asset-store/index.js";
@@ -65,9 +65,6 @@ export class RestoreEnvironmentStage implements RunStage {
     const runRoot = resolve(scope.runRoot);
     const roles = Object.values(ScoutAgentRoles);
     const assetStore = this.options.assetStore ?? new AssetStore();
-    const preflightMount = this.options.preflightMount ?? ((mount: CodexMount) =>
-      preflightCodexAppServerMount({ mount, appServer: scope.appServer })
-    );
     const progress = createMountPreparationProgress(roles);
     const publishProgress = createMountPreparationProgressPublisher(scope.interactionPort);
     await publishProgress(progress);
@@ -144,6 +141,11 @@ export class RestoreEnvironmentStage implements RunStage {
       new Map(plans.map((plan) => [plan.role, plan.inspection] as const)),
     );
     await publishProgress(progress);
+    const preflightMount = this.options.preflightMount
+      ?? createCodexAppServerMountPreflight(
+        scope.appServer,
+        plans.some((plan) => plan.inspection.decision === "rebuild") ? 4 : 1,
+      );
 
     const runner = new EnvironmentRoleRunner(assetStore, preflightMount, {
       onRoleStart: async (role) => {

@@ -53,7 +53,7 @@ test("AssetStore materializes read and write roots from agent profile", () => {
   assert.equal(mount.mcpServers.some((server) => server.name === "codegraph"), false);
   assert.deepEqual(mount.agentProfile.model, {
     id: "gpt-5.5",
-    provider: "GuruOpenAI",
+    provider: "custom",
     reasoningEffort: "high",
     reasoningSummary: "concise",
   });
@@ -91,18 +91,6 @@ test("Agent profiles reject invalid native subagent settings", () => {
       new RegExp(`agent profile ${invalid.key}`),
     );
   }
-});
-
-test("Agent profiles reject the removed skills allowlist", () => {
-  const path = join(scoutRoot, "assets", "codex", "agents", "agent-profiles.json");
-  const profiles = JSON.parse(readFileSync(path, "utf8")) as AgentProfilesFile;
-  const profile = profiles.profiles.researcher as unknown as Record<string, unknown>;
-  profile.skills = ["domain-validation-researcher"];
-
-  assert.throws(
-    () => resolveAgentProfile(profiles, "researcher"),
-    /must not define legacy skills; use phase/,
-  );
 });
 
 test("AssetStore rejects a profile that references an unknown custom agent", () => {

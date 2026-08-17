@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import {
-  preflightCodexAppServerMount,
+  createCodexAppServerMountPreflight,
 } from "../../../agent-server/codex/app-server-preflight.js";
 import type { AgentServerPreflightReport } from "../../../agent-server/types.js";
 import {
@@ -97,9 +97,6 @@ export class PrepareEnvironmentStage implements RunStage {
     assertMaterializationPath(scoutRoot, join(runRoot, "agents"));
 
     const assetStore = this.options.assetStore ?? new AssetStore();
-    const preflightMount = this.options.preflightMount ?? ((mount: CodexMount) =>
-      preflightCodexAppServerMount({ mount, appServer: scope.appServer })
-    );
     const progress = createMountPreparationProgress(roles);
     const publishProgress = createMountPreparationProgressPublisher(scope.interactionPort);
     await publishProgress(progress);
@@ -164,6 +161,11 @@ export class PrepareEnvironmentStage implements RunStage {
       new Map(plans.map((plan) => [plan.role, plan.inspection] as const)),
     );
     await publishProgress(progress);
+    const preflightMount = this.options.preflightMount
+      ?? createCodexAppServerMountPreflight(
+        scope.appServer,
+        plans.some((plan) => plan.inspection.decision === "rebuild") ? 4 : 1,
+      );
 
     const runner = new EnvironmentRoleRunner(assetStore, preflightMount, {
       onRoleStart: async (role) => {

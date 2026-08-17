@@ -9,14 +9,11 @@ import {
   resolve,
   sep,
 } from "node:path";
-import { promisify } from "node:util";
 import type { CodexMount } from "../../asset-store/contracts/mount.js";
 import { buildMountShellEnvironment } from "../../asset-store/mount/macros.js";
 import { isPathWithin } from "../../core/path.js";
 import type { CodexAppServerClient } from "./app-server-client.js";
 import type { AgentServerPreflightReport } from "../types.js";
-
-const execFileAsync = promisify(execFile);
 
 /**
  * Keep the runtime RPC responses available to the gate, but persist only a
@@ -76,6 +73,7 @@ export function summarizeAgentServerPreflight(
     summary.shellSmoke = report.shellSmoke.map((item) => ({
       command: item.command,
       status: item.status,
+      durationMs: item.durationMs,
       ...(item.status === "failed" && item.stdout ? { stdout: summarizeError(item.stdout) } : {}),
       ...(item.status === "failed" && item.stderr ? { stderr: summarizeError(item.stderr) } : {}),
       ...(item.error ? { error: summarizeError(item.error) } : {}),
@@ -85,11 +83,61 @@ export function summarizeAgentServerPreflight(
   return summary;
 }
 
+type ShellSmokeResult = NonNullable<AgentServerPreflightReport["shellSmoke"]>[number];
+type ShellSmokeBatch = {
+  run: Map<string, Promise<ShellSmokeResult>>;
+  schedule(operation: () => Promise<ShellSmokeResult>): Promise<ShellSmokeResult>;
+};
+
+function createShellSmokeBatch(concurrency: number): ShellSmokeBatch {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error(`Shell smoke concurrency must be a positive integer: ${concurrency}`);
+  }
+  const waiters: Array<() => void> = [];
+  let active = 0;
+  return {
+    run: new Map(),
+    schedule: async (operation) => {
+      if (active < concurrency) {
+        active += 1;
+      } else {
+        await new Promise<void>((resolveWaiter) => waiters.push(resolveWaiter));
+      }
+      try {
+        return await operation();
+      } finally {
+        const next = waiters.shift();
+        if (next) next();
+        else active -= 1;
+      }
+    },
+  };
+}
+
+/** Creates one mount preflight function whose run-scoped shell smokes are shared within the batch. */
+export function createCodexAppServerMountPreflight(
+  appServer: CodexAppServerClient,
+  shellSmokeConcurrency: number,
+): (mount: CodexMount) => Promise<AgentServerPreflightReport> {
+  const shellSmokeBatch = createShellSmokeBatch(shellSmokeConcurrency);
+  return (mount) => preflightCodexAppServerMountInternal({ mount, appServer }, shellSmokeBatch);
+}
+
 /** Runs root, Codex catalog, plugin, hook, and shell smoke checks for one mount. */
 export async function preflightCodexAppServerMount(input: {
   mount: CodexMount;
   appServer: CodexAppServerClient;
 }): Promise<AgentServerPreflightReport> {
+  return preflightCodexAppServerMountInternal(input, createShellSmokeBatch(4));
+}
+
+async function preflightCodexAppServerMountInternal(
+  input: {
+    mount: CodexMount;
+    appServer: CodexAppServerClient;
+  },
+  shellSmokeBatch: ShellSmokeBatch,
+): Promise<AgentServerPreflightReport> {
   const { mount, appServer } = input;
   const result: AgentServerPreflightReport = {
     status: "failed",
@@ -151,7 +199,7 @@ export async function preflightCodexAppServerMount(input: {
     }).catch((error: unknown) => ({
       warning: error instanceof Error ? error.message : String(error),
     }));
-    result.shellSmoke = await smokeShellTools(mount);
+    result.shellSmoke = await smokeShellTools(mount, shellSmokeBatch);
 
     result.status = preflightPassed(result) ? "passed" : "failed";
   } catch (error) {
@@ -161,38 +209,86 @@ export async function preflightCodexAppServerMount(input: {
   return result;
 }
 
-async function smokeShellTools(mount: CodexMount): Promise<AgentServerPreflightReport["shellSmoke"]> {
+async function smokeShellTools(
+  mount: CodexMount,
+  shellSmokeBatch: ShellSmokeBatch,
+): Promise<AgentServerPreflightReport["shellSmoke"]> {
   const mountRoot = mount.mountRoot;
-  const path = `${mountRoot}/bin:${process.env.PATH ?? ""}`;
   const tools = mount.shellTools.filter((tool) => tool.required);
-  return Promise.all(tools.map((tool) =>
-    execFileAsync("sh", ["-lc", shellSmokeCommand(tool.exposeAs, tool.smokeArgs ?? [])], {
-      cwd: mountRoot,
-      env: {
-        ...process.env,
-        PATH: path,
-        ...buildMountShellEnvironment({
-          runRoot: mount.runRoot,
-          artifactRoot: mount.artifactRoot,
-          assetCommitId: mount.assetCommitId,
-        }),
-      },
-    }).then((output) => {
-      const stdout = output.stdout.trim();
-      const markerPassed = tool.marker ? stdout.includes(tool.marker) : true;
+  const environment = {
+    ...process.env,
+    PATH: `${mountRoot}/bin:${process.env.PATH ?? ""}`,
+    ...buildMountShellEnvironment({
+      runRoot: mount.runRoot,
+      artifactRoot: mount.artifactRoot,
+      assetCommitId: mount.assetCommitId,
+    }),
+  };
+  return Promise.all(tools.map(async (tool): Promise<ShellSmokeResult> => {
+    const startedAt = Date.now();
+    const command = [tool.exposeAs, ...(tool.smoke?.args ?? [])].join(" ");
+    const executable = join(mountRoot, "bin", tool.exposeAs);
+
+    try {
+      accessSync(executable, constants.X_OK);
+    } catch (error) {
       return {
-        command: [tool.exposeAs, ...(tool.smokeArgs ?? [])].join(" "),
-        status: markerPassed ? "passed" as const : "failed" as const,
-        stdout,
-        stderr: output.stderr.trim(),
-        error: markerPassed ? undefined : `Missing marker: ${tool.marker}`,
+        command,
+        status: "failed",
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
       };
-    }).catch((error: unknown) => ({
-      command: [tool.exposeAs, ...(tool.smokeArgs ?? [])].join(" "),
-      status: "failed" as const,
-      error: error instanceof Error ? error.message : String(error),
-    }))
-  ));
+    }
+
+    if (!tool.smoke) {
+      return {
+        command,
+        status: "passed",
+        durationMs: Date.now() - startedAt,
+      };
+    }
+    const smoke = tool.smoke;
+
+    const execute = () => new Promise<ShellSmokeResult>((resolveOutput) => {
+      execFile(executable, smoke.args, {
+        cwd: mountRoot,
+        env: environment,
+        encoding: "utf8",
+      }, (error, stdout, stderr) => {
+        const normalizedStdout = String(stdout).trim();
+        const normalizedStderr = String(stderr).trim();
+        const markerPassed = smoke.marker
+          ? normalizedStdout.includes(smoke.marker)
+          : true;
+        const passed = !error && markerPassed;
+        resolveOutput({
+          command,
+          status: passed ? "passed" : "failed",
+          durationMs: Date.now() - startedAt,
+          stdout: normalizedStdout,
+          stderr: normalizedStderr,
+          ...(!passed ? {
+            error: error?.message ?? `Missing marker: ${smoke.marker}`,
+          } : {}),
+        });
+      });
+    });
+
+    if (smoke.scope === "mount") return shellSmokeBatch.schedule(execute);
+
+    const cacheKey = JSON.stringify({
+      id: tool.id,
+      command: tool.command,
+      args: tool.args ?? [],
+      exposeAs: tool.exposeAs,
+      smoke,
+    });
+    const existing = shellSmokeBatch.run.get(cacheKey);
+    if (existing) return existing;
+    const execution = shellSmokeBatch.schedule(execute);
+    shellSmokeBatch.run.set(cacheKey, execution);
+    return execution;
+  }));
 }
 
 function preflightPassed(result: AgentServerPreflightReport): boolean {
@@ -291,13 +387,6 @@ function buildPluginGate(input: {
     plugins,
     status: plugins.every((plugin) => plugin.installedAfter && plugin.enabledAfter) ? "passed" : "failed",
   };
-}
-
-function shellSmokeCommand(exposeAs: string, smokeArgs: string[]): string {
-  const executable = JSON.stringify(exposeAs);
-  if (smokeArgs.length === 0) return `command -v ${executable}`;
-  const args = smokeArgs.map((arg) => JSON.stringify(arg)).join(" ");
-  return `command -v ${executable} && ${executable} ${args}`;
 }
 
 function findPluginSummary(response: unknown, pluginName: string): Record<string, unknown> | undefined {

@@ -1,7 +1,6 @@
 import type { CodexAppServerClient } from "../agent-server/codex/app-server-client.js";
 import { AgentRegistry } from "../agent/core/agent-registry.js";
 import { AgentHumanInputStore } from "../agent/human-input/index.js";
-import { AgentSkillStore } from "../agent/skill/index.js";
 import { AgentTaskStore } from "../agent/task/agent-task-store.js";
 import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
@@ -41,7 +40,6 @@ export class RunScope {
   readonly eventBus: EventBus;
   readonly interactionPort: RuntimeInteractionPort;
   readonly agentRegistry = new AgentRegistry();
-  readonly skillStore = new AgentSkillStore();
   readonly taskStore = new AgentTaskStore();
   readonly humanInputStore: AgentHumanInputStore;
   readonly domain: ScoutDomain;

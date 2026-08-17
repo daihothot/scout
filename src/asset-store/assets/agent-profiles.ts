@@ -70,9 +70,6 @@ function cloneAgentProfile(
   profile: AgentProfileDefinition,
   model: CodexModelConfig,
 ): AgentProfile {
-  if (Object.hasOwn(profile, "skills")) {
-    throw new Error("Agent profile must not define legacy skills; use phase.");
-  }
   if (
     !Array.isArray(profile.customAgents)
     || profile.customAgents.some((name) => typeof name !== "string" || name.trim().length === 0)

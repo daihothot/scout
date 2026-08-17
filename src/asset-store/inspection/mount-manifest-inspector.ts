@@ -4,7 +4,6 @@ import { CodexAssetLayout, roleAgentPath } from "../assets/asset-layout.js";
 import {
   assetSourcePath,
   customAgentNameFromPath,
-  skillNameFromPath,
 } from "../files/asset-paths.js";
 import type { MountContext } from "../contracts/mount-context.js";
 import {
@@ -37,7 +36,10 @@ export class MountManifestInspector {
       return "custom agent inventory changed";
     }
     if (!Array.isArray(manifest.skills)
-      || !sameUnorderedStrings(manifest.skills, context.profiledSkillPaths.map(skillNameFromPath))) {
+      || !sameValue(
+        manifest.skills,
+        context.skillCatalog.map(({ name, path }) => ({ name, path })),
+      )) {
       return "Skill inventory changed";
     }
     if (!Array.isArray(manifest.plugins)

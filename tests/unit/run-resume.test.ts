@@ -1405,10 +1405,6 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
       };
     },
     async request(method: string, params: unknown) {
-      if (method === "mcpServerStatus/list"
-        && (params as { threadId?: string }).threadId === "researcher-old-thread") {
-        researcherResumeOrder.push("preflight");
-      }
       if (method === "config/read") return { layers: [] };
       if (method === "plugin/installed") {
         const names = (
@@ -1539,7 +1535,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     threadId: "researcher-old-thread",
     path: researcherRolloutPath,
     model: "gpt-5.5",
-    modelProvider: "GuruOpenAI",
+    modelProvider: "custom",
     reasoningEffort: "high",
     cwd: restoredResearcherMount.mountRoot,
     runtimeWorkspaceRoots: [restoredResearcherMount.mountRoot],
@@ -1551,7 +1547,6 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   }]);
   assert.equal(researcherResumeOrder[0], "resume");
   assert.ok(researcherResumeOrder.indexOf("ready") > 0);
-  assert.ok(researcherResumeOrder.indexOf("preflight") > 0);
   assert.equal(threadSequence, 3);
   assert.equal(
     researcherAgent.threadId,

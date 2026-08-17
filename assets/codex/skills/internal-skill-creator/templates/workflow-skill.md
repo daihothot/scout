@@ -13,9 +13,9 @@ scout:
 
 ## Frontmatter Rules
 
-- 必须填写 `phase`。只有该 Workflow 是 Agent 应直接导航的入口时才填写有序 `family`；作为其它入口的服务层时必须省略 `family` 并由 required dependency 带入。
+- 必须填写 `phase` 和 `family`。`family` 按 Domain、Tool 或 Internal 的真实责任分类，并决定 `.scout/skill` 下的物化目录。
 - frontmatter `phase` 不表示本模板正文中的 Phase 顺序；正文阶段仍由 Workflow Overview 和 Exit Rules 定义。
-- `tags` 只表达 Workflow 的稳定特征，不参与 Runtime 路由。
+- `tags` 只表达 Workflow 的稳定特征，不参与目录分类或 phase 投影。
 - `type` 在正文 `Skill Type` 中固定为 `workflow`。
 - `structure_level` 使用 `full`。
 
@@ -119,7 +119,7 @@ Partial：
 
 - Inputs 只包含上游必须提供或可推断的信息，且每项来源和缺失语义明确。
 - Workflow Overview、Phase 顺序和 Workflow Exit Rules 一致。
-- frontmatter `phase` 表达 Runtime 适用阶段；`family` 的有无与该 Workflow 是直接入口还是 dependency-only 服务层一致。
+- frontmatter `phase` 表达 Runtime 适用阶段；`family` 必填且表达 Workflow 的稳定类型归属。
 - `tags` 是非路由特征，不被正文阶段名称或 family path 机械复制。
 - 每个 Phase 的 Exit、Blocked、Partial 可以被明确判断。
 - 正式产物、claim owner、refs 和 artifact relationship 不互相重复或冲突。

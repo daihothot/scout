@@ -5,6 +5,7 @@ description: Scout 使用 Jarvis codebase 管理 Guru 托管代码库路径、�
 id: tool-jarvis-codebase
 version: 0.5.2
 phase: [research, verify, validate]
+family: [tool, jarvis]
 tags: [jarvis, codebase, codegraph, source, evidence]
 devices: [any]
 dependencies:

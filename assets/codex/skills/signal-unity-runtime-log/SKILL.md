@@ -5,7 +5,7 @@ description: 定义或解释 Unity runtime log 信号、日志记录结构、匹
 id: signal-unity-runtime-log
 version: 0.3.2
 phase: [research, verify, validate]
-family: [validation, unity, single, local, general, runtime-log]
+family: [validation, single, unity, local, general]
 tags: [signal, unity, runtime, log]
 devices: [any]
 summary: 定义 Unity runtime log 的统一文件格式、记录结构、匹配契约和解释限制。

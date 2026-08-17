@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   AssetStore,
   inspectCodexMount,
@@ -113,6 +113,32 @@ test("AssetStore rejects asset-local paths that escape the assets root", () => {
       agentId: "coordinator",
     }),
     /Asset-local path escapes assets root/,
+  );
+});
+
+test("AssetStore rejects removed flat shell smoke fields", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-shell-smoke-contract-");
+  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  writeFileSync(join(assetsRoot, "tools", "shell-tools.json"), JSON.stringify({
+    tools: [{
+      id: "legacySmoke",
+      name: "legacy-smoke",
+      command: "node",
+      exposeAs: "legacy-smoke",
+      required: true,
+      smokeArgs: ["--smoke"],
+      marker: "LEGACY_OK",
+    }],
+  }, null, 2) + "\n", "utf8");
+  updateCoordinatorShellTools(assetsRoot, ["legacySmoke"]);
+
+  assert.throws(
+    () => new AssetStore().inspectMount({
+      scoutRoot: fixtureRoot,
+      runId: "run-shell-smoke-contract",
+      agentId: "coordinator",
+    }),
+    /Removed shell tool smoke fields are not accepted/,
   );
 });
 
@@ -895,7 +921,7 @@ test("AssetStore exposes mounted Skill readers to the coordinator", () => {
   }
 });
 
-test("AssetStore exposes profiled Validation Domain Skills outside Codex Skill discovery", () => {
+test("AssetStore exposes profiled Validation Domain Skills through classified filesystem paths", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-validation-skills-");
   const expectedSkills = {
     coordinator: "domain-validation-coordinator",
@@ -913,20 +939,17 @@ test("AssetStore exposes profiled Validation Domain Skills outside Codex Skill d
     });
     const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
 
-    assert.ok(mount.skills.includes(skill));
-    assert.ok(manifest.skills.includes(skill));
-    assert.equal(existsSync(join(
-      mount.mountRoot,
-      ".scout",
-      "skills",
-      skill,
-      "SKILL.md",
-    )), true);
+    assert.ok(hasSkill(mount.skills, skill));
+    assert.ok(hasSkill(manifest.skills, skill));
+    const materialized = mount.skills.find((candidate) => candidate.name === skill);
+    assert.ok(materialized);
+    assert.equal(existsSync(join(mount.mountRoot, materialized.path)), true);
+    assert.match(materialized.path, /^\.scout\/skill\/validation\/workflow\//);
     assert.deepEqual(readdirSync(join(mount.mountRoot, ".agents", "skills")), []);
   }
 });
 
-test("AssetStore keeps the profiled Skill catalog in memory without exposing it in the mount", () => {
+test("AssetStore persists only each materialized Skill identity and filesystem path", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-skill-catalog-");
   const store = new AssetStore();
   const mount = store.materializeMount({
@@ -941,33 +964,30 @@ test("AssetStore keeps the profiled Skill catalog in memory without exposing it 
 
   assert.equal(existsSync(catalogPath), false);
   assert.equal("skillCatalog" in manifest, false);
-  assert.deepEqual(mount.skillCatalog.map((skill) => skill.name), mount.skills);
+  assert.deepEqual(manifest.skills, mount.skills);
   assert.deepEqual(readdirSync(join(mount.mountRoot, ".agents", "skills")), []);
-  const entrySkill = mount.skillCatalog.find((skill) => skill.name === "domain-validation-researcher");
-  const serviceSkill = mount.skillCatalog.find((skill) =>
+  const entrySkill = mount.skills.find((skill) => skill.name === "domain-validation-researcher");
+  const serviceSkill = mount.skills.find((skill) =>
     skill.name === "domain-validation-research-pack"
   );
   assert.ok(entrySkill);
-  assert.deepEqual(entrySkill.family, ["validation", "workflow", "researcher"]);
-  assert.deepEqual(entrySkill.tags, ["scout", "validation", "bdd", "research", "workflow"]);
+  assert.equal(
+    entrySkill.path,
+    ".scout/skill/validation/workflow/domain-validation-researcher/SKILL.md",
+  );
   assert.ok(serviceSkill);
-  assert.equal(serviceSkill.family, undefined);
-  assert.deepEqual(serviceSkill.tags, [
-    "scout",
-    "validation",
-    "research",
-    "pack",
-    "evidence",
-    "manual",
-  ]);
-  assert.ok(mount.skillCatalog.every((skill) =>
-    skill.path === `.scout/skills/${skill.name}/SKILL.md`
+  assert.equal(
+    serviceSkill.path,
+    ".scout/skill/validation/workflow/domain-validation-research-pack/SKILL.md",
+  );
+  assert.ok(mount.skills.every((skill) =>
+    skill.path.endsWith(`/${skill.name}/SKILL.md`)
     && existsSync(join(mount.mountRoot, skill.path))
   ));
 
-  for (const skill of mount.skillCatalog) {
+  for (const skill of mount.skills) {
     assert.equal(
-      realpathSync(join(mount.mountRoot, ".scout", "skills", skill.name)),
+      realpathSync(dirname(join(mount.mountRoot, skill.path))),
       realpathSync(join(fixtureRoot, "assets", "codex", "skills", skill.name)),
     );
   }
@@ -980,7 +1000,7 @@ test("AssetStore keeps the profiled Skill catalog in memory without exposing it 
     persistedIdentity: mountIdentity(mount),
   });
   assert.equal(reused.decision, "reused");
-  assert.deepEqual(reused.mount.skillCatalog, mount.skillCatalog);
+  assert.deepEqual(reused.mount.skills, mount.skills);
 });
 
 test("Skill resource hashes cover the complete profiled Skill directory", () => {
@@ -1041,15 +1061,12 @@ test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
     const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
 
     for (const signalSkill of signalSkills) {
-      assert.ok(mount.skills.includes(signalSkill));
-      assert.ok(manifest.skills.includes(signalSkill));
-      assert.equal(existsSync(join(
-        mount.mountRoot,
-        ".scout",
-        "skills",
-        signalSkill,
-        "SKILL.md",
-      )), true);
+      assert.ok(hasSkill(mount.skills, signalSkill));
+      assert.ok(hasSkill(manifest.skills, signalSkill));
+      const materialized = mount.skills.find((skill) => skill.name === signalSkill);
+      assert.ok(materialized);
+      assert.equal(existsSync(join(mount.mountRoot, materialized.path)), true);
+      assert.match(materialized.path, /^\.scout\/skill\/validation\/single\/unity\/local\/general\//);
     }
   }
 
@@ -1059,7 +1076,7 @@ test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
     agentId: "coordinator",
   });
   for (const signalSkill of signalSkills) {
-    assert.equal(coordinatorMount.skills.includes(signalSkill), false);
+    assert.equal(hasSkill(coordinatorMount.skills, signalSkill), false);
   }
 });
 
@@ -1074,23 +1091,15 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
     runId: "run-runtime-log-acquisition-verifier-test",
     agentId: "verifier",
   });
-  assert.ok(verifierMount.skills.includes(toolSkill));
-  assert.ok(verifierMount.skills.includes(acquisitionSkill));
+  assert.ok(hasSkill(verifierMount.skills, toolSkill));
+  assert.ok(hasSkill(verifierMount.skills, acquisitionSkill));
   assert.ok(verifierMount.shellTools.some((tool) => tool.id === "unity"));
-  assert.equal(existsSync(join(
-    verifierMount.mountRoot,
-    ".scout",
-    "skills",
-    toolSkill,
-    "SKILL.md",
-  )), true);
-  assert.equal(existsSync(join(
-    verifierMount.mountRoot,
-    ".scout",
-    "skills",
-    acquisitionSkill,
-    "SKILL.md",
-  )), true);
+  const materializedTool = verifierMount.skills.find((skill) => skill.name === toolSkill);
+  const materializedAcquisition = verifierMount.skills.find((skill) => skill.name === acquisitionSkill);
+  assert.ok(materializedTool);
+  assert.ok(materializedAcquisition);
+  assert.equal(existsSync(join(verifierMount.mountRoot, materializedTool.path)), true);
+  assert.equal(existsSync(join(verifierMount.mountRoot, materializedAcquisition.path)), true);
   assert.equal(existsSync(join(verifierMount.mountRoot, "bin", "unity")), true);
 
   const validatorMount = store.materializeMount({
@@ -1098,8 +1107,8 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
     runId: "run-runtime-log-acquisition-validator-test",
     agentId: "validator",
   });
-  assert.ok(validatorMount.skills.includes(toolSkill));
-  assert.ok(validatorMount.skills.includes(acquisitionSkill));
+  assert.ok(hasSkill(validatorMount.skills, toolSkill));
+  assert.ok(hasSkill(validatorMount.skills, acquisitionSkill));
   assert.equal(validatorMount.shellTools.some((tool) => tool.id === "unity"), false);
 
   for (const agentId of ["coordinator", "researcher"]) {
@@ -1108,8 +1117,8 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
       runId: `run-runtime-log-acquisition-${agentId}-test`,
       agentId,
     });
-    assert.equal(mount.skills.includes(toolSkill), false);
-    assert.equal(mount.skills.includes(acquisitionSkill), false);
+    assert.equal(hasSkill(mount.skills, toolSkill), false);
+    assert.equal(hasSkill(mount.skills, acquisitionSkill), false);
     assert.equal(mount.shellTools.some((tool) => tool.id === "unity"), false);
   }
 });
@@ -1154,7 +1163,7 @@ test("AssetStore exposes Research artifact checking and git tools to the researc
   assert.ok(checker);
   assert.ok(digest);
   assert.ok(git);
-  assert.ok(mount.skills.includes("tool-guru-knowledge"));
+  assert.ok(hasSkill(mount.skills, "tool-guru-knowledge"));
   assert.equal(existsSync(wrapperPath), true);
   assert.equal(existsSync(digestWrapperPath), true);
   assert.match(execFileSync(wrapperPath, ["--smoke"], {
@@ -1177,11 +1186,11 @@ test("AssetStore gives the validator producer contracts, code inspection tools, 
   const digest = mount.shellTools.find((tool) => tool.id === "scoutArtifactDigest");
   const wrapperPath = join(mount.mountRoot, "bin", "scout-artifact-digest");
 
-  assert.ok(mount.skills.includes("domain-validation-validator"));
-  assert.ok(mount.skills.includes("domain-validation-research-pack"));
-  assert.ok(mount.skills.includes("domain-validation-verifier"));
-  assert.ok(mount.skills.includes("tool-guru-knowledge"));
-  assert.ok(mount.skills.includes("tool-jarvis-codebase"));
+  assert.ok(hasSkill(mount.skills, "domain-validation-validator"));
+  assert.ok(hasSkill(mount.skills, "domain-validation-research-pack"));
+  assert.ok(hasSkill(mount.skills, "domain-validation-verifier"));
+  assert.ok(hasSkill(mount.skills, "tool-guru-knowledge"));
+  assert.ok(hasSkill(mount.skills, "tool-jarvis-codebase"));
   assert.equal(mount.shellTools.some((tool) => tool.id === "scoutResearchArtifactCheck"), false);
   assert.ok(mount.shellTools.some((tool) => tool.id === "jarvis"));
   assert.ok(mount.shellTools.some((tool) => tool.id === "codegraph"));
@@ -1645,6 +1654,10 @@ function mountIdentity(mount: CodexMount) {
     mountId: mount.mountId,
     resourceHash: mount.resourceHash,
   };
+}
+
+function hasSkill(skills: ReadonlyArray<{ name: string }>, name: string): boolean {
+  return skills.some((skill) => skill.name === name);
 }
 
 function writeManifest(path: string, manifest: MountManifest): void {

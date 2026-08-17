@@ -5,6 +5,7 @@ description: Scout Researcher 在 Validation Domain 中编排知识与代码证�
 id: domain-validation-research-pack
 version: 0.2.4
 phase: [research, validate]
+family: [validation, workflow]
 tags: [scout, validation, research, pack, evidence, manual]
 devices: [any]
 dependencies:
@@ -134,13 +135,13 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 
 描述：
 
-- 当前 mount 可见本技能、`tool-guru-knowledge`、`tool-jarvis-codebase`、当前 Manual 实际引用的 Signal Skill、`scout-assets`、`scout-research-artifact-check` 和 `scout-artifact-digest`。
+- 当前 mount 可见本技能、`tool-guru-knowledge`、`tool-jarvis-codebase`、角色 Domain Skill 已按 Single 完整读取规则准备的 contract、`scout-assets`、`scout-research-artifact-check` 和 `scout-artifact-digest`。
 
 注意事项：
 
 - 使用 `scout-assets` 查询当前可见能力。
 - 两个 producer Skill 各自负责检查自己的 required capabilities。
-- Signal 是条件依赖；只有 Manual 选择对应信号时才要求该 Signal Skill 可见。
+- Single 的完整读取由角色 Domain Skill 与 `internal-single-skill-reader` 负责；本技能只在 Manual 中选择并消费适用 contract，不把完整读取等同于全部适用。
 - 缺少 Domain Skill 直接依赖或任一 producer contract 时，记录为阻塞项并向上游报告。
 
 ### I-003: Producer Scope
@@ -310,7 +311,7 @@ scout-assets list
 - 从上游输入中提取 product、domain、capability、platform、app version / SDK version / branch / commit、BDD scenario、user persona clue、source refs 和 issue / PR 线索。
 - `scout-assets` 输出只能证明当前 mount 能力可见，不能证明业务状态。
 - 读取本技能、`tool-guru-knowledge` 和 `tool-jarvis-codebase` 的 contract 与模板索引；缺失时不得自行复制或缩减 producer 规则。
-- 进入 Phase 6 并选择具体 Signal 前，读取该 Signal Skill；未选择的 Signal 不构成 Phase 1 前置依赖。
+- 进入 Phase 6 时，只从角色 Domain Skill 已完成读取的 Single 集合中选择适用 contract；若新确认了 capability，先按角色 Domain Skill 完整读取该 capability 集合。
 - 只有当前任务需要确认 MCP server、plugin 或 raw manifest 时，再执行 `scout-assets mcp`、`scout-assets plugins` 或 `scout-assets raw`。
 - 缺少 required Domain capability 或 producer contract 时记录为阻塞项；producer 内部能力由对应 Skill 检查。
 - 初始输入明确确认了模板中的必填事实时，可以将该事实登记为 `E-HUMAN-*`；用户画像线索必须进一步整理进独立 `E-PERSONA-*`，不得直接写入人工确认证据结构。
@@ -472,7 +473,7 @@ templates/verification-manual.md
 - verification point 只描述需要验证的功能点，不写 pass / fail 标准。
 - `Supporting Evidence` 只引用 evidence id，不粘贴证据正文。
 - `Signals To Collect` 只选择适用 Signal，并按对应 Signal Skill 定义业务匹配要求；不制定 runtime 执行策略或最终业务结论。
-- 每个 Signal requirement 都必须通过 `signal_ref` 读取当前挂载的 Signal contract，并将已确认事实映射为完整匹配要求；contract 声明 `source_signal` 时确认其可见，其余血缘与派生约束由 Signal contract 自己拥有。
+- 每个 Signal requirement 都必须引用已按角色 Domain Skill 完整读取的 Signal contract，并将已确认事实映射为完整匹配要求；contract 声明 `source_signal` 时确认其依赖成立，其余血缘与派生约束由 Signal contract 自己拥有。
 - 识别到模板中仍未闭环且未注明可不填写的事实字段时，将当前缺口放入 `Human Confirmation Needed`，立即进入人工确认 Gate 并停止后续工作；不得形成完成态 manual 或 task handoff。
 - 每个 verification point 必须通过 `persona_evidence_ref` 引用 registry 中已登记的 `E-PERSONA-*`，不得内嵌用户画像字段。
 - 人工求证完成后，`E-HUMAN-*` 的 `applies_to` 必须定位被确认的模板字段；`E-PERSONA-*` 通过 `Source Evidence` 引用支撑画像事实的人工确认证据，manual 只在该人工确认证据直接支持 verification point 时引用它。
@@ -487,7 +488,7 @@ Exit：
 Blocked：
 
 - 缺少唯一 BDD fact、缺少当前版本 `E-CODE-*` 或 evidence registry 不闭环时，不生成完成状态的 verification manual。
-- Manual 选择的 Signal contract 不可见时停止受影响 verification point，不得自行补写信号语义。
+- Manual 选择的 Signal contract 不在已完整读取的 Single 集合中时停止受影响 verification point，不得自行补写信号语义。
 
 Partial：
 

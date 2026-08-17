@@ -3,14 +3,13 @@ import {
   readdirSync,
   readlinkSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { sha256File } from "../../core/fs.js";
 import { isPathWithin } from "../../core/path.js";
 import type { MountManifest } from "../contracts/manifest.js";
 import {
   resolveAssetLocalPath,
   resolveAssetRelativePath,
-  skillNameFromPath,
 } from "../files/asset-paths.js";
 import type { MountContext } from "../contracts/mount-context.js";
 import { runInspectionCheck } from "./diagnostics.js";
@@ -28,7 +27,7 @@ export class MountFilesystemInspector {
     return this.check("mount layout", this.context.mountRoot, () => this.checkLayout())
       ?? this.check("asset source", this.context.assetsRoot, () => this.checkAssetSources())
       ?? this.check("linked files", this.context.mountRoot, () => this.checkLinkedFiles())
-      ?? this.check("Skill links", join(this.context.mountRoot, ".scout", "skills"), () => this.checkSkillLinks())
+      ?? this.check("Skill links", join(this.context.mountRoot, ".scout", "skill"), () => this.checkSkillLinks())
       ?? this.check("plugin links", join(this.context.mountRoot, "plugins"), () => this.checkPluginLinks());
   }
 
@@ -56,7 +55,7 @@ export class MountFilesystemInspector {
       ".codex/agents",
       ".agents/skills",
       ".agents/plugins",
-      ".scout/skills",
+      ".scout/skill",
       "agents",
       "plugins",
       "bin",
@@ -106,16 +105,40 @@ export class MountFilesystemInspector {
   }
 
   private checkSkillLinks(): string | undefined {
-    const expectedNames = this.context.profiledSkillPaths.map(skillNameFromPath);
-    const directory = join(this.context.mountRoot, ".scout", "skills");
-    if (!sameUnorderedStrings(readdirSync(directory), expectedNames)) {
+    const directory = join(this.context.mountRoot, ".scout", "skill");
+    const expectedPaths = this.context.skillCatalog.map((skill) =>
+      relative(directory, join(this.context.mountRoot, dirname(skill.path)))
+    );
+    const actualPaths: string[] = [];
+    const visit = (current: string): string | undefined => {
+      for (const entry of readdirSync(current, { withFileTypes: true })) {
+        const path = join(current, entry.name);
+        const stat = lstatSync(path);
+        if (stat.isSymbolicLink()) {
+          actualPaths.push(relative(directory, path));
+          continue;
+        }
+        if (!stat.isDirectory()) return `unexpected Skill mount entry: ${relative(directory, path)}`;
+        const issue = visit(path);
+        if (issue) return issue;
+      }
+      return undefined;
+    };
+    const inventoryIssue = visit(directory);
+    if (inventoryIssue) return inventoryIssue;
+    if (!sameUnorderedStrings(actualPaths, expectedPaths)) {
       return "Skill link inventory changed";
     }
-    for (const skillPath of this.context.profiledSkillPaths) {
-      const name = skillNameFromPath(skillPath);
-      const linkPath = join(directory, name);
+    const sourcePathsByName = new Map(this.context.profiledSkillPaths.map((skillPath) => [
+      basename(dirname(skillPath)),
+      skillPath,
+    ] as const));
+    for (const skill of this.context.skillCatalog) {
+      const skillPath = sourcePathsByName.get(skill.name);
+      if (!skillPath) return `Skill source path is missing: ${skill.name}`;
+      const linkPath = join(this.context.mountRoot, dirname(skill.path));
       const expectedTarget = resolveAssetRelativePath(dirname(skillPath), this.context.assetsRoot);
-      if (!isCurrentSymlink(linkPath, expectedTarget)) return `Skill link changed: ${name}`;
+      if (!isCurrentSymlink(linkPath, expectedTarget)) return `Skill link changed: ${skill.path}`;
     }
     return undefined;
   }

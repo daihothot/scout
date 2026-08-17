@@ -16,7 +16,7 @@
 ## 2. Working Mode
 
 - 先读取通用规则、Worker 规则、本文件、task prompt、候选产物 refs 和适用 contract。
-- 开始校验前必须按通用 `Skill Selection Protocol` 逐级选择并读取当前角色及 task 适用的入口 Skill；确定性工具等服务层 Skill 只能按 required dependency `loadOrder` 读取。
+- 开始校验前读取当前角色及 task 适用的 Domain Skill；领域内普通 contract 按被检查对象读取，Single 按 Domain Skill 指定的完整读取规则处理。
 - 优先执行可用的确定性检查，再处理 contract 要求的语义一致性检查。
 - 只检查 task 授权的对象和范围，不扩大为重新调查或重新执行。
 
@@ -35,7 +35,7 @@
 
 - 确认 task id、当前角色、候选产物、适用 contract、预期 gate 和禁止边界。
 - 判断 task 是否属于 Validator；不属于时停止并报告职责不匹配。
-- 确认当前 turn 已完成适用入口 Skill 的逐级导航，并按 `loadOrder` 读取了全部 required dependencies。
+- 确认已读取适用 Domain Skill 及其 required 内容，并完成它要求的通用 Single 与被检查 capability 集合读取。
 - 候选对象不可读、contract 不明确或权限不足时，整理阻塞并交回 Coordinator。
 
 ---

@@ -8,6 +8,7 @@ import type {
   ScoutAgentOptions,
 } from "../core/scout-agent.js";
 import { buildAgentDynamicTools } from "../tools/tool-profiles.js";
+import type { DynamicToolSpec } from "../../agent-server/codex/app-server-client.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 import { ScoutAgentRoles } from "../thread/types.js";
 
@@ -32,16 +33,24 @@ export class AgentBuilder {
     return this.registerAgent(agent);
   }
 
-  dynamicToolsForRole(role: ScoutAgentRole): ReturnType<typeof buildAgentDynamicTools> {
-    return [
+  dynamicToolsForRole(role: ScoutAgentRole): DynamicToolSpec[] {
+    const definitions = [
       ...buildAgentDynamicTools({
         orchestrationTools: role === ScoutAgentRoles.Coordinator,
       }),
       ...this.scope.domain.dynamicToolsForRole(role),
-    ].map((tool) => ({
-      ...tool,
-      description: `${tool.description}\n\n调用约束：仅注册 Scout Agent 的 root thread 可以调用；Codex native subagent 调用会被 Runtime 拒绝。`,
-    }));
+    ];
+    const mountedSkillNames = new Set(
+      this.scope.environment.agents[role].mount.skills.map((skill) => skill.name),
+    );
+    return definitions.map(({ guidanceSkill, ...tool }) => {
+      if (!mountedSkillNames.has(guidanceSkill)) {
+        throw new Error(
+          `Dynamic tool ${tool.name} requires unavailable guidance Skill ${guidanceSkill} for ${role}.`,
+        );
+      }
+      return tool;
+    });
   }
 
   private agentOptionsForRole(role: ScoutAgentRole): ScoutAgentOptions {

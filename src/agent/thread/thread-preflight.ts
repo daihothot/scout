@@ -12,7 +12,7 @@ export interface ScoutAgentThreadPreflightSnapshot {
   result: ThreadPreflightReport;
 }
 
-/** Runs non-mutating MCP status and smoke checks against an active thread. */
+/** Runs the mounted MCP smoke contracts against an active thread. */
 export async function runThreadPreflight(input: {
   agentId: string;
   thread: AgentThreadSnapshot;
@@ -33,10 +33,6 @@ async function checkThread(input: {
 }): Promise<ThreadPreflightReport> {
   const appServer = currentRunScope().appServer;
   try {
-    const mcpServerStatus = await appServer.request("mcpServerStatus/list", {
-      threadId: input.thread.threadId,
-      detail: "full",
-    });
     const mcpSmoke = await Promise.all(input.mount.mcpServers.map(async (server) => {
       if (!server.smoke) {
         return {
@@ -72,7 +68,6 @@ async function checkThread(input: {
     return {
       status: mcpSmoke.some((item) => item.status === "failed") ? "failed" : "passed",
       threadId: input.thread.threadId,
-      mcpServerStatus,
       mcpSmoke,
     };
   } catch (error) {

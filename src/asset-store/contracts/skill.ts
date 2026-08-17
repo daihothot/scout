@@ -26,9 +26,15 @@ export interface ScoutSkillCatalogEntry {
   description: string;
   summary: string;
   phase: ScoutAgentPhase[];
-  family?: string[];
+  family: string[];
   tags: string[];
   requiredSkills: string[];
   path: string;
   resources: ScoutSkillResourceCatalogEntry[];
+}
+
+/** One phase-projected Skill linked into a role mount. */
+export interface MaterializedSkill {
+  name: string;
+  path: string;
 }

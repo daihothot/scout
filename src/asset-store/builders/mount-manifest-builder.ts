@@ -9,6 +9,7 @@ import type {
 import type { AgentProfile } from "../contracts/profile.js";
 import type { MountManifest } from "../contracts/manifest.js";
 import type { MountMaterializationIssue } from "../contracts/mount.js";
+import type { MaterializedSkill } from "../contracts/skill.js";
 import { CodexAssetLayout, roleAgentPath } from "../assets/asset-layout.js";
 import {
   assertMountPathSegment,
@@ -49,7 +50,7 @@ export type MountManifestInput = AssetInventoryInput & {
   shellTools: ShellToolContract[];
   shellWrappers: Array<{ id: string; wrapperPath: string }>;
   customAgentNames: string[];
-  skillNames: string[];
+  materializedSkills: MaterializedSkill[];
   pluginNames: string[];
 };
 
@@ -257,7 +258,7 @@ function buildMountManifestInternal(input: MountManifestInput): MountManifest {
       wrapperPath: `bin/${tool.exposeAs}`,
       command: tool.command,
       required: tool.required,
-      marker: tool.marker,
+      smoke: tool.smoke,
     })),
     mcpServers: input.mcpServers.map((server) => ({
       name: server.name,
@@ -270,7 +271,7 @@ function buildMountManifestInternal(input: MountManifestInput): MountManifest {
       smoke: server.smoke,
     })),
     customAgents: input.customAgentNames,
-    skills: input.skillNames,
+    skills: input.materializedSkills,
     plugins: input.pluginNames,
     ...(input.workerAgentPath ? { workerAgent: input.workerAgentPath } : {}),
     roleAgents: input.roleAgentPaths,

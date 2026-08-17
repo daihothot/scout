@@ -5,12 +5,12 @@ description: Scout Verifier 在 accepted Research Pack Gate 后消费 verificati
 id: domain-validation-verifier
 version: 0.2.3
 phase: [verify, validate]
-family: [validation, workflow, verifier]
+family: [validation, workflow]
 tags: [scout, validation, bdd, verification, evidence, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [tool-jarvis-codebase]
+    required: [tool-jarvis-codebase, internal-single-skill-reader]
   shellTools:
     required: [scoutAssets, jarvis, codegraph, git]
     optional: [rg, sed, find, cat]
@@ -51,6 +51,14 @@ summary: 从 accepted Research Pack Gate 进入实际验证并形成 Verificatio
 - 代替 Validator 判断产物是否可交付。
 - 在缺少证据时声明 BDD 已成立。
 - 把 Signal Skill 当作采集实现，或让 Acquisition 改写 Manual 的匹配 requirement。
+
+## Single Consumption
+
+- 本领域当前 Single 根目录为 `.scout/skill/validation/single/unity/local/`。
+- 在解释 verification point 或调用采集工具前，先按 `internal-single-skill-reader` 完整读取 `general/` 下当前 verify phase 可见的全部 Single。verify phase 同时可见接口 contract 与相关采集实现，二者都属于通用集合，不能只读其中一类。
+- 从 accepted Research Pack、verification manual 与明确 Capability 选择 capability 目录；一旦选择，必须在执行相关验证点前完整读取该 capability 目录下当前 phase 可见的全部 Single。
+- 接口 Single 定义观察与解释 contract，采集实现 Single 定义具体 acquisition；required Skill 依赖表达二者关系，不允许用实现替代接口，也不允许只读接口后凭工具常识执行。
+- 任一集合未完整读取时，不开始依赖它的采集；只报告受影响验证点和真实缺口，不生成 coverage 记录。
 
 ## Validation Verification Model
 

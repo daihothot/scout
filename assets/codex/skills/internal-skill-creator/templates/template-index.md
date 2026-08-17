@@ -12,7 +12,7 @@ status: ready
 
 ## Purpose
 
-本文件负责 `internal-skill-creator` 的类型分类、模板选择和读取顺序。通用 identity、frontmatter、`Core Use`、命名、family 路由、tag 特征 catalog、依赖和挂载规则由上级 `SKILL.md` 定义。
+本文件负责 `internal-skill-creator` 的类型分类、模板选择和读取顺序。通用 identity、frontmatter、`Core Use`、命名、family 文件系统分类、tag、依赖和挂载规则由上级 `SKILL.md` 定义。
 
 ## Reading Order
 
@@ -44,7 +44,7 @@ status: ready
 
 ## Selection Rules
 
-- 以正文实际拥有的责任分类，不根据目录前缀、family、tag、profile 或当前任务名称猜测。
+- 先以正文实际拥有的责任分类，再用匹配该责任的 family 形成文件系统路径；不根据当前任务名称或 tag 猜测类型。
 - 每个 Skill 只选择一个主要类型模板；两个责任拥有不同生命周期、输出或失败语义时，应拆成两个 Skill。
 - 主要定义工具接入、命令操作、连接、权限、副作用、失败或重试契约时按 `tool` 分类；Internal Skill 可以使用只读工具检查内部边界，但不拥有这些工具的操作契约。
 - `signal` 是纯知识 / 纯 Contract Skill，不得包含 Inputs、Phase、Workflow 或具体操作。

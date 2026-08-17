@@ -32,7 +32,8 @@ import {
 } from "../assets/agent-profiles.js";
 import {
   buildScoutSkillCatalog,
-  resolveSkillDependencyLoadOrder,
+  listScoutSkillPaths,
+  resolveScoutSkillsForPhase,
 } from "../assets/skill-catalog.js";
 
 /**
@@ -65,16 +66,9 @@ export class MountContextBuilder {
       listCustomAgentPaths(assetsRoot),
       agentProfile.customAgents,
     );
-    const skillPaths = listSkillPaths(assetsRoot);
+    const skillPaths = listScoutSkillPaths(assetsRoot);
     const fullSkillCatalog = buildScoutSkillCatalog({ assetsRoot, skillPaths });
-    const skillCatalog = resolveSkillDependencyLoadOrder(
-      fullSkillCatalog,
-      fullSkillCatalog
-        .filter((skill) =>
-          skill.family !== undefined && skill.phase.includes(agentProfile.phase)
-        )
-        .map((skill) => skill.name),
-    );
+    const skillCatalog = resolveScoutSkillsForPhase(fullSkillCatalog, agentProfile.phase);
     const profiledSkillPaths = filterSkills(
       skillPaths,
       skillCatalog.map((skill) => skill.name),
@@ -175,6 +169,31 @@ function filterShellTools(tools: ShellToolContract[], ids: string[]): ShellToolC
     const tool = byId.get(id);
     if (!tool) throw new Error(`Agent profile references unknown shell tool: ${id}`);
     assertMountPathSegment(tool.exposeAs, `shell tool exposeAs for ${tool.id}`);
+    if ("smokeArgs" in tool || "marker" in tool) {
+      throw new Error(`Removed shell tool smoke fields are not accepted for ${tool.id}.`);
+    }
+    const smoke: unknown = tool.smoke;
+    if (smoke !== undefined) {
+      if (smoke === null || typeof smoke !== "object" || Array.isArray(smoke)) {
+        throw new Error(`Invalid shell tool smoke contract for ${tool.id}.`);
+      }
+      if (!("scope" in smoke)) {
+        throw new Error(`Missing shell tool smoke scope for ${tool.id}.`);
+      }
+      if (smoke.scope !== "mount" && smoke.scope !== "run") {
+        throw new Error(`Invalid shell tool smoke scope for ${tool.id}: ${String(smoke.scope)}`);
+      }
+      if (!("args" in smoke) || !Array.isArray(smoke.args)) {
+        throw new Error(`Missing or invalid shell tool smoke args for ${tool.id}.`);
+      }
+      if (smoke.args.some((argument) => typeof argument !== "string")) {
+        throw new Error(`Invalid shell tool smoke args for ${tool.id}.`);
+      }
+      if ("marker" in smoke && smoke.marker !== undefined
+        && (typeof smoke.marker !== "string" || smoke.marker.length === 0)) {
+        throw new Error(`Invalid shell tool smoke marker for ${tool.id}.`);
+      }
+    }
     return tool;
   });
   const toolByExecutableName = new Map<string, ShellToolContract>();
@@ -219,16 +238,6 @@ function filterPlugins(pluginPaths: string[], names: string[]): string[] {
     if (!path) throw new Error(`Agent profile references unknown plugin: ${name}`);
     return path;
   });
-}
-
-function listSkillPaths(assetsRoot: string): string[] {
-  const skillsRoot = join(assetsRoot, CodexAssetLayout.skillsRoot);
-  if (!existsSync(skillsRoot)) return [];
-  return readdirSync(skillsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => join(CodexAssetLayout.skillsRoot, entry.name, "SKILL.md"))
-    .filter((path) => existsSync(join(assetsRoot, path)))
-    .sort();
 }
 
 function listCustomAgentPaths(assetsRoot: string): string[] {

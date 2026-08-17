@@ -5,12 +5,12 @@ description: Scout Researcher 在 Validation Domain 中接收 BDD 定位输入�
 id: domain-validation-researcher
 version: 0.5.9
 phase: [research]
-family: [validation, workflow, researcher]
+family: [validation, workflow]
 tags: [scout, validation, bdd, research, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [domain-validation-research-pack]
+    required: [domain-validation-research-pack, internal-single-skill-reader]
 summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 handoff。
 ---
 
@@ -41,6 +41,14 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 - 重复定义 `domain-validation-research-pack` 的 evidence pack、模板或验证手册字段。
 - 执行运行时验证、判定 BDD 是否通过或执行最终 gate。
 - 直接向用户请求输入。
+
+## Single Consumption
+
+- 本领域当前 Single 根目录为 `.scout/skill/validation/single/unity/local/`。
+- 在调用知识、代码或其它研究工具前，先按 `internal-single-skill-reader` 完整枚举并读取 `general/` 下当前 research phase 可见的全部 Single；这些内容用于理解可表达的接口 contract，不用于执行采集实现。
+- 根据 BDD 与已确认 Capability 决定是否选择 capability 目录。尚未确认 capability 时不猜测、不预读；一旦选择某个 capability，必须先完整读取该目录下当前 phase 可见的全部 Single，再形成相关 research claim 或 verification manual requirement。
+- 通用 Single 已读不表示任意 capability 已选择；某个 capability 中看起来不重要的 Single 也不得跳过。
+- 完整读取失败时停止受影响研究范围并报告实际缺口；不生成 coverage 或 applicability 记录。
 
 ## Validation Research Model
 

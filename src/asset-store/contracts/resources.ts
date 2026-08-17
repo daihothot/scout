@@ -46,6 +46,9 @@ export interface ShellToolContract {
   args?: string[];
   exposeAs: string;
   required: boolean;
-  smokeArgs?: string[];
-  marker?: string;
+  smoke?: {
+    scope: "mount" | "run";
+    args: string[];
+    marker?: string;
+  };
 }
