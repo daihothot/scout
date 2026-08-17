@@ -7,7 +7,7 @@ import type {
   MaterializedMcpServer,
   ShellToolContract,
 } from "./resources.js";
-import type { ScoutSkillCatalogEntry } from "./skill.js";
+import type { MaterializedSkill } from "./skill.js";
 
 /** Non-fatal or fatal issue retained on the effective mount projection. */
 export interface MountMaterializationIssue {
@@ -36,8 +36,7 @@ export interface CodexMount {
   shellTools: ShellToolContract[];
   mcpServers: MaterializedMcpServer[];
   customAgents: string[];
-  skills: string[];
-  skillCatalog: ScoutSkillCatalogEntry[];
+  skills: MaterializedSkill[];
   plugins: string[];
   manifestPath: string;
   resourceHash: string;

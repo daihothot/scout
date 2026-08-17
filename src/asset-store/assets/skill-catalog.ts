@@ -32,19 +32,6 @@ interface FrontmatterField {
   indent: number;
 }
 
-interface FrontmatterLine {
-  text: string;
-  ending: string;
-}
-
-interface FrontmatterDocument {
-  frontmatter: string;
-  opening: string;
-  closing: string;
-  remainder: string;
-  lines: FrontmatterLine[];
-}
-
 const SKILL_TOKEN_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const SCOUT_AGENT_PHASES = new Set<ScoutAgentPhase>(Object.values(ScoutAgentPhases));
 const SCOUT_SKILL_RESOURCE_REQUIREMENTS = new Set<ScoutSkillResourceRequirement>(
@@ -52,6 +39,17 @@ const SCOUT_SKILL_RESOURCE_REQUIREMENTS = new Set<ScoutSkillResourceRequirement>
 );
 const SKILL_RESOURCE_ROOTS = ["templates", "references"] as const;
 const MAX_SKILL_RESOURCE_PATH_LENGTH = 512;
+
+/** Lists every authored Skill entry point under the Scout asset root. */
+export function listScoutSkillPaths(assetsRoot: string): string[] {
+  const skillsRoot = join(assetsRoot, "skills");
+  if (!existsSync(skillsRoot)) return [];
+  return readdirSync(skillsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join("skills", entry.name, "SKILL.md"))
+    .filter((path) => existsSync(join(assetsRoot, path)))
+    .sort();
+}
 
 /** Reads selected Skill files, parses their metadata, and validates the complete catalog. */
 export function buildScoutSkillCatalog(input: {
@@ -73,7 +71,7 @@ export function buildScoutSkillCatalog(input: {
   return catalog;
 }
 
-/** Parses one Skill frontmatter block and rejects legacy or inconsistent metadata. */
+/** Parses one Skill frontmatter block and validates current metadata. */
 export function parseScoutSkillMetadata(input: {
   text: string;
   expectedName: string;
@@ -104,10 +102,7 @@ export function parseScoutSkillMetadata(input: {
     }
     return value as ScoutAgentPhase;
   });
-  if (findField(fields, ["domain"])) {
-    throw new Error(`Scout Skill ${label} must use family instead of legacy domain metadata.`);
-  }
-  const family = optionalNonEmptyTokenList(fields, ["family"], label);
+  const family = requireTokenList(fields, ["family"], label);
   const tags = requireTokenList(fields, ["tags"], label);
   const requiredSkills = optionalTokenList(
     fields,
@@ -120,10 +115,10 @@ export function parseScoutSkillMetadata(input: {
     description,
     summary,
     phase,
-    ...(family === undefined ? {} : { family }),
+    family,
     tags,
     requiredSkills,
-    path: posix.join(".scout", "skills", name, "SKILL.md"),
+    path: posix.join(".scout", "skill", ...family, name, "SKILL.md"),
     resources: input.resources,
   };
 }
@@ -134,90 +129,17 @@ export function parseScoutSkillResourceMetadata(input: {
   path: string;
   sourcePath?: string;
 }): ScoutSkillResourceCatalogEntry {
-  return parseScoutSkillResourceDocument(input).metadata;
-}
-
-/** Removes runtime-owned control metadata after proving it matches the catalog entry. */
-export function projectScoutSkillResourceText(input: {
-  text: string;
-  path: string;
-  expected: ScoutSkillResourceCatalogEntry;
-  sourcePath?: string;
-}): string {
-  const parsed = parseScoutSkillResourceDocument({
-    text: input.text,
-    path: input.path,
-    sourcePath: input.sourcePath,
-  });
-  const expectedPath = validateSkillResourcePath(
-    input.expected.path,
-    `${input.sourcePath ?? input.expected.path} catalog entry`,
-  );
-  if (parsed.metadata.path !== expectedPath) {
-    throw new Error(
-      `Scout Skill ${parsed.label} path does not match its catalog entry: expected ${expectedPath}, actual ${parsed.metadata.path}.`,
-    );
-  }
-  if (parsed.metadata.requirement !== input.expected.requirement) {
-    throw new Error(
-      `Scout Skill ${parsed.label} requirement does not match its catalog entry: expected ${input.expected.requirement}, actual ${parsed.metadata.requirement}.`,
-    );
-  }
-  if (parsed.metadata.description !== input.expected.description) {
-    throw new Error(
-      `Scout Skill ${parsed.label} description does not match its catalog entry.`,
-    );
-  }
-
-  const scoutField = findField(parsed.fields, ["scout"]);
-  const resourceField = findField(parsed.fields, ["scout", "resource"]);
-  if (!scoutField || !resourceField) {
-    throw new Error(`Scout Skill ${parsed.label} control metadata cannot be projected.`);
-  }
-  const subtreeEnd = (field: FrontmatterField): number => {
-    for (let index = field.lineIndex + 1; index < parsed.document.lines.length; index += 1) {
-      const line = parsed.document.lines[index]?.text ?? "";
-      if (line.trim().length === 0 || line.trimStart().startsWith("#")) continue;
-      const indent = /^( *)/.exec(line)?.[1]?.length ?? 0;
-      if (indent <= field.indent) return index;
-    }
-    return parsed.document.lines.length;
-  };
-  const resourceEnd = subtreeEnd(resourceField);
-  const scoutEnd = subtreeEnd(scoutField);
-  const scoutHasRemainingContent = parsed.document.lines.some((line, index) =>
-    index > scoutField.lineIndex
-    && index < scoutEnd
-    && (index < resourceField.lineIndex || index >= resourceEnd)
-    && line.text.trim().length > 0
-    && !line.text.trimStart().startsWith("#")
-  );
-  const removeStart = scoutHasRemainingContent ? resourceField.lineIndex : scoutField.lineIndex;
-  const removeEnd = scoutHasRemainingContent ? resourceEnd : scoutEnd;
-  const projectedFrontmatter = parsed.document.lines
-    .filter((_, index) => index < removeStart || index >= removeEnd)
-    .map((line) => line.text + line.ending)
-    .join("");
-  return parsed.document.opening
-    + projectedFrontmatter
-    + parsed.document.closing
-    + parsed.document.remainder;
+  return parseScoutSkillResourceDocument(input);
 }
 
 function parseScoutSkillResourceDocument(input: {
   text: string;
   path: string;
   sourcePath?: string;
-}): {
-  metadata: ScoutSkillResourceCatalogEntry;
-  label: string;
-  document: FrontmatterDocument;
-  fields: FrontmatterField[];
-} {
+}): ScoutSkillResourceCatalogEntry {
   const path = validateSkillResourcePath(input.path, input.sourcePath ?? input.path);
   const label = `resource ${input.sourcePath ?? path}`;
-  const document = extractFrontmatterDocument(input.text, label);
-  const fields = parseFrontmatterFields(document.frontmatter, label);
+  const fields = parseFrontmatterFields(extractFrontmatter(input.text, label), label);
   const requirement = requireScalar(
     fields,
     ["scout", "resource", "requirement"],
@@ -234,14 +156,9 @@ function parseScoutSkillResourceDocument(input: {
     label,
   );
   return {
-    metadata: {
-      path,
-      requirement: requirement as ScoutSkillResourceRequirement,
-      description,
-    },
-    label,
-    document,
-    fields,
+    path,
+    requirement: requirement as ScoutSkillResourceRequirement,
+    description,
   };
 }
 
@@ -273,7 +190,18 @@ export function resolveSkillDependencyLoadOrder(
   return result;
 }
 
-/** Validates names, phase compatibility, dependency closure, and family routing constraints. */
+/** Returns all Skills visible in one phase plus their required dependency closure. */
+export function resolveScoutSkillsForPhase(
+  catalog: ScoutSkillCatalogEntry[],
+  phase: ScoutAgentPhase,
+): ScoutSkillCatalogEntry[] {
+  return resolveSkillDependencyLoadOrder(
+    catalog,
+    catalog.filter((skill) => skill.phase.includes(phase)).map((skill) => skill.name),
+  );
+}
+
+/** Validates names, resources, phase compatibility, and dependency closure. */
 export function validateScoutSkillCatalog(catalog: ScoutSkillCatalogEntry[]): void {
   const names = new Set<string>();
   for (const skill of catalog) {
@@ -301,8 +229,6 @@ export function validateScoutSkillCatalog(catalog: ScoutSkillCatalogEntry[]): vo
     }
   }
   resolveSkillDependencyLoadOrder(catalog, catalog.map((skill) => skill.name));
-  validateRoutableFamilyLeaves(catalog);
-  validateDependencyOnlySkillReachability(catalog);
 }
 
 function buildScoutSkillResourceCatalog(skillRoot: string): ScoutSkillResourceCatalogEntry[] {
@@ -420,38 +346,12 @@ function validateSkillResourcePath(value: unknown, label: string): string {
 
 /** Extracts the YAML-like frontmatter section required by every Scout Skill. */
 function extractFrontmatter(text: string, label: string): string {
-  return extractFrontmatterDocument(text, label).frontmatter;
-}
-
-function extractFrontmatterDocument(text: string, label: string): FrontmatterDocument {
   const match = /^(---)(\r?\n)([\s\S]*?)(\r?\n---(?:\r?\n|$))/.exec(text);
   const frontmatter = match?.[3];
   if (!match || !frontmatter) {
     throw new Error(`Scout Skill ${label} must contain YAML frontmatter.`);
   }
-  return {
-    frontmatter,
-    opening: (match[1] ?? "---") + (match[2] ?? "\n"),
-    closing: match[4] ?? "\n---\n",
-    remainder: text.slice(match[0].length),
-    lines: splitFrontmatterLines(frontmatter),
-  };
-}
-
-function splitFrontmatterLines(frontmatter: string): FrontmatterLine[] {
-  const lines: FrontmatterLine[] = [];
-  const newlinePattern = /\r?\n/g;
-  let cursor = 0;
-  for (const match of frontmatter.matchAll(newlinePattern)) {
-    const index = match.index;
-    lines.push({
-      text: frontmatter.slice(cursor, index),
-      ending: match[0],
-    });
-    cursor = index + match[0].length;
-  }
-  lines.push({ text: frontmatter.slice(cursor), ending: "" });
-  return lines;
+  return frontmatter;
 }
 
 /** Parses nested scalar field paths while rejecting tabs and duplicate declarations. */
@@ -501,15 +401,6 @@ function requireTokenList(fields: FrontmatterField[], path: string[], label: str
   return values;
 }
 
-function optionalNonEmptyTokenList(
-  fields: FrontmatterField[],
-  path: string[],
-  label: string,
-): string[] | undefined {
-  if (!findField(fields, path)) return undefined;
-  return requireTokenList(fields, path, label);
-}
-
 function optionalTokenList(fields: FrontmatterField[], path: string[], label: string): string[] {
   const field = findField(fields, path);
   if (!field) return [];
@@ -548,63 +439,4 @@ function unquote(value: string): string {
     return value.slice(1, -1);
   }
   return value;
-}
-
-function validateRoutableFamilyLeaves(catalog: ScoutSkillCatalogEntry[]): void {
-  const familyPaths = uniqueFamilyPaths(catalog);
-  for (const family of familyPaths) {
-    const descendant = familyPaths.find((candidate) =>
-      candidate.length > family.length && familyPrefixMatches(candidate, family)
-    );
-    if (descendant) {
-      throw new Error(
-        `Scout Skill family ${formatFamily(family)} must be a leaf and cannot prefix ${formatFamily(descendant)}.`,
-      );
-    }
-  }
-}
-
-function validateDependencyOnlySkillReachability(catalog: ScoutSkillCatalogEntry[]): void {
-  const dependencyOnlySkills = catalog.filter((skill) => skill.family === undefined);
-  if (dependencyOnlySkills.length === 0) return;
-
-  const byName = new Map(catalog.map((skill) => [skill.name, skill] as const));
-  const reachableDependencies = new Set<string>();
-  const visit = (name: string): void => {
-    if (reachableDependencies.has(name)) return;
-    reachableDependencies.add(name);
-    const skill = byName.get(name);
-    if (!skill) return;
-    for (const dependencyName of skill.requiredSkills) visit(dependencyName);
-  };
-  for (const entry of catalog) {
-    if (entry.family === undefined) continue;
-    for (const dependencyName of entry.requiredSkills) visit(dependencyName);
-  }
-
-  for (const skill of dependencyOnlySkills) {
-    if (!reachableDependencies.has(skill.name)) {
-      throw new Error(
-        `Scout Skill ${skill.name} has no family and is unreachable from every routable Skill dependency closure.`,
-      );
-    }
-  }
-}
-
-function uniqueFamilyPaths(catalog: ScoutSkillCatalogEntry[]): string[][] {
-  const paths = new Map<string, string[]>();
-  for (const skill of catalog) {
-    if (skill.family === undefined) continue;
-    const key = skill.family.join("\0");
-    if (!paths.has(key)) paths.set(key, skill.family);
-  }
-  return [...paths.values()];
-}
-
-function familyPrefixMatches(family: string[], prefix: string[]): boolean {
-  return prefix.every((token, index) => family[index] === token);
-}
-
-function formatFamily(family: string[]): string {
-  return `[${family.join(", ")}]`;
 }

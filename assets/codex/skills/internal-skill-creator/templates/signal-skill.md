@@ -13,9 +13,9 @@ scout:
 
 ## Frontmatter Rules
 
-- 必须填写 `phase`。需要 Agent 精确锁定的 Signal 入口必须声明有序 `family`；路径层数和 token 完全由所属 domain 的稳定导航语义决定，通用模板不预置具体 Single leaf。只作为其它入口服务层时省略 `family` 并由 required dependency 带入。
+- 必须填写 `phase` 和所属 Role Domain 定义的 Single `family`。通用 Single 与 capability Single 使用不同集合目录；本模板不预置具体 domain、capability 或 Single identity。
 - `phase` 只表示哪些 Agent phase 可以选择或审计本 Signal contract，不在正文引入流程阶段。
-- `tags` 只表达 Signal 的对象、介质、格式或能力特征，不参与信号族路由。
+- `tags` 只表达 Signal 的对象、介质、格式或能力特征，不参与目录分类或 phase 投影。
 - `type` 在正文 `Skill Type` 中固定为 `signal`。
 - `structure_level` 使用 `compact`。
 
@@ -76,7 +76,7 @@ Derived Signal 必须保留本节并且只声明一个直接 Source Signal；直
 ## Checklist
 
 - 正文不存在 Inputs、Workflow Overview、编号 Phase 或 Workflow Exit Rules。
-- frontmatter `phase` 覆盖实际选择或审计场景；`family` 的有无与该 Signal 是直接入口还是 dependency-only 服务层一致。
+- frontmatter `phase` 覆盖实际生产、消费或检查场景；`family` 必填且归入所属 Domain 的 general 或 capability Single 集合。
 - `tags` 是非路由特征，不改变 Signal 的稳定知识边界。
 - Signal Model、Signal Matching Contract 和 Signal Output Contract 的职责不重叠。
 - contract 不包含任何具体实现的工具、命令、连接、权限或重试语义。

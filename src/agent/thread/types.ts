@@ -1,8 +1,8 @@
 import type {
-  AgentDynamicToolSpec,
   AgentJsonValue,
 } from "../tools/types.js";
 import type {
+  DynamicToolSpec,
   ThreadResumeRequest,
   ThreadStartRequest,
 } from "../../agent-server/codex/app-server-client.js";
@@ -55,7 +55,7 @@ export interface AgentThreadSpec {
   config?: Record<string, AgentJsonValue>;
   baseInstructions?: string;
   developerInstructions?: string;
-  dynamicTools?: AgentDynamicToolSpec[];
+  dynamicTools?: DynamicToolSpec[];
 }
 
 interface AgentThreadSnapshotBase {

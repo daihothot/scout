@@ -12,7 +12,7 @@
 ## When Assigned Task
 
 - 先确认 task id、当前角色、上游 Coordinator、目标、输入 refs、预期输出、完成条件和禁止越权边界。
-- 读取当前角色规则；需要选择 Skill 时，先满足下述 `Runtime Control Protocol`，再按通用 `Skill Selection Protocol` 逐级导航当前角色及 task 适用的入口 Skill，并严格按 dependency-first `loadOrder` 读取。
+- 读取当前角色规则，并从 `.scout/skill/<domain>/workflow/` 中读取当前角色及 task 适用的 Domain Skill；Domain Skill 决定领域 resources、required Skill 和 Single 消费规则。
 - task 与当前角色不匹配时停止，并向 Coordinator 报告职责不匹配和建议角色。
 - 缺少输入、能力、权限或输出位置时，不猜测继续；按缺口类型使用下述人工输入规则或当前正式上游入口。
 
@@ -24,6 +24,13 @@
 - 每个正式工作轮必须且只能选择 `RequestHumanInput` 或 `SubmitTask` 作为 disposition；同一 step 禁止同时或重复调用这两个工具。
 - 调用 `SubmitTask` 前，除提交步骤外的计划步骤必须完成，提交步骤保持 `in_progress`；调用成功后立即用 `update_plan` 将提交步骤标为 `completed`。
 - 普通 final response、`SendMessage`、artifact 写入或已全部完成的 plan 都不能替代上述 disposition，也不会改变 task 生命周期。
+
+## Dynamic Tool Guidance
+
+- 首次使用 `SendMessage` 前读取 `tool-scout-send-message`。
+- 首次使用 `RequestHumanInput` 前读取 `tool-scout-request-human-input`。
+- 首次使用 `SubmitTask` 前读取 `tool-scout-submit-task`。
+- 这些 Tool Skill 位于 `.scout/skill/tool/scout/dynamic/`；工具 description 不是完整操作 contract。
 
 ## Human Input
 

@@ -9,10 +9,13 @@
       ],
       "exposeAs": "scout-assets",
       "required": true,
-      "smokeArgs": [
-        "--smoke"
-      ],
-      "marker": "SCOUT_ASSETS_OK"
+      "smoke": {
+        "scope": "mount",
+        "args": [
+          "--smoke"
+        ],
+        "marker": "SCOUT_ASSETS_OK"
+      }
     },
     {
       "id": "scoutMemory",
@@ -23,10 +26,13 @@
       ],
       "exposeAs": "scout-memory",
       "required": true,
-      "smokeArgs": [
-        "--smoke"
-      ],
-      "marker": "SCOUT_MEMORY_OK"
+      "smoke": {
+        "scope": "run",
+        "args": [
+          "--smoke"
+        ],
+        "marker": "SCOUT_MEMORY_OK"
+      }
     },
     {
       "id": "scoutJsonWrite",
@@ -37,10 +43,13 @@
       ],
       "exposeAs": "scout-json-write",
       "required": true,
-      "smokeArgs": [
-        "--smoke"
-      ],
-      "marker": "SCOUT_JSON_WRITE_OK"
+      "smoke": {
+        "scope": "run",
+        "args": [
+          "--smoke"
+        ],
+        "marker": "SCOUT_JSON_WRITE_OK"
+      }
     },
     {
       "id": "scoutResearchArtifactCheck",
@@ -51,10 +60,13 @@
       ],
       "exposeAs": "scout-research-artifact-check",
       "required": true,
-      "smokeArgs": [
-        "--smoke"
-      ],
-      "marker": "SCOUT_RESEARCH_ARTIFACT_CHECK_OK"
+      "smoke": {
+        "scope": "run",
+        "args": [
+          "--smoke"
+        ],
+        "marker": "SCOUT_RESEARCH_ARTIFACT_CHECK_OK"
+      }
     },
     {
       "id": "scoutArtifactDigest",
@@ -65,10 +77,13 @@
       ],
       "exposeAs": "scout-artifact-digest",
       "required": true,
-      "smokeArgs": [
-        "--smoke"
-      ],
-      "marker": "SCOUT_ARTIFACT_DIGEST_OK"
+      "smoke": {
+        "scope": "run",
+        "args": [
+          "--smoke"
+        ],
+        "marker": "SCOUT_ARTIFACT_DIGEST_OK"
+      }
     },
     {
       "id": "unity",
@@ -76,9 +91,12 @@
       "command": "unity",
       "exposeAs": "unity",
       "required": true,
-      "smokeArgs": [
-        "--version"
-      ]
+      "smoke": {
+        "scope": "run",
+        "args": [
+          "--version"
+        ]
+      }
     },
     {
       "id": "jarvis",
@@ -86,11 +104,14 @@
       "command": "/Users/chengdai/.guru/guru-jarvis/scripts/jarvis",
       "exposeAs": "jarvis",
       "required": true,
-      "smokeArgs": [
-        "codebase",
-        "supported"
-      ],
-      "marker": "gurusdk-unity"
+      "smoke": {
+        "scope": "run",
+        "args": [
+          "codebase",
+          "supported"
+        ],
+        "marker": "gurusdk-unity"
+      }
     },
     {
       "id": "codegraph",
@@ -98,9 +119,12 @@
       "command": "/Users/chengdai/.npm-global/bin/codegraph",
       "exposeAs": "codegraph",
       "required": true,
-      "smokeArgs": [
-        "--version"
-      ]
+      "smoke": {
+        "scope": "run",
+        "args": [
+          "--version"
+        ]
+      }
     },
     {
       "id": "rg",
@@ -108,10 +132,13 @@
       "command": "assets/codex/tools/ripgrep/15.1.0/darwin-arm64/rg",
       "exposeAs": "rg",
       "required": true,
-      "smokeArgs": [
-        "--version"
-      ],
-      "marker": "ripgrep"
+      "smoke": {
+        "scope": "run",
+        "args": [
+          "--version"
+        ],
+        "marker": "ripgrep"
+      }
     },
     {
       "id": "sed",

@@ -20,10 +20,6 @@ export const AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE = "scout_agent_respondhuma
 export const AGENT_SUBMIT_TASK_TOOL_NAMESPACE = "scout_agent_submittask";
 /** Namespace for coordinator task archival. */
 export const AGENT_ARCHIVE_TASK_TOOL_NAMESPACE = "scout_agent_archivetask";
-/** Namespace for phase-scoped skill navigation. */
-export const AGENT_FIND_SKILLS_TOOL_NAMESPACE = "scout_agent_findskills";
-/** Namespace for reading a selected skill resource. */
-export const AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE = "scout_agent_readskillresource";
 
 /** Maps protocol tool names to their required app-server namespace. */
 export const AGENT_TOOL_NAMESPACE_BY_NAME: Readonly<Record<string, string>> = {
@@ -33,8 +29,6 @@ export const AGENT_TOOL_NAMESPACE_BY_NAME: Readonly<Record<string, string>> = {
   RespondHumanInput: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
   SubmitTask: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
   ArchiveTask: AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
-  FindSkills: AGENT_FIND_SKILLS_TOOL_NAMESPACE,
-  ReadSkillResource: AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
 };
 
 /** Set used to reject non-Scout namespaces at the app-server boundary. */
@@ -92,21 +86,6 @@ export interface ArchiveTaskToolCall {
   task_id: string;
 }
 
-/** Input contract for phase-scoped skill family navigation. */
-export interface FindSkillsToolCall {
-  tool: "FindSkills";
-  family?: string[];
-  detail?: "names" | "metadata";
-}
-
-/** Input contract for reading a resource from a selected skill. */
-export interface ReadSkillResourceToolCall {
-  tool: "ReadSkillResource";
-  selection_id: string;
-  skill_id: string;
-  resource: string;
-}
-
 /** Discriminated union accepted by the dynamic-tool dispatcher. */
 export type AgentDynamicToolCall =
   | AssignTaskToolCall
@@ -114,75 +93,12 @@ export type AgentDynamicToolCall =
   | RequestHumanInputToolCall
   | RespondHumanInputToolCall
   | SubmitTaskToolCall
-  | ArchiveTaskToolCall
-  | FindSkillsToolCall
-  | ReadSkillResourceToolCall;
-
-/** Builds the schema for phase-scoped skill navigation. */
-export function buildFindSkillsDynamicTool(): AgentDynamicToolSpec {
-  return {
-    namespace: AGENT_FIND_SKILLS_TOOL_NAMESPACE,
-    name: "FindSkills",
-    description: [
-      "在 Runtime 为当前 Agent phase 建立的 Skill 观察范围内，按 family 发现或精确选择可路由的 Scout Skill。",
-      "未知入口时先省略 family 取得一级 family，再把上次 family 前缀与一个返回的直接子节点原样组成 family，每次只前进一步。",
-      "已知完整 canonical leaf 时可直接提交完整 family；Runtime 只接受当前 phase mount 中精确存在的 leaf，并为本 turn 重新签发 selection。",
-      "如果返回 reason=family_navigation_reset，说明请求路径没有当前 turn 的连续 discovery 状态；丢弃 requestedFamily，从 facets 返回的根节点重新开始。",
-      "中间节点只返回下一层 family；到达叶节点后才返回 selectionId 和 dependency-first loadOrder。",
-      "detail 默认为 names；metadata 额外返回当前 family 范围的安全 Skill frontmatter，但不包含正文或授予资源读取权。",
-      "无 family 的服务 Skill 不参与导航，只能由入口 Skill 的 requiredSkills 自动带入 selection；tags 只作为结果特征，不参与筛选。",
-      "逐级发现受同一 agent/thread/turn/phase/asset commit 的导航连续性约束；精确选择也会按当前 phase mount 和 asset commit 重新授权。",
-      "叶节点同时返回该 selection 的 required/optional resource catalog 和完整性状态；同一 scope 的任一 selection required 未全部读取时不能开始新的 Skill discovery 或 SubmitTask。",
-    ].join("\n"),
-    inputSchema: objectSchema({
-      family: {
-        type: "array",
-        minItems: 1,
-        items: {
-          type: "string",
-          pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$",
-        },
-        description: "按顺序组成的 family 路径。未知入口时首次省略，后续每次准确追加一个返回的直接子节点；已知完整 canonical leaf 时可直接提交完整路径。",
-      },
-      detail: {
-        type: "string",
-        enum: ["names", "metadata"],
-        description: "候选投影。默认 names 只返回紧凑名称；metadata 额外返回当前 family 范围内的安全 Skill frontmatter，不包含正文。",
-      },
-    }, []),
-  };
-}
-
-/** Builds the schema for reading a resource from a current-turn Skill selection. */
-export function buildReadSkillResourceDynamicTool(): AgentDynamicToolSpec {
-  return {
-    namespace: AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
-    name: "ReadSkillResource",
-    description: "读取本 task/thread/turn 中任一 FindSkills selection 已声明的 Skill 文本资源。新 selection 不会撤销同一 scope 的既有 selection；每个 Skill 的 SKILL.md 必须等待其 required Skill 的 SKILL.md，无依赖关系的 Skill 可以并行。某个 Skill 的 SKILL.md 读完后，它声明的 supplementary resources 可以并行读取；全部 required 内容读取成功后该 selection 才 ready，optional 按 description 或正文适用条件读取。selection 不能跨 agent、task、thread、turn、phase 或 asset commit 使用，禁止读取未声明资源、绝对路径和路径穿越。",
-    inputSchema: objectSchema({
-      selection_id: {
-        type: "string",
-        minLength: 1,
-        description: "FindSkills 精筛成功后返回的 selectionId。",
-      },
-      skill_id: {
-        type: "string",
-        pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$",
-        description: "selection loadOrder 中的准确 Skill id。",
-      },
-      resource: {
-        type: "string",
-        minLength: 1,
-        maxLength: 512,
-        description: "Skill 根目录内的相对文本资源路径，例如 SKILL.md 或 templates/template-index.md。",
-      },
-    }, ["selection_id", "skill_id", "resource"]),
-  };
-}
+  | ArchiveTaskToolCall;
 
 /** Builds the schema for assigning work to an existing worker agent. */
 export function buildAssignTaskDynamicTool(): AgentDynamicToolSpec {
   return {
+    guidanceSkill: "tool-scout-assign-task",
     namespace: AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
     name: "AssignTask",
     description: "向当前 Run 中已有的 Scout researcher、verifier 或 validator worker agent 分配一个新任务。",
@@ -211,9 +127,10 @@ export function buildAssignTaskDynamicTool(): AgentDynamicToolSpec {
 /** Builds the schema for ordinary agent-to-agent messaging. */
 export function buildSendMessageDynamicTool(): AgentDynamicToolSpec {
   return {
+    guidanceSkill: "tool-scout-send-message",
     namespace: AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
     name: "SendMessage",
-    description: "向已有 Scout agent 或其当前任务发送普通消息。message 只填写需要传达的中文正文，不构造 Runtime 内部通信协议，也不用于人工输入或正式 task 提交。",
+    description: "向已有 Scout agent 或其当前任务发送普通消息。",
     inputSchema: objectSchema({
       to: {
         type: "string",
@@ -230,9 +147,10 @@ export function buildSendMessageDynamicTool(): AgentDynamicToolSpec {
 /** Builds the schema for a worker's human-input request. */
 export function buildRequestHumanInputDynamicTool(): AgentDynamicToolSpec {
   return {
+    guidanceSkill: "tool-scout-request-human-input",
     namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
     name: "RequestHumanInput",
-    description: "仅供 Worker 在当前工作必须等待人工确认时请求输入，必须在本轮结束前调用；普通回复或 SendMessage 不能替代。一次调用应合并当前工作所需的最小问题，同一 step 不得重复调用或再调用 SubmitTask。Runtime 将请求投递给 Coordinator；当前 task 保持 running，当前 step 完成后记录 humanInputRequest。不得用本工具提交 task outcome。",
+    description: "Worker 在当前任务必须等待人工确认时请求输入。",
     inputSchema: objectSchema({
       request: {
         type: "string",
@@ -245,9 +163,10 @@ export function buildRequestHumanInputDynamicTool(): AgentDynamicToolSpec {
 /** Builds the schema for a coordinator's human-input response. */
 export function buildRespondHumanInputDynamicTool(): AgentDynamicToolSpec {
   return {
+    guidanceSkill: "tool-scout-respond-human-input",
     namespace: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
     name: "RespondHumanInput",
-    description: "仅供 Coordinator 把匹配的用户明确回复投递给原 Worker task。Runtime 在目标 Worker 实际消费回复时记录 humanInputResponse；不得加入 Coordinator 自己的领域结论。",
+    description: "Coordinator 将用户的明确回复投递给等待中的 Worker task。",
     inputSchema: objectSchema({
       task_id: {
         type: "string",
@@ -264,9 +183,10 @@ export function buildRespondHumanInputDynamicTool(): AgentDynamicToolSpec {
 /** Builds the schema for formal worker task submission. */
 export function buildSubmitTaskDynamicTool(): AgentDynamicToolSpec {
   return {
+    guidanceSkill: "tool-scout-submit-task",
     namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
     name: "SubmitTask",
-    description: "仅供 Worker 正式交回当前一轮工作。普通 turn 必须先用 FindSkills 签发当前 turn 的 Skill selection，并读取全部 required resources；只有不存在未完成 discovery、当前 task/thread/turn 的全部 selection 都与当前 phase/asset commit 一致且已 ready 时才能提交。Runtime 协议修正 turn 只能精确复用触发修正的上一 turn 的全部 ready selections，不得重新发现或选择 Skill。当前 outcome 符合适用 handoff contract 时，必须在本轮结束前调用。普通回复、SendMessage、artifact 写入或完成 plan 都不构成提交，漏调会使 task 保持 running。同一 step 不得重复调用或再调用 RequestHumanInput。Runtime 接受 outcome 时会把当前 Worker 的 ${SCOUT_ARTIFACT_ROOT} 引用绑定为带 owner 的 run-scoped ref；在当前 step 完成后先将 task 置为 done，再把 Markdown outcome 投递给 Coordinator。",
+    description: "Worker 将当前任务的正式结果提交给 Coordinator。",
     inputSchema: objectSchema({
       outcome: {
         type: "string",
@@ -279,6 +199,7 @@ export function buildSubmitTaskDynamicTool(): AgentDynamicToolSpec {
 /** Builds the schema for coordinator-only task archival. */
 export function buildArchiveTaskDynamicTool(): AgentDynamicToolSpec {
   return {
+    guidanceSkill: "tool-scout-archive-task",
     namespace: AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
     name: "ArchiveTask",
     description: "仅供 Coordinator 归档指定 Worker task；归档会释放该 Worker 的当前 runner，但保留 agent thread。",
@@ -388,61 +309,9 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
         task_id: taskId.trim(),
       };
     }
-    case "FindSkills": {
-      if ("phase" in input || "domain" in input || "tags" in input) {
-        throw new Error(
-          "FindSkills no longer accepts phase, domain, or tags; Runtime supplies phase and returns family paths.",
-        );
-      }
-      const detail = input.detail;
-      if (detail !== undefined && detail !== "names" && detail !== "metadata") {
-        throw new Error("FindSkills detail must be names or metadata when provided.");
-      }
-      const family = input.family;
-      if (family !== undefined) {
-        if (!Array.isArray(family) || family.length === 0) {
-          throw new Error("FindSkills family must be a non-empty ordered token path when provided.");
-        }
-        return {
-          tool: "FindSkills",
-          family: family.map((token) => validateSkillToken(token, "FindSkills family token")),
-          ...(detail === undefined ? {} : { detail }),
-        };
-      }
-      return {
-        tool: "FindSkills",
-        ...(detail === undefined ? {} : { detail }),
-      };
-    }
-    case "ReadSkillResource": {
-      const selectionId = requireNonEmptyString(input.selection_id, "ReadSkillResource selection_id");
-      const skillId = validateSkillToken(input.skill_id, "ReadSkillResource skill_id");
-      const resource = requireNonEmptyString(input.resource, "ReadSkillResource resource");
-      return {
-        tool: "ReadSkillResource",
-        selection_id: selectionId,
-        skill_id: skillId,
-        resource,
-      };
-    }
     default:
       throw new Error(`Unsupported agent tool: ${tool}`);
   }
-}
-
-function requireNonEmptyString(value: unknown, label: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`${label} must be a non-empty string.`);
-  }
-  return value.trim();
-}
-
-function validateSkillToken(value: unknown, label: string): string {
-  const token = requireNonEmptyString(value, label).toLowerCase();
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(token)) {
-    throw new Error(`${label} must be a lowercase kebab-case token.`);
-  }
-  return token;
 }
 
 function objectSchema(

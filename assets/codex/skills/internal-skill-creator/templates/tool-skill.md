@@ -13,9 +13,9 @@ scout:
 
 ## Frontmatter Rules
 
-- 必须填写 `phase`。通用工具服务层必须省略 `family`，并由业务入口 Skill 的 required dependency 带入；只有同时拥有明确业务入口责任的专用操作 Skill 才能声明 `family`。
+- 必须填写 `phase` 和 `family`。Tool Skill 使用 `[tool, <provider>, <capability>]` 或同等稳定类型路径；是否被 Domain Skill 依赖不改变其 Tool 归属。
 - `phase` 只表示哪些 Agent phase 可以选择本 Skill，不表示工具命令具有内部阶段或执行顺序。
-- `tags` 只表达工具、交互面、设备或能力特征，不参与 Runtime 路由。
+- `tags` 只表达工具、交互面、设备或能力特征，不参与目录分类或 phase 投影。
 - `type` 在正文 `Skill Type` 中固定为 `tool`。
 - `structure_level` 根据真实操作复杂度使用 `compact` 或 `full`。
 
@@ -94,7 +94,7 @@ Tool 确实消费上游信息时，必须定义 Inputs；不得把命令输出�
 - Inputs 只在实际消费上游信息时存在，且来源、缺失和冲突语义明确。
 - 工具 identity、命令、连接、权限和版本均可从当前环境定位。
 - frontmatter `phase` 覆盖实际可使用或审计本工具 contract 的场景。
-- `family` 的有无与该 Tool Skill 是业务入口还是 dependency-only 服务层一致；`tags` 只是非路由特征。
+- `family` 必填且表达 Tool 的 provider 与 capability；`tags` 只是非分类特征。
 - 只读操作和副作用操作边界明确。
 - 副作用操作具有明确授权条件和幂等性说明。
 - 失败、空输出和解析限制不会被当作成功。

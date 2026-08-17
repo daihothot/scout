@@ -84,6 +84,8 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   const coordinatorArtifact = resolve(runRoot, "agents", "coordinator", "artifacts");
   const researcherArtifact = resolve(runRoot, "agents", "researcher", "artifacts");
   const logicalSkillRoot = resolve(fixtureRoot, "assets", "codex", "skills");
+  const researcherSkillRoot = join(logicalSkillRoot, "domain-validation-researcher");
+  const coordinatorSkillRoot = join(logicalSkillRoot, "domain-validation-coordinator");
   const coordinatorPermissions = stage.rootPlan.permissionProfiles.coordinator;
   const researcherPermissions = stage.rootPlan.permissionProfiles.researcher;
   assert.ok(stage.rootPlan.mountRoots.includes(coordinatorMount));
@@ -93,9 +95,11 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   assert.ok(researcherPermissions?.readableRoots.includes(coordinatorArtifact));
   assert.ok(researcherPermissions?.writableRoots.includes(researcherArtifact));
   assert.ok(researcherPermissions?.deniedRoots.includes(runsRoot));
-  assert.ok(researcherPermissions?.deniedRoots.includes(join(researcherMount, ".scout", "skills")));
   assert.ok(researcherPermissions?.deniedRoots.includes(logicalSkillRoot));
   assert.ok(researcherPermissions?.deniedRoots.includes(realpathSync(logicalSkillRoot)));
+  assert.ok(researcherPermissions?.readableRoots.includes(researcherSkillRoot));
+  assert.ok(researcherPermissions?.readableRoots.includes(realpathSync(researcherSkillRoot)));
+  assert.equal(researcherPermissions?.readableRoots.includes(coordinatorSkillRoot), false);
   assert.ok(coordinatorPermissions?.readableRoots.includes(
     realpathSync(join(fixtureRoot, "assets", "codex", "agents", "AGENTS.md")),
   ));
@@ -110,9 +114,16 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   assert.match(configToml, new RegExp(escapeRegExp(`[projects."${researcherMount}"]`)));
   assert.doesNotMatch(configToml, new RegExp(escapeRegExp(`[projects."${resolve(fixtureRoot)}"]`)));
   assert.match(configToml, /^model = "gpt-5\.5"$/m);
+  assert.match(configToml, /^model_provider = "custom"$/m);
+  assert.match(configToml, /^\[model_providers\.custom\]$/m);
+  assert.match(configToml, /^name = "OpenAI"$/m);
+  assert.match(configToml, /^supports_websockets = true$/m);
+  assert.doesNotMatch(configToml, /^base_url\s*=/m);
   assert.match(configToml, /^model_reasoning_effort = "high"$/m);
   assert.match(configToml, /^model_reasoning_summary = "concise"$/m);
   assert.match(configToml, /^default_permissions = ":read-only"$/m);
+  assert.match(configToml, /^apps = false$/m);
+  assert.match(configToml, /^remote_plugin = false$/m);
   assert.match(
     configToml,
     new RegExp(escapeRegExp(`[permissions.${ScoutAgentPermissionProfiles.Researcher}.filesystem]`)),
@@ -122,6 +133,7 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   assert.match(configToml, new RegExp(escapeRegExp(`"${coordinatorArtifact}" = "read"`)));
   assert.match(configToml, new RegExp(escapeRegExp(`"${researcherArtifact}" = "write"`)));
   assert.match(configToml, new RegExp(escapeRegExp(`"${logicalSkillRoot}" = "deny"`)));
+  assert.match(configToml, new RegExp(escapeRegExp(`"${researcherSkillRoot}" = "read"`)));
   assert.doesNotMatch(configToml, /^sandbox_mode\s*=/m);
   assert.match(configToml, /^env_key = "CODEX_API_KEY"$/m);
   assert.doesNotMatch(configToml, /^experimental_bearer_token\s*=/m);
@@ -172,13 +184,21 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   assert.notEqual((await exec(["/bin/cat", coordinator.manifestPath])).exitCode, 0);
   assert.notEqual((await exec(["/bin/cat", ownLogsFile])).exitCode, 0);
   assert.notEqual((await exec(["/bin/cat", historicalRunFile])).exitCode, 0);
-  const mountedSkill = join(researcher.mountRoot, ".scout", "skills", "domain-validation-researcher", "SKILL.md");
-  assert.notEqual((await exec(["/bin/cat", mountedSkill])).exitCode, 0);
-  assert.notEqual(
-    (await exec(["/bin/cat", join(logicalSkillRoot, "domain-validation-researcher", "SKILL.md")])).exitCode,
+  const mountedSkillEntry = researcher.skills.find((skill) =>
+    skill.name === "domain-validation-researcher"
+  );
+  assert.ok(mountedSkillEntry);
+  const mountedSkill = join(researcher.mountRoot, mountedSkillEntry.path);
+  assert.equal((await exec(["/bin/cat", mountedSkill])).exitCode, 0);
+  assert.equal(
+    (await exec(["/bin/cat", join(researcherSkillRoot, "SKILL.md")])).exitCode,
     0,
   );
-  assert.notEqual((await exec(["/bin/cat", realpathSync(mountedSkill)])).exitCode, 0);
+  assert.equal((await exec(["/bin/cat", realpathSync(mountedSkill)])).exitCode, 0);
+  assert.notEqual(
+    (await exec(["/bin/cat", join(coordinatorSkillRoot, "SKILL.md")])).exitCode,
+    0,
+  );
   assert.notEqual(
     (await exec(["/usr/bin/touch", join(coordinator.artifactRoot, "forbidden.txt")])).exitCode,
     0,
@@ -274,7 +294,7 @@ test("RunAppServerStage rejects a missing target model provider without falling 
     assert.ok(error instanceof Error);
     assert.match(
       error.message,
-      /Codex model provider "GuruOpenAI" is not configured/,
+      /Codex model provider "custom" is not configured/,
     );
     assert.doesNotMatch(error.message, /scout-test-provider-token/);
     return true;
@@ -367,14 +387,14 @@ function installTestCodexHome(
     join(testCodexHome, "config.toml"),
     includeProvider
       ? [
-        "[model_providers.GuruOpenAI]",
-        'name = "GuruOpenAI"',
-        'base_url = "https://example.invalid/v1"',
+        "[model_providers.custom]",
+        'name = "OpenAI"',
         credentialMode === "auth"
           ? "requires_openai_auth = true"
           : credentialMode === "bearer"
           ? 'experimental_bearer_token = "source-device-bearer-token"'
           : 'env_key = "SCOUT_BOOT_CLIENTS_PROVIDER_KEY"',
+        "supports_websockets = true",
         'wire_api = "responses"',
         "",
       ].join("\n")

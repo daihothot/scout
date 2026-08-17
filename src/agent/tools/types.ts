@@ -7,8 +7,9 @@ export type AgentJsonValue =
   | AgentJsonValue[]
   | { [key: string]: AgentJsonValue };
 
-/** Dynamic tool definition registered with the app-server thread. */
+/** Scout-owned dynamic tool definition and its required operational Skill. */
 export interface AgentDynamicToolSpec {
+  guidanceSkill: string;
   namespace?: string;
   name: string;
   description: string;

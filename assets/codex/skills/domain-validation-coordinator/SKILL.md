@@ -5,7 +5,7 @@ description: Scout Coordinator 在 Validation Domain 中接收 BDD 目标，组�
 id: domain-validation-coordinator
 version: 0.3.2
 phase: [coordinate]
-family: [validation, workflow, coordinator]
+family: [validation, workflow]
 tags: [scout, validation, bdd, coordination, workflow]
 devices: [any]
 summary: 规范 Research Pack Gate、Verification 和 Verification Report Gate 的完整调度循环。

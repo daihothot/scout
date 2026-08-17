@@ -21,7 +21,6 @@ export class MountIdentityInspector {
   inspect(): string | undefined {
     const manifest = this.manifest;
     const context = this.context;
-    if (manifest.resourceInventoryVersion !== 1) return "legacy mount manifest";
     if (manifest.mountRoot !== ".") return "mount manifest is not portable: mountRoot must be .";
     if (manifest.agentId !== context.agentId) {
       return `agent id changed: persisted=${manifest.agentId} current=${context.agentId}`;

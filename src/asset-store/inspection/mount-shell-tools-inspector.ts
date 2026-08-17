@@ -40,11 +40,18 @@ export class MountShellToolsInspector {
       const persisted = persistedTools.find((candidate) => candidate.id === contract.id);
       if (!persisted) return `shell tool contract missing: ${contract.id}`;
       const relativeWrapperPath = relative(this.context.mountRoot, built.wrapperPath);
+      const smokeChanged = (persisted.smoke === undefined) !== (contract.smoke === undefined)
+        || Boolean(persisted.smoke && contract.smoke && (
+          persisted.smoke.scope !== contract.smoke.scope
+          || persisted.smoke.marker !== contract.smoke.marker
+          || persisted.smoke.args.length !== contract.smoke.args.length
+          || persisted.smoke.args.some((argument, index) => argument !== contract.smoke?.args[index])
+        ));
       if (persisted.exposeAs !== contract.exposeAs
         || persisted.wrapperPath !== relativeWrapperPath
         || persisted.command !== contract.command
         || persisted.required !== contract.required
-        || persisted.marker !== contract.marker) {
+        || smokeChanged) {
         return `shell tool contract changed: ${contract.id}`;
       }
 

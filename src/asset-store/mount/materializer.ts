@@ -1,5 +1,5 @@
 import { chmodSync, readFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   ensureDir,
   recreateDir,
@@ -15,6 +15,7 @@ import type { MountManifest } from "../contracts/manifest.js";
 import type { MaterializeOptions } from "../contracts/materialization.js";
 import type { MountContext } from "../contracts/mount-context.js";
 import type { ShellToolContract } from "../contracts/resources.js";
+import type { MaterializedSkill, ScoutSkillCatalogEntry } from "../contracts/skill.js";
 import { CodexAssetLayout, roleAgentPath } from "../assets/asset-layout.js";
 import { McpServerBuilder } from "../builders/mcp-server-builder.js";
 import { MountGeneratedFilesBuilder } from "../builders/mount-generated-files-builder.js";
@@ -63,7 +64,6 @@ export class MountMaterializer {
       })),
       customAgents: manifest.customAgents,
       skills: manifest.skills,
-      skillCatalog: context.skillCatalog,
       plugins: manifest.plugins,
       manifestPath: join(context.mountRoot, "mount-manifest.json"),
       resourceHash: context.resourceHash,
@@ -122,7 +122,7 @@ export class MountMaterializer {
     ensureDir(join(mountRoot, ".codex", "agents"));
     ensureDir(join(mountRoot, ".agents", "skills"));
     ensureDir(join(mountRoot, ".agents", "plugins"));
-    ensureDir(join(mountRoot, ".scout", "skills"));
+    ensureDir(join(mountRoot, ".scout", "skill"));
     ensureDir(join(mountRoot, "agents"));
     ensureDir(join(mountRoot, "plugins"));
     ensureDir(join(mountRoot, "bin"));
@@ -172,7 +172,12 @@ export class MountMaterializer {
     options.onMaterializationStep?.("config");
 
     const customAgentNames = materializeCustomAgents(assetsRoot, mountRoot, profiledCustomAgentPaths);
-    const skillNames = materializeSkills(assetsRoot, mountRoot, profiledSkillPaths);
+    const materializedSkills = materializeSkills(
+      assetsRoot,
+      mountRoot,
+      profiledSkillPaths,
+      skillCatalog,
+    );
     options.onMaterializationStep?.("skills");
     const pluginNames = materializePlugins(assetsRoot, mountRoot, profiledPluginPaths);
     options.onMaterializationStep?.("plugins");
@@ -216,7 +221,7 @@ export class MountMaterializer {
         wrapperPath,
       })),
       customAgentNames,
-      skillNames,
+      materializedSkills,
       pluginNames,
     });
     const manifestPath = join(mountRoot, "mount-manifest.json");
@@ -239,8 +244,7 @@ export class MountMaterializer {
       shellTools: shellBuild.tools.map(({ contract }) => contract),
       mcpServers: materializedMcpServers,
       customAgents: customAgentNames,
-      skills: skillNames,
-      skillCatalog,
+      skills: materializedSkills,
       plugins: pluginNames,
       manifestPath,
       resourceHash,
@@ -249,12 +253,21 @@ export class MountMaterializer {
 }
 
 /** Links selected Skill directories into the mount's Scout Skill namespace. */
-function materializeSkills(assetsRoot: string, mountRoot: string, skills: string[]): string[] {
-  return skills.map((skillPath) => {
+function materializeSkills(
+  assetsRoot: string,
+  mountRoot: string,
+  skillPaths: string[],
+  catalog: ScoutSkillCatalogEntry[],
+): MaterializedSkill[] {
+  const pathsByName = new Map(
+    skillPaths.map((skillPath) => [skillNameFromPath(skillPath), skillPath] as const),
+  );
+  return catalog.map((skill) => {
+    const skillPath = pathsByName.get(skill.name);
+    if (!skillPath) throw new Error(`Missing source path for Scout Skill ${skill.name}.`);
     const source = resolveAssetRelativePath(skillPath, assetsRoot);
-    const name = skillNameFromPath(skillPath);
-    safeSymlink(resolve(source, ".."), join(mountRoot, ".scout", "skills", name));
-    return name;
+    safeSymlink(resolve(source, ".."), join(mountRoot, dirname(skill.path)));
+    return { name: skill.name, path: skill.path };
   });
 }
 

@@ -5,6 +5,7 @@ description: 使用 Unity Pipeline CLI 定位目标 Unity Editor 或桌面 Unity
 id: tool-unity-pipeline-cli
 version: 0.4.2
 phase: [verify, validate]
+family: [tool, unity, pipeline-cli]
 tags: [unity, pipeline, cli, editor, desktop, player, automation, shell-tool]
 devices: [editor, desktop]
 dependencies:

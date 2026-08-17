@@ -50,13 +50,6 @@ test("run scope release cannot be applied twice", (t) => {
   );
 });
 
-test("each RunScope owns independent Skill state", (t) => {
-  const first = createRunScope(t, "run-scope-skill-first");
-  const second = createRunScope(t, "run-scope-skill-second");
-
-  assert.notEqual(first.skillStore, second.skillStore);
-});
-
 test("RunScope exposes staged resources only after their owner registers them", (t) => {
   const scope = createRunScope(t, "run-scope-resources");
   const appServer = {} as RunScope["appServer"];

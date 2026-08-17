@@ -7,10 +7,6 @@ import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
 import type { AgentTaskNotAssignedEventPayload } from "../task/task-events.js";
 import type { AgentTaskState } from "../task/types.js";
-import {
-  AGENT_FIND_SKILLS_TOOL_NAMESPACE,
-  AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE,
-} from "../tools/agent-tools.js";
 
 /** Writes task lifecycle events to the owning agent's task log. */
 export class TaskEventRecorder {
@@ -121,12 +117,7 @@ export class TaskEventRecorder {
         turnId: step?.turnId,
         status: step?.status,
         finalResponse: step?.finalResponse,
-        // Skill discovery/read facts have their own skill.log; keep the task
-        // projection focused on calls that do not have a dedicated recorder.
-        toolCalls: step?.toolCalls.filter((toolCall) =>
-          toolCall.namespace !== AGENT_FIND_SKILLS_TOOL_NAMESPACE
-          && toolCall.namespace !== AGENT_READ_SKILL_RESOURCE_TOOL_NAMESPACE
-        ),
+        toolCalls: step?.toolCalls,
         humanInputRequest: step?.humanInputRequest,
         finishedAt: step?.finishedAt,
         durationMs: step?.durationMs,
