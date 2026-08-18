@@ -576,7 +576,7 @@ test("activity strip uses turn lifecycle instead of task status for process pres
       status: "done",
       description: "整理研究证据",
       updatedAt: "2026-07-10T00:00:01.000Z",
-      planSteps: [],
+      turns: [],
     }],
   }));
   const completed = selectCurrentAgentActivity(tuiState({

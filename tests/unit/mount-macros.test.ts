@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { dirname } from "node:path";
 import {
   buildMountMacroValues,
   buildMountShellEnvironment,
+  buildMountShellPath,
   resolveMountMacros,
   MountMacros,
 } from "../../src/asset-store/mount/macros.js";
@@ -50,6 +52,8 @@ test("mount shell environment exposes only shell-facing macros", () => {
     SCOUT_RUN_ROOT: "/repo/run/run-1",
     SCOUT_ARTIFACT_ROOT: "/repo/run/run-1/agents/validator/artifacts",
     SCOUT_ASSET_COMMIT_ID: "ac_3",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
   });
 });
 
@@ -65,4 +69,11 @@ test("generated Codex config exposes the shared run root", () => {
   });
 
   assert.match(config, /SCOUT_RUN_ROOT = "\/repo\/run\/run-1"/);
+  assert.ok(config.includes(buildMountShellPath("/repo/run/run-1/agents/validator/mount")));
+});
+
+test("mount shell path includes the mount bin and current Node runtime", () => {
+  const path = buildMountShellPath("/repo/run/run-1/agents/validator/mount");
+  assert.equal(path.split(":")[0], "/repo/run/run-1/agents/validator/mount/bin");
+  assert.ok(path.split(":").includes(dirname(process.execPath)));
 });

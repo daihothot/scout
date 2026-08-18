@@ -47,7 +47,7 @@ summary: 说明当前 Run 的 mount 结构、允许访问范围、软链接 cano
 ./AGENTS.md
 ./agents/worker.AGENTS.md      # 仅 Worker
 ./agents/<role>.AGENTS.md
-./.scout/skill/<family...>/<skill-name>/SKILL.md
+./.scout/skill/<family...>/<skill-name>/SKILL.md (具体路径以 `scout-assets skills` 返回为准)
 ./bin/
 ./mcp/
 ./plugins/
@@ -95,6 +95,7 @@ scout-assets plugins
 - `scout-assets list` 读取当前 mount manifest 的身份、路径边界和已物化能力。
 - 其它子命令只查看对应的当前 mount 清单。
 - 清单中不存在的能力不应通过 Scout checkout、其它 mount 或缓存目录自行寻找。
+- `scout-assets skills` 返回的每个 Skill path 是唯一的读取入口；必须原样使用，不得按 family、domain 或 Skill name 猜测、拼接或替换路径。
 - 只有需要读取具体文件时，才在已知允许目录内使用 `ls`、`rg`、`sed` 或 `cat`；不要以递归扫描作为环境发现的第一步。
 
 ## Environment Facts

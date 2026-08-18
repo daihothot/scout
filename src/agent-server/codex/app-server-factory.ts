@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { CodexAppServerClient } from "./app-server-client.js";
 
@@ -32,7 +33,9 @@ export function createCodexAppServerClient(options: CreateCodexAppServerClientOp
   );
   return {
     client: new CodexAppServerClient({
-      home: options.isolatedHome,
+      // CODEX_HOME isolates Codex state. HOME remains the current device's
+      // real home so third-party tools resolve ~/.guru and ~/.codegraph correctly.
+      home: homedir(),
       codexHome: options.isolatedCodexHome,
       providerName: options.providerName,
       providerApiKey: options.providerApiKey,

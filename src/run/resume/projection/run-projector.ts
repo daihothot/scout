@@ -29,7 +29,9 @@ export interface ProjectedTurn {
   taskId?: string;
   threadId: string;
   prompt: string;
+  startedSeq: number;
   startedAt: string;
+  completedSeq?: number;
   completedAt?: string;
   status?: "completed" | "failed" | "interrupted";
   error?: string;
@@ -41,6 +43,7 @@ export interface ProjectedTaskOutcome {
   agentId: string;
   stepId: string;
   outcome: string;
+  journalSeq: number;
   submittedAt: string;
 }
 
@@ -53,6 +56,7 @@ export interface ProjectedArtifact {
   ref: string;
   digest: string;
   status: string;
+  journalSeq: number;
   publishedAt: string;
 }
 
@@ -66,6 +70,7 @@ export interface ProjectedGate {
   gateRef: string;
   gateDigest: string;
   status: string;
+  journalSeq: number;
   recordedAt: string;
 }
 
@@ -189,6 +194,7 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
           agentId: event.payload.task.agentId,
           stepId: event.payload.stepId,
           outcome: event.payload.outcome,
+          journalSeq: event.seq,
           submittedAt: event.payload.submittedAt,
         });
       }
@@ -250,6 +256,7 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
         taskId: event.payload.taskId,
         threadId: event.payload.threadId,
         prompt: event.payload.prompt,
+        startedSeq: event.seq,
         startedAt: event.payload.startedAt,
       });
       continue;
@@ -261,6 +268,7 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
       }
       turns.set(existing.invocationId, {
         ...existing,
+        completedSeq: event.seq,
         completedAt: event.payload.turn.finishedAt,
         status: event.payload.turn.status,
         error: event.payload.turn.error,
@@ -274,6 +282,7 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
       }
       turns.set(existing.invocationId, {
         ...existing,
+        completedSeq: event.seq,
         completedAt: event.payload.interruptedAt,
         status: "interrupted",
         error: event.payload.reason,
@@ -312,11 +321,17 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
       continue;
     }
     if (ValidationEvents.artifact.published.is(event)) {
-      artifacts.push(structuredClone(event.payload));
+      artifacts.push({
+        ...structuredClone(event.payload),
+        journalSeq: event.seq,
+      });
       continue;
     }
     if (ValidationEvents.gate.recorded.is(event)) {
-      gates.push(structuredClone(event.payload));
+      gates.push({
+        ...structuredClone(event.payload),
+        journalSeq: event.seq,
+      });
     }
   }
 

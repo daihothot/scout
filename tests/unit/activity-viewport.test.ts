@@ -23,6 +23,7 @@ test("activity viewport clamps keyboard and page scrolling", () => {
 test("activity viewport parses SGR mouse wheel input", () => {
   const wheelUp = parseSgrMouseEvent("[<64;12;15M");
   const wheelDown = parseSgrMouseEvent("\u001b[<65;12;21M");
+  const primaryDrag = parseSgrMouseEvent("\u001b[<32;18;9M");
 
   assert.deepEqual(wheelUp, {
     button: 64,
@@ -32,5 +33,11 @@ test("activity viewport parses SGR mouse wheel input", () => {
   });
   assert.equal(mouseWheelDelta(wheelUp!), -3);
   assert.equal(mouseWheelDelta(wheelDown!), 3);
+  assert.deepEqual(primaryDrag, {
+    button: 32,
+    x: 18,
+    y: 9,
+    released: false,
+  });
   assert.equal(parseSgrMouseEvent("not-mouse-input"), undefined);
 });

@@ -122,8 +122,9 @@
       "smoke": {
         "scope": "run",
         "args": [
-          "--version"
-        ]
+          "status"
+        ],
+        "managedCodebase": "gurusdk-unity"
       }
     },
     {

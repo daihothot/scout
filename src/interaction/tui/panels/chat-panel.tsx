@@ -36,17 +36,31 @@ export function ChatPanel({
   height,
   startY,
   keyboardActive,
+  onVisibleLinesChange,
 }: {
   items: TuiChatItem[];
   width: number;
   height: number;
   startY: number;
   keyboardActive: boolean;
+  onVisibleLinesChange?: (lines: string[]) => void;
 }) {
   const [scrollTop, setScrollTop] = useState<number | null>(null);
   const rows = useMemo(() => buildChatVisualRows(items, width), [items, width]);
   const resolvedScrollTop = resolveActivityScrollTop(rows.length, height, scrollTop);
   const visibleRows = rows.slice(resolvedScrollTop, resolvedScrollTop + height);
+  const selectableLineTexts = useMemo(
+    () => height === 0
+      ? []
+      : rows.length === 0
+        ? ["Waiting for conversation."]
+        : visibleRows.map(chatVisualRowText),
+    [height, resolvedScrollTop, rows],
+  );
+
+  useEffect(() => {
+    onVisibleLinesChange?.(selectableLineTexts);
+  }, [onVisibleLinesChange, selectableLineTexts]);
 
   useEffect(() => {
     if (scrollTop === null || scrollTop === resolvedScrollTop) return;
@@ -114,4 +128,17 @@ export function buildChatVisualRows(items: TuiChatItem[], width: number): ChatVi
       ? [...rows, { id: `${item.id}:spacer`, kind: "spacer" as const }]
       : rows;
   });
+}
+
+/** Converts one rendered Chat row to the plain text used by copy selection. */
+function chatVisualRowText(row: ChatVisualRow): string {
+  if (row.kind === "spacer") return "";
+  const prefix = row.first
+    ? row.kind === "user"
+      ? "YOU "
+      : row.kind === "coordinator"
+        ? "COORD "
+        : "SYSTEM "
+    : " ".repeat(row.leadingWidth);
+  return `${prefix}${row.prefixOnly ? "" : row.text}`;
 }

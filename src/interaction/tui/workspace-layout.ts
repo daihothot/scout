@@ -3,7 +3,7 @@ import { terminalDisplayWidth } from "./terminal-text.js";
 const ROOT_PADDING_X = 2;
 const INPUT_BORDER_WIDTH = 1;
 const INPUT_PADDING_X = 1;
-const INPUT_PROMPT = "> ";
+const INPUT_PROMPT = "› ";
 
 /** Width budget shared by the shell, chat, drawer, and prompt. */
 export interface TuiWidths {
@@ -54,7 +54,20 @@ export function resolveTuiWorkspaceLayout(input: {
   taskPlanStepRows: number;
   desiredActivityRows: number;
 }): TuiWorkspaceLayout {
-  const totalRows = Math.max(1, Math.floor(input.availableRows));
+  const totalRows = Math.max(0, Math.floor(input.availableRows));
+  if (totalRows === 0) {
+    return {
+      totalRows: 0,
+      chatOffset: 0,
+      chatRows: 0,
+      taskGapRows: 0,
+      tasksOffset: 0,
+      taskRows: 0,
+      activityGapRows: 0,
+      activityOffset: 0,
+      activityRows: 0,
+    };
+  }
   const minimumTaskRows = totalRows >= 2 ? 1 : 0;
   const taskGapRows = totalRows >= 4 ? 1 : 0;
   const activityGapRows = totalRows >= 5 ? 1 : 0;

@@ -28,7 +28,12 @@ export function statusColor(status: string | undefined): TuiColor {
     || status === "completed"
     || status === "passed"
   ) return "green";
-  if (status === "failed" || status === "blocked" || status === "stopped") return "red";
+  if (
+    status === "failed"
+    || status === "blocked"
+    || status === "stopped"
+    || status === "interrupted"
+  ) return "red";
   if (status === "running" || status === "inProgress") return "yellow";
   return "gray";
 }

@@ -94,6 +94,8 @@ completion_state: partial
 
 ## Human Confirmation Evidence
 
+本 section 仅在 Research pack 实际包含 `E-HUMAN-*` evidence 时保留；没有人工确认 evidence 时省略整个 section。
+
 ### E-HUMAN-001
 
 - artifact_ref: <填写 E-HUMAN-* 独立 evidence artifact ref>

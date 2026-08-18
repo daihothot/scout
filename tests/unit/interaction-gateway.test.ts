@@ -215,9 +215,12 @@ test("interaction gateway projects assigned task plan and Worker activity into T
     updatedAt: "2026-07-10T00:00:03.000Z",
   } satisfies AgentTurnActivity);
 
-  assert.deepEqual(store.snapshot().tasks[0]?.planSteps, [{
-    step: "Locate BDD and Behavior source",
-    status: "inProgress",
+  assert.deepEqual(store.snapshot().tasks[0]?.turns, [{
+    turnId: "turn-1",
+    planSteps: [{
+      step: "Locate BDD and Behavior source",
+      status: "inProgress",
+    }],
   }]);
   assert.equal(store.snapshot().activities[0]?.taskId, "researcher-task-0001");
   assert.equal(store.snapshot().turnActivities[0]?.status, "inProgress");
@@ -230,7 +233,7 @@ test("interaction gateway projects assigned task plan and Worker activity into T
 
   assert.equal(store.snapshot().tasks.length, 1);
   assert.equal(store.snapshot().tasks[0]?.status, AgentTaskStatuses.Done);
-  assert.equal(store.snapshot().tasks[0]?.planSteps[0]?.status, "completed");
+  assert.equal(store.snapshot().tasks[0]?.turns[0]?.planSteps[0]?.status, "completed");
 
   await bus.publishAndWait(AgentEvents.task.archived, taskState({
     status: AgentTaskStatuses.Done,
@@ -241,7 +244,7 @@ test("interaction gateway projects assigned task plan and Worker activity into T
 
   assert.equal(store.snapshot().tasks.length, 1);
   assert.equal(store.snapshot().tasks[0]?.status, "archived");
-  assert.equal(store.snapshot().tasks[0]?.planSteps[0]?.status, "completed");
+  assert.equal(store.snapshot().tasks[0]?.turns[0]?.planSteps[0]?.status, "completed");
 });
 
 class TestInteractionPort implements RuntimeInteractionPort {
@@ -272,6 +275,10 @@ class TestInteractionPort implements RuntimeInteractionPort {
 
   async publishTaskEvent(event: ScoutEvent): Promise<void> {
     this.taskEvents.push(event);
+  }
+
+  async restoreTaskSnapshot(_task: AgentTaskState): Promise<void> {
+    return undefined;
   }
 
   async receiveAgentMessage(_message: AgentMessageReply): Promise<void> {

@@ -10,7 +10,7 @@ tags: [scout, validation, research, verification, gate, evidence, audit, workflo
 devices: [any]
 dependencies:
   skills:
-    required: [domain-validation-research-pack, domain-validation-verifier, tool-guru-knowledge, tool-jarvis-codebase, internal-single-skill-reader]
+    required: [domain-validation-research-pack, tool-guru-knowledge, tool-jarvis-codebase, internal-single-skill-reader]
   shellTools:
     required: [scoutAssets, scoutArtifactDigest]
     optional: [rg, sed, find, cat]
@@ -191,6 +191,8 @@ blocked > insufficient_evidence > needs_fix > accepted
 - Phase 2：检查 pack 结构、状态、聚合与独立 evidence 引用关系。
 - Phase 3：检查 BDD、knowledge、代码证据和验证点语义。
 - Phase 4：确认 digest 未变化，写入并提交 Research Pack Gate。
+
+Research Pack Gate 的 required contracts 是 `domain-validation-research-pack`、`tool-guru-knowledge`、`tool-jarvis-codebase` 和 `internal-single-skill-reader`。`domain-validation-verifier` 不属于 Research Pack Gate 的无条件输入；只有进入下方 Verification Report Gate 时，才读取并消费它定义的 report contract。
 
 ## Research Pack Gate Output Layout
 

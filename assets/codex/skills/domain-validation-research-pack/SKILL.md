@@ -21,6 +21,8 @@ summary: 编排知识和代码 producer contracts，形成唯一 Research Pack�
 
 本技能拥有 Research Pack 的编排、聚合、状态和 handoff contract。Guru Knowledge 与当前版本代码的具体采集方法分别由 `tool-guru-knowledge` 和 `tool-jarvis-codebase` 拥有；具体信号语义由对应 Signal Skill 拥有。
 
+模板文件的 `scout.resource` frontmatter 只描述 Runtime 如何物化和提供模板资源。生成 Research artifact 时不得复制该运行时 metadata；checker 会拒绝 artifact frontmatter 中的 `scout.resource`。`evidence-registry.md` 的 `Human Confirmation Evidence` section 只有在 pack 实际包含 `E-HUMAN-*` 时才需要保留；无人工确认 evidence 时可以省略整个 section。
+
 ## Skill Type
 
 - type: workflow
@@ -267,6 +269,7 @@ tool-jarvis-codebase/templates/source-code-evidence.md
 - `evidence-registry.md`：所有证据编号的集中索引。
 - `verification-manual.md`：验证手册，只引用 evidence id，不粘贴证据正文；verification point 通过 `E-PERSONA-*` 引用独立用户画像 evidence。
 - `evidence/*.md`：除 `E-BDD-001` 和 `E-KB-001` 外，每条 research evidence 的独立 artifact 文件，文件名必须和 evidence id 对齐。
+- `evidence-registry.md` 的 `Human Confirmation Evidence` 是条件 section：没有 `E-HUMAN-*` 时省略；登记任何 `E-HUMAN-*` 时必须保留并填写对应 registry entry。
 
 ### Artifact Relationship Rules
 

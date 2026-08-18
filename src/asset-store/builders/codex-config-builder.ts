@@ -1,5 +1,5 @@
 import type { MaterializedMcpServer } from "../contracts/resources.js";
-import { buildMountShellEnvironment } from "../mount/macros.js";
+import { buildMountShellEnvironment, buildMountShellPath } from "../mount/macros.js";
 
 /** Inputs used to render the generated Codex config layer for one mount. */
 export interface GenerateCodexConfigOptions {
@@ -22,7 +22,7 @@ export class CodexConfigBuilder {
       input.baseConfig.trimEnd(),
       "",
       "[shell_environment_policy.set]",
-      `PATH = "${escapeToml(`${input.mountRoot}/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin`)}"`,
+      `PATH = "${escapeToml(buildMountShellPath(input.mountRoot))}"`,
       ...Object.entries(buildMountShellEnvironment({
         runRoot: input.runRoot,
         artifactRoot: input.artifactRoot,

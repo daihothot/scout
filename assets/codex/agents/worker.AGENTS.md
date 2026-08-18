@@ -12,7 +12,7 @@
 ## When Assigned Task
 
 - 先确认 task id、当前角色、上游 Coordinator、目标、输入 refs、预期输出、完成条件和禁止越权边界。
-- 读取当前角色规则，并从 `.scout/skill/<domain>/workflow/` 中读取当前角色及 task 适用的 Domain Skill；Domain Skill 决定领域 resources、required Skill 和 Single 消费规则。
+- 读取当前角色规则，再执行 `scout-assets skills` 获取当前 phase 已物化的 Domain Skill 精确路径；必须原样使用返回路径，不得按 domain、family 或 Skill 名称自行拼接路径。Domain Skill 决定领域 resources、required Skill 和 Single 消费规则。
 - task 与当前角色不匹配时停止，并向 Coordinator 报告职责不匹配和建议角色。
 - 缺少输入、能力、权限或输出位置时，不猜测继续；按缺口类型使用下述人工输入规则或当前正式上游入口。
 
@@ -30,7 +30,7 @@
 - 首次使用 `SendMessage` 前读取 `tool-scout-send-message`。
 - 首次使用 `RequestHumanInput` 前读取 `tool-scout-request-human-input`。
 - 首次使用 `SubmitTask` 前读取 `tool-scout-submit-task`。
-- 这些 Tool Skill 位于 `.scout/skill/tool/scout/dynamic/`；工具 description 不是完整操作 contract。
+- 这些 Tool Skill 的精确路径由 `scout-assets skills` 返回；工具 description 不是完整操作 contract。
 
 ## Human Input
 

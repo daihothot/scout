@@ -7,6 +7,7 @@ export function ScoutShell({
   contentWidth,
   appHeight,
   rootPaddingX,
+  topChromeRows,
   topChrome,
   chatPanel,
   tasksDrawer,
@@ -14,12 +15,15 @@ export function ScoutShell({
   taskGapRows,
   activityGapRows,
   promptInput,
+  promptRows,
   workspaceRows,
+  selectionOverlay,
 }: {
   terminalWidth: number;
   contentWidth: number;
   appHeight: number;
   rootPaddingX: number;
+  topChromeRows: number;
   topChrome: ReactNode;
   chatPanel: ReactNode;
   tasksDrawer: ReactNode;
@@ -27,7 +31,9 @@ export function ScoutShell({
   taskGapRows: number;
   activityGapRows: number;
   promptInput?: ReactNode;
+  promptRows: number;
   workspaceRows: number;
+  selectionOverlay?: ReactNode;
 }) {
   return (
     <Box
@@ -37,7 +43,14 @@ export function ScoutShell({
       paddingX={rootPaddingX}
       overflow="hidden"
     >
-      {topChrome}
+      <Box
+        width={contentWidth}
+        height={topChromeRows}
+        overflow="hidden"
+        flexShrink={0}
+      >
+        {topChrome}
+      </Box>
       <Box
         flexDirection="column"
         width={contentWidth}
@@ -51,7 +64,20 @@ export function ScoutShell({
         {activityGapRows > 0 && <Box height={activityGapRows} flexShrink={0} />}
         {activityBar}
       </Box>
-      {promptInput}
+      {selectionOverlay}
+      {promptInput && promptRows > 0 && (
+        <Box
+          position="absolute"
+          bottom={0}
+          left={rootPaddingX}
+          width={contentWidth}
+          height={promptRows}
+          overflow="hidden"
+          flexShrink={0}
+        >
+          {promptInput}
+        </Box>
+      )}
     </Box>
   );
 }

@@ -78,6 +78,26 @@ test("short workspaces preserve Chat before optional chrome rows", () => {
   });
 });
 
+test("empty workspace leaves the bottom prompt slot available", () => {
+  assert.deepEqual(resolveTuiWorkspaceLayout({
+    availableRows: 0,
+    drawerOpen: false,
+    taskCount: 0,
+    taskPlanStepRows: 0,
+    desiredActivityRows: 1,
+  }), {
+    totalRows: 0,
+    chatOffset: 0,
+    chatRows: 0,
+    taskGapRows: 0,
+    tasksOffset: 0,
+    taskRows: 0,
+    activityGapRows: 0,
+    activityOffset: 0,
+    activityRows: 0,
+  });
+});
+
 test("workspace reserves wrapped Activity rows below the task gap", () => {
   assert.deepEqual(resolveTuiWorkspaceLayout({
     availableRows: 12,
@@ -145,7 +165,7 @@ test("task drawer keeps archived tasks after current tasks and summarizes their 
         status: "archived",
         description: "旧研究任务",
         updatedAt: "2026-07-10T00:00:01.000Z",
-        planSteps: [],
+        turns: [],
       },
       {
         taskId: "validator-task-0001",
@@ -154,7 +174,7 @@ test("task drawer keeps archived tasks after current tasks and summarizes their 
         status: "running",
         description: "检查研究结果",
         updatedAt: "2026-07-10T00:00:02.000Z",
-        planSteps: [],
+        turns: [],
       },
     ],
   };

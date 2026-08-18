@@ -57,10 +57,12 @@
       "plugins": [],
       "readableRoots": [
         "${SCOUT_ROOT}",
-        "~/.guru/knowledge"
+        "~/.guru/knowledge",
+        "~/.codegraph"
       ],
       "writableRoots": [
-        "~/.guru/codebase"
+        "~/.guru/codebase",
+        "~/.codegraph"
       ]
     },
     "verifier": {
@@ -101,10 +103,12 @@
       ],
       "readableRoots": [
         "${SCOUT_ROOT}",
-        "~/.guru/knowledge"
+        "~/.guru/knowledge",
+        "~/.codegraph"
       ],
       "writableRoots": [
-        "~/.guru/codebase"
+        "~/.guru/codebase",
+        "~/.codegraph"
       ]
     },
     "validator": {
@@ -141,10 +145,12 @@
       "plugins": [],
       "readableRoots": [
         "~/.guru/knowledge",
-        "~/.guru/codebase"
+        "~/.guru/codebase",
+        "~/.codegraph"
       ],
       "writableRoots": [
-        "~/.guru/codebase"
+        "~/.guru/codebase",
+        "~/.codegraph"
       ]
     }
   }

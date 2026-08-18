@@ -1,11 +1,9 @@
 import { AgentEvents } from "../../../agent/events/index.js";
 import { WorkerAgent } from "../../../agent/roles/worker-agent.js";
-import { AgentTaskStatuses } from "../../../agent/task/types.js";
 import { ScoutAgentRoles } from "../../../agent/thread/types.js";
-import type { ScoutEvent } from "../../../core/events/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
-import { projectRun, type RunProjection } from "../projection/index.js";
+import { projectRun } from "../projection/index.js";
 
 /**
  * Rehydrates worker task stores and republishes projected task facts to the
@@ -49,7 +47,7 @@ export class RestoreTasksStage implements RunStage {
     }
 
     for (const task of projection.tasks) {
-      await scope.interactionPort.publishTaskEvent(restoredTaskEvent(task));
+      await scope.interactionPort.restoreTaskSnapshot(task);
     }
     for (const archived of projection.archivedTasks) {
       await scope.interactionPort.publishTaskEvent({
@@ -60,21 +58,4 @@ export class RestoreTasksStage implements RunStage {
       });
     }
   }
-}
-
-/** Converts a projected task status into the event used to replay its UI fact. */
-function restoredTaskEvent(task: RunProjection["tasks"][number]): ScoutEvent {
-  const key = task.status === AgentTaskStatuses.Done
-    ? AgentEvents.task.done
-    : task.status === AgentTaskStatuses.Failed
-      ? AgentEvents.task.failed
-      : task.status === AgentTaskStatuses.Stopped
-        ? AgentEvents.task.stopped
-        : AgentEvents.task.assigned;
-  return {
-    id: `restore-task-${task.taskId}`,
-    key,
-    payload: task,
-    occurredAt: task.updatedAt,
-  };
 }
