@@ -374,6 +374,159 @@ test("Coordinator resume actions compose independent task checkpoints without pr
   );
 });
 
+test("Coordinator does not re-evaluate a completed outcome without newer facts", () => {
+  const task = taskState({ status: AgentTaskStatuses.Done });
+  const projection = projectRun(journalEvents(
+    scoutEvent(AgentEvents.task.assigned, taskState()),
+    scoutEvent(AgentEvents.task.outcomeSubmitted, {
+      task,
+      stepId: "researcher-task-0001-step-0001",
+      outcome: "## Outcome\n\n已完成。",
+      submittedAt: "2026-07-22T00:01:00.000Z",
+    }, "2026-07-22T00:01:00.000Z"),
+    scoutEvent(AgentEvents.turn.started, {
+      invocationId: "coordinator-invocation-0001",
+      agentId: ScoutAgentRoles.Coordinator,
+      role: ScoutAgentRoles.Coordinator,
+      threadId: "coordinator-thread",
+      prompt: "检查已提交 outcome",
+      startedAt: "2026-07-22T00:02:00.000Z",
+    }, "2026-07-22T00:02:00.000Z"),
+    scoutEvent(AgentEvents.turn.completed, {
+      turn: {
+        invocationId: "coordinator-invocation-0001",
+        agentId: ScoutAgentRoles.Coordinator,
+        role: ScoutAgentRoles.Coordinator,
+        threadId: "coordinator-thread",
+        turnId: "coordinator-turn-0001",
+        startedAt: "2026-07-22T00:02:00.000Z",
+        finishedAt: "2026-07-22T00:03:00.000Z",
+        status: "completed",
+      },
+    }, "2026-07-22T00:03:00.000Z"),
+  ));
+
+  assert.deepEqual(
+    planResumeActions({
+      projection,
+      agentId: ScoutAgentRoles.Coordinator,
+      role: ScoutAgentRoles.Coordinator,
+    }),
+    [],
+  );
+});
+
+test("Coordinator keeps an outcome when its completed turn started before the outcome", () => {
+  const task = taskState({ status: AgentTaskStatuses.Done });
+  const projection = projectRun(journalEvents(
+    scoutEvent(AgentEvents.task.assigned, taskState()),
+    scoutEvent(AgentEvents.turn.started, {
+      invocationId: "coordinator-invocation-0001",
+      agentId: ScoutAgentRoles.Coordinator,
+      role: ScoutAgentRoles.Coordinator,
+      threadId: "coordinator-thread",
+      prompt: "处理其它消息",
+      startedAt: "2026-07-22T00:01:00.000Z",
+    }, "2026-07-22T00:01:00.000Z"),
+    scoutEvent(AgentEvents.task.outcomeSubmitted, {
+      task,
+      stepId: "researcher-task-0001-step-0001",
+      outcome: "## Outcome\n\n尚未被读取。",
+      submittedAt: "2026-07-22T00:02:00.000Z",
+    }, "2026-07-22T00:02:00.000Z"),
+    scoutEvent(AgentEvents.turn.completed, {
+      turn: {
+        invocationId: "coordinator-invocation-0001",
+        agentId: ScoutAgentRoles.Coordinator,
+        role: ScoutAgentRoles.Coordinator,
+        threadId: "coordinator-thread",
+        turnId: "coordinator-turn-0001",
+        startedAt: "2026-07-22T00:01:00.000Z",
+        finishedAt: "2026-07-22T00:03:00.000Z",
+        status: "completed",
+      },
+    }, "2026-07-22T00:03:00.000Z"),
+  ));
+
+  assert.deepEqual(
+    planResumeActions({
+      projection,
+      agentId: ScoutAgentRoles.Coordinator,
+      role: ScoutAgentRoles.Coordinator,
+    }),
+    [{
+      type: ResumeActionTypes.EvaluateOutcome,
+      taskId: task.taskId,
+    }],
+  );
+});
+
+test("Coordinator re-evaluates a completed outcome after a newer outcome or gate", () => {
+  const task = taskState({ status: AgentTaskStatuses.Done });
+  const firstCheck = [
+    scoutEvent(AgentEvents.task.assigned, taskState()),
+    scoutEvent(AgentEvents.task.outcomeSubmitted, {
+      task,
+      stepId: "researcher-task-0001-step-0001",
+      outcome: "## Outcome\n\n初始结果。",
+      submittedAt: "2026-07-22T00:01:00.000Z",
+    }, "2026-07-22T00:01:00.000Z"),
+    scoutEvent(AgentEvents.turn.started, {
+      invocationId: "coordinator-invocation-0001",
+      agentId: ScoutAgentRoles.Coordinator,
+      role: ScoutAgentRoles.Coordinator,
+      threadId: "coordinator-thread",
+      prompt: "检查已提交 outcome",
+      startedAt: "2026-07-22T00:02:00.000Z",
+    }, "2026-07-22T00:02:00.000Z"),
+    scoutEvent(AgentEvents.turn.completed, {
+      turn: {
+        invocationId: "coordinator-invocation-0001",
+        agentId: ScoutAgentRoles.Coordinator,
+        role: ScoutAgentRoles.Coordinator,
+        threadId: "coordinator-thread",
+        turnId: "coordinator-turn-0001",
+        startedAt: "2026-07-22T00:02:00.000Z",
+        finishedAt: "2026-07-22T00:03:00.000Z",
+        status: "completed",
+      },
+    }, "2026-07-22T00:03:00.000Z"),
+  ];
+
+  for (const newerFact of [
+    scoutEvent(AgentEvents.task.outcomeSubmitted, {
+      task,
+      stepId: "researcher-task-0001-step-0002",
+      outcome: "## Outcome\n\n更新结果。",
+      submittedAt: "2026-07-22T00:04:00.000Z",
+    }, "2026-07-22T00:04:00.000Z"),
+    scoutEvent(ValidationEvents.gate.recorded, {
+      gateId: "gate-0001",
+      taskId: task.taskId,
+      agentId: ScoutAgentRoles.Validator,
+      checkedRef: "agents/researcher/artifacts/research-pack",
+      checkedDigest: "sha256:pack",
+      gateRef: "agents/validator/artifacts/research-pack-gate-0001.md",
+      gateDigest: "sha256:gate",
+      status: "needs_fix",
+      recordedAt: "2026-07-22T00:00:30.000Z",
+    }, "2026-07-22T00:04:00.000Z"),
+  ]) {
+    const projection = projectRun(journalEvents(...firstCheck, newerFact));
+    assert.deepEqual(
+      planResumeActions({
+        projection,
+        agentId: ScoutAgentRoles.Coordinator,
+        role: ScoutAgentRoles.Coordinator,
+      }),
+      [{
+        type: ResumeActionTypes.EvaluateOutcome,
+        taskId: task.taskId,
+      }],
+    );
+  }
+});
+
 test("Coordinator Resume Packet processes pending user input without duplicating its body", () => {
   const projection = projectRun(journalEvents(
     scoutEvent(SystemEvents.interaction.userMessageSubmitted, {

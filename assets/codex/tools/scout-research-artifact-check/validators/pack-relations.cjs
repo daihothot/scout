@@ -28,6 +28,10 @@ function validateRemovedEvidenceRefs({ documents, evidence, packRoot, issues }) 
 function validateRegistryClosure({ evidence, registryIds, documents, packRoot, issues }) {
   const registry = documents.get("evidence-registry");
   const registryPath = registry ? displayPath(registry.path, packRoot) : AGGREGATES["evidence-registry"].file;
+  const hasHumanEvidence = [...evidence.keys()].some((id) => /^E-HUMAN-\d+$/.test(id));
+  if (hasHumanEvidence && registry && !sectionByTitle(registry, 2, "Human Confirmation Evidence")) {
+    addIssue(issues, "TEMPLATE_SECTION_MISSING", registryPath, "Missing applicable template section: Human Confirmation Evidence.");
+  }
   for (const [id, artifact] of evidence) {
     if (!registryIds.has(id)) addIssue(issues, "UNREGISTERED_EVIDENCE", `evidence/${id}.md`, `${id} is not registered.`);
     if (id.startsWith("E-PERSONA-")) {

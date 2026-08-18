@@ -44,6 +44,7 @@ export class MountShellToolsInspector {
         || Boolean(persisted.smoke && contract.smoke && (
           persisted.smoke.scope !== contract.smoke.scope
           || persisted.smoke.marker !== contract.smoke.marker
+          || persisted.smoke.managedCodebase !== contract.smoke.managedCodebase
           || persisted.smoke.args.length !== contract.smoke.args.length
           || persisted.smoke.args.some((argument, index) => argument !== contract.smoke?.args[index])
         ));

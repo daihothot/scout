@@ -1,6 +1,6 @@
 import type {
   TuiState,
-  TuiTaskPlanStep,
+  TuiTaskTurn,
 } from "../tui-store.js";
 
 /** Drawer projection combining task identity, status, and plan steps. */
@@ -11,7 +11,7 @@ export interface TuiTaskDrawerItem {
   status?: string;
   description?: string;
   updatedAt: string;
-  planSteps: TuiTaskPlanStep[];
+  turns: TuiTaskTurn[];
 }
 
 /** Selects task summaries in their stable sequence order for the drawer. */
@@ -24,7 +24,10 @@ export function selectTaskSummaries(state: TuiState): TuiTaskDrawerItem[] {
       status: task.status,
       description: task.description,
       updatedAt: task.updatedAt,
-      planSteps: task.planSteps.map((step) => ({ ...step })),
+      turns: task.turns.map((turn) => ({
+        ...turn,
+        planSteps: turn.planSteps.map((step) => ({ ...step })),
+      })),
     }))
     .sort((left, right) =>
       Number(left.status === "archived") - Number(right.status === "archived")

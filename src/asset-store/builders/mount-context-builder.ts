@@ -193,6 +193,10 @@ function filterShellTools(tools: ShellToolContract[], ids: string[]): ShellToolC
         && (typeof smoke.marker !== "string" || smoke.marker.length === 0)) {
         throw new Error(`Invalid shell tool smoke marker for ${tool.id}.`);
       }
+      if ("managedCodebase" in smoke && smoke.managedCodebase !== undefined
+        && (typeof smoke.managedCodebase !== "string" || smoke.managedCodebase.length === 0)) {
+        throw new Error(`Invalid shell tool smoke managed codebase for ${tool.id}.`);
+      }
     }
     return tool;
   });

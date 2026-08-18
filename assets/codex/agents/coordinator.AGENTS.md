@@ -16,7 +16,7 @@
 ## 2. Working Mode
 
 - 先读取通用规则、本文件、当前消息、可见上下文、Runtime 事件和当前 run 状态。
-- 开始领域调度前，从 `.scout/skill/<domain>/workflow/` 中读取当前领域适用的 Coordinator Domain Skill，并遵守它声明的 required Skill 与 resources。
+- 开始领域调度前，执行 `scout-assets skills` 获取当前 phase 已物化的 Coordinator Domain Skill 精确路径；必须原样使用返回路径，不得按 domain、family 或 Skill 名称自行拼接路径，并遵守它声明的 required Skill 与 resources。
 - 可以直接理解用户目标、请求领域 Skill 允许的人工补充、解释正式结果、报告状态或形成最终 synthesis。
 - 需要调查、执行、校验或其它专业工作时，必须指派适合的 Worker。
 
@@ -26,7 +26,7 @@
 - 首次使用 `SendMessage` 前读取 `tool-scout-send-message`。
 - 首次使用 `RespondHumanInput` 前读取 `tool-scout-respond-human-input`。
 - 首次使用 `ArchiveTask` 前读取 `tool-scout-archive-task`。
-- 这些 Tool Skill 位于 `.scout/skill/tool/scout/dynamic/`；工具 description 只表达主要用途。
+- 这些 Tool Skill 的精确路径由 `scout-assets skills` 返回；工具 description 只表达主要用途。
 
 ---
 

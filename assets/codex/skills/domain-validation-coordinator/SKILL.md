@@ -299,6 +299,12 @@ Partial：
 
 ## Retry Rules (Enforcement)
 
+### No-progress stop
+
+- 当 Gate 仍为 `insufficient_evidence` 或 `blocked`，且 issue ids、外部错误和受影响输入没有变化，同时没有新的用户事实、artifact、环境状态变化或实质修复结果时，Coordinator 必须停止重新派发和复查。
+- 仅修改文字、重新生成 digest、重复读取同一不可变输入或更换 task 描述不构成实质变化；不得因为这些变化重新启动 Researcher -> Validator 或 Verifier -> Validator 循环。
+- 同一外部错误最多允许一次有明确新输入或修复后的复测；复测仍相同则形成 blocked synthesis，并报告继续条件。
+
 - RR-001：只对瞬时 task dispatch 或消息投递失败进行有限重试，并保留失败记录。
 - RR-002：不得通过改变目标、Worker 角色或用户已确认输入来制造重试成功。
 - RR-003：重复失败后报告阻塞，不循环派发相同 task。

@@ -2,6 +2,7 @@ import type {
   AgentActivity,
   AgentTurnActivity,
 } from "../../agent/activity/activity-event.js";
+import type { AgentTaskState } from "../../agent/task/types.js";
 import type { ScoutEvent } from "../../core/events/index.js";
 import type { RunLifecycleSnapshot } from "../../run/lifecycle/run-stage.js";
 
@@ -77,6 +78,7 @@ export interface RuntimeInteractionPort {
   publishAgentActivity(activity: AgentActivity): Promise<void>;
   publishAgentTurnActivity(activity: AgentTurnActivity): Promise<void>;
   publishTaskEvent(event: ScoutEvent): Promise<void>;
+  restoreTaskSnapshot(task: AgentTaskState): Promise<void>;
   receiveAgentMessage(message: AgentMessageReply): Promise<void>;
   restoreUserMessage(message: RestoredUserMessage): Promise<void>;
   sendAgentMessage?(handler: (message: AgentMessageSend) => void | Promise<void>): RuntimeInteractionUnsubscribe;
@@ -106,6 +108,10 @@ export class NoopRuntimeInteractionPort implements RuntimeInteractionPort {
   }
 
   async publishTaskEvent(): Promise<void> {
+    // no-op
+  }
+
+  async restoreTaskSnapshot(): Promise<void> {
     // no-op
   }
 

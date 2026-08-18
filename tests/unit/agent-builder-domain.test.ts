@@ -1861,6 +1861,10 @@ class CapturingInteractionPort implements RuntimeInteractionPort {
     this.taskEvents.push(event);
   }
 
+  async restoreTaskSnapshot(_task: AgentTaskState): Promise<void> {
+    return undefined;
+  }
+
   async receiveAgentMessage(message: AgentMessageReply): Promise<void> {
     this.agentMessages.push(message);
   }

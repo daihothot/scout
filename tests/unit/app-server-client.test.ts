@@ -618,6 +618,52 @@ test("CodexAppServerClient persists stderr diagnostics and optional NDJSON trans
   }
 });
 
+test("CodexAppServerClient keeps multiline diagnostics out of the TUI terminal", async () => {
+  const fakeServer = writeFakeAppServer(`
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin });
+    function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+    process.stderr.write("ERROR first line\\nERROR second line\\n");
+    rl.on("line", (line) => {
+      const message = JSON.parse(line);
+      if (message.method === "initialize") send({ id: message.id, result: { ok: true } });
+    });
+  `);
+  const root = mkdtempSync(join(tmpdir(), "scout-app-server-tui-diagnostics-"));
+  const stderrLogPath = join(root, "logs", "app-server.log");
+  const client = new CodexAppServerClient({
+    codexPath: fakeServer,
+    home: root,
+    codexHome: root,
+    providerName: "missing-provider",
+    logPrefix: "tui app-server",
+    stderrLogPath,
+    writeDiagnosticsToStderr: false,
+  });
+  const originalWrite = process.stderr.write;
+  let terminalWrites = 0;
+  process.stderr.write = ((..._args: Parameters<typeof originalWrite>) => {
+    terminalWrites += 1;
+    return true;
+  }) as typeof originalWrite;
+
+  try {
+    await client.startSession();
+    await waitFor(() =>
+      existsSync(stderrLogPath)
+      && readFileSync(stderrLogPath, "utf8").includes("ERROR second line")
+    );
+  } finally {
+    process.stderr.write = originalWrite;
+    client.close();
+  }
+
+  const stderrText = readFileSync(stderrLogPath, "utf8");
+  assert.match(stderrText, /ERROR first line/);
+  assert.match(stderrText, /ERROR second line/);
+  assert.equal(terminalWrites, 0);
+});
+
 test("CodexAppServerClient does not report an intentional close as a disconnect", async () => {
   const fakeServer = writeFakeAppServer(`
     const readline = require("node:readline");

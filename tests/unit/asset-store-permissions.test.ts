@@ -38,17 +38,21 @@ test("AssetStore materializes read and write roots from agent profile", () => {
   assert.equal(mount.mountRoot, expectedMountRoot);
   assert.deepEqual(mount.writableRoots.sort(), [
     join(homedir(), ".guru", "codebase"),
+    join(homedir(), ".codegraph"),
   ].sort());
   assert.deepEqual(mount.readableRoots.sort(), [
     fixtureRoot,
     join(homedir(), ".guru", "knowledge"),
+    join(homedir(), ".codegraph"),
   ].sort());
   assert.deepEqual(manifest.writableRoots.sort(), [
     relativeFromMount(expectedMountRoot, join(homedir(), ".guru", "codebase")),
+    relativeFromMount(expectedMountRoot, join(homedir(), ".codegraph")),
   ].sort());
   assert.deepEqual(manifest.readableRoots.sort(), [
     relativeFromMount(expectedMountRoot, fixtureRoot),
     relativeFromMount(expectedMountRoot, join(homedir(), ".guru", "knowledge")),
+    relativeFromMount(expectedMountRoot, join(homedir(), ".codegraph")),
   ].sort());
   assert.equal(mount.mcpServers.some((server) => server.name === "codegraph"), false);
   assert.deepEqual(mount.agentProfile.model, {
@@ -178,10 +182,12 @@ test("AssetStore keeps validator artifact ownership outside profile write roots"
 
   assert.deepEqual(mount.writableRoots, [
     join(homedir(), ".guru", "codebase"),
+    join(homedir(), ".codegraph"),
   ]);
   assert.deepEqual(mount.readableRoots.sort(), [
     join(homedir(), ".guru", "knowledge"),
     join(homedir(), ".guru", "codebase"),
+    join(homedir(), ".codegraph"),
   ].sort());
   assert.ok(store.writableRootsForMount(mount).includes(mount.artifactRoot));
 });

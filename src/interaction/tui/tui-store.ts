@@ -43,13 +43,20 @@ export interface TuiTaskSummary {
   status?: string;
   description?: string;
   updatedAt: string;
-  planSteps: TuiTaskPlanStep[];
+  turns: TuiTaskTurn[];
 }
 
 /** Display-level plan step retained inside a task summary. */
 export interface TuiTaskPlanStep {
   step: string;
   status: string;
+}
+
+/** Display-level plan and lifecycle state for one task turn. */
+export interface TuiTaskTurn {
+  turnId?: string;
+  status?: string;
+  planSteps: TuiTaskPlanStep[];
 }
 
 /** Terminal-facing status of the current run. */
@@ -249,26 +256,12 @@ export class TuiStore {
       && !AgentEvents.task.assigned.is(event)
       && !archived
     ) return;
-    const plans = task.planRecords?.length
-      ? task.planRecords
-      : task.plan
-        ? [task.plan]
-        : [];
-    this.taskMap.set(task.taskId, {
-      taskId: task.taskId,
-      taskSequence: task.taskSequence,
-      agentId: task.agentId,
-      role: task.role,
-      status: archived ? "archived" : task.status,
-      description: task.description,
-      updatedAt: archived ? event.occurredAt : task.updatedAt,
-      planSteps: plans.length > 0
-        ? plans.flatMap((plan) => plan.steps.map((step) => ({
-          step: step.step,
-          status: step.status,
-        })))
-        : (existing?.planSteps.map((step) => ({ ...step })) ?? []),
-    });
+    this.taskMap.set(task.taskId, projectTaskSummary(
+      task,
+      existing,
+      archived ? "archived" : task.status,
+      archived ? event.occurredAt : task.updatedAt,
+    ));
     if (archived) {
       systemText = `任务 ${task.taskId} 已归档。`;
     } else if (AgentEvents.task.assigned.is(event)) {
@@ -289,6 +282,17 @@ export class TuiStore {
       this.appendLog({ kind: "system", text: systemText });
       return;
     }
+    this.emit();
+  }
+
+  /** Rebuilds a task projection from the complete durable snapshot during resume. */
+  restoreTaskSnapshot(task: AgentTaskState): void {
+    this.taskMap.set(task.taskId, projectTaskSummary(
+      task,
+      this.taskMap.get(task.taskId),
+      task.status,
+      task.updatedAt,
+    ));
     this.emit();
   }
 
@@ -357,6 +361,94 @@ export class TuiStore {
       listener(state);
     }
   }
+}
+
+function buildTaskTurns(
+  task: AgentTaskState,
+  plans: NonNullable<AgentTaskState["planRecords"]>,
+): TuiTaskTurn[] {
+  const taskSteps = task.steps ?? [];
+  const planTurnIds = new Set<string | undefined>();
+  const turns = plans.map((plan): TuiTaskTurn => {
+    planTurnIds.add(plan.turnId);
+    const lifecycle = [...taskSteps]
+      .reverse()
+      .find((step) => step.turnId === plan.turnId);
+    const turn: TuiTaskTurn = {
+      turnId: plan.turnId,
+      planSteps: plan.steps.map((step) => ({
+        step: step.step,
+        status: step.status,
+      })),
+    };
+    if (lifecycle) turn.status = lifecycle.status;
+    return turn;
+  });
+
+  for (const step of taskSteps) {
+    if (planTurnIds.has(step.turnId)) continue;
+    turns.push({
+      turnId: step.turnId,
+      status: step.status,
+      planSteps: [],
+    });
+    planTurnIds.add(step.turnId);
+  }
+  return turns;
+}
+
+function projectTaskSummary(
+  task: AgentTaskState,
+  existing: TuiTaskSummary | undefined,
+  status: string,
+  updatedAt: string,
+): TuiTaskSummary {
+  const plans = task.planRecords?.length
+    ? task.planRecords
+    : task.plan
+      ? [task.plan]
+      : [];
+  const turns = plans.length > 0
+    ? buildTaskTurns(task, plans)
+    : mergeTaskTurns(existing?.turns ?? [], task);
+  return {
+    taskId: task.taskId,
+    taskSequence: task.taskSequence,
+    agentId: task.agentId,
+    role: task.role,
+    status,
+    description: task.description,
+    updatedAt,
+    turns,
+  };
+}
+
+function mergeTaskTurns(
+  existing: TuiTaskTurn[],
+  task: AgentTaskState,
+): TuiTaskTurn[] {
+  const taskSteps = task.steps ?? [];
+  const lifecycleByTurn = new Map<string | undefined, NonNullable<AgentTaskState["steps"]>[number]>();
+  for (const step of taskSteps) lifecycleByTurn.set(step.turnId, step);
+  const turns = existing.map((turn) => {
+    const lifecycle = lifecycleByTurn.get(turn.turnId);
+    return {
+      ...turn,
+      ...(lifecycle ? { status: lifecycle.status } : {}),
+      planSteps: turn.planSteps.map((step) => ({ ...step })),
+    };
+  });
+  const knownTurnIds = new Set(turns.map((turn) => turn.turnId));
+  for (const step of taskSteps) {
+    if (knownTurnIds.has(step.turnId)) continue;
+    turns.push({
+      turnId: step.turnId,
+      status: step.status,
+      planSteps: [],
+    });
+    knownTurnIds.add(step.turnId);
+  }
+  return turns;
 }
 
 function activityKey(activity: AgentActivity): string {

@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+
 /** Runtime placeholders expanded only after the run and mount roots exist. */
 export const MountMacros = {
   ScoutRoot: "SCOUT_ROOT",
@@ -59,9 +61,31 @@ export function buildMountShellEnvironment(input: MountShellEnvironmentInput): R
     [MountMacros.RunRoot]: input.runRoot,
     [MountMacros.ArtifactRoot]: input.artifactRoot,
     [MountMacros.AssetCommitId]: input.assetCommitId,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
   };
+}
+
+/**
+ * Builds the deterministic PATH used by both Codex shells and mount preflight.
+ * Mount wrappers may invoke the device's Node runtime through /usr/bin/env.
+ */
+export function buildMountShellPath(mountRoot: string): string {
+  return uniquePaths([
+    join(mountRoot, "bin"),
+    dirname(process.execPath),
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    "/opt/homebrew/bin",
+  ]);
 }
 
 function runIdFromRunRoot(runRoot: string): string {
   return runRoot.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+}
+
+function uniquePaths(paths: string[]): string {
+  return [...new Set(paths.filter((path) => path.length > 0))].join(":");
 }

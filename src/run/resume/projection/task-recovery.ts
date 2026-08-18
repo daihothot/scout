@@ -102,7 +102,9 @@ export function inferTaskRecoveryCheckpoint(
 
 /**
  * Plans pending-message consumption and role-specific task actions. The
- * coordinator evaluates every task, while a worker receives only its own
+ * coordinator evaluates a completed task only when its outcome or related
+ * validation facts have not already been covered by a Coordinator turn that
+ * started and completed after those facts. A worker receives only its own
  * queued/resumable task; this function records intent without executing it.
  */
 export function planResumeActions(input: {
@@ -118,6 +120,14 @@ export function planResumeActions(input: {
     }));
 
   if (input.role === ScoutAgentRoles.Coordinator) {
+    const completedCoordinatorTurns = input.projection.turns
+      .filter((turn) =>
+        turn.agentId === input.agentId
+        && turn.role === ScoutAgentRoles.Coordinator
+        && turn.status === "completed"
+        && turn.completedAt !== undefined
+      );
+
     for (const task of input.projection.tasks) {
       const checkpoint = inferTaskRecoveryCheckpoint(input.projection, task);
       if (checkpoint === TaskRecoveryCheckpoints.Interrupted) {
@@ -126,6 +136,28 @@ export function planResumeActions(input: {
           taskId: task.taskId,
         });
       } else if (checkpoint === TaskRecoveryCheckpoints.OutcomeSubmitted) {
+        const taskFactSequences = [
+          ...input.projection.taskOutcomes
+            .filter((outcome) => outcome.taskId === task.taskId)
+            .map((outcome) => outcome.journalSeq),
+          ...input.projection.artifacts
+            .filter((artifact) => artifact.taskId === task.taskId)
+            .map((artifact) => artifact.journalSeq),
+          ...input.projection.gates
+            .filter((gate) => gate.taskId === task.taskId)
+            .map((gate) => gate.journalSeq),
+        ];
+        const latestTaskFact = taskFactSequences
+          .sort((left, right) => left - right)
+          .at(-1);
+        const hasCompletedCheckAfterFacts = latestTaskFact !== undefined
+          && completedCoordinatorTurns.some((turn) =>
+            turn.startedSeq > latestTaskFact
+            && turn.completedSeq !== undefined
+            && turn.completedSeq > latestTaskFact
+          );
+        const hasUnreviewedFacts = !hasCompletedCheckAfterFacts;
+        if (!hasUnreviewedFacts) continue;
         actions.push({
           type: ResumeActionTypes.EvaluateOutcome,
           taskId: task.taskId,

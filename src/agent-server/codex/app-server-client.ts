@@ -90,6 +90,8 @@ export interface CodexAppServerOptions {
   logPrefix?: string;
   stderrLogPath?: string;
   transportLogPath?: string;
+  /** Controls whether child diagnostics are also copied to the terminal. */
+  writeDiagnosticsToStderr?: boolean;
   onDynamicToolCall?: DynamicToolCallHandler;
 }
 
@@ -266,6 +268,7 @@ export class CodexAppServerClient {
   private readonly codexHome: string;
   private readonly stderrLogPath?: string;
   private readonly transportLogPath?: string;
+  private readonly writeDiagnosticsToStderr: boolean;
   private onDynamicToolCall?: DynamicToolCallHandler;
   private nextRequestId = 1;
   private closing = false;
@@ -290,6 +293,10 @@ export class CodexAppServerClient {
     this.codexHome = resolve(options.codexHome);
     this.stderrLogPath = options.stderrLogPath;
     this.transportLogPath = options.transportLogPath;
+    // Ink owns an interactive stdout terminal. Raw child stderr would bypass
+    // its layout and be written at the current terminal cursor position.
+    this.writeDiagnosticsToStderr = options.writeDiagnosticsToStderr
+      ?? !process.stdout.isTTY;
     if (this.stderrLogPath) mkdirSync(dirname(this.stderrLogPath), { recursive: true });
     if (this.transportLogPath) mkdirSync(dirname(this.transportLogPath), { recursive: true });
     this.onDynamicToolCall = options.onDynamicToolCall;
@@ -870,7 +877,7 @@ export class CodexAppServerClient {
   private writeDiagnostic(message: string): void {
     const normalized = message.endsWith("\n") ? message : `${message}\n`;
     const rendered = `[${this.logPrefix}] ${normalized}`;
-    process.stderr.write(rendered);
+    if (this.writeDiagnosticsToStderr) process.stderr.write(rendered);
     if (!this.stderrLogPath) return;
     appendFileSync(
       this.stderrLogPath,

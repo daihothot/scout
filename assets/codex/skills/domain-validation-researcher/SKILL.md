@@ -258,7 +258,7 @@ Partial：
 
 - RR-001：重试遵守专项 Skill 的只读和副作用边界，并写入其 retry log。
 - RR-002：不得通过更换 BDD、版本、repo 或来源范围制造成功。
-- RR-003：重复失败后提交 blocked 或 partial，不循环执行相同失败路径。
+- RR-003：同一外部错误或不可读入口在一次有明确新输入、环境变化或实质修复后的复测仍失败时，提交 blocked 或 partial，不循环执行相同失败路径；仅重写文字、重算 digest 或再次调用同一失败命令不构成新输入。
 
 ## Prohibited Rules (Enforcement)
 

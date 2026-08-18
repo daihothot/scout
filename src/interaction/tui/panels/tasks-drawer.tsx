@@ -9,8 +9,12 @@ import {
   type TuiTaskDrawerItem,
 } from "../selectors/task-summaries.js";
 import {
+  buildTaskPlanStepText,
+  buildTaskSummaryText,
+  buildTaskTurnText,
   TaskPlanStepRow,
   TaskSummaryRow,
+  TaskTurnRow,
 } from "../rows/task-summary-row.js";
 import {
   truncateByDisplayWidth,
@@ -18,7 +22,8 @@ import {
 
 type TaskDrawerVisualRow =
   | { kind: "task"; id: string; task: TuiTaskDrawerItem; taskIndex: number }
-  | { kind: "step"; id: string; step: TuiTaskDrawerItem["planSteps"][number] };
+  | { kind: "turn"; id: string; turn: TuiTaskDrawerItem["turns"][number]; turnIndex: number }
+  | { kind: "step"; id: string; step: TuiTaskDrawerItem["turns"][number]["planSteps"][number] };
 
 /** Keyboard- and mouse-navigable task drawer with optional plan expansion. */
 export function TasksDrawer({
@@ -28,6 +33,7 @@ export function TasksDrawer({
   height,
   startY,
   onClose,
+  onVisibleLinesChange,
 }: {
   tasks: TuiTaskDrawerItem[];
   open: boolean;
@@ -35,6 +41,7 @@ export function TasksDrawer({
   height: number;
   startY: number;
   onClose: () => void;
+  onVisibleLinesChange?: (lines: string[]) => void;
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [expandedTaskId, setExpandedTaskId] = useState<string>();
@@ -131,6 +138,32 @@ export function TasksDrawer({
     }
   });
 
+  const visibleRows = open ? visualRows.slice(scrollTop, scrollTop + bodyRows) : [];
+  const visibleLineTexts = useMemo(
+    () => visibleRows.map((row) => row.kind === "task"
+      ? buildTaskSummaryText(row.task, row.taskIndex === selectedIndex, width)
+      : row.kind === "turn"
+        ? buildTaskTurnText(row.turn.status, row.turnIndex, width)
+        : buildTaskPlanStepText(row.step, width, 4)),
+    [bodyRows, open, selectedIndex, scrollTop, visualRows, width],
+  );
+  const selectableLineTexts = useMemo(() => {
+    if (height === 0) return [];
+    if (!open) return [buildCollapsedTaskSummary(tasks, width)];
+    const headerLeft = "Tasks";
+    const headerRight = "Esc close";
+    const headerGap = " ".repeat(Math.max(
+      0,
+      width - headerLeft.length - headerRight.length,
+    ));
+    const body = tasks.length === 0 ? ["No assigned tasks."] : visibleLineTexts;
+    return [`${headerLeft}${headerGap}${headerRight}`, ...body].slice(0, height);
+  }, [height, open, tasks, visibleLineTexts, width]);
+
+  useEffect(() => {
+    onVisibleLinesChange?.(selectableLineTexts);
+  }, [onVisibleLinesChange, selectableLineTexts]);
+
   if (!open) {
     return (
       <Box width={width} height={height} flexShrink={0} overflow="hidden">
@@ -138,8 +171,6 @@ export function TasksDrawer({
       </Box>
     );
   }
-
-  const visibleRows = visualRows.slice(scrollTop, scrollTop + bodyRows);
 
   return (
     <Box
@@ -164,7 +195,9 @@ export function TasksDrawer({
               width={width}
             />
           )
-          : <TaskPlanStepRow key={row.id} step={row.step} width={width} />)}
+          : row.kind === "turn"
+            ? <TaskTurnRow key={row.id} turn={row.turn} turnIndex={row.turnIndex} width={width} />
+            : <TaskPlanStepRow key={row.id} step={row.step} width={width} indent={4} />)}
     </Box>
   );
 }
@@ -202,11 +235,19 @@ function buildTaskDrawerRows(
   return tasks.flatMap((task, taskIndex): TaskDrawerVisualRow[] => [
     { kind: "task", id: `task:${task.taskId}`, task, taskIndex },
     ...(task.taskId === expandedTaskId
-      ? task.planSteps.map((step, stepIndex) => ({
-        kind: "step" as const,
-        id: `task:${task.taskId}:step:${stepIndex}`,
-        step,
-      }))
+      ? task.turns.flatMap((turn, turnIndex) => [
+        {
+          kind: "turn" as const,
+          id: `task:${task.taskId}:turn:${turnIndex}`,
+          turn,
+          turnIndex,
+        },
+        ...turn.planSteps.map((step, stepIndex) => ({
+          kind: "step" as const,
+          id: `task:${task.taskId}:turn:${turnIndex}:step:${stepIndex}`,
+          step,
+        })),
+      ])
       : []),
   ]);
 }

@@ -147,6 +147,96 @@ test("mount preflight directly executes functional shell wrappers and checks mar
   assert.ok((report.shellSmoke?.[0]?.durationMs ?? -1) >= 0);
 });
 
+test("mount preflight resolves a managed codebase before running CodeGraph status", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-codegraph-preflight-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const mountRoot = join(root, "mount");
+  const artifactRoot = join(root, "artifacts");
+  const codebaseRoot = join(root, "managed-codebase");
+  mkdirSync(join(mountRoot, "bin"), { recursive: true });
+  mkdirSync(artifactRoot, { recursive: true });
+  mkdirSync(codebaseRoot, { recursive: true });
+  writeFileSync(
+    join(mountRoot, "bin", "jarvis"),
+    `#!/bin/sh\nprintf '%s\\n' ${JSON.stringify(codebaseRoot)}\n`,
+    "utf8",
+  );
+  chmodSync(join(mountRoot, "bin", "jarvis"), 0o755);
+  writeFileSync(
+    join(mountRoot, "bin", "codegraph"),
+    "#!/bin/sh\nprintf 'CODEGRAPH_OK %s %s\\n' \"$1\" \"$2\"\n",
+    "utf8",
+  );
+  chmodSync(join(mountRoot, "bin", "codegraph"), 0o755);
+
+  const report = await preflightCodexAppServerMount({
+    mount: testMount({
+      root,
+      mountRoot,
+      artifactRoot,
+      readableRoots: [mountRoot, codebaseRoot],
+      writableRoots: [artifactRoot, codebaseRoot],
+      shellTools: [
+        testShellTool({ exposeAs: "jarvis" }),
+        testShellTool({
+          exposeAs: "codegraph",
+          smoke: {
+            scope: "mount",
+            args: ["status"],
+            managedCodebase: "gurusdk-unity",
+          },
+        }),
+      ],
+    }),
+    appServer: testAppServer(),
+  });
+
+  assert.equal(report.status, "passed");
+  assert.deepEqual(report.shellSmoke?.filter((item) => item.command.startsWith("codegraph ")).map((item) => ({
+    command: item.command,
+    status: item.status,
+    stdout: item.stdout,
+  })), [{
+    command: `codegraph status ${codebaseRoot}`,
+    status: "passed",
+    stdout: `CODEGRAPH_OK status ${codebaseRoot}`,
+  }]);
+});
+
+test("mount preflight resolves a Node-based wrapper through the shared shell PATH", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-shell-node-preflight-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const mountRoot = join(root, "mount");
+  const artifactRoot = join(root, "artifacts");
+  const executable = join(mountRoot, "bin", "node-wrapper");
+  mkdirSync(join(mountRoot, "bin"), { recursive: true });
+  mkdirSync(artifactRoot, { recursive: true });
+  writeFileSync(executable, "#!/usr/bin/env node\nprocess.stdout.write('NODE_OK ' + process.argv[2]);\n", "utf8");
+  chmodSync(executable, 0o755);
+
+  const report = await preflightCodexAppServerMount({
+    mount: testMount({
+      root,
+      mountRoot,
+      artifactRoot,
+      readableRoots: [mountRoot],
+      writableRoots: [artifactRoot],
+      shellTools: [testShellTool({
+        exposeAs: "node-wrapper",
+        smoke: {
+          scope: "mount",
+          args: ["--smoke"],
+          marker: "NODE_OK --smoke",
+        },
+      })],
+    }),
+    appServer: testAppServer(),
+  });
+
+  assert.equal(report.status, "passed");
+  assert.equal(report.shellSmoke?.[0]?.stdout, "NODE_OK --smoke");
+});
+
 test("preflight batch shares run smokes and preserves mount smokes", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-shell-scope-preflight-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

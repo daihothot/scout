@@ -46,6 +46,7 @@ export interface MountManifest {
       scope: "mount" | "run";
       args: string[];
       marker?: string;
+      managedCodebase?: string;
     };
   }>;
   mcpServers: MaterializedMcpServer[];

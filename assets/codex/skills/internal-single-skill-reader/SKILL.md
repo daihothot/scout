@@ -36,9 +36,9 @@ summary: 规定基于文件系统枚举的通用 Single 与已选 capability Sin
 ## Complete Read Procedure
 
 1. 先读取调用方领域 Skill，取得 Single 根目录、环境分支和 capability 选择规则。
-2. 在开始领域调查、采集或检查前，递归枚举通用集合中的全部 `SKILL.md`，固定本次文件清单。
+2. 在开始领域调查、采集或检查前，使用 `find -L <single-root> -type f -name SKILL.md -print | sort` 递归枚举通用集合中的全部 `SKILL.md`，固定本次文件清单；`-L` 必须保留，因为 mount 中的 Single 叶子可能是软链接。
 3. 逐一完整读取清单中的 `SKILL.md`、其 required Skill 依赖和 required supplementary resources；不得因为名称、摘要或先验判断跳过其中任意项。
-4. 根据领域输入选择 capability。没有选择 capability 时不得预读任意 capability 集合；一旦选择某个 capability，先递归枚举该目录并完整读取其中全部 Single，再执行依赖它的领域动作。
+4. 根据领域输入选择 capability。没有选择 capability 时不得预读任意 capability 集合；一旦选择某个 capability，先使用同一 `find -L ... | sort` 递归枚举该目录并完整读取其中全部 Single，再执行依赖它的领域动作。
 5. capability 改变或任务范围明确增加新的 capability 时，对新增 capability 重复完整枚举与读取；已经完整读取且文件未变化的集合无需重复读取。
 
 ## Completion Rules

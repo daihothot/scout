@@ -89,6 +89,32 @@ test("scout-research-artifact-check derives a blocked Pack state from aggregate 
   assert.match(output, /pack_completion_state=blocked/);
 });
 
+test("scout-research-artifact-check allows an omitted Human Confirmation registry section when unused", () => {
+  const packRoot = createReadyResearchPack();
+  replaceInFile(join(packRoot, "evidence-registry.md"), "## Human Confirmation Evidence\n- none\n", "");
+
+  const output = execFileSync(process.execPath, [checkerPath, "pack", packRoot], {
+    cwd: scoutRoot,
+    encoding: "utf8",
+  });
+
+  assert.match(output, /research_pack_valid=true/);
+});
+
+test("scout-research-artifact-check requires the Human Confirmation registry section when evidence exists", () => {
+  const packRoot = createReadyResearchPack();
+  replaceInFile(join(packRoot, "evidence-registry.md"), "## Human Confirmation Evidence\n- none\n", "");
+  write(join(packRoot, "evidence"), "E-HUMAN-001.md", humanConfirmationEvidence());
+
+  const result = spawnSync(process.execPath, [checkerPath, "pack", packRoot], {
+    cwd: scoutRoot,
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /TEMPLATE_SECTION_MISSING/);
+});
+
 test("scout-research-artifact-check rejects a versioned Research pack directory", () => {
   const packRoot = createReadyResearchPack();
   const versionedPackRoot = `${packRoot}-v2`;

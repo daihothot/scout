@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
-import { Box, Text } from "ink";
+import ansiEscapes from "ansi-escapes";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Box, Text, useStdout } from "ink";
 import type { TuiAgentActivityStripItem } from "../selectors/activity-strip.js";
 import {
   buildTerminalMarkdownLines,
@@ -33,17 +34,27 @@ export interface ActivityBarPresentation {
 }
 
 /** Renders the current agent activity with optional lifecycle animation and width-safe wrapping. */
-export function ActivityBar({ item, width, height }: {
+export function ActivityBar({ item, width, height, screenX, screenY, onVisibleLinesChange }: {
   item?: TuiAgentActivityStripItem;
   width: number;
   height: number;
+  screenX: number;
+  screenY: number;
+  onVisibleLinesChange?: (lines: string[]) => void;
 }) {
-  const motionEnabled = process.env.SCOUT_TUI_MOTION !== "0" && width >= MIN_ANIMATED_WIDTH;
+  const motionEnabled = process.env.SCOUT_TUI_MOTION !== "0"
+    && width >= MIN_ANIMATED_WIDTH;
   const requestedAnimation = activityAnimation(item, motionEnabled);
   const [animation, setAnimation] = useState<ActivityAnimation | undefined>(() =>
     initialActivityAnimation(item, requestedAnimation, motionEnabled)
   );
-  const [frame, setFrame] = useState(0);
+  const frameRef = useRef(0);
+  const renderedAnimationRef = useRef(animation);
+  const { stdout } = useStdout();
+  if (renderedAnimationRef.current !== animation) {
+    renderedAnimationRef.current = animation;
+    frameRef.current = 0;
+  }
   const activityId = item?.activityId;
   const activityIdRef = useRef(activityId);
   const animationRef = useRef(animation);
@@ -67,7 +78,7 @@ export function ActivityBar({ item, width, height }: {
       next: ActivityAnimation | undefined,
     ) => {
       minimumCycleRef.current = { animation: cycle, startedAt: Date.now() };
-      setFrame(0);
+      frameRef.current = 0;
       transition(cycle);
       if (next !== cycle) {
         transitionTimer = setTimeout(() => {
@@ -152,8 +163,26 @@ export function ActivityBar({ item, width, height }: {
     return () => clearTimeout(transitionTimer);
   }, [activityId, item?.status, item?.type, motionEnabled, requestedAnimation]);
 
+  const presentation = useMemo(
+    () => buildActivityBarPresentation(item, width),
+    [item, width],
+  );
+  const marker = activityMarker(item, animation, frameRef.current);
+  const selectableLineTexts = useMemo(() => {
+    const firstPrefix = `activity  ${marker} ${item ? `${item.label}${presentation.taskRef} ` : ""}`;
+    return presentation.lines.slice(0, height).map((line, lineIndex) => `${lineIndex === 0
+      ? firstPrefix
+      : " ".repeat(presentation.prefixWidth)}${line.map((span) => span.text).join("")}`);
+  }, [height, item, marker, presentation]);
+
   useEffect(() => {
-    setFrame(0);
+    onVisibleLinesChange?.(height === 0 ? [] : selectableLineTexts);
+  }, [height, onVisibleLinesChange, selectableLineTexts]);
+
+  // Keep periodic marker updates out of React so Ink never walks the prompt
+  // cursor through the full output tree for an animation frame.
+  useEffect(() => {
+    frameRef.current = 0;
     if (!animation) return;
     const frames = animation === "breathing"
       ? BREATHING_FRAMES
@@ -165,15 +194,23 @@ export function ActivityBar({ item, width, height }: {
       : animation === "fold"
         ? FOLD_FRAME_MS
         : PROCESS_FRAME_MS;
+    if (!stdout.isTTY || height === 0) return;
+    let currentFrame = 0;
     const timer = setInterval(() => {
-      setFrame((current) => (current + 1) % frames.length);
+      currentFrame = (currentFrame + 1) % frames.length;
+      const marker = frames[currentFrame];
+      if (!marker) return;
+      stdout.write(
+        ansiEscapes.cursorSavePosition
+          + ansiEscapes.cursorTo(screenX + terminalDisplayWidth("activity  "), screenY)
+          + marker
+          + ansiEscapes.cursorRestorePosition,
+      );
     }, frameMs);
     return () => clearInterval(timer);
-  }, [animation]);
+  }, [animation, height, screenX, screenY, stdout]);
 
   if (height === 0) return null;
-  const presentation = buildActivityBarPresentation(item, width);
-  const marker = activityMarker(item, animation, frame);
   const contextCompactionFailed = item?.type === "contextCompaction"
     && (item.status === "failed" || item.status === "blocked" || item.status === "cancelled");
   const markerColor = animation === "fold"

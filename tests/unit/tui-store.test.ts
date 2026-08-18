@@ -278,7 +278,79 @@ test("TuiStore ignores task updates until assignment is confirmed", () => {
   assert.deepEqual(store.snapshot().logs, []);
 });
 
-test("TuiStore appends plans across turns and keeps them after archive", () => {
+test("TuiStore restores the same task projection that normal events would display", () => {
+  const store = createStore();
+  const firstPlan = {
+    turnId: "turn-1",
+    explanation: "First attempt",
+    steps: [{ step: "Read the contract", status: "completed" as const, raw: {} }],
+  };
+  const resumedPlan = {
+    turnId: "turn-2",
+    explanation: "Resumed attempt",
+    steps: [{ step: "Complete the contract", status: "completed" as const, raw: {} }],
+  };
+
+  store.restoreTaskSnapshot(taskState({
+    status: "done",
+    updatedAt: "2026-07-10T00:00:03.000Z",
+    plan: resumedPlan,
+    planRecords: [firstPlan, resumedPlan],
+    steps: [
+      {
+        stepId: "step-1",
+        taskId: "researcher-task-0001",
+        turnId: "turn-1",
+        status: "interrupted",
+        prompt: "first",
+        toolCalls: [],
+        startedAt: "2026-07-10T00:00:00.000Z",
+      },
+      {
+        stepId: "step-2",
+        taskId: "researcher-task-0001",
+        turnId: "turn-2",
+        status: "completed",
+        prompt: "resumed",
+        toolCalls: [],
+        startedAt: "2026-07-10T00:00:01.000Z",
+      },
+    ],
+  }));
+
+  assert.deepEqual(store.snapshot().tasks, [{
+    taskId: "researcher-task-0001",
+    taskSequence: 1,
+    agentId: "researcher",
+    role: "researcher",
+    status: "done",
+    description: "Research BDD evidence",
+    updatedAt: "2026-07-10T00:00:03.000Z",
+    turns: [
+      {
+        turnId: "turn-1",
+        status: "interrupted",
+        planSteps: [{ step: "Read the contract", status: "completed" }],
+      },
+      {
+        turnId: "turn-2",
+        status: "completed",
+        planSteps: [{ step: "Complete the contract", status: "completed" }],
+      },
+    ],
+  }]);
+  assert.deepEqual(store.snapshot().logs, []);
+});
+
+test("TuiStore restores every task status already supported by the drawer", () => {
+  for (const status of ["queued", "running", "done", "failed", "stopped"] as const) {
+    const store = createStore();
+    store.restoreTaskSnapshot(taskState({ status }));
+    assert.equal(store.snapshot().tasks[0]?.status, status);
+  }
+});
+
+test("TuiStore keeps plans separated by turn and retains them after archive", () => {
   const store = createStore();
   const bus = new InMemoryEventBus();
   const assigned = taskState();
@@ -323,11 +395,21 @@ test("TuiStore appends plans across turns and keeps them after archive", () => {
     status: "done",
     description: "Research BDD evidence",
     updatedAt: "2026-07-10T00:00:03.000Z",
-    planSteps: [
-      { step: "Read role and skills", status: "completed" },
-      { step: "Locate BDD", status: "completed" },
-      { step: "Write research artifact", status: "completed" },
-      { step: "Submit research handoff", status: "completed" },
+    turns: [
+      {
+        turnId: "turn-1",
+        planSteps: [
+          { step: "Read role and skills", status: "completed" },
+          { step: "Locate BDD", status: "completed" },
+        ],
+      },
+      {
+        turnId: "turn-2",
+        planSteps: [
+          { step: "Write research artifact", status: "completed" },
+          { step: "Submit research handoff", status: "completed" },
+        ],
+      },
     ],
   }]);
   assert.deepEqual(
@@ -352,14 +434,79 @@ test("TuiStore appends plans across turns and keeps them after archive", () => {
     status: "archived",
     description: "Research BDD evidence",
     updatedAt: archivedEvent.occurredAt,
-    planSteps: [
-      { step: "Read role and skills", status: "completed" },
-      { step: "Locate BDD", status: "completed" },
-      { step: "Write research artifact", status: "completed" },
-      { step: "Submit research handoff", status: "completed" },
+    turns: [
+      {
+        turnId: "turn-1",
+        planSteps: [
+          { step: "Read role and skills", status: "completed" },
+          { step: "Locate BDD", status: "completed" },
+        ],
+      },
+      {
+        turnId: "turn-2",
+        planSteps: [
+          { step: "Write research artifact", status: "completed" },
+          { step: "Submit research handoff", status: "completed" },
+        ],
+      },
     ],
   }]);
   assert.equal(store.snapshot().logs.at(-1)?.text, "任务 researcher-task-0001 已归档。");
+});
+
+test("TuiStore keeps an interrupted turn separate from its resumed turn", () => {
+  const store = createStore();
+  const bus = new InMemoryEventBus();
+  const firstPlan = {
+    turnId: "turn-interrupted",
+    explanation: "First attempt",
+    steps: [{ step: "Read the contract", status: "inProgress" as const, raw: {} }],
+  };
+  const resumedPlan = {
+    turnId: "turn-resumed",
+    explanation: "Resumed attempt",
+    steps: [{ step: "Read the contract again", status: "completed" as const, raw: {} }],
+  };
+
+  store.addTaskEvent(bus.publish(AgentEvents.task.assigned, taskState()));
+  store.addTaskEvent(bus.publish(AgentEvents.task.done, taskState({
+    status: "failed",
+    plan: resumedPlan,
+    planRecords: [firstPlan, resumedPlan],
+    steps: [
+      {
+        stepId: "step-1",
+        taskId: "researcher-task-0001",
+        turnId: "turn-interrupted",
+        status: "interrupted",
+        prompt: "first",
+        toolCalls: [],
+        startedAt: "2026-07-10T00:00:00.000Z",
+      },
+      {
+        stepId: "step-2",
+        taskId: "researcher-task-0001",
+        turnId: "turn-resumed",
+        status: "failed",
+        prompt: "resumed",
+        toolCalls: [],
+        startedAt: "2026-07-10T00:00:01.000Z",
+      },
+    ],
+  })));
+
+  assert.deepEqual(store.snapshot().tasks[0]?.turns, [
+    {
+      turnId: "turn-interrupted",
+      status: "interrupted",
+      planSteps: [{ step: "Read the contract", status: "inProgress" }],
+    },
+    {
+      turnId: "turn-resumed",
+      status: "failed",
+      planSteps: [{ step: "Read the contract again", status: "completed" }],
+    },
+  ]);
 });
 
 test("TuiStore reports human confirmation without projecting a waiting task status", () => {

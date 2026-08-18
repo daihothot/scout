@@ -50,5 +50,6 @@ export interface ShellToolContract {
     scope: "mount" | "run";
     args: string[];
     marker?: string;
+    managedCodebase?: string;
   };
 }

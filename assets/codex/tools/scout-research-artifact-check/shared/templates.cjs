@@ -1,5 +1,5 @@
 const { existsSync, readFileSync } = require("node:fs");
-const { join } = require("node:path");
+const { basename, join } = require("node:path");
 const { addIssue } = require("./diagnostics.cjs");
 const { displayPath, parseMarkdown } = require("./markdown.cjs");
 
@@ -21,7 +21,13 @@ function validateTemplateSections(document, templatePath, displayRoot, issues) {
     return;
   }
   const template = parseMarkdown(templatePath, readFileSync(templatePath, "utf8"));
-  const required = template.headings.filter((heading) => heading.level === 2).map((heading) => heading.title);
+  const optional = templatePath.includes(join("domain-validation-research-pack", "templates"))
+    && basename(templatePath) === "evidence-registry.md"
+    ? new Set(["Human Confirmation Evidence"])
+    : new Set();
+  const required = template.headings
+    .filter((heading) => heading.level === 2 && !optional.has(heading.title))
+    .map((heading) => heading.title);
   const actual = new Set(document.headings.filter((heading) => heading.level === 2).map((heading) => heading.title));
   for (const title of required) {
     if (!actual.has(title)) {

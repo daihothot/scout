@@ -10,7 +10,10 @@ import {
   sep,
 } from "node:path";
 import type { CodexMount } from "../../asset-store/contracts/mount.js";
-import { buildMountShellEnvironment } from "../../asset-store/mount/macros.js";
+import {
+  buildMountShellEnvironment,
+  buildMountShellPath,
+} from "../../asset-store/mount/macros.js";
 import { isPathWithin } from "../../core/path.js";
 import type { CodexAppServerClient } from "./app-server-client.js";
 import type { AgentServerPreflightReport } from "../types.js";
@@ -217,7 +220,7 @@ async function smokeShellTools(
   const tools = mount.shellTools.filter((tool) => tool.required);
   const environment = {
     ...process.env,
-    PATH: `${mountRoot}/bin:${process.env.PATH ?? ""}`,
+    PATH: buildMountShellPath(mountRoot),
     ...buildMountShellEnvironment({
       runRoot: mount.runRoot,
       artifactRoot: mount.artifactRoot,
@@ -250,27 +253,115 @@ async function smokeShellTools(
     const smoke = tool.smoke;
 
     const execute = () => new Promise<ShellSmokeResult>((resolveOutput) => {
-      execFile(executable, smoke.args, {
+      const finish = (result: Omit<ShellSmokeResult, "durationMs">) => {
+        resolveOutput({
+          ...result,
+          durationMs: Date.now() - startedAt,
+        });
+      };
+      const runCodegraph = (codebasePath: string) => {
+        const args = [...smoke.args, codebasePath];
+        execFile(executable, args, {
+          cwd: mountRoot,
+          env: environment,
+          encoding: "utf8",
+        }, (error, stdout, stderr) => {
+          const normalizedStdout = String(stdout).trim();
+          const normalizedStderr = String(stderr).trim();
+          const markerPassed = smoke.marker
+            ? normalizedStdout.includes(smoke.marker)
+            : true;
+          const passed = !error && markerPassed;
+          finish({
+            command: [tool.exposeAs, ...args].join(" "),
+            status: passed ? "passed" : "failed",
+            stdout: normalizedStdout,
+            stderr: normalizedStderr,
+            ...(!passed ? {
+              error: error?.message ?? `Missing marker: ${smoke.marker}`,
+            } : {}),
+          });
+        });
+      };
+
+      if (!smoke.managedCodebase) {
+        execFile(executable, smoke.args, {
+          cwd: mountRoot,
+          env: environment,
+          encoding: "utf8",
+        }, (error, stdout, stderr) => {
+          const normalizedStdout = String(stdout).trim();
+          const normalizedStderr = String(stderr).trim();
+          const markerPassed = smoke.marker
+            ? normalizedStdout.includes(smoke.marker)
+            : true;
+          const passed = !error && markerPassed;
+          finish({
+            command,
+            status: passed ? "passed" : "failed",
+            stdout: normalizedStdout,
+            stderr: normalizedStderr,
+            ...(!passed ? {
+              error: error?.message ?? `Missing marker: ${smoke.marker}`,
+            } : {}),
+          });
+        });
+        return;
+      }
+
+      const jarvisTool = mount.shellTools.find((candidate) => candidate.id === "jarvis");
+      if (!jarvisTool) {
+        finish({
+          command,
+          status: "failed",
+          error: "Managed CodeGraph smoke requires the jarvis shell tool.",
+        });
+        return;
+      }
+      const jarvisExecutable = join(mountRoot, "bin", jarvisTool.exposeAs);
+      execFile(jarvisExecutable, ["codebase", smoke.managedCodebase, "path"], {
         cwd: mountRoot,
         env: environment,
         encoding: "utf8",
       }, (error, stdout, stderr) => {
         const normalizedStdout = String(stdout).trim();
         const normalizedStderr = String(stderr).trim();
-        const markerPassed = smoke.marker
-          ? normalizedStdout.includes(smoke.marker)
-          : true;
-        const passed = !error && markerPassed;
-        resolveOutput({
-          command,
-          status: passed ? "passed" : "failed",
-          durationMs: Date.now() - startedAt,
-          stdout: normalizedStdout,
-          stderr: normalizedStderr,
-          ...(!passed ? {
-            error: error?.message ?? `Missing marker: ${smoke.marker}`,
-          } : {}),
-        });
+        if (error) {
+          finish({
+            command,
+            status: "failed",
+            stdout: normalizedStdout,
+            stderr: normalizedStderr,
+            error: `Jarvis managed codebase path failed: ${error.message}`,
+          });
+          return;
+        }
+        const codebasePath = normalizedStdout.split(/\r?\n/).at(-1)?.trim() ?? "";
+        if (!isAbsolute(codebasePath)) {
+          finish({
+            command,
+            status: "failed",
+            stdout: normalizedStdout,
+            stderr: normalizedStderr,
+            error: `Jarvis returned a non-absolute managed codebase path: ${codebasePath}`,
+          });
+          return;
+        }
+        try {
+          if (!statSync(codebasePath).isDirectory()) {
+            throw new Error("path is not a directory");
+          }
+        } catch (pathError) {
+          finish({
+            command,
+            status: "failed",
+            stdout: normalizedStdout,
+            stderr: normalizedStderr,
+            error: `Jarvis returned an unusable managed codebase path: ${pathError instanceof Error ? pathError.message : String(pathError)}`,
+          });
+          return;
+        }
+        runCodegraph(codebasePath);
       });
     });
 

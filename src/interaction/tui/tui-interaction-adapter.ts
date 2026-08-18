@@ -11,6 +11,7 @@ import type {
   AgentActivity,
   AgentTurnActivity,
 } from "../../agent/activity/activity-event.js";
+import type { AgentTaskState } from "../../agent/task/types.js";
 import type { RunLifecycleSnapshot } from "../../run/lifecycle/run-stage.js";
 import type { SubprocessProgressSnapshot } from "../protocol/port.js";
 import type { TuiStore } from "./tui-store.js";
@@ -41,6 +42,10 @@ export class TuiInteractionAdapter implements RuntimeInteractionPort {
 
   async publishTaskEvent(event: ScoutEvent): Promise<void> {
     this.store.addTaskEvent(event);
+  }
+
+  async restoreTaskSnapshot(task: AgentTaskState): Promise<void> {
+    this.store.restoreTaskSnapshot(task);
   }
 
   async receiveAgentMessage(message: AgentMessageReply): Promise<void> {
