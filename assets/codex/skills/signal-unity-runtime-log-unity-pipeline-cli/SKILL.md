@@ -148,7 +148,7 @@ limitations: <none 或本次操作限制>
 
 ## Retry Rules (Enforcement)
 
-- RR-001：`tool-unity-pipeline-cli` 将调用判定为可重试，或目标文件尚未生成时，最多重试一次并记录首次失败。
+- RR-001：只有 `tool-unity-pipeline-cli` 已成功完成调用、但目标文件尚未生成时，才允许最多重试一次并记录首次失败；Pipeline CLI 本身发生故障时遵守其 Tool Skill 的立即停止和人工请求规则。
 - RR-002：重试使用新的、尚不存在的 artifact 目标；不得覆盖或修补失败操作留下的文件。
 - RR-003：重试不得改变 project、日志来源或观察范围来制造成功。
 

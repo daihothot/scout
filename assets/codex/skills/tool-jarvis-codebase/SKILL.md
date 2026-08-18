@@ -369,7 +369,7 @@ jarvis codebase <repo> <version>
 - 命令副作用和授权要求以 `Command Side Effects` 为准。
 - 必须先确认 root repository identity、version / branch / commit 和 working tree state，再执行 `codegraph status`。
 - version / branch / commit 任一不明确时，记录为需人工确认项，不主动猜测，也不得执行任何 `codegraph` 命令。
-- `codegraph status` 失败或索引不可用时，记录为阻塞项，并保留失败命令和输出摘要。
+- `codegraph status` 失败、索引不可用或状态不确定时，立即停止当前源码证据范围，通过正式 `RequestHumanInput` 请求人工，并保留失败命令和输出摘要。
 - root working tree state 必须记录；root branch 为空时写 `detached`，不得把空 branch 当成缺失 commit。
 
 Exit：
@@ -515,7 +515,7 @@ Partial：
 - ER-002：`jarvis codebase` 只负责 codebase 管理、路径解析、版本切换和索引刷新；源码语义检索必须使用独立 `codegraph` CLI。
 - ER-003：禁止把 `rg` 作为 Guru managed codebase 的首选源码语义检索方式。
 - ER-004：CodeGraph 查询、状态输出和工具命令属于 Activity State，只能记录在 `E-CODE-*` 的 `Collection` 或 provenance；它们不能直接支撑 source claim。
-- ER-005：`rg-fallback` 产物必须标记为低置信度来源，并记录 CodeGraph 失败原因、检索命令和范围。
+- ER-005：本技能不生成 `rg-fallback`；CodeGraph 失败时必须停止并请求人工，不得用文本搜索或其它回退替代源码语义证据。
 - ER-006：代码证据必须记录 root/source repo identity、version / branch / commit、working tree state、gitlink、source-relative file、唯一 primary symbol、start_line、end_line、signature、key lines 和 collection commands。
 - ER-007：本机绝对路径只能作为本次 Scout runtime artifact provenance，不能作为 canonical source locator。
 - ER-008：CodeGraph 查询结果不能获得 evidence id；implementation claim 必须有 `E-CODE-*` 支撑。
@@ -531,22 +531,23 @@ Partial：
 - FR-003：源码文件不可读、行号不稳定、signature 无法确认或 key lines 无法解释时，不得生成 `E-CODE-*`。
 - FR-004：evidence artifact 写入失败或模板字段无法填充时，不得宣称本技能完成；必须向上游报告 artifact target 和失败原因。
 - FR-005：source repository、source commit、gitlink 或目标文件 working tree state 无法解析时，不得把 root repository commit 代填为 source commit。
+- FR-006：本技能声明的第三方工具、managed checkout 或 CodeGraph 能力发生错误、空输出、权限失败、参数失败、超时或状态不确定时，必须立即停止当前依赖范围，并通过正式 `RequestHumanInput` 请求人工解决；请求必须说明失败命令、原始错误摘要、受影响 repo/path、已确认的 provenance、缺失的解除条件和修复后需要重新执行的检查。
 
 ## Blocking Rules (Enforcement)
 
 - BR-001：缺少 `scoutAssets`、`jarvis`、`codegraph` 或 `git` required shell tool 时必须停止。
 - BR-002：目标 repo 不在当前 `jarvis codebase supported` 输出中，或 repo 无法唯一确定时必须停止。
 - BR-003：需要切换版本、使用 `latest`、fetch 或 checkout 但缺少明确版本要求或上游授权时必须停止。
-- BR-004：CodeGraph 不可用且未获得低置信度文本回退授权时，不能继续补齐源码语义证据。
+- BR-004：CodeGraph 不可用、索引打不开或状态不确定时必须立即停止当前源码证据范围并请求人工，不得继续补齐源码语义证据。
 - BR-005：artifact target 不可写时，不能进入 Phase 6 的完成状态。
 - BR-006：目标源码文件不属于已确认 source repository、source commit 不可确定或 gitlink 与 source commit 不一致时，不得形成 source-verified evidence。
 
 ## Retry Rules (Enforcement)
 
-- RR-001：只读命令出现瞬时失败时最多重试一次，并记录 retry_log、前后命令、错误摘要和结果差异。
-- RR-002：`jarvis codebase <repo> path`、`versions`、`latest` 或 `<version>` 等有副作用命令不得自动重试；重试前必须有明确任务要求或上游授权。
-- RR-003：重试不得改变 repo、version、query topic、symbol 或 evidence scope 来制造成功。
-- RR-004：重试后仍失败时，必须固定为阻塞项或 limitation，不得静默改用 `rg`。
+- RR-001：本技能声明的第三方工具、managed checkout 或 CodeGraph 能力首次失败后不得自动重试；必须立即停止当前依赖范围并请求人工。
+- RR-002：不得通过 `remote add`、`remote set-url`、clone、删除或替换 checkout、切 branch、更新 submodule、刷新索引或其它修复动作自行改变故障环境。
+- RR-003：不得改用未由本技能声明的工具、文本搜索、其它 checkout、Knowledge anchor 或模型推断来绕过失败并形成源码证据。
+- RR-004：人工修复并明确回复后，才能从失败阶段重新执行必要检查；重跑必须记录修复后的命令、输出和 provenance 差异。
 
 ## Prohibited Rules (Enforcement)
 
@@ -555,8 +556,8 @@ Partial：
 - PR-003：禁止根据非当前 `jarvis codebase supported` 输出直接断言当前 repo 可用。
 - PR-004：禁止在缺少 version / branch / commit 时主动选择 `latest`。
 - PR-005：禁止在没有上游明确授权时执行 `jarvis codebase <repo> versions`、`latest` 或 `<version>`。
-- PR-006：禁止在 CodeGraph 不可用、索引打不开或命令失败时静默改用文本搜索补齐语义证据。
-- PR-007：禁止在没有上游明确授权低置信度文本回退时使用 `rg-fallback`。
+- PR-006：禁止在 CodeGraph 不可用、索引打不开或命令失败时改用文本搜索补齐语义证据。
+- PR-007：禁止使用 `rg-fallback` 或其它文本回退替代 CodeGraph 源码语义证据。
 - PR-008：禁止把 CodeGraph 命中当作运行时行为证明。
 - PR-009：禁止把源码存在当作 BDD 已通过。
 - PR-010：禁止把权限失败、空输出、命令错误或索引异常当作无证据成功。
