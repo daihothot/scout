@@ -280,6 +280,7 @@ limitations: <none 或通用操作限制>
 - FR-004：CLI 调用失败不得被消费方解释为具体 Signal 缺失、业务失败或验证结论。
 - FR-005：Eval compilation diagnostic 包含 error、执行异常、`EvalResponse.success=false` 或 `result` 不符合 Evaluation Contract 时，本次 Eval 失败。
 - FR-006：Eval timeout、连接中断或 response 丢失时，不得声明 source 未执行、已终止或没有产生部分副作用。
+- FR-007：Unity Pipeline CLI 或当前目标 runtime 发生错误、空输出、权限失败、参数失败、超时、连接中断、响应丢失或状态不确定时，必须立即停止当前依赖范围，并通过正式 `RequestHumanInput` 请求人工解决；请求必须说明失败命令、target、原始错误摘要、受影响范围、已确认状态和修复后需要重新执行的检查。
 
 ## Blocking Rules (Enforcement)
 
@@ -291,11 +292,10 @@ limitations: <none 或通用操作限制>
 
 ## Retry Rules (Enforcement)
 
-- RR-001：版本检查、`status` 和 `list` 这类只读操作遇到瞬时连接、domain reload 或 runtime endpoint 暂不可用时最多重试一次，并保留首次失败。
-- RR-002：只读 command 可以在专用 Skill 允许时重试一次；有副作用 command 默认不得自动重试。
-- RR-003：重试必须保持同一 target、command、参数、timeout 和结果 contract，不得切换 Editor/Player、selector 或修改输入来制造成功。
-- RR-004：Eval 遇到 timeout、连接中断或 response 丢失时不得自动重试，即使 source 被分类为只读；必须先确认 target 已恢复响应并核对前一次执行状态。
-- RR-005：修改 source、file、timeout 或 expected result contract 后的调用是新的 Eval，不是原调用重试；必须保留前一次失败记录。
+- RR-001：本技能声明的 Unity Pipeline CLI 或目标 runtime 首次失败后不得自动重试；必须立即停止当前依赖范围并请求人工。
+- RR-002：不得自行重启、重载、切换 Editor/Player、改变 selector、修改参数或调整 timeout 来绕过故障。
+- RR-003：不得改用未由本技能声明的其它 runtime、command 或本地文件来源绕过失败。
+- RR-004：人工修复并明确回复后，才能从失败阶段重新执行必要检查；重跑必须保持原 target、command、参数和结果 contract，并记录修复后的输出差异。
 
 ## Prohibited Rules (Enforcement)
 

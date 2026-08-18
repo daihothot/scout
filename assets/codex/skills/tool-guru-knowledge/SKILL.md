@@ -351,6 +351,7 @@ templates/platform-evidence.md
 - FR-002：来源互相冲突时返回冲突和全部有效 refs，不得自行消解。
 - FR-003：关键来源缺失时不得生成 `ready` evidence。
 - FR-004：knowledge repository working tree 影响当前来源时必须披露，不能声称该事实仅由 commit 支撑。
+- FR-005：Git provenance 查询、knowledge repository 状态或其它本技能声明的外部能力发生错误、空输出、权限失败、参数失败、超时或状态不确定时，必须立即停止当前依赖范围，并通过正式 `RequestHumanInput` 请求人工解决；请求必须说明失败命令、原始错误摘要、受影响 repository/path、已确认 provenance、缺失的解除条件和修复后需要重新执行的检查。
 
 ## Blocking Rules
 
@@ -360,9 +361,9 @@ templates/platform-evidence.md
 
 ## Retry Rules
 
-- RR-001：只读文件查询或 Git provenance 查询出现瞬时失败时最多重试一次。
-- RR-002：重试必须记录原命令、失败摘要、重试命令和结果。
-- RR-003：语义冲突、来源缺失和权限拒绝不是瞬时故障，不得循环重试。
+- RR-001：本技能声明的 Git provenance、knowledge repository 或其它外部能力首次失败后不得自动重试；必须立即停止当前依赖范围并请求人工。
+- RR-002：不得自行修改、修复、替换或重新绑定 knowledge repository，也不得改用未由本技能声明的其它来源绕过失败。
+- RR-003：人工修复并明确回复后，才能从失败阶段重新执行必要检查；重跑必须记录修复后的命令、输出和 provenance 差异。
 
 ## Prohibited Rules
 
