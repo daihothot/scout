@@ -6,6 +6,7 @@ import type { AgentMessage, AgentMessageDeliveryMode } from "./types.js";
 export interface AgentMessageConsumedEvent {
   messageId: string;
   agentId: string;
+  stepId: string;
   taskId?: string;
   consumedAt: string;
   /** Actual delivery method used by the runner. */

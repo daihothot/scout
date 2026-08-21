@@ -1,3 +1,4 @@
+import { attachments } from "../../../agent/context/attachments.js";
 import type { ScoutAgentRole } from "../../../agent/thread/types.js";
 import {
   ResumeActionTypes,
@@ -160,4 +161,13 @@ export function boundedText(text: string | undefined): unknown {
     truncated: true,
     byte_count: bytes,
   };
+}
+
+/** Removes a prior resume attachment before reusing a prompt in a new packet. */
+export function renderRecoveryPrompt(prompt: string): unknown {
+  let rendered = prompt;
+  for (const block of attachments.readTagBlock(rendered, "resume")) {
+    rendered = rendered.replace(block.raw, "");
+  }
+  return boundedText(rendered.trim());
 }

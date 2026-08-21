@@ -5,6 +5,7 @@ import type { AgentMessage } from "../message/types.js";
 /** Fact emitted when a Worker asks the Coordinator to obtain user input. */
 export interface AgentHumanInputRequestedEvent {
   requestId: string;
+  stepId: string;
   taskId: string;
   agentId: string;
   body: string;
@@ -15,6 +16,7 @@ export interface AgentHumanInputRequestedEvent {
 /** Fact emitted when the Coordinator forwards the user's response. */
 export interface AgentHumanInputRespondedEvent {
   requestId: string;
+  stepId: string;
   taskId: string;
   agentId: string;
   body: string;

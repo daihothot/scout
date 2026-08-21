@@ -17,7 +17,6 @@ import { ChatPanel } from "./panels/chat-panel.js";
 import { TasksDrawer } from "./panels/tasks-drawer.js";
 import {
   isActiveTaskStatus,
-  selectCoordinatorSteps,
   selectCurrentAgentActivity,
   selectChatItems,
   selectTaskSummaries,
@@ -96,7 +95,6 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
   const inputEnabled = inputReady && !tasksOpen;
   const chatItems = useMemo(() => selectChatItems(state), [state]);
   const tasks = useMemo(() => selectTaskSummaries(state), [state]);
-  const coordinatorSteps = useMemo(() => selectCoordinatorSteps(state), [state]);
   const currentActivity = useMemo(() => selectCurrentAgentActivity(state), [state]);
   const activeTasks = useMemo(
     () => tasks.filter((task) => isActiveTaskStatus(task.status)).length,
@@ -114,9 +112,6 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
           0,
         ),
       ),
-      0,
-    ) + coordinatorSteps.reduce(
-      (rows, step) => rows + 1 + (step.planExplanation ? 1 : 0) + step.planSteps.length,
       0,
     ),
     desiredActivityRows: resolveActivityBarRows(currentActivity, widths.contentWidth),
@@ -329,7 +324,6 @@ export function ScoutTuiApp({ store, onExit }: ScoutTuiAppProps) {
         ? (
           <TasksDrawer
             tasks={tasks}
-            coordinatorSteps={coordinatorSteps}
             open={tasksOpen}
             width={widths.contentWidth}
             height={workspace.taskRows}

@@ -15,6 +15,7 @@ import type {
 export interface AgentHumanInputState extends AgentHumanInputRequestedEvent {
   requestConsumption?: AgentMessageConsumedEvent;
   response?: {
+    stepId: string;
     body: string;
     respondedAt: string;
     message: AgentMessage;
@@ -61,6 +62,21 @@ export class AgentHumanInputStore {
       .map((request) => structuredClone(request));
   }
 
+  findByMessageId(messageId: string): {
+    requestId: string;
+    kind: "request" | "response";
+  } | undefined {
+    for (const request of this.requests.values()) {
+      if (request.message.messageId === messageId) {
+        return { requestId: request.requestId, kind: "request" };
+      }
+      if (request.response?.message.messageId === messageId) {
+        return { requestId: request.requestId, kind: "response" };
+      }
+    }
+    return undefined;
+  }
+
   restore(requests: AgentHumanInputState[]): void {
     this.requests.clear();
     for (const request of requests) {
@@ -93,7 +109,8 @@ export class AgentHumanInputStore {
     const existing = request.response;
     if (existing) {
       if (
-        existing.body !== response.body
+        existing.stepId !== response.stepId
+        || existing.body !== response.body
         || existing.respondedAt !== response.respondedAt
         || !sameMessage(existing.message, response.message)
       ) {
@@ -104,6 +121,7 @@ export class AgentHumanInputStore {
     this.requests.set(request.requestId, {
       ...request,
       response: {
+        stepId: response.stepId,
         body: response.body,
         respondedAt: response.respondedAt,
         message: structuredClone(response.message),
@@ -145,6 +163,7 @@ function sameRequest(
   right: AgentHumanInputRequestedEvent,
 ): boolean {
   return left.requestId === right.requestId
+    && left.stepId === right.stepId
     && left.taskId === right.taskId
     && left.agentId === right.agentId
     && left.body === right.body

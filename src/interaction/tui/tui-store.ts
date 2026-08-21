@@ -55,6 +55,7 @@ export interface TuiTaskPlanStep {
 
 /** Display-level plan and lifecycle state for one task turn. */
 export interface TuiTaskTurn {
+  stepId: string;
   turnId?: string;
   status?: string;
   planSteps: TuiTaskPlanStep[];
@@ -232,7 +233,7 @@ export class TuiStore {
   }
 
   addAgentActivity(activity: AgentActivity): void {
-    if (activity.type === "dynamicToolCall") return;
+    if (activity.type === "dynamicToolCall" || activity.type === "mcpToolCall") return;
     this.activityMap.set(activityKey(activity), activity);
     this.emit();
   }
@@ -296,14 +297,32 @@ export class TuiStore {
   }
 
   addStepEvent(event: ScoutEvent): void {
-    if (!(
+    let step: AgentStepState;
+    if (AgentEvents.step.planUpdated.is(event)) {
+      const update = event.payload;
+      const current = this.stepMap.get(update.stepId);
+      if (!current) throw new Error(`Agent step plan update has no step: ${update.stepId}`);
+      if (current.agentId !== update.agentId || current.taskId !== update.taskId) {
+        throw new Error(`Agent step plan update conflicts with step owner: ${update.stepId}`);
+      }
+      step = {
+        ...current,
+        turnId: update.turnId,
+        plan: structuredClone(update.plan),
+        updatedAt: update.updatedAt,
+      };
+    } else if (
       AgentEvents.step.started.is(event)
       || AgentEvents.step.completed.is(event)
       || AgentEvents.step.interrupted.is(event)
       || AgentEvents.step.failed.is(event)
-      || AgentEvents.step.planUpdated.is(event)
-    )) return;
-    const step = event.payload as AgentStepState;
+      || AgentEvents.step.toolCallReferenced.is(event)
+      || AgentEvents.step.humanInputReferenced.is(event)
+    ) {
+      step = event.payload;
+    } else {
+      return;
+    }
     this.stepMap.set(step.stepId, structuredClone(step));
     if (step.taskId) {
       const task = this.taskMap.get(step.taskId);
@@ -314,6 +333,10 @@ export class TuiStore {
 
   restoreStepSnapshot(step: AgentStepState): void {
     this.stepMap.set(step.stepId, structuredClone(step));
+    if (step.taskId) {
+      const task = this.taskMap.get(step.taskId);
+      if (task) this.taskMap.set(step.taskId, mergeStepIntoTaskSummary(task, step));
+    }
     this.emit();
   }
 
@@ -423,24 +446,27 @@ function mergeTaskTurns(
   existing: TuiTaskTurn[],
   taskSteps: AgentStepState[],
 ): TuiTaskTurn[] {
-  const lifecycleByTurn = new Map<string | undefined, AgentStepState>();
-  for (const step of taskSteps) lifecycleByTurn.set(step.turnId, step);
+  const lifecycleByStep = new Map(taskSteps.map((step) => [step.stepId, step]));
   const turns = existing.map((turn) => {
-    const lifecycle = lifecycleByTurn.get(turn.turnId);
+    const lifecycle = lifecycleByStep.get(turn.stepId);
     const planSteps = lifecycle?.plan?.steps.map((planStep) => ({
       step: planStep.step,
       status: planStep.status,
     }));
     return {
       ...turn,
-      ...(lifecycle ? { status: lifecycle.status } : {}),
+      ...(lifecycle ? {
+        turnId: lifecycle.turnId,
+        status: lifecycle.status,
+      } : {}),
       planSteps: planSteps ?? turn.planSteps.map((step) => ({ ...step })),
     };
   });
-  const knownTurnIds = new Set(turns.map((turn) => turn.turnId));
+  const knownStepIds = new Set(turns.map((turn) => turn.stepId));
   for (const step of taskSteps) {
-    if (knownTurnIds.has(step.turnId)) continue;
+    if (knownStepIds.has(step.stepId)) continue;
     turns.push({
+      stepId: step.stepId,
       turnId: step.turnId,
       status: step.status,
       planSteps: step.plan?.steps.map((planStep) => ({
@@ -448,7 +474,7 @@ function mergeTaskTurns(
         status: planStep.status,
       })) ?? [],
     });
-    knownTurnIds.add(step.turnId);
+    knownStepIds.add(step.stepId);
   }
   return turns;
 }
@@ -458,12 +484,13 @@ function mergeStepIntoTaskSummary(task: TuiTaskSummary, step: AgentStepState): T
     ...turn,
     planSteps: turn.planSteps.map((planStep) => ({ ...planStep })),
   }));
-  const turnIndex = turns.findIndex((turn) => turn.turnId === step.turnId);
+  const turnIndex = turns.findIndex((turn) => turn.stepId === step.stepId);
   const planSteps = step.plan?.steps.map((planStep) => ({
     step: planStep.step,
     status: planStep.status,
   })) ?? [];
   const turn = {
+    stepId: step.stepId,
     turnId: step.turnId,
     status: step.status,
     planSteps,
@@ -476,7 +503,7 @@ function mergeStepIntoTaskSummary(task: TuiTaskSummary, step: AgentStepState): T
   };
   return {
     ...task,
-    updatedAt: step.updatedAt,
+    updatedAt: step.updatedAt > task.updatedAt ? step.updatedAt : task.updatedAt,
     turns,
   };
 }

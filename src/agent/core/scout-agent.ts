@@ -8,7 +8,6 @@ import type { CodexMount } from "../../asset-store/contracts/mount.js";
 import type { Result } from "../../core/result.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import type { AgentTaskState, SendAgentMessageInput } from "../task/types.js";
-import type { AgentStepToolCall } from "../step/types.js";
 import type { AgentMessage } from "../message/types.js";
 import type {
   AgentThreadSnapshot,
@@ -49,7 +48,6 @@ export interface ScoutAgentTurnRecord {
 export interface ScoutAgentTurnOutcome {
   turn: ScoutAgentTurnRecord;
   finalResponse?: string;
-  toolCalls?: AgentStepToolCall[];
   plan?: AppServerPlanState;
   goal?: AppServerThreadGoalState;
 }
@@ -219,12 +217,12 @@ export abstract class ScoutAgent {
     return delivery.then(() => acceptedNewMessage);
   }
 
-  protected consumeQueuedMessages(messages: AgentMessage[]): void {
+  protected consumeQueuedMessages(messages: AgentMessage[], stepId: string): void {
     const consumed = new Set(messages.map((message) => message.messageId));
     this.pendingMessages = this.pendingMessages.filter((message) =>
       !consumed.has(message.messageId)
     );
-    for (const message of messages) this.publishMessageConsumed(message, "queued");
+    for (const message of messages) this.publishMessageConsumed(message, "queued", undefined, stepId);
   }
 
   protected clearPendingMessages(): void {
@@ -253,11 +251,25 @@ export abstract class ScoutAgent {
     message: AgentMessage,
     deliveryMode: "steer" | "queued",
     turnId?: string,
+    stepId?: string,
   ): void {
+    const runningSteps = this.runScope.stepStore.list({ agentId: this.agentId }).filter((step) =>
+      step.status === "running" && (stepId === undefined || step.stepId === stepId)
+    );
+    if (runningSteps.length !== 1 || !runningSteps[0]) {
+      throw new Error(`Agent ${this.agentId} must have exactly one running step to consume message ${message.messageId}.`);
+    }
+    const runningStep = runningSteps[0];
+    if (turnId && runningStep.turnId && runningStep.turnId !== turnId) {
+      throw new Error(
+        `Agent step ${runningStep.stepId} belongs to turn ${runningStep.turnId}, not ${turnId}.`,
+      );
+    }
     const consumedAt = new Date().toISOString();
     this.eventBus.publish(AgentEvents.message.consumed, {
       messageId: message.messageId,
       agentId: message.agentId,
+      stepId: runningStep.stepId,
       taskId: message.taskId,
       consumedAt,
       deliveryMode,
@@ -627,7 +639,6 @@ export abstract class ScoutAgent {
     return {
       turn,
       finalResponse: result.finalResponse,
-      toolCalls: extractToolCalls(result.progressItems ?? []),
       plan: result.plan,
       goal: result.goal,
     };
@@ -813,36 +824,6 @@ async function withTimeout<T>(
   } finally {
     if (timeout) clearTimeout(timeout);
   }
-}
-
-function extractToolCalls(progressItems: NonNullable<Awaited<ReturnType<CodexAppServerClient["runTurn"]>>["progressItems"]>): AgentStepToolCall[] {
-  return progressItems.flatMap((progressItem) => {
-    const item = progressItem.item;
-    if (item.type === "dynamicToolCall") {
-      const raw = item as unknown as Record<string, unknown>;
-      return [{
-        namespace: readOptionalString(raw, "namespace") ?? null,
-        tool: item.tool,
-        callId: readOptionalString(raw, "callId") ?? item.id,
-        arguments: item.arguments,
-        success: item.success ?? null,
-      }];
-    }
-    if (item.type === "mcpToolCall") {
-      return [{
-        namespace: item.server,
-        tool: item.tool,
-        callId: item.id,
-        arguments: item.arguments,
-        success: item.status === "completed" ? true : item.status === "failed" ? false : null,
-      }];
-    }
-    return [];
-  });
-}
-
-function readOptionalString(object: Record<string, unknown>, key: string): string | undefined {
-  return typeof object[key] === "string" ? object[key] : undefined;
 }
 
 function sameAgentMessage(left: AgentMessage, right: AgentMessage): boolean {

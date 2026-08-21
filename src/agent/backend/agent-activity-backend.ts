@@ -26,7 +26,7 @@ export class AgentActivityBackend {
   handleAppServerTimelineEntry(
     agent: ScoutAgent,
     entry: AppServerTimelineEntry,
-    resolve: () => AppServerResolvedTimelineEntry,
+    resolved: AppServerResolvedTimelineEntry,
   ): void {
     if (!entry.threadId) return;
     if (
@@ -35,7 +35,7 @@ export class AgentActivityBackend {
       && entry.turnId
     ) {
       const activeTask = this.scope.taskStore.findActiveTaskForAgent(agent.agentId);
-      const turn = entry.kind === "turn_completed" ? resolve().turn : undefined;
+      const turn = entry.kind === "turn_completed" ? resolved.turn : undefined;
       this.scope.eventBus.publish(AgentEvents.activity.turnObserved, {
         seq: entry.seq,
         agentId: agent.agentId,
@@ -57,7 +57,6 @@ export class AgentActivityBackend {
     ) return;
 
     const activeTask = this.scope.taskStore.findActiveTaskForAgent(agent.agentId);
-    const resolved = resolve();
     if (resolved.item?.type === "collabAgentToolCall") {
       this.scope.eventBus.publish(AgentEvents.activity.nativeSubagentObserved, {
         seq: entry.seq,
@@ -94,7 +93,14 @@ export class AgentActivityBackend {
         updatedAt: entry.receivedAt,
       } satisfies AgentNativeSubagentActivity);
     }
-    const progressItem = resolved.progressItem;
+    // Dynamic and MCP calls have their own Tool Call fact stream. Command
+    // execution remains an Activity because it is not yet a progress item
+    // owned by a separate store.
+    const progressItem = resolved.progressItem
+      && resolved.progressItem.type !== "dynamicToolCall"
+      && resolved.progressItem.type !== "mcpToolCall"
+      ? resolved.progressItem
+      : undefined;
     const activity: AgentActivity | undefined = progressItem
       ? {
         seq: entry.seq,
@@ -110,7 +116,11 @@ export class AgentActivityBackend {
         detail: progressItem.detail,
         updatedAt: progressItem.updatedAt,
       }
-      : resolved.item && resolved.item.type !== "agentMessage" && resolved.item.type !== "userMessage"
+      : resolved.item
+        && resolved.item.type !== "agentMessage"
+        && resolved.item.type !== "userMessage"
+        && resolved.item.type !== "dynamicToolCall"
+        && resolved.item.type !== "mcpToolCall"
         ? {
           seq: entry.seq,
           agentId: agent.agentId,

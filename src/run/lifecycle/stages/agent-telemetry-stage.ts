@@ -1,6 +1,8 @@
 import {
   AgentActivityRecorder,
+  AgentHumanInputRecorder,
   AgentThreadRecorder,
+  AgentToolCallRecorder,
   StepEventRecorder,
   TaskEventRecorder,
 } from "../../../agent/telemetry/index.js";
@@ -14,12 +16,16 @@ export class AgentTelemetryStage implements RunStage {
   private stepRecorder?: StepEventRecorder;
   private activityRecorder?: AgentActivityRecorder;
   private threadRecorder?: AgentThreadRecorder;
+  private humanInputRecorder?: AgentHumanInputRecorder;
+  private toolCallRecorder?: AgentToolCallRecorder;
 
   async start(): Promise<void> {
     const taskRecorder = new TaskEventRecorder();
     const stepRecorder = new StepEventRecorder();
     const activityRecorder = new AgentActivityRecorder();
     const threadRecorder = new AgentThreadRecorder();
+    const humanInputRecorder = new AgentHumanInputRecorder();
+    const toolCallRecorder = new AgentToolCallRecorder();
     threadRecorder.start();
     try {
       taskRecorder.start();
@@ -27,7 +33,11 @@ export class AgentTelemetryStage implements RunStage {
         stepRecorder.start();
         try {
           activityRecorder.start();
+          humanInputRecorder.start();
+          toolCallRecorder.start();
         } catch (error) {
+          toolCallRecorder.stop();
+          humanInputRecorder.stop();
           stepRecorder.stop();
           throw error;
         }
@@ -43,6 +53,8 @@ export class AgentTelemetryStage implements RunStage {
     this.taskRecorder = taskRecorder;
     this.stepRecorder = stepRecorder;
     this.activityRecorder = activityRecorder;
+    this.humanInputRecorder = humanInputRecorder;
+    this.toolCallRecorder = toolCallRecorder;
   }
 
   async stop(): Promise<void> {
@@ -53,6 +65,18 @@ export class AgentTelemetryStage implements RunStage {
       errors.push(error);
     }
     this.activityRecorder = undefined;
+    try {
+      this.humanInputRecorder?.stop();
+    } catch (error) {
+      errors.push(error);
+    }
+    this.humanInputRecorder = undefined;
+    try {
+      this.toolCallRecorder?.stop();
+    } catch (error) {
+      errors.push(error);
+    }
+    this.toolCallRecorder = undefined;
     try {
       this.stepRecorder?.stop();
     } catch (error) {

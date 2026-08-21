@@ -14,7 +14,7 @@ export interface CoordinatorRunnerHost {
 export interface CoordinatorStepInput {
   prompt: string;
   outputContract?: string;
-  onTurnStarted?(): void | Promise<void>;
+  onTurnStarted?(step: AgentStepState): void | Promise<void>;
 }
 
 export interface CoordinatorStepResult {
@@ -62,7 +62,7 @@ export class CoordinatorRunner extends AgentRunner {
       const outcome = await this.host.runTurn({
         prompt: input.prompt,
         outputContract: input.outputContract,
-        onTurnStarted: input.onTurnStarted,
+        onTurnStarted: () => input.onTurnStarted?.(step),
       });
       const durationMs = durationSince(step.startedAt);
       const finished = outcome.turn.status === "completed"

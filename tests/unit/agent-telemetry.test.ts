@@ -8,20 +8,22 @@ import type {
   AgentNativeSubagentActivity,
   AgentTurnActivity,
 } from "../../src/agent/activity/activity-event.js";
+import { attachments } from "../../src/agent/context/attachments.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import {
   AgentActivityRecorder,
+  AgentToolCallRecorder,
   AgentThreadRecorder,
   StepEventRecorder,
   TaskEventRecorder,
 } from "../../src/agent/telemetry/index.js";
 import type { AgentStepState } from "../../src/agent/step/types.js";
 import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
+import type { AgentToolCallState } from "../../src/agent/tool-call/types.js";
 import type { AgentTaskNotAssignedEventPayload } from "../../src/agent/task/task-events.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
-import { AGENT_SUBMIT_TASK_TOOL_NAMESPACE } from "../../src/agent/tools/agent-tools.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
@@ -51,7 +53,8 @@ test("TaskEventRecorder writes only task lifecycle facts", async (t) => {
     taskId: task.taskId,
     status: "running",
     prompt: "Step prompt must not enter the task log",
-    toolCalls: [],
+    toolCallIds: [],
+    humanInputReferences: [],
     startedAt: "2026-07-14T00:00:01.000Z",
     updatedAt: "2026-07-14T00:00:01.000Z",
   } satisfies AgentStepState);
@@ -99,41 +102,84 @@ test("StepEventRecorder writes Worker and Coordinator step facts only to step lo
     taskId: "researcher-task-0001",
     status: "running",
     prompt: "Inspect current evidence",
-    toolCalls: [],
+    toolCallIds: [],
+    humanInputReferences: [],
     startedAt: "2026-07-14T00:00:01.000Z",
     updatedAt: "2026-07-14T00:00:01.000Z",
   } satisfies AgentStepState;
   await eventBus.publishAndWait(AgentEvents.step.started, startedStep);
   await eventBus.publishAndWait(AgentEvents.step.planUpdated, {
-    ...startedStep,
+    stepId: startedStep.stepId,
+    agentId: startedStep.agentId,
+    taskId: startedStep.taskId,
+    turnId: "turn-1",
     plan: {
+      turnId: "turn-1",
       explanation: "Research current evidence.",
       steps: [{ step: "Locate BDD", status: "inProgress", raw: {} }],
     },
     updatedAt: "2026-07-14T00:00:02.000Z",
   });
+  await eventBus.publishAndWait(AgentEvents.step.toolCallReferenced, {
+    ...startedStep,
+    turnId: "turn-1",
+    toolCallIds: ["call-submit"],
+    updatedAt: "2026-07-14T00:00:02.500Z",
+  } satisfies AgentStepState);
+  await eventBus.publishAndWait(AgentEvents.step.humanInputReferenced, {
+    ...startedStep,
+    turnId: "turn-1",
+    humanInputReferences: [{
+      requestId: "request-1",
+      kind: "request_produced",
+    }],
+    updatedAt: "2026-07-14T00:00:02.750Z",
+  } satisfies AgentStepState);
   await eventBus.publishAndWait(AgentEvents.step.completed, {
     ...startedStep,
     turnId: "turn-1",
     status: "completed",
     finalResponse: "Current response",
-    toolCalls: [{
-      namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
-      tool: "SubmitTask",
-      callId: "call-submit",
-      arguments: { outcome: "Current response" },
-      success: true,
-    }],
+    toolCallIds: ["call-submit"],
     finishedAt: "2026-07-14T00:00:03.000Z",
     updatedAt: "2026-07-14T00:00:03.000Z",
     durationMs: 2000,
+  } satisfies AgentStepState);
+  const resumePrompt = attachments.compose(
+    "<use-update-tools>\n继续恢复。\n</use-update-tools>",
+    attachments.addTagBlock("resume", JSON.stringify({
+      task: {
+        initial_prompt: "do-not-log-initial-prompt",
+        current_step: { id: "step-resume" },
+      },
+      open: [
+        {
+          type: "interrupted_task_step",
+          step_id: "step-resume",
+          prompt: "keep-task-step-prompt",
+        },
+        {
+          type: "interrupted_turn",
+          invocation_id: "invocation-resume",
+          prompt: "do-not-log-interrupted-turn-prompt",
+        },
+      ],
+    }, null, 2)),
+  );
+  await eventBus.publishAndWait(AgentEvents.step.started, {
+    ...startedStep,
+    stepId: "researcher-task-0001-step-0002",
+    prompt: resumePrompt,
+    startedAt: "2026-07-14T00:00:04.000Z",
+    updatedAt: "2026-07-14T00:00:04.000Z",
   } satisfies AgentStepState);
   await eventBus.publishAndWait(AgentEvents.step.started, {
     stepId: "coordinator-step-0001",
     agentId: "coordinator",
     status: "running",
     prompt: "Coordinate the run",
-    toolCalls: [],
+    toolCallIds: [],
+    humanInputReferences: [],
     startedAt: "2026-07-14T00:00:04.000Z",
     updatedAt: "2026-07-14T00:00:04.000Z",
   } satisfies AgentStepState);
@@ -145,14 +191,88 @@ test("StepEventRecorder writes Worker and Coordinator step facts only to step lo
   assert.match(researcherText, /event=agent\.step\.completed/);
   assert.match(researcherText, /prompt: "Inspect current evidence"/);
   assert.match(researcherText, /finalResponse: "Current response"/);
-  assert.match(researcherText, /tool: "SubmitTask"/);
+  assert.match(researcherText, /toolCallId: "call-submit"/);
+  assert.match(researcherText, /requestId: "request-1"/);
+  assert.match(researcherText, /kind: "request_produced"/);
+  assert.match(researcherText, /"type": "interrupted_task_step"/);
+  assert.match(researcherText, /keep-task-step-prompt/);
+  assert.match(researcherText, /"type": "interrupted_turn"/);
+  assert.doesNotMatch(researcherText, /initial_prompt|do-not-log-initial-prompt/);
+  assert.doesNotMatch(researcherText, /do-not-log-interrupted-turn-prompt/);
+  const completedRecord = researcherText.split("\n\n").find((record) =>
+    record.includes("event=agent.step.completed")
+  );
+  assert.ok(completedRecord);
+  assert.doesNotMatch(completedRecord, /prompt:|toolCallIds:|plan:|humanInputReferences:/);
   assert.match(researcherText, /explanation: "Research current evidence\."/);
+  const planRecord = researcherText.split("\n\n").find((record) =>
+    record.includes("event=agent.step.plan_updated")
+  );
+  assert.ok(planRecord);
+  assert.doesNotMatch(planRecord, /prompt:|finalResponse:|toolCallIds:|humanInputReferences:/);
   assert.equal(existsSync(join(researcherLogsRoot, "researcher-task-0001.log")), false);
 
   const coordinatorText = readFileSync(join(coordinatorLogsRoot, "steps.log"), "utf8");
   assert.match(coordinatorText, /agent=coordinator/);
   assert.match(coordinatorText, /prompt: "Coordinate the run"/);
   assert.doesNotMatch(coordinatorText, / task=/);
+});
+
+test("AgentToolCallRecorder aggregates one logical Tool Call lifecycle", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-tool-call-recorder-"));
+  const logsRoot = join(root, "agents", "coordinator", "logs");
+  const eventBus = new InMemoryEventBus();
+  const registry = installTestRunScope(t, {
+    runId: "run-tool-call-recorder",
+    eventBus,
+  }).agentRegistry;
+  registerAgent(registry, "coordinator", logsRoot);
+  const recorder = new AgentToolCallRecorder();
+  recorder.start();
+
+  const started = {
+    toolCallId: "call-assign-task",
+    kind: "dynamic",
+    agentId: "coordinator",
+    taskId: undefined,
+    stepId: "coordinator-step-0001",
+    threadId: "coordinator-thread",
+    turnId: "coordinator-turn",
+    itemId: "call-assign-task",
+    namespace: "scout_agent_assigntask",
+    tool: "AssignTask",
+    arguments: { subagent_type: "researcher" },
+    status: "inProgress",
+    success: null,
+    contentItems: null,
+    sourceSeq: 10,
+    observedAt: "2026-07-14T00:00:01.000Z",
+  } satisfies AgentToolCallState;
+  const failed = {
+    ...started,
+    status: "failed",
+    success: false,
+    error: "AssignTask agent_id must be a non-empty string when provided.",
+    sourceSeq: 11,
+    observedAt: "2026-07-14T00:00:01.005Z",
+    finishedAt: "2026-07-14T00:00:01.005Z",
+  } satisfies AgentToolCallState;
+
+  await eventBus.publishAndWait(AgentEvents.toolCall.observed, started);
+  await eventBus.publishAndWait(AgentEvents.toolCall.observed, failed);
+  recorder.stop();
+
+  const text = readFileSync(join(logsRoot, "tool-calls.log"), "utf8");
+  assert.equal(readEventCount(text), 1);
+  assert.match(text, /event=agent\.tool_call\.summary/);
+  assert.match(text, /toolCallId: "call-assign-task"/);
+  assert.match(text, /status: "failed"/);
+  assert.match(text, /observationCount: 2/);
+  assert.match(text, /firstObservedAt: "2026-07-14T00:00:01\.000Z"/);
+  assert.match(text, /lastObservedAt: "2026-07-14T00:00:01\.005Z"/);
+  assert.match(text, /- "inProgress"/);
+  assert.match(text, /- "failed"/);
+  assert.match(text, /AssignTask agent_id must be a non-empty string/);
 });
 
 test("AgentActivityRecorder writes stable activity to the role activity log", async (t) => {

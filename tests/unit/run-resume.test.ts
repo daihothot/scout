@@ -123,11 +123,13 @@ test("Run projection rebuilds pending messages, human gate and interrupted turn"
     scoutEvent(AgentEvents.message.consumed, {
       messageId: "message-1",
       agentId: "researcher",
+      stepId: "researcher-task-0001-step-0001",
       taskId: "researcher-task-0001",
       consumedAt: "2026-07-22T00:00:03.000Z",
     }),
     scoutEvent(AgentEvents.humanInput.requested, {
       requestId: "human-1",
+      stepId: "researcher-task-0001-step-0001",
       taskId: "researcher-task-0001",
       agentId: "researcher",
       body: "请确认版本。",
@@ -208,6 +210,47 @@ test("Run projection keeps the original thread snapshot across resume lifecycles
   assert.deepEqual(projection.threads, [started]);
 });
 
+test("Run projection merges plan deltas and retains Human Input Step references", () => {
+  const started = agentStepState({
+    stepId: "researcher-step-evidence",
+    turnId: undefined,
+    prompt: "Inspect the current source.",
+    toolCallIds: ["call-1"],
+  });
+  const referenced = {
+    ...started,
+    humanInputReferences: [{
+      requestId: "human-evidence-1",
+      kind: "request_produced" as const,
+    }],
+    updatedAt: "2026-07-22T00:00:02.000Z",
+  };
+  const plan = {
+    turnId: "turn-evidence",
+    explanation: "Inspect evidence.",
+    steps: [{ step: "Read source", status: "inProgress" as const, raw: {} }],
+  };
+  const projection = projectRun(journalEvents(
+    scoutEvent(AgentEvents.step.started, started),
+    scoutEvent(AgentEvents.step.humanInputReferenced, referenced),
+    scoutEvent(AgentEvents.step.planUpdated, {
+      stepId: started.stepId,
+      agentId: started.agentId,
+      taskId: started.taskId,
+      turnId: plan.turnId,
+      plan,
+      updatedAt: "2026-07-22T00:00:03.000Z",
+    }),
+  ));
+
+  assert.deepEqual(projection.steps, [{
+    ...referenced,
+    turnId: plan.turnId,
+    plan,
+    updatedAt: "2026-07-22T00:00:03.000Z",
+  }]);
+});
+
 test("Run projection derives an outcome checkpoint and no checkpoint without a task", () => {
   const doneTask = { ...taskState(), status: AgentTaskStatuses.Done };
   const doneProjection = projectRun(journalEvents(
@@ -235,6 +278,7 @@ test("Terminal task checkpoints ignore stale unresolved human requests", () => {
       scoutEvent(AgentEvents.task.assigned, taskState()),
       scoutEvent(AgentEvents.humanInput.requested, {
         requestId: `${status}-request`,
+        stepId: `${status}-step`,
         taskId: task.taskId,
         agentId: task.agentId,
         body: "终态前遗留请求",
@@ -579,6 +623,7 @@ test("Pending human responses stay in the delivery queue instead of Resume Packe
     scoutEvent(AgentEvents.task.assigned, task),
     scoutEvent(AgentEvents.humanInput.requested, {
       requestId: "human-response-pending",
+      stepId: "researcher-task-0001-step-request",
       taskId: task.taskId,
       agentId: task.agentId,
       body: "请选择目标。",
@@ -593,10 +638,12 @@ test("Pending human responses stay in the delivery queue instead of Resume Packe
     scoutEvent(AgentEvents.message.consumed, {
       messageId: "human-request-consumed",
       agentId: "coordinator",
+      stepId: "coordinator-step-request",
       consumedAt: "2026-07-22T00:01:01.000Z",
     }),
     scoutEvent(AgentEvents.humanInput.responded, {
       requestId: "human-response-pending",
+      stepId: "coordinator-step-response",
       taskId: task.taskId,
       agentId: task.agentId,
       body: "使用测试账号。",
@@ -639,12 +686,14 @@ test("Run projection persists one consumption fact for each Human Input directio
   const requestConsumption = {
     messageId: requestMessage.messageId,
     agentId: requestMessage.agentId,
+    stepId: "coordinator-step-request",
     consumedAt: "2026-07-22T00:01:01.000Z",
     deliveryMode: "queued" as const,
   };
   const responseConsumption = {
     messageId: responseMessage.messageId,
     agentId: responseMessage.agentId,
+    stepId: "researcher-task-0001-step-response",
     taskId: task.taskId,
     consumedAt: "2026-07-22T00:01:03.000Z",
     deliveryMode: "queued" as const,
@@ -653,6 +702,7 @@ test("Run projection persists one consumption fact for each Human Input directio
     scoutEvent(AgentEvents.task.assigned, task),
     scoutEvent(AgentEvents.humanInput.requested, {
       requestId: "human-consumption",
+      stepId: "researcher-task-0001-step-request",
       taskId: task.taskId,
       agentId: task.agentId,
       body: "请选择目标。",
@@ -662,6 +712,7 @@ test("Run projection persists one consumption fact for each Human Input directio
     scoutEvent(AgentEvents.message.consumed, requestConsumption),
     scoutEvent(AgentEvents.humanInput.responded, {
       requestId: "human-consumption",
+      stepId: "coordinator-step-response",
       taskId: task.taskId,
       agentId: task.agentId,
       body: "使用测试账号。",
@@ -673,6 +724,7 @@ test("Run projection persists one consumption fact for each Human Input directio
 
   assert.deepEqual(projection.humanInputRequests, [{
     requestId: "human-consumption",
+    stepId: "researcher-task-0001-step-request",
     taskId: task.taskId,
     agentId: task.agentId,
     body: "请选择目标。",
@@ -680,6 +732,7 @@ test("Run projection persists one consumption fact for each Human Input directio
     message: requestMessage,
     requestConsumption,
     response: {
+      stepId: "coordinator-step-response",
       body: "使用测试账号。",
       respondedAt: responseMessage.queuedAt,
       message: responseMessage,
@@ -692,6 +745,7 @@ test("Run projection persists one consumption fact for each Human Input directio
     scoutEvent(AgentEvents.task.assigned, task),
     scoutEvent(AgentEvents.humanInput.requested, {
       requestId: "human-consumption",
+      stepId: "researcher-task-0001-step-request",
       taskId: task.taskId,
       agentId: task.agentId,
       body: "请选择目标。",
@@ -709,6 +763,7 @@ test("Archived tasks do not retain unresolved Human Gates or their pending deliv
     scoutEvent(AgentEvents.task.assigned, task),
     scoutEvent(AgentEvents.humanInput.requested, {
       requestId: "archived-request",
+      stepId: "researcher-task-0001-step-archived",
       taskId: task.taskId,
       agentId: task.agentId,
       body: "已经失效的请求",
@@ -773,6 +828,144 @@ test("Resume Packet is deterministic, role-scoped and escapes closing tags", () 
   const packet = JSON.parse(body ?? "{}") as Record<string, unknown>;
   assert.match(JSON.stringify(packet), /researcher-task-0001/);
   assert.doesNotMatch(JSON.stringify(packet), /validator secret/);
+});
+
+test("Worker resume packet keeps only the interrupted Step prompt and strips nested resume context", () => {
+  const task = taskState({
+    stepIds: ["researcher-task-0001-step-0001"],
+  });
+  const originalPrompt = agent.turn.message("恢复中断验证");
+  const nestedPrompt = attachments.compose(
+    agent.turn.use_update_tools(),
+    attachments.addTagBlock("resume", JSON.stringify({ previous: "must-not-repeat" })),
+  );
+  const step = agentStepState({
+    stepId: "researcher-task-0001-step-0001",
+    taskId: task.taskId,
+    status: AgentStepStatuses.Interrupted,
+    prompt: nestedPrompt,
+  });
+  const projection = projectRun(journalEvents(
+    scoutEvent(AgentEvents.task.assigned, task),
+    scoutEvent(AgentEvents.step.interrupted, {
+      ...step,
+      prompt: originalPrompt,
+    }),
+    scoutEvent(AgentEvents.turn.started, {
+      invocationId: "researcher-interrupted-invocation",
+      agentId: task.agentId,
+      role: task.role,
+      taskId: task.taskId,
+      threadId: "researcher-thread",
+      prompt: originalPrompt,
+      startedAt: "2026-07-22T00:00:01.000Z",
+    }),
+    scoutEvent(AgentEvents.turn.interrupted, {
+      invocationId: "researcher-interrupted-invocation",
+      agentId: task.agentId,
+      role: task.role,
+      taskId: task.taskId,
+      threadId: "researcher-thread",
+      reason: "测试中断",
+      interruptedAt: "2026-07-22T00:00:02.000Z",
+    }),
+  ));
+  const body = attachments.readTagBlock(buildPlannedResumePacket({
+    projection,
+    agentId: task.agentId,
+    role: task.role,
+    assetCommitId: "ac-researcher",
+  }), "resume")[0]?.body;
+  const packet = JSON.parse(body ?? "{}") as {
+    open?: Array<Record<string, unknown>>;
+  };
+  const open = packet.open ?? [];
+  const stepEntry = open.find((entry) => entry.type === "interrupted_task_step");
+  const turnEntry = open.find((entry) => entry.type === "interrupted_turn");
+
+  assert.equal(stepEntry?.prompt, originalPrompt);
+  assert.equal(turnEntry, undefined);
+  assert.equal(open.filter((entry) => Object.hasOwn(entry, "prompt")).length, 1);
+
+  const nestedStep = {
+    ...step,
+    prompt: nestedPrompt,
+  };
+  const nestedProjection = projectRun(journalEvents(
+    scoutEvent(AgentEvents.task.assigned, task),
+    scoutEvent(AgentEvents.step.interrupted, nestedStep),
+  ));
+  const nestedBody = attachments.readTagBlock(buildPlannedResumePacket({
+    projection: nestedProjection,
+    agentId: task.agentId,
+    role: task.role,
+    assetCommitId: "ac-researcher",
+  }), "resume")[0]?.body;
+  assert.doesNotMatch(nestedBody ?? "", /must-not-repeat/);
+  assert.match(nestedBody ?? "", /use-update-tools/);
+});
+
+test("Coordinator resume packet uses its own interrupted Step prompt only", () => {
+  const workerTask = taskState({
+    taskId: "researcher-task-resume",
+    stepIds: ["researcher-task-resume-step-0001"],
+  });
+  const coordinatorStep = {
+    ...agentStepState({
+      stepId: "coordinator-step-resume",
+      agentId: ScoutAgentRoles.Coordinator,
+      prompt: agent.turn.message("Coordinator 上层恢复意图"),
+      status: AgentStepStatuses.Interrupted,
+    }),
+    taskId: undefined,
+  } satisfies AgentStepState;
+  const workerStep = agentStepState({
+    stepId: "researcher-task-resume-step-0001",
+    taskId: workerTask.taskId,
+    status: AgentStepStatuses.Interrupted,
+    prompt: agent.turn.message("Worker 历史执行 prompt"),
+  });
+  const projection = projectRun(journalEvents(
+    scoutEvent(AgentEvents.task.assigned, workerTask),
+    scoutEvent(AgentEvents.step.interrupted, coordinatorStep),
+    scoutEvent(AgentEvents.step.interrupted, workerStep),
+    scoutEvent(AgentEvents.turn.started, {
+      invocationId: "coordinator-resume-invocation",
+      agentId: ScoutAgentRoles.Coordinator,
+      role: ScoutAgentRoles.Coordinator,
+      threadId: "coordinator-thread",
+      prompt: agent.turn.message("Coordinator App Server prompt"),
+      startedAt: "2026-07-22T00:00:01.000Z",
+    }),
+    scoutEvent(AgentEvents.turn.interrupted, {
+      invocationId: "coordinator-resume-invocation",
+      agentId: ScoutAgentRoles.Coordinator,
+      role: ScoutAgentRoles.Coordinator,
+      threadId: "coordinator-thread",
+      reason: "测试中断",
+      interruptedAt: "2026-07-22T00:00:02.000Z",
+    }),
+  ));
+  const body = attachments.readTagBlock(buildPlannedResumePacket({
+    projection,
+    agentId: ScoutAgentRoles.Coordinator,
+    role: ScoutAgentRoles.Coordinator,
+    assetCommitId: "ac-coordinator",
+  }), "resume")[0]?.body;
+  const packet = JSON.parse(body ?? "{}") as {
+    open?: Array<Record<string, unknown>>;
+  };
+  const open = packet.open ?? [];
+  const promptEntries = open.filter((entry) => Object.hasOwn(entry, "prompt"));
+
+  assert.equal(promptEntries.length, 1);
+  assert.equal(promptEntries[0]?.type, "interrupted_step");
+  assert.equal(promptEntries[0]?.prompt, agent.turn.message("Coordinator 上层恢复意图"));
+  assert.equal(open.some((entry) => entry.type === "interrupted_turn"), false);
+  assert.equal(
+    open.some((entry) => entry.prompt === agent.turn.message("Worker 历史执行 prompt")),
+    false,
+  );
 });
 
 test("Resume Packet bounds long outcomes and keeps artifact refs without message duplication", () => {
@@ -923,6 +1116,7 @@ test("TaskRunner injects restored context once and consumes restored messages on
             eventBus.publish(AgentEvents.message.consumed, {
               messageId: message.messageId,
               agentId: message.agentId,
+              stepId: step.stepId,
               taskId: message.taskId,
               consumedAt,
               deliveryMode: "queued",
@@ -1768,6 +1962,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   );
   await initialEventBus.publishAndWait(AgentEvents.humanInput.requested, {
     requestId: "researcher-human",
+    stepId: researcherStep.stepId,
     taskId: researcherTask.taskId,
     agentId: researcherTask.agentId,
     body: "请确认 Researcher 版本",
@@ -1786,12 +1981,14 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     {
       messageId: "researcher-human-request",
       agentId: ScoutAgentRoles.Coordinator,
+      stepId: "coordinator-step-human-request",
       consumedAt: "2026-07-22T00:00:08.000Z",
     },
     { occurredAt: "2026-07-22T00:00:08.000Z" },
   );
   await initialEventBus.publishAndWait(AgentEvents.humanInput.responded, {
     requestId: "researcher-human",
+    stepId: "coordinator-step-human-response",
     taskId: researcherTask.taskId,
     agentId: researcherTask.agentId,
     body: "已确认 Researcher 版本",
@@ -1808,6 +2005,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   });
   await initialEventBus.publishAndWait(AgentEvents.humanInput.requested, {
     requestId: "validator-human",
+    stepId: "validator-task-0001-step-human-request",
     taskId: validatorTask.taskId,
     agentId: validatorTask.agentId,
     body: "请确认 Validator 的边界",
@@ -2507,9 +2705,9 @@ function agentStepState(input: Partial<AgentStepState> = {}): AgentStepState {
     status: input.status ?? AgentStepStatuses.Running,
     prompt: input.prompt ?? agent.turn.message("研究当前行为"),
     finalResponse: input.finalResponse,
-    toolCalls: input.toolCalls ?? [],
+    toolCallIds: input.toolCallIds ?? [],
     plan: input.plan,
-    humanInputResponse: input.humanInputResponse,
+    humanInputReferences: input.humanInputReferences ?? [],
     startedAt,
     updatedAt: input.updatedAt ?? startedAt,
     finishedAt: input.finishedAt,

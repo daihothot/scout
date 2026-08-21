@@ -8,18 +8,14 @@ export const AgentStepStatuses = {
 
 export type AgentStepStatus = typeof AgentStepStatuses[keyof typeof AgentStepStatuses];
 
-/** App-server tool call recorded as part of one Agent step. */
-export interface AgentStepToolCall {
-  namespace: string | null;
-  tool: string;
-  callId?: string;
-  arguments?: unknown;
-  success?: boolean | null;
-}
-
-/** Human response consumed as input by one Agent step. */
-export interface AgentStepHumanInputResponse {
-  body: string;
+/** Causal relation between one Step and a Human Input request aggregate. */
+export interface AgentStepHumanInputReference {
+  requestId: string;
+  kind:
+    | "request_produced"
+    | "request_consumed"
+    | "response_produced"
+    | "response_consumed";
 }
 
 /** Durable execution state shared by Coordinator and Worker runners. */
@@ -31,9 +27,10 @@ export interface AgentStepState {
   status: AgentStepStatus;
   prompt: string;
   finalResponse?: string;
-  toolCalls: AgentStepToolCall[];
+  /** References to Tool Call facts owned by AgentToolCallStore. */
+  toolCallIds: string[];
   plan?: AppServerPlanState;
-  humanInputResponse?: AgentStepHumanInputResponse;
+  humanInputReferences: AgentStepHumanInputReference[];
   startedAt: string;
   updatedAt: string;
   finishedAt?: string;

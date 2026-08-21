@@ -19,26 +19,15 @@ import {
 import {
   truncateByDisplayWidth,
 } from "../terminal-text.js";
-import type { TuiCoordinatorStepDrawerItem } from "../selectors/coordinator-steps.js";
-import {
-  buildCoordinatorPlanExplanationText,
-  buildCoordinatorStepText,
-  CoordinatorPlanExplanationRow,
-  CoordinatorStepRow,
-} from "../rows/coordinator-step-row.js";
 
 type TaskDrawerVisualRow =
   | { kind: "task"; id: string; task: TuiTaskDrawerItem; taskIndex: number }
   | { kind: "turn"; id: string; turn: TuiTaskDrawerItem["turns"][number]; turnIndex: number }
-  | { kind: "step"; id: string; step: TuiTaskDrawerItem["turns"][number]["planSteps"][number] }
-  | { kind: "coordinator"; id: string; step: TuiCoordinatorStepDrawerItem }
-  | { kind: "coordinator-explanation"; id: string; explanation: string }
-  | { kind: "coordinator-plan-step"; id: string; step: TuiCoordinatorStepDrawerItem["planSteps"][number] };
+  | { kind: "step"; id: string; step: TuiTaskDrawerItem["turns"][number]["planSteps"][number] };
 
 /** Keyboard- and mouse-navigable task drawer with optional plan expansion. */
 export function TasksDrawer({
   tasks,
-  coordinatorSteps,
   open,
   width,
   height,
@@ -47,7 +36,6 @@ export function TasksDrawer({
   onVisibleLinesChange,
 }: {
   tasks: TuiTaskDrawerItem[];
-  coordinatorSteps: TuiCoordinatorStepDrawerItem[];
   open: boolean;
   width: number;
   height: number;
@@ -72,8 +60,8 @@ export function TasksDrawer({
   };
 
   const visualRows = useMemo(
-    () => buildTaskDrawerRows(tasks, expandedTaskId, coordinatorSteps),
-    [coordinatorSteps, expandedTaskId, tasks],
+    () => buildTaskDrawerRows(tasks, expandedTaskId),
+    [expandedTaskId, tasks],
   );
   const bodyRows = Math.max(0, height - 1);
   const selectedVisualIndex = visualRows.findIndex((row) =>
@@ -156,29 +144,23 @@ export function TasksDrawer({
       ? buildTaskSummaryText(row.task, row.taskIndex === selectedIndex, width)
       : row.kind === "turn"
         ? buildTaskTurnText(row.turn.status, row.turnIndex, width)
-        : row.kind === "step"
-          ? buildTaskPlanStepText(row.step, width, 4)
-          : row.kind === "coordinator"
-            ? buildCoordinatorStepText(row.step, width)
-            : row.kind === "coordinator-explanation"
-              ? buildCoordinatorPlanExplanationText(row.explanation, width)
-              : buildTaskPlanStepText(row.step, width, 4)),
+        : buildTaskPlanStepText(row.step, width, 4)),
     [bodyRows, open, selectedIndex, scrollTop, visualRows, width],
   );
   const selectableLineTexts = useMemo(() => {
     if (height === 0) return [];
-    if (!open) return [buildCollapsedTaskSummary(tasks, width, coordinatorSteps)];
+    if (!open) return [buildCollapsedTaskSummary(tasks, width)];
     const headerLeft = "Tasks";
     const headerRight = "Esc close";
     const headerGap = " ".repeat(Math.max(
       0,
       width - headerLeft.length - headerRight.length,
     ));
-    const body = tasks.length === 0 && coordinatorSteps.length === 0
+    const body = tasks.length === 0
       ? ["No assigned tasks."]
       : visibleLineTexts;
     return [`${headerLeft}${headerGap}${headerRight}`, ...body].slice(0, height);
-  }, [coordinatorSteps, height, open, tasks, visibleLineTexts, width]);
+  }, [height, open, tasks, visibleLineTexts, width]);
 
   useEffect(() => {
     onVisibleLinesChange?.(selectableLineTexts);
@@ -187,7 +169,7 @@ export function TasksDrawer({
   if (!open) {
     return (
       <Box width={width} height={height} flexShrink={0} overflow="hidden">
-        <Text wrap="truncate-end">{buildCollapsedTaskSummary(tasks, width, coordinatorSteps)}</Text>
+        <Text wrap="truncate-end">{buildCollapsedTaskSummary(tasks, width)}</Text>
       </Box>
     );
   }
@@ -204,7 +186,7 @@ export function TasksDrawer({
         <Text color="cyan" bold>Tasks</Text>
         <Text dimColor>Esc close</Text>
       </Box>
-      {tasks.length === 0 && coordinatorSteps.length === 0
+      {tasks.length === 0
         ? <Text dimColor>No assigned tasks.</Text>
         : visibleRows.map((row) => row.kind === "task"
           ? (
@@ -217,13 +199,7 @@ export function TasksDrawer({
           )
           : row.kind === "turn"
             ? <TaskTurnRow key={row.id} turn={row.turn} turnIndex={row.turnIndex} width={width} />
-            : row.kind === "step"
-              ? <TaskPlanStepRow key={row.id} step={row.step} width={width} indent={4} />
-              : row.kind === "coordinator"
-                ? <CoordinatorStepRow key={row.id} step={row.step} width={width} />
-                : row.kind === "coordinator-explanation"
-                  ? <CoordinatorPlanExplanationRow key={row.id} explanation={row.explanation} width={width} />
-                  : <TaskPlanStepRow key={row.id} step={row.step} width={width} indent={4} />)}
+            : <TaskPlanStepRow key={row.id} step={row.step} width={width} indent={4} />)}
     </Box>
   );
 }
@@ -232,7 +208,6 @@ export function TasksDrawer({
 export function buildCollapsedTaskSummary(
   tasks: TuiTaskDrawerItem[],
   width: number,
-  coordinatorSteps: TuiCoordinatorStepDrawerItem[] = [],
 ): string {
   const activeTasks = tasks.filter((task) => isActiveTaskStatus(task.status));
   const archivedTaskCount = tasks.filter((task) => task.status === "archived").length;
@@ -251,10 +226,7 @@ export function buildCollapsedTaskSummary(
     })
     .join(" · ");
   const archivedSummary = archivedTaskCount > 0 ? `${archivedTaskCount} archived` : "";
-  const coordinatorSummary = coordinatorSteps.at(-1)
-    ? `COORD:${coordinatorSteps.at(-1)!.status}`
-    : "";
-  const details = [taskDetails, coordinatorSummary, archivedSummary].filter(Boolean).join(" · ");
+  const details = [taskDetails, archivedSummary].filter(Boolean).join(" · ");
   return truncateByDisplayWidth(
     `▸ Tasks  ${activeTasks.length} active${details ? ` · ${details}` : ""}`,
     width,
@@ -264,24 +236,8 @@ export function buildCollapsedTaskSummary(
 function buildTaskDrawerRows(
   tasks: TuiTaskDrawerItem[],
   expandedTaskId: string | undefined,
-  coordinatorSteps: TuiCoordinatorStepDrawerItem[],
 ): TaskDrawerVisualRow[] {
-  const coordinatorRows = coordinatorSteps.flatMap((step): TaskDrawerVisualRow[] => [
-    { kind: "coordinator", id: `coordinator:${step.stepId}`, step },
-    ...(step.planExplanation
-      ? [{
-        kind: "coordinator-explanation" as const,
-        id: `coordinator:${step.stepId}:explanation`,
-        explanation: step.planExplanation,
-      }]
-      : []),
-    ...step.planSteps.map((planStep, stepIndex) => ({
-      kind: "coordinator-plan-step" as const,
-      id: `coordinator:${step.stepId}:plan:${stepIndex}`,
-      step: planStep,
-    })),
-  ]);
-  const taskRows = tasks.flatMap((task, taskIndex): TaskDrawerVisualRow[] => [
+  return tasks.flatMap((task, taskIndex): TaskDrawerVisualRow[] => [
     { kind: "task", id: `task:${task.taskId}`, task, taskIndex },
     ...(task.taskId === expandedTaskId
       ? task.turns.flatMap((turn, turnIndex) => [
@@ -299,7 +255,6 @@ function buildTaskDrawerRows(
       ])
       : []),
   ]);
-  return [...coordinatorRows, ...taskRows];
 }
 
 /** Resolves the drawer scroll offset around the selected task row. */

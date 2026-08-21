@@ -1,9 +1,6 @@
 import {
   attachments,
 } from "../../context/attachments.js";
-import {
-  AgentContextTags,
-} from "../../context/agent-attachments.js";
 import type {
   ScoutAgentTurnInput,
   ScoutAgentTurnOutcome,
@@ -72,10 +69,6 @@ export class WorkerRunner extends AgentRunner {
       stepId: input.stepId,
       taskId: input.taskId,
       prompt,
-      humanInputResponse: attachments.readTagBlock(
-        prompt,
-        AgentContextTags.HumanResponse,
-      ).map(({ body }) => ({ body }))[0],
       startedAt: input.startedAt,
     });
 

@@ -27,6 +27,7 @@ export class InjectResumeContextStage implements RunStage {
   async start(): Promise<void> {
     const scope = currentRunScope();
     const projection = projectRun(scope.journal.readAll());
+    scope.toolCallStore.restore(projection.toolCalls);
     scope.stepStore.restore(projection.steps);
     scope.humanInputStore.restore(projection.humanInputRequests);
     for (const step of projection.steps) {

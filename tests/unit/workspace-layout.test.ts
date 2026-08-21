@@ -178,6 +178,22 @@ test("task drawer keeps archived tasks after current tasks and summarizes their 
         turns: [],
       },
     ],
+    steps: [{
+      stepId: "coordinator-step-hidden-from-tasks",
+      agentId: "coordinator",
+      turnId: "coordinator-turn-hidden-from-tasks",
+      status: "completed",
+      prompt: "Coordinate without entering the Tasks drawer.",
+      toolCallIds: [],
+      humanInputReferences: [],
+      plan: {
+        turnId: "coordinator-turn-hidden-from-tasks",
+        explanation: "Coordinator-only plan.",
+        steps: [{ step: "Observe workers", status: "completed", raw: {} }],
+      },
+      startedAt: "2026-07-10T00:00:00.000Z",
+      updatedAt: "2026-07-10T00:00:02.000Z",
+    }],
   };
 
   const tasks = selectTaskSummaries(state);
@@ -186,6 +202,7 @@ test("task drawer keeps archived tasks after current tasks and summarizes their 
     buildCollapsedTaskSummary(tasks, 120),
     "▸ Tasks  1 active · VAL:t-0001 running · 1 archived",
   );
+  assert.doesNotMatch(buildCollapsedTaskSummary(tasks, 120), /Coordinator|COORD|Observe workers/);
 });
 
 test("task step statuses start in one aligned column", () => {
@@ -204,7 +221,7 @@ test("task step statuses start in one aligned column", () => {
   ));
 });
 
-test("Coordinator steps and their plans are projected into the shared work drawer", () => {
+test("Coordinator steps remain available for a future independent drawer", () => {
   const state: TuiState = {
     runtime: {
       cwd: "/repo/scout",
@@ -221,7 +238,8 @@ test("Coordinator steps and their plans are projected into the shared work drawe
       turnId: "turn-1",
       status: "completed",
       prompt: "coordinate",
-      toolCalls: [],
+      toolCallIds: [],
+      humanInputReferences: [],
       plan: {
         explanation: "Review the worker result.",
         steps: [

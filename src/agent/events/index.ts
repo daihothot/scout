@@ -7,6 +7,7 @@ import type { AgentTurnEventCatalog } from "../thread/turn-events.js";
 import type { AgentMessageEventCatalog } from "../message/message-events.js";
 import type { AgentHumanInputEventCatalog } from "../human-input/human-input-events.js";
 import type { AgentStepEventCatalog } from "../step/step-events.js";
+import type { AgentToolCallEventCatalog } from "../tool-call/tool-call-events.js";
 
 import "../activity/activity-event.js";
 import "../thread/thread-events.js";
@@ -14,6 +15,7 @@ import "../thread/turn-events.js";
 import "../message/message-events.js";
 import "../human-input/human-input-events.js";
 import "../step/step-events.js";
+import "../tool-call/tool-call-events.js";
 import "../task/task-events.js";
 import "../runner/coordinator/coordinator-runner-events.js";
 import { AgentEvents as AgentEventCatalog } from "./catalog.js";
@@ -26,5 +28,6 @@ export const AgentEvents = AgentEventCatalog as EventCatalogRegistry<"agent">
   & DefinedEventCatalog<AgentMessageEventCatalog>
   & DefinedEventCatalog<AgentHumanInputEventCatalog>
   & DefinedEventCatalog<AgentStepEventCatalog>
+  & DefinedEventCatalog<AgentToolCallEventCatalog>
   & DefinedEventCatalog<AgentTaskEventCatalog>
   & DefinedEventCatalog<CoordinatorRunnerEventCatalog>;

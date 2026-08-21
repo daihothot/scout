@@ -188,8 +188,8 @@ export class CoordinatorAgent extends ScoutAgent {
     const result = await this.stepRunner.runStep({
       prompt,
       outputContract: "coordinator_main_loop",
-      onTurnStarted: () => {
-        this.consumeQueuedMessages(messages);
+      onTurnStarted: (step) => {
+        this.consumeQueuedMessages(messages, step.stepId);
         this.resumeContext = undefined;
       },
     });
