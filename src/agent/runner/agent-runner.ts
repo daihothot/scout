@@ -25,7 +25,6 @@ export abstract class AgentRunner {
   protected startStep(input: {
     taskId?: string;
     prompt: string;
-    humanInputResponse?: AgentStepState["humanInputResponse"];
     startedAt?: string;
     stepId?: string;
   }): AgentStepState {
@@ -42,8 +41,8 @@ export abstract class AgentRunner {
       taskId: input.taskId,
       status: "running",
       prompt: input.prompt,
-      toolCalls: [],
-      humanInputResponse: input.humanInputResponse,
+      toolCallIds: [],
+      humanInputReferences: [],
       startedAt,
       updatedAt: startedAt,
     });
@@ -105,7 +104,9 @@ export abstract class AgentRunner {
       ...step,
       turnId: outcome.turn.turnId,
       finalResponse: outcome.finalResponse,
-      toolCalls: outcome.toolCalls ?? [],
+      toolCallIds: currentRunScope().toolCallStore
+        .list({ stepId })
+        .map((call) => call.toolCallId),
       plan: outcome.plan,
       finishedAt: outcome.turn.finishedAt,
       durationMs,

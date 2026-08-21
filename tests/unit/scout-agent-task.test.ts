@@ -28,7 +28,6 @@ import {
 import {
   AgentStepStatuses,
   type AgentStepState,
-  type AgentStepToolCall,
 } from "../../src/agent/step/types.js";
 import {
   agent,
@@ -537,7 +536,7 @@ test("TaskRunner records a human-input request on its completed step", async (t)
       : undefined,
     "Need human input.",
   );
-  assert.equal(step?.humanInputResponse, undefined);
+  assert.deepEqual(step?.humanInputReferences, []);
   assert.equal(harness.terminalTasks.length, 0);
 });
 
@@ -600,16 +599,16 @@ test("TaskRunner records a delayed human response on the step that consumes it",
       : undefined,
     "Need human input 1.",
   );
-  assert.equal(steps[0]?.humanInputResponse, undefined);
+  assert.deepEqual(steps[0]?.humanInputReferences, []);
   assert.equal(
     task?.dispositions[1]?.kind === AgentTaskDispositionKinds.WaitingForHuman
       ? task.dispositions[1].request
       : undefined,
     "Need human input 2.",
   );
-  assert.equal(steps[1]?.humanInputResponse, undefined);
+  assert.deepEqual(steps[1]?.humanInputReferences, []);
   assert.equal(task?.dispositions[2]?.kind, AgentTaskDispositionKinds.HandoffSubmitted);
-  assert.deepEqual(steps[2]?.humanInputResponse, { body: "User picked A." });
+  assert.deepEqual(steps[2]?.humanInputReferences, []);
   assert.match(turnPrompts[2] ?? "", /<human-response>\nUser picked A\.\n<\/human-response>/);
   assert.ok(harness.events.some((event) =>
     AgentEvents.task.stepStarted.is(event)
@@ -851,12 +850,12 @@ test("AgentStepBackend reduces app-server plan timeline entries into step state"
   backend.handleAppServerTimelineEntry(
     agent,
     planTimelineEntry(1, "turn-1"),
-    () => resolvedPlanEntry(firstPlan),
+    resolvedPlanEntry(firstPlan),
   );
   backend.handleAppServerTimelineEntry(
     agent,
     planTimelineEntry(2, "turn-1"),
-    () => resolvedPlanEntry(completedFirstPlan),
+    resolvedPlanEntry(completedFirstPlan),
   );
   scope.stepStore.updateStep(firstStep.stepId, (current) => ({
     ...current,
@@ -875,7 +874,7 @@ test("AgentStepBackend reduces app-server plan timeline entries into step state"
   backend.handleAppServerTimelineEntry(
     agent,
     planTimelineEntry(3, "turn-2"),
-    () => resolvedPlanEntry(secondPlan),
+    resolvedPlanEntry(secondPlan),
   );
   const steps = scope.stepStore.list({ taskId: task.taskId });
   assert.deepEqual(steps.map((step) => step.plan?.turnId), ["turn-1", "turn-2"]);
@@ -1182,7 +1181,8 @@ function stepState(input: {
     ...input,
     status: AgentStepStatuses.Running,
     prompt: "Verify plan updates",
-    toolCalls: [],
+    toolCallIds: [],
+    humanInputReferences: [],
     startedAt: now,
     updatedAt: now,
   };
@@ -1352,10 +1352,18 @@ function requireCurrentStep(runtime: TestTaskRuntime): AgentStepState {
   return step;
 }
 
+interface TestToolCall {
+  namespace: string;
+  tool: string;
+  callId: string;
+  arguments: unknown;
+  success: boolean;
+}
+
 function requestHumanInputToolCall(
   request: string,
   callId: string,
-): AgentStepToolCall {
+): TestToolCall {
   return {
     namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
     tool: "RequestHumanInput",
@@ -1368,7 +1376,7 @@ function requestHumanInputToolCall(
 function completedTurn(
   finalResponse: string,
   turnId = "turn-1",
-  toolCalls: AgentStepToolCall[] = [],
+  _toolCalls: TestToolCall[] = [],
 ): ScoutAgentTurnOutcome {
   return {
     turn: {
@@ -1382,7 +1390,6 @@ function completedTurn(
       status: "completed",
     },
     finalResponse,
-    toolCalls,
   };
 }
 

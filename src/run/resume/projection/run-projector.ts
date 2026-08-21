@@ -10,6 +10,7 @@ import { AgentEvents } from "../../../agent/events/index.js";
 import type { AgentHumanInputState } from "../../../agent/human-input/index.js";
 import type { AgentMessage } from "../../../agent/message/types.js";
 import type { AgentStepState } from "../../../agent/step/types.js";
+import type { AgentToolCallState } from "../../../agent/tool-call/types.js";
 import { ValidationEvents } from "../../../domain/validation/validation-events.js";
 import { SystemEvents } from "../../../system/events/index.js";
 import { RunEvents } from "../../events/index.js";
@@ -92,6 +93,7 @@ export interface RunProjection {
   humanInputRequests: ProjectedHumanInputRequest[];
   turns: ProjectedTurn[];
   steps: AgentStepState[];
+  toolCalls: AgentToolCallState[];
   taskOutcomes: ProjectedTaskOutcome[];
   artifacts: ProjectedArtifact[];
   gates: ProjectedGate[];
@@ -133,6 +135,7 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
   const humanRequests = new Map<string, ProjectedHumanInputRequest>();
   const turns = new Map<string, ProjectedTurn>();
   const steps = new Map<string, AgentStepState>();
+  const toolCalls = new Map<string, AgentToolCallState>();
   const outcomes: ProjectedTaskOutcome[] = [];
   const artifacts: ProjectedArtifact[] = [];
   const gates: ProjectedGate[] = [];
@@ -207,9 +210,42 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
       || AgentEvents.step.completed.is(event)
       || AgentEvents.step.interrupted.is(event)
       || AgentEvents.step.failed.is(event)
-      || AgentEvents.step.planUpdated.is(event)
+      || AgentEvents.step.toolCallReferenced.is(event)
+      || AgentEvents.step.humanInputReferenced.is(event)
     ) {
       steps.set(event.payload.stepId, structuredClone(event.payload));
+      continue;
+    }
+    if (AgentEvents.toolCall.observed.is(event)) {
+      const existing = toolCalls.get(event.payload.toolCallId);
+      if (existing && (
+        existing.agentId !== event.payload.agentId
+        || existing.stepId !== event.payload.stepId
+        || existing.itemId !== event.payload.itemId
+      )) {
+        throw new Error(`Tool call ${event.payload.toolCallId} conflicts during projection.`);
+      }
+      if (existing && event.payload.sourceSeq < existing.sourceSeq) continue;
+      toolCalls.set(event.payload.toolCallId, structuredClone(event.payload));
+      continue;
+    }
+    if (AgentEvents.step.planUpdated.is(event)) {
+      const current = steps.get(event.payload.stepId);
+      if (!current) {
+        throw new Error(`Agent step plan update has no step: ${event.payload.stepId}`);
+      }
+      if (
+        current.agentId !== event.payload.agentId
+        || current.taskId !== event.payload.taskId
+      ) {
+        throw new Error(`Agent step plan update conflicts with step owner: ${event.payload.stepId}`);
+      }
+      steps.set(event.payload.stepId, {
+        ...current,
+        turnId: event.payload.turnId,
+        plan: structuredClone(event.payload.plan),
+        updatedAt: event.payload.updatedAt,
+      });
       continue;
     }
     if (SystemEvents.interaction.userMessageSubmitted.is(event)) {
@@ -345,6 +381,7 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
       humanRequests.set(request.requestId, {
         ...request,
         response: {
+          stepId: event.payload.stepId,
           body: event.payload.body,
           respondedAt: event.payload.respondedAt,
           message: structuredClone(event.payload.message),
@@ -433,6 +470,7 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
     humanInputRequests: [...humanRequests.values()].map((request) => structuredClone(request)),
     turns: [...turns.values()].map((turn) => structuredClone(turn)),
     steps: [...steps.values()].map((step) => structuredClone(step)),
+    toolCalls: [...toolCalls.values()].map((call) => structuredClone(call)),
     taskOutcomes: outcomes,
     artifacts,
     gates,

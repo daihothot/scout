@@ -342,7 +342,7 @@ export class TaskRunner {
     if (latest.status === AgentTaskStatuses.Stopped) {
       const stoppedWithUsage = this.updateTask(
         taskId,
-        () => this.withStepUsage(latest, outcome, step.durationMs ?? 0),
+        () => this.withStepUsage(latest, step.stepId, step.durationMs ?? 0, outcome.turn.finishedAt),
       );
       this.activeTask = stoppedWithUsage;
       this.publishTaskStepFinished(stoppedWithUsage, step);
@@ -351,7 +351,7 @@ export class TaskRunner {
     if (isTerminalTaskStatus(latest.status)) {
       const terminalWithUsage = this.updateTask(
         taskId,
-        () => this.withStepUsage(latest, outcome, step.durationMs ?? 0),
+        () => this.withStepUsage(latest, step.stepId, step.durationMs ?? 0, outcome.turn.finishedAt),
       );
       this.activeTask = terminalWithUsage;
       this.publishTaskStepFinished(terminalWithUsage, step);
@@ -381,8 +381,9 @@ export class TaskRunner {
               ...latest,
               protocolRepairAttempts: 0,
             },
-            outcome,
+            step.stepId,
             step.durationMs ?? 0,
+            outcome.turn.finishedAt,
           ));
           this.activeTask = completedState;
           this.eventBus.publish(
@@ -414,8 +415,9 @@ export class TaskRunner {
               finishedAt: new Date().toISOString(),
             } : {}),
           },
-          outcome,
+          step.stepId,
           step.durationMs ?? 0,
+          outcome.turn.finishedAt,
         ));
         this.activeTask = completedState;
         this.eventBus.publish(
@@ -443,8 +445,9 @@ export class TaskRunner {
           ...latest,
           protocolRepairAttempts: 0,
         },
-        outcome,
+        step.stepId,
         step.durationMs ?? 0,
+        outcome.turn.finishedAt,
       ));
       this.activeTask = completedState;
       this.eventBus.publish(
@@ -484,7 +487,7 @@ export class TaskRunner {
     if (outcome.turn.status === "interrupted") {
       const interruptedState = this.updateTask(
         taskId,
-        () => this.withStepUsage(latest, outcome, step.durationMs ?? 0),
+        () => this.withStepUsage(latest, step.stepId, step.durationMs ?? 0, outcome.turn.finishedAt),
       );
       this.activeTask = interruptedState;
       this.eventBus.publish(
@@ -502,8 +505,9 @@ export class TaskRunner {
         error: outcome.turn.error,
         finishedAt: new Date().toISOString(),
       },
-      outcome,
+      step.stepId,
       step.durationMs ?? 0,
+      outcome.turn.finishedAt,
     ));
     this.activeTask = failedState;
     this.eventBus.publish(
@@ -550,17 +554,19 @@ export class TaskRunner {
 
   private withStepUsage(
     task: AgentTaskState,
-    outcome: ScoutAgentTurnOutcome,
+    stepId: string,
     durationMs: number,
+    updatedAt: string,
   ): AgentTaskState {
+    const toolUses = currentRunScope().toolCallStore.list({ stepId }).length;
     return {
       ...task,
       usage: {
         ...task.usage,
         durationMs: (task.usage?.durationMs ?? 0) + durationMs,
-        toolUses: (task.usage?.toolUses ?? 0) + (outcome.toolCalls?.length ?? 0),
+        toolUses: (task.usage?.toolUses ?? 0) + toolUses,
       },
-      updatedAt: outcome.turn.finishedAt,
+      updatedAt,
     };
   }
 

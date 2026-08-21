@@ -44,7 +44,7 @@ export class AgentActivityRecorder {
   }
 
   private recordActivity(activity: AgentActivity): void {
-    if (activity.type === "dynamicToolCall") return;
+    if (activity.type === "dynamicToolCall" || activity.type === "mcpToolCall") return;
     if (activity.type === "collabAgentToolCall" || activity.type === "subAgentActivity") return;
     if (activity.type === "reasoning" && activity.status !== "completed") return;
     this.loggerFor(activity.agentId).info({

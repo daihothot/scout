@@ -23,7 +23,7 @@ import { agent } from "../context/agent-attachments.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 
 /** Dependencies required to dispatch agent-owned dynamic tools. */
-export interface AgentToolBackendOptions {
+export interface AgentDynamicToolBackendOptions {
   taskBackend: AgentTaskBackend;
 }
 
@@ -47,18 +47,33 @@ type AssignTaskToolResponse =
  * Dispatches validated agent dynamic tools to task, message, and human-input
  * backends while routing other namespaces to the domain.
  */
-export class AgentToolBackend {
+export class AgentDynamicToolBackend {
   private readonly registry: RunScope["agentRegistry"];
   private readonly taskStore: RunScope["taskStore"];
   private readonly taskBackend: AgentTaskBackend;
   private readonly domain: RunScope["domain"];
+  private unsubscribeDynamicTools?: () => void;
 
-  constructor(options: AgentToolBackendOptions) {
+  constructor(options: AgentDynamicToolBackendOptions) {
     const scope = currentRunScope();
     this.registry = scope.agentRegistry;
     this.taskStore = scope.taskStore;
     this.taskBackend = options.taskBackend;
     this.domain = scope.domain;
+  }
+
+  start(): void {
+    if (this.unsubscribeDynamicTools) return;
+    const appServer = currentRunScope().appServer;
+    this.unsubscribeDynamicTools = appServer.setDynamicToolCallHandler((input) =>
+      this.handleDynamicToolCall(input)
+    );
+  }
+
+  stop(): void {
+    const unsubscribe = this.unsubscribeDynamicTools;
+    this.unsubscribeDynamicTools = undefined;
+    unsubscribe?.();
   }
 
   async handleDynamicToolCall(input: DynamicToolCallInput): Promise<DynamicToolCallResponse> {
@@ -213,11 +228,12 @@ export class AgentToolBackend {
   private async handleRespondHumanInputToolCall(
     call: RespondHumanInputToolCall,
     caller: ScoutAgent,
+    delivery: DynamicToolCallInput,
   ): Promise<Record<string, unknown>> {
     if (caller.role !== ScoutAgentRoles.Coordinator) {
       throw new Error("RespondHumanInput is only available to the Coordinator agent.");
     }
-    return this.taskBackend.respondHumanInput(call);
+    return this.taskBackend.respondHumanInput({ call, caller, delivery });
   }
 
   private async dispatchAgentDynamicToolCall(
@@ -233,7 +249,7 @@ export class AgentToolBackend {
       case "RequestHumanInput":
         return this.handleRequestHumanInputToolCall(call, caller, delivery);
       case "RespondHumanInput":
-        return this.handleRespondHumanInputToolCall(call, caller);
+        return this.handleRespondHumanInputToolCall(call, caller, delivery);
       case "SubmitTask":
         return this.handleSubmitTaskToolCall(call, caller, delivery);
       case "ArchiveTask":

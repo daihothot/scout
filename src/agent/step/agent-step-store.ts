@@ -1,13 +1,93 @@
-import type { AgentStepState } from "./types.js";
+import type { AppServerPlanState } from "../../agent-server/codex/app-server-event-store.js";
+import {
+  EventSubscriptionPriorities,
+  type UnsubscribeEventHandler,
+} from "../../core/events/index.js";
+import { currentRunScope, type RunScope } from "../../run/run-scope.js";
+import { AgentEvents } from "../events/index.js";
+import type { AgentToolCallState } from "../tool-call/types.js";
+import type { AgentStepHumanInputReference, AgentStepState } from "./types.js";
 
-/** Canonical in-memory authority for Coordinator and Worker execution steps. */
+/** Active Step projection and canonical in-memory authority for Agent execution steps. */
 export class AgentStepStore {
   private readonly steps = new Map<string, AgentStepState>();
+  private readonly pendingHumanInputReferences = new Map<string, AgentStepHumanInputReference[]>();
+  private readonly pendingToolCallReferences = new Map<string, AgentToolCallState[]>();
+  private readonly unsubscribers: UnsubscribeEventHandler[] = [];
+  private eventBus?: RunScope["eventBus"];
+  private humanInputStore?: RunScope["humanInputStore"];
+
+  /** Starts the Store-owned subscriptions that project related Agent facts into Steps. */
+  start(): void {
+    if (this.unsubscribers.length > 0) return;
+    const scope = currentRunScope();
+    this.eventBus = scope.eventBus;
+    this.humanInputStore = scope.humanInputStore;
+    try {
+      this.unsubscribers.push(
+        this.eventBus.subscribe(AgentEvents.step.started, (event) => {
+          if (!AgentEvents.step.started.is(event)) return;
+          this.applyStepSnapshot(event.payload);
+        }, { priority: EventSubscriptionPriorities.High }),
+        this.eventBus.subscribe(AgentEvents.step.completed, (event) => {
+          if (!AgentEvents.step.completed.is(event)) return;
+          this.applyStepSnapshot(event.payload);
+        }, { priority: EventSubscriptionPriorities.High }),
+        this.eventBus.subscribe(AgentEvents.step.interrupted, (event) => {
+          if (!AgentEvents.step.interrupted.is(event)) return;
+          this.applyStepSnapshot(event.payload);
+        }, { priority: EventSubscriptionPriorities.High }),
+        this.eventBus.subscribe(AgentEvents.step.failed, (event) => {
+          if (!AgentEvents.step.failed.is(event)) return;
+          this.applyStepSnapshot(event.payload);
+        }, { priority: EventSubscriptionPriorities.High }),
+        this.eventBus.subscribe(AgentEvents.humanInput.requested, (event) => {
+          if (!AgentEvents.humanInput.requested.is(event)) return;
+          this.recordHumanInputReference(event.payload.stepId, {
+            requestId: event.payload.requestId,
+            kind: "request_produced",
+          });
+        }, { priority: EventSubscriptionPriorities.Low }),
+        this.eventBus.subscribe(AgentEvents.humanInput.responded, (event) => {
+          if (!AgentEvents.humanInput.responded.is(event)) return;
+          this.recordHumanInputReference(event.payload.stepId, {
+            requestId: event.payload.requestId,
+            kind: "response_produced",
+          });
+        }, { priority: EventSubscriptionPriorities.Low }),
+        this.eventBus.subscribe(AgentEvents.toolCall.observed, (event) => {
+          if (!AgentEvents.toolCall.observed.is(event)) return;
+          this.recordToolCallReference(event.payload);
+        }, { priority: EventSubscriptionPriorities.Low }),
+        this.eventBus.subscribe(AgentEvents.message.consumed, (event) => {
+          if (!AgentEvents.message.consumed.is(event)) return;
+          const humanInput = this.humanInputStore?.findByMessageId(event.payload.messageId);
+          if (!humanInput) return;
+          this.recordHumanInputReference(event.payload.stepId, {
+            requestId: humanInput.requestId,
+            kind: humanInput.kind === "request" ? "request_consumed" : "response_consumed",
+          });
+        }, { priority: EventSubscriptionPriorities.Low }),
+      );
+    } catch (error) {
+      this.dispose();
+      throw error;
+    }
+  }
+
+  dispose(): void {
+    while (this.unsubscribers.length > 0) this.unsubscribers.pop()?.();
+    this.pendingHumanInputReferences.clear();
+    this.pendingToolCallReferences.clear();
+    this.eventBus = undefined;
+    this.humanInputStore = undefined;
+  }
 
   addStep(step: AgentStepState): AgentStepState {
     if (this.steps.has(step.stepId)) throw new Error(`Duplicate agent step id: ${step.stepId}`);
     const stored = cloneAgentStepState(step);
     this.steps.set(step.stepId, stored);
+    this.flushPendingReferences(step.stepId);
     return cloneAgentStepState(stored);
   }
 
@@ -37,6 +117,8 @@ export class AgentStepStore {
 
   restore(steps: AgentStepState[]): void {
     this.steps.clear();
+    this.pendingHumanInputReferences.clear();
+    this.pendingToolCallReferences.clear();
     for (const step of steps) this.steps.set(step.stepId, cloneAgentStepState(step));
   }
 
@@ -47,20 +129,147 @@ export class AgentStepStore {
       if (existing.agentId !== step.agentId || existing.taskId !== step.taskId) {
         throw new Error(`Agent step ${step.stepId} conflicts with its existing owner.`);
       }
+      this.flushPendingReferences(step.stepId);
       return cloneAgentStepState(existing);
     }
     const restored = cloneAgentStepState(step);
     this.steps.set(restored.stepId, restored);
+    this.flushPendingReferences(restored.stepId);
     return cloneAgentStepState(restored);
+  }
+
+  applyPlanObservation(
+    agentId: string,
+    plan: AppServerPlanState & { turnId: string },
+  ): AgentStepState | undefined {
+    const runningSteps = this.list({ agentId }).filter((step) => step.status === "running");
+    if (runningSteps.length === 0) return undefined;
+    if (runningSteps.length !== 1 || !runningSteps[0]) {
+      throw new Error(`Agent ${agentId} has multiple running steps for plan update.`);
+    }
+    const currentStep = runningSteps[0];
+    if (currentStep.turnId && currentStep.turnId !== plan.turnId) {
+      throw new Error(
+        `Agent step ${currentStep.stepId} belongs to turn ${currentStep.turnId}, not ${plan.turnId}.`,
+      );
+    }
+    const updatedAt = new Date().toISOString();
+    const step = this.updateStep(currentStep.stepId, (current) => ({
+      ...current,
+      turnId: plan.turnId,
+      plan,
+      updatedAt,
+    }));
+    this.requireEventBus().publish(AgentEvents.step.planUpdated, {
+      stepId: step.stepId,
+      agentId: step.agentId,
+      taskId: step.taskId,
+      turnId: plan.turnId,
+      plan,
+      updatedAt,
+    }, { occurredAt: updatedAt });
+    return step;
+  }
+
+  recordHumanInputReference(
+    stepId: string,
+    reference: AgentStepHumanInputReference,
+  ): AgentStepState | undefined {
+    const current = this.getStep(stepId);
+    if (!current) {
+      const pending = this.pendingHumanInputReferences.get(stepId) ?? [];
+      if (!pending.some((candidate) =>
+        candidate.requestId === reference.requestId && candidate.kind === reference.kind
+      )) {
+        pending.push({ ...reference });
+        this.pendingHumanInputReferences.set(stepId, pending);
+      }
+      return undefined;
+    }
+    if (current.status !== "running") {
+      throw new Error(`Agent step ${stepId} cannot record Human Input from status ${current.status}.`);
+    }
+    if (current.humanInputReferences.some((candidate) =>
+      candidate.requestId === reference.requestId && candidate.kind === reference.kind
+    )) return undefined;
+    const updatedAt = new Date().toISOString();
+    const step = this.updateStep(stepId, (stored) => ({
+      ...stored,
+      humanInputReferences: [...stored.humanInputReferences, reference],
+      updatedAt,
+    }));
+    this.requireEventBus().publish(AgentEvents.step.humanInputReferenced, step, {
+      occurredAt: updatedAt,
+    });
+    return step;
+  }
+
+  recordToolCallReference(call: AgentToolCallState): AgentStepState | undefined {
+    const current = this.getStep(call.stepId);
+    if (!current) {
+      const pending = this.pendingToolCallReferences.get(call.stepId) ?? [];
+      if (!pending.some((candidate) => candidate.toolCallId === call.toolCallId)) {
+        pending.push(structuredClone(call));
+        this.pendingToolCallReferences.set(call.stepId, pending);
+      }
+      return undefined;
+    }
+    if (current.agentId !== call.agentId || current.taskId !== call.taskId) {
+      throw new Error(`Tool call ${call.toolCallId} conflicts with Step ${call.stepId} ownership.`);
+    }
+    if (current.turnId && current.turnId !== call.turnId) {
+      throw new Error(`Tool call ${call.toolCallId} belongs to turn ${call.turnId}, not Step turn ${current.turnId}.`);
+    }
+    if (current.toolCallIds.includes(call.toolCallId)) return undefined;
+    const updatedAt = new Date().toISOString();
+    const step = this.updateStep(call.stepId, (stored) => ({
+      ...stored,
+      toolCallIds: [...stored.toolCallIds, call.toolCallId],
+      updatedAt,
+    }));
+    this.requireEventBus().publish(AgentEvents.step.toolCallReferenced, step, {
+      occurredAt: updatedAt,
+    });
+    return step;
+  }
+
+  private requireEventBus(): RunScope["eventBus"] {
+    if (!this.eventBus) throw new Error("AgentStepStore is not started.");
+    return this.eventBus;
+  }
+
+  private applyStepSnapshot(step: AgentStepState): void {
+    const existing = this.steps.get(step.stepId);
+    if (existing && (
+      existing.agentId !== step.agentId || existing.taskId !== step.taskId
+    )) {
+      throw new Error(`Agent step ${step.stepId} conflicts with its existing owner.`);
+    }
+    this.steps.set(step.stepId, cloneAgentStepState(step));
+    this.flushPendingReferences(step.stepId);
+  }
+
+  private flushPendingReferences(stepId: string): void {
+    const humanInputReferences = this.pendingHumanInputReferences.get(stepId) ?? [];
+    this.pendingHumanInputReferences.delete(stepId);
+    for (const reference of humanInputReferences) {
+      this.recordHumanInputReference(stepId, reference);
+    }
+
+    const toolCalls = this.pendingToolCallReferences.get(stepId) ?? [];
+    this.pendingToolCallReferences.delete(stepId);
+    for (const call of toolCalls) {
+      this.recordToolCallReference(call);
+    }
   }
 }
 
 export function cloneAgentStepState(step: AgentStepState): AgentStepState {
   return {
     ...step,
-    toolCalls: step.toolCalls.map((call) => ({ ...call })),
+    toolCallIds: [...step.toolCallIds],
     plan: step.plan === undefined ? undefined : cloneJson(step.plan),
-    humanInputResponse: step.humanInputResponse ? { ...step.humanInputResponse } : undefined,
+    humanInputReferences: step.humanInputReferences.map((reference) => ({ ...reference })),
   };
 }
 

@@ -208,7 +208,14 @@ test("interaction gateway projects assigned task plan and Worker activity into T
   );
   await bus.publishAndWait(
     AgentEvents.step.planUpdated,
-    stepState({ plan: taskPlan("inProgress") }),
+    {
+      stepId: "researcher-task-0001-step-0001",
+      agentId: "researcher",
+      taskId: "researcher-task-0001",
+      turnId: "turn-1",
+      plan: taskPlan("inProgress"),
+      updatedAt: "2026-07-10T00:00:02.000Z",
+    },
   );
   await bus.publishAndWait(AgentEvents.activity.observed, {
     seq: 1,
@@ -235,6 +242,7 @@ test("interaction gateway projects assigned task plan and Worker activity into T
   } satisfies AgentTurnActivity);
 
   assert.deepEqual(store.snapshot().tasks[0]?.turns, [{
+    stepId: "researcher-task-0001-step-0001",
     turnId: "turn-1",
     status: "running",
     planSteps: [{
@@ -375,7 +383,8 @@ function stepState(input: Partial<AgentStepState> = {}): AgentStepState {
     turnId: "turn-1",
     status: "running",
     prompt: "Research current BDD evidence",
-    toolCalls: [],
+    toolCallIds: [],
+    humanInputReferences: [],
     startedAt: "2026-07-10T00:00:01.000Z",
     updatedAt: "2026-07-10T00:00:01.000Z",
     ...input,

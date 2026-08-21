@@ -8,6 +8,7 @@ import {
   boundedText,
   renderArtifact,
   renderIdentity,
+  renderRecoveryPrompt,
   renderResumeAction,
   type ResumePacket,
   type ResumePacketInput,
@@ -31,12 +32,6 @@ export function buildWorkerResumePacket(
   const checkpoint = inferTaskRecoveryCheckpoint(input.projection, task);
   const requests = task
     ? input.projection.humanInputRequests.filter((request) => request.taskId === task.taskId)
-    : [];
-  const interrupted = task
-    ? input.projection.turns.filter((turn) =>
-      turn.taskId === task.taskId
-      && (turn.completedAt === undefined || turn.status === "interrupted")
-    )
     : [];
   const taskSteps = task ? projectedStepsForTask(input.projection, task) : [];
   const currentStep = taskSteps.at(-1);
@@ -90,7 +85,7 @@ export function buildWorkerResumePacket(
           : "incomplete_task_step",
         step_id: currentStep.stepId,
         started_at: currentStep.startedAt,
-        prompt: boundedText(currentStep.prompt),
+        prompt: renderRecoveryPrompt(currentStep.prompt),
       }]
       : []),
     ...requests.filter((request) =>
@@ -103,12 +98,6 @@ export function buildWorkerResumePacket(
       request_id: request.requestId,
       body: boundedText(request.body),
       requested_at: request.requestedAt,
-    })),
-    ...interrupted.map((turn) => ({
-      type: "interrupted_turn",
-      invocation_id: turn.invocationId,
-      started_at: turn.startedAt,
-      prompt: boundedText(turn.prompt),
     })),
   ];
 

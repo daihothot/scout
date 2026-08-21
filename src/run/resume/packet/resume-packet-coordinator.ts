@@ -8,6 +8,7 @@ import {
   boundedText,
   renderArtifact,
   renderIdentity,
+  renderRecoveryPrompt,
   renderResumeAction,
   type ResumePacket,
   type ResumePacketInput,
@@ -94,25 +95,40 @@ export function buildCoordinatorResumePacket(
       })),
   ];
 
-  const renderOpen = (): Array<Record<string, unknown>> => [
-    ...openTasks
-      .flatMap((task) => {
-        const step = projectedStepsForTask(input.projection, task).at(-1);
-        if (
-          step?.status !== AgentStepStatuses.Running
-          && step?.status !== AgentStepStatuses.Interrupted
-        ) return [];
-        return [{
+  const renderOpen = (): Array<Record<string, unknown>> => {
+    const coordinatorStep = input.projection.steps
+      .filter((step) =>
+        step.agentId === input.agentId
+        && step.taskId === undefined
+        && (step.status === AgentStepStatuses.Running || step.status === AgentStepStatuses.Interrupted)
+      )
+      .at(-1);
+    const coordinatorStepEntry = coordinatorStep
+      ? [{
+        type: coordinatorStep.status === AgentStepStatuses.Interrupted
+          ? "interrupted_step"
+          : "incomplete_step",
+        step_id: coordinatorStep.stepId,
+        started_at: coordinatorStep.startedAt,
+        prompt: renderRecoveryPrompt(coordinatorStep.prompt),
+      }]
+      : [];
+    const taskStepEntries = openTasks.flatMap((task) => {
+      const step = projectedStepsForTask(input.projection, task).at(-1);
+      if (
+        step?.status !== AgentStepStatuses.Running
+        && step?.status !== AgentStepStatuses.Interrupted
+      ) return [];
+      return [{
         type: step.status === AgentStepStatuses.Interrupted
           ? "interrupted_task_step"
           : "incomplete_task_step",
         task_id: task.taskId,
         step_id: step.stepId,
         started_at: step.startedAt,
-        prompt: boundedText(step.prompt),
       }];
-      }),
-    ...input.projection.humanInputRequests
+    });
+    const humanInputEntries = input.projection.humanInputRequests
       .filter((request) =>
         !request.response
         && openTaskIds.has(request.taskId)
@@ -129,18 +145,9 @@ export function buildCoordinatorResumePacket(
           ? undefined
           : boundedText(request.body),
         requested_at: request.requestedAt,
-      })),
-    ...input.projection.turns
-      .filter((turn) => turn.completedAt === undefined || turn.status === "interrupted")
-      .map((turn) => ({
-        type: "interrupted_turn",
-        agent_id: turn.agentId,
-        task_id: turn.taskId,
-        invocation_id: turn.invocationId,
-        started_at: turn.startedAt,
-        prompt: boundedText(turn.prompt),
-      })),
-  ];
+      }));
+    return [...coordinatorStepEntry, ...taskStepEntries, ...humanInputEntries];
+  };
 
   const renderArtifacts = (): Array<Record<string, unknown>> => [
     ...input.projection.artifacts.slice(-20).map(renderArtifact),

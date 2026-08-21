@@ -86,7 +86,6 @@ import {
   AgentTaskStatuses,
   type AgentTaskState,
 } from "../../src/agent/task/types.js";
-import type { AgentStepToolCall } from "../../src/agent/step/types.js";
 import {
   RunJournal,
   RunJournalWriter,
@@ -742,17 +741,21 @@ test("AgentBackend normalizes app-server items into Agent activity", () => {
     turnId: "turn-1",
     itemId: "reasoning-1",
   } satisfies AppServerTimelineEntry;
+  let resolveCount = 0;
   const appServer = createFakeAppServer({
-    resolveTimelineEntry: () => ({
-      entry,
-      item: {
-        id: "reasoning-1",
-        type: "reasoning",
-        status: "completed",
-        summary: ["Inspect current evidence."],
-        content: ["private chain of thought"],
-      },
-    }),
+    resolveTimelineEntry: (resolvedEntry) => {
+      resolveCount += 1;
+      return {
+        entry: resolvedEntry,
+        item: {
+          id: "reasoning-1",
+          type: "reasoning",
+          status: "completed",
+          summary: ["Inspect current evidence."],
+          content: ["private chain of thought"],
+        },
+      };
+    },
   });
   const fixture = createAgentFixture("agent-activity", {
     appServer,
@@ -769,6 +772,7 @@ test("AgentBackend normalizes app-server items into Agent activity", () => {
 
   appServer.emitTimeline(entry);
 
+  assert.equal(resolveCount, 1);
   assert.deepEqual(activities, [{
     seq: 7,
     agentId: "coordinator",
@@ -1269,6 +1273,8 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   let verifier: WorkerAgent | undefined;
   let requestSucceeded = false;
   let repeatedRequestSucceeded = false;
+  let responseSucceeded = false;
+  let repeatedResponseStatus = "";
   let submitSucceeded = false;
   let staleRequestError = "";
   let staleSubmitError = "";
@@ -1281,14 +1287,49 @@ test("Human input tools deliver through Coordinator and update the bound task", 
     releaseResponseTurn = resolve;
   });
   const appServer = createFakeAppServer({
-    turnIdForTurn: (turn) => turn.prompt?.includes("<human-response>")
-      ? "turn-human-response-worker"
-      : turn.prompt?.includes("Restate the existing request")
-        ? "turn-human-request-repeat-worker"
-        : "turn-human-request-worker",
+    turnIdForTurn: (turn) => turn.prompt?.includes("Forward human response again")
+      ? "turn-human-response-repeat"
+      : turn.prompt?.includes("Forward human response")
+        ? "turn-human-response"
+        : turn.prompt?.includes("<human-response>")
+          ? "turn-human-response-worker"
+          : turn.prompt?.includes("Restate the existing request")
+            ? "turn-human-request-repeat-worker"
+            : "turn-human-request-worker",
     onRunTurn: async (turn) => {
       const prompt = turn.prompt ?? "";
       if (!verifier || !appServer.handler) return;
+      if (prompt.includes("<message>\nForward human response.\n</message>")) {
+        const result = await appServer.handler({
+          threadId: "thread-test",
+          turnId: "turn-human-response",
+          callId: "call-human-response",
+          namespace: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
+          tool: "RespondHumanInput",
+          arguments: {
+            task_id: verifier.taskRunner?.snapshot().activeTask?.taskId,
+            response: "Use staging account.",
+          },
+        });
+        responseSucceeded = result.success;
+        return;
+      }
+      if (prompt.includes("<message>\nForward human response again.\n</message>")) {
+        const result = await appServer.handler({
+          threadId: "thread-test",
+          turnId: "turn-human-response-repeat",
+          callId: "call-human-response-repeat",
+          namespace: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
+          tool: "RespondHumanInput",
+          arguments: {
+            task_id: verifier.taskRunner?.snapshot().activeTask?.taskId,
+            response: "Use staging account.",
+          },
+        });
+        responseSucceeded = result.success;
+        repeatedResponseStatus = JSON.parse(result.contentItems[0]?.text ?? "{}").status ?? "";
+        return;
+      }
       if (prompt.includes("<message>\nPerform lifecycle handoff.\n</message>")) {
         const stale = await appServer.handler({
           threadId: verifier.threadId ?? "",
@@ -1473,42 +1514,29 @@ test("Human input tools deliver through Coordinator and update the bound task", 
     1,
   );
 
-  assert.ok(appServer.handler);
-  const response = await appServer.handler({
-    threadId: "thread-coordinator",
-    turnId: "turn-human-response",
-    callId: "call-human-response",
-    namespace: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
-    tool: "RespondHumanInput",
-    arguments: {
-      task_id: assignment.value.taskId,
-      response: "Use staging account.",
-    },
+  await coordinator.runToIdle();
+  fixture.registry.bindThread(coordinator.agentId, coordinator.threadId ?? "");
+  const responseDelivery = await coordinator.sendMessage({
+    message: agent.turn.message("Forward human response."),
   });
-  assert.equal(response.success, true);
+  assert.equal(responseDelivery.ok, true);
+  await coordinator.runToIdle();
+  assert.equal(responseSucceeded, true);
   await responseTurnStarted;
 
   const stepCountAfterResponse = fixture.stepStore.list({ taskId: assignment.value.taskId }).length;
-  const repeatedResponse = await appServer.handler({
-    threadId: "thread-coordinator",
-    turnId: "turn-human-response-repeat",
-    callId: "call-human-response-repeat",
-    namespace: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
-    tool: "RespondHumanInput",
-    arguments: {
-      task_id: assignment.value.taskId,
-      response: "Use staging account.",
-    },
+  const repeatedResponseDelivery = await coordinator.sendMessage({
+    message: agent.turn.message("Forward human response again."),
   });
-  assert.equal(repeatedResponse.success, true);
-  assert.equal(
-    JSON.parse(repeatedResponse.contentItems[0]?.text ?? "{}").status,
-    "accepted",
-  );
+  assert.equal(repeatedResponseDelivery.ok, true);
+  await coordinator.runToIdle();
+  assert.equal(responseSucceeded, true);
+  assert.equal(repeatedResponseStatus, "accepted");
   assert.equal(
     fixture.stepStore.list({ taskId: assignment.value.taskId }).length,
     stepCountAfterResponse,
   );
+  fixture.registry.bindThread(verifier.agentId, verifier.threadId ?? "");
   releaseResponseTurn?.();
   await verifier.runToIdle();
 
@@ -1521,9 +1549,21 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   const submittedStep = fixture.stepStore.list({ taskId: assignment.value.taskId }).find((step) =>
     step.turnId === "turn-human-response-worker"
   );
-  assert.deepEqual(submittedStep?.humanInputResponse, {
-    body: "Use staging account.",
-  });
+  assert.deepEqual(submittedStep?.humanInputReferences, [{
+    requestId: humanRequestEvent.payload.requestId,
+    kind: "response_consumed",
+  }]);
+  const humanInputKinds = fixture.stepStore.list()
+    .flatMap((step) => step.humanInputReferences)
+    .filter((reference) => reference.requestId === humanRequestEvent.payload.requestId)
+    .map((reference) => reference.kind)
+    .sort();
+  assert.deepEqual(humanInputKinds, [
+    "request_produced",
+    "request_consumed",
+    "response_produced",
+    "response_consumed",
+  ].sort());
   const submittedDisposition = runner.snapshot().activeTask?.dispositions.find((disposition) =>
     disposition.stepId === submittedStep?.stepId
   );
@@ -1568,6 +1608,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
     1,
   );
 
+  if (!appServer.handler) throw new Error("Expected the dynamic tool handler.");
   const coordinatorRequest = await appServer.handler({
     threadId: "thread-coordinator",
     turnId: "turn-invalid-human-request",
@@ -2115,10 +2156,18 @@ function readMarkdownListValue(markdown: string, label: string): string | undefi
   return markdown.split("\n").find((line) => line.startsWith(prefix))?.slice(prefix.length);
 }
 
+interface TestToolCall {
+  namespace?: string | null;
+  tool: string;
+  callId?: string;
+  arguments?: unknown;
+  success?: boolean | null;
+}
+
 function createFakeAppServer(options: {
   onRunTurn?: (
     turn: { prompt?: string },
-  ) => AgentStepToolCall[] | void | Promise<AgentStepToolCall[] | void>;
+  ) => TestToolCall[] | void | Promise<TestToolCall[] | void>;
   onBeforeTurnStarted?: (turn: { prompt?: string }) => void | Promise<void>;
   onInterruptTurn?: (input: { threadId: string; turnId: string }) => void | Promise<void>;
   onCancelTurnWait?: (threadId: string, error: Error) => void;

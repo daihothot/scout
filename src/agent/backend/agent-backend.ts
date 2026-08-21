@@ -1,27 +1,22 @@
-import type {
-  AppServerTimelineEntry,
-} from "../../agent-server/codex/app-server-event-store.js";
+import type { AppServerTimelineEntry } from "../../agent-server/codex/app-server-event-store.js";
 import { AgentActivityBackend } from "./agent-activity-backend.js";
-import { AgentTaskBackend } from "./agent-task-backend.js";
 import { AgentStepBackend } from "./agent-step-backend.js";
-import { AgentToolBackend } from "./agent-tool-backend.js";
+import { AgentToolCallBackend } from "./agent-tool-call-backend.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 
 /**
- * Owns the run-scoped app-server subscriptions and routes each entry to the
- * task or activity backend. Agent construction and lifecycle orchestration are
+ * Owns the run-scoped app-server subscriptions and composes the Tool Call and
+ * Step backend trees. Agent construction and lifecycle orchestration are
  * intentionally left to the surrounding run stages.
  */
 export class AgentBackend {
   readonly registry: RunScope["agentRegistry"];
   readonly activity: AgentActivityBackend;
-  readonly task: AgentTaskBackend;
   readonly step: AgentStepBackend;
-  readonly tool: AgentToolBackend;
+  readonly toolCall: AgentToolCallBackend;
   readonly domain: RunScope["domain"];
   private readonly scope: RunScope;
-  private unsubscribeDynamicTools?: () => void;
   private unsubscribeTimeline?: () => void;
 
   constructor() {
@@ -30,39 +25,35 @@ export class AgentBackend {
     this.domain = scope.domain;
     this.registry = scope.agentRegistry;
     this.activity = new AgentActivityBackend();
-    this.task = new AgentTaskBackend();
     this.step = new AgentStepBackend();
-    this.tool = new AgentToolBackend({
-      taskBackend: this.task,
+    this.toolCall = new AgentToolCallBackend({
+      taskBackend: this.step.task,
     });
   }
 
   start(): void {
-    if (this.unsubscribeDynamicTools || this.unsubscribeTimeline) return;
-    const unsubscribeDynamicTools = this.scope.appServer.setDynamicToolCallHandler((input) =>
-      this.tool.handleDynamicToolCall(input)
-    );
+    if (this.unsubscribeTimeline) return;
+    let unsubscribeTimeline: (() => void) | undefined;
     try {
-      const unsubscribeTimeline = this.scope.appServer.onTimeline((entry) =>
+      this.toolCall.start();
+      unsubscribeTimeline = this.scope.appServer.onTimeline((entry) =>
         this.handleAppServerTimelineEntry(entry)
       );
-      this.unsubscribeDynamicTools = unsubscribeDynamicTools;
       this.unsubscribeTimeline = unsubscribeTimeline;
     } catch (error) {
-      unsubscribeDynamicTools();
+      unsubscribeTimeline?.();
+      this.toolCall.stop();
       throw error;
     }
   }
 
   stop(): void {
     const unsubscribeTimeline = this.unsubscribeTimeline;
-    const unsubscribeDynamicTools = this.unsubscribeDynamicTools;
     this.unsubscribeTimeline = undefined;
-    this.unsubscribeDynamicTools = undefined;
     try {
       unsubscribeTimeline?.();
     } finally {
-      unsubscribeDynamicTools?.();
+      this.toolCall.stop();
     }
   }
 
@@ -84,14 +75,10 @@ export class AgentBackend {
     entry: AppServerTimelineEntry,
   ): void {
     this.logAppServerHealthEvent(entry, agent);
-    this.step.handleAppServerTimelineEntry(agent, entry, (timelineEntry) =>
-      this.scope.appServer.resolveTimelineEntry(timelineEntry)
-    );
-    this.activity.handleAppServerTimelineEntry(
-      agent,
-      entry,
-      () => this.scope.appServer.resolveTimelineEntry(entry),
-    );
+    const resolved = this.scope.appServer.resolveTimelineEntry(entry);
+    this.step.handleAppServerTimelineEntry(agent, entry, resolved);
+    this.toolCall.handleAppServerTimelineEntry(agent, entry, resolved);
+    this.activity.handleAppServerTimelineEntry(agent, entry, resolved);
   }
 
   private handleUnboundAppServerTimelineEntry(entry: AppServerTimelineEntry): void {

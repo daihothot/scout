@@ -20,7 +20,7 @@ test("Logger writes to its configured file and redacts structured data", () => {
     data: {
       api_key: "should-not-appear",
       nested: { token: "hidden" },
-      output: "x".repeat(4100),
+      output: "x".repeat(10100),
       items: Array.from({ length: 205 }, (_, index) => index),
     },
   });
@@ -32,7 +32,7 @@ test("Logger writes to its configured file and redacts structured data", () => {
   assert.equal(events[0]?.includes("should-not-appear"), false);
   assert.equal(events[0]?.includes("hidden"), false);
   assert.match(events[0] ?? "", /\[redacted\]/);
-  assert.match(events[0] ?? "", /\.\.\.\[truncated:4100\]/);
+  assert.match(events[0] ?? "", /\.\.\.\[truncated:10100\]/);
   assert.match(events[0] ?? "", /\[truncated_items:5\]/);
 
   logger.warn({
@@ -96,7 +96,7 @@ test("Logger writes a summarized message between the header and structured data"
   logger.warn({
     module: "run.lifecycle",
     event: "long_message",
-    message: "x".repeat(4100),
+    message: "x".repeat(10100),
   });
 
   const events = readEvents(join(root, "logs", "runtime.log"));
@@ -106,7 +106,7 @@ test("Logger writes a summarized message between the header and structured data"
   );
   assert.match(events[1] ?? "", /event=legacy_event run=run-message\ndata:/);
   assert.equal(events[1]?.includes("\nmessage:"), false);
-  assert.match((events[2] ?? "").replaceAll("\n  ", ""), /\.\.\.\[truncated:4100\]/);
+  assert.match((events[2] ?? "").replaceAll("\n  ", ""), /\.\.\.\[truncated:10100\]/);
 });
 
 test("Logger supports custom redactor and summarizer hooks", () => {

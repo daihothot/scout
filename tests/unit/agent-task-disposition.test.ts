@@ -232,7 +232,8 @@ function stepState(taskId: string, stepId: string, turnId: string): AgentStepSta
     turnId,
     status: AgentStepStatuses.Running,
     prompt: "Perform the current task.",
-    toolCalls: [],
+    toolCallIds: [],
+    humanInputReferences: [],
     startedAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
   };

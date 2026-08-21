@@ -268,7 +268,7 @@ export abstract class WorkerAgent extends ScoutAgent {
       onStarted: (step) => {
         taskRunner.recordStepStarted(preparation, step);
         if (preparation.messagesToConsume.length > 0) {
-          this.consumeQueuedMessages(preparation.messagesToConsume);
+          this.consumeQueuedMessages(preparation.messagesToConsume, step.stepId);
           taskRunner.recordPendingMessagesDrained(preparation.taskId);
         }
       },

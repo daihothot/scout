@@ -35,6 +35,7 @@ export interface LoggerOptions {
 }
 
 const LOG_LINE_WIDTH = 120;
+const MAX_LOG_STRING_LENGTH = 10_000;
 
 /** Appends structured, summarized, and redacted runtime events to one run log. */
 export class Logger {
@@ -275,7 +276,9 @@ function summarizeValue(value: unknown): unknown {
 }
 
 function summarizeString(value: string): string {
-  return value.length > 4000 ? `${value.slice(0, 4000)}...[truncated:${value.length}]` : value;
+  return value.length > MAX_LOG_STRING_LENGTH
+    ? `${value.slice(0, MAX_LOG_STRING_LENGTH)}...[truncated:${value.length}]`
+    : value;
 }
 
 function shouldRedactKey(key: string): boolean {

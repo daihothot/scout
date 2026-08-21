@@ -3,6 +3,7 @@ import { AgentRegistry } from "../agent/core/agent-registry.js";
 import { AgentHumanInputStore } from "../agent/human-input/index.js";
 import { AgentTaskStore } from "../agent/task/agent-task-store.js";
 import { AgentStepStore } from "../agent/step/agent-step-store.js";
+import { AgentToolCallStore } from "../agent/tool-call/agent-tool-call-store.js";
 import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
 import type { ScoutDomain } from "../domain/index.js";
@@ -47,8 +48,9 @@ export class RunScope {
   readonly interactionPort: RuntimeInteractionPort;
   readonly agentRegistry = new AgentRegistry();
   readonly taskStore = new AgentTaskStore();
-  readonly stepStore = new AgentStepStore();
+  readonly toolCallStore = new AgentToolCallStore();
   readonly humanInputStore: AgentHumanInputStore;
+  readonly stepStore: AgentStepStore;
   readonly domain: ScoutDomain;
   readonly scoutConfig: ScoutConfig;
   readonly journal: RunJournal;
@@ -65,6 +67,7 @@ export class RunScope {
     this.eventBus = options.eventBus;
     this.interactionPort = options.interactionPort;
     this.humanInputStore = new AgentHumanInputStore();
+    this.stepStore = new AgentStepStore();
     this.domain = options.domain;
     this.scoutConfig = options.scoutConfig ?? defaultScoutConfig;
     this.journal = options.journal;
@@ -125,7 +128,9 @@ export class RunScope {
   }
 
   dispose(): void {
+    this.stepStore.dispose();
     this.humanInputStore.dispose();
+    this.toolCallStore.dispose();
   }
 }
 
@@ -139,7 +144,10 @@ export function installRunScope(scope: RunScope): () => void {
   activeRunScope = scope;
   try {
     scope.humanInputStore.start();
+    scope.stepStore.start();
   } catch (error) {
+    scope.stepStore.dispose();
+    scope.humanInputStore.dispose();
     activeRunScope = undefined;
     throw error;
   }

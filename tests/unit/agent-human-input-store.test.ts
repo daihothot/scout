@@ -15,6 +15,7 @@ test("AgentHumanInputStore projects requests and matching responses", async (t) 
   }).humanInputStore;
   const request = {
     requestId: "task-1-human-1",
+    stepId: "task-1-step-request",
     taskId: "task-1",
     agentId: "researcher",
     body: "请确认目标版本。",
@@ -33,6 +34,7 @@ test("AgentHumanInputStore projects requests and matching responses", async (t) 
   const requestConsumption = {
     messageId: request.message.messageId,
     agentId: request.message.agentId,
+    stepId: "coordinator-step-request",
     consumedAt: "2026-07-23T00:00:01.000Z",
     deliveryMode: "queued" as const,
   };
@@ -40,6 +42,7 @@ test("AgentHumanInputStore projects requests and matching responses", async (t) 
 
   const response = {
     requestId: request.requestId,
+    stepId: "coordinator-step-response",
     taskId: request.taskId,
     agentId: request.agentId,
     body: "使用 v2。",
@@ -56,6 +59,7 @@ test("AgentHumanInputStore projects requests and matching responses", async (t) 
   const responseConsumption = {
     messageId: response.message.messageId,
     agentId: response.message.agentId,
+    stepId: "task-1-step-response",
     taskId: response.taskId,
     consumedAt: "2026-07-23T00:01:01.000Z",
     deliveryMode: "queued" as const,
@@ -66,6 +70,7 @@ test("AgentHumanInputStore projects requests and matching responses", async (t) 
     ...request,
     requestConsumption,
     response: {
+      stepId: response.stepId,
       body: response.body,
       respondedAt: response.respondedAt,
       message: response.message,
@@ -89,6 +94,7 @@ test("AgentHumanInputStore restores a cloned projection", (t) => {
   }).humanInputStore;
   const state = {
     requestId: "task-1-human-1",
+    stepId: "task-1-step-1",
     taskId: "task-1",
     agentId: "researcher",
     body: "请确认目标版本。",
@@ -122,6 +128,7 @@ test("AgentHumanInputStore does not project an event when persistence fails", as
   await assert.rejects(
     eventBus.publishAndWait(AgentEvents.humanInput.requested, {
       requestId: "task-1-human-1",
+      stepId: "task-1-step-1",
       taskId: "task-1",
       agentId: "researcher",
       body: "请确认目标版本。",
