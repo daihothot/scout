@@ -12,6 +12,7 @@ export function collectMountReadableRoots(mount: CodexMount): string[] {
 export function collectMountWritableRoots(mount: CodexMount): string[] {
   return uniqueStrings([
     mount.artifactRoot,
+    mount.tempRoot,
     ...mount.writableRoots,
     ...mount.mcpServers.flatMap((server) => server.writableRoots),
   ]);

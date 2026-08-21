@@ -30,6 +30,14 @@ test("AgentHumanInputStore projects requests and matching responses", async (t) 
   await eventBus.publishAndWait(AgentEvents.humanInput.requested, request);
   assert.deepEqual(store.listForTask("task-1"), [request]);
 
+  const requestConsumption = {
+    messageId: request.message.messageId,
+    agentId: request.message.agentId,
+    consumedAt: "2026-07-23T00:00:01.000Z",
+    deliveryMode: "queued" as const,
+  };
+  await eventBus.publishAndWait(AgentEvents.message.consumed, requestConsumption);
+
   const response = {
     requestId: request.requestId,
     taskId: request.taskId,
@@ -45,15 +53,34 @@ test("AgentHumanInputStore projects requests and matching responses", async (t) 
     },
   };
   await eventBus.publishAndWait(AgentEvents.humanInput.responded, response);
+  const responseConsumption = {
+    messageId: response.message.messageId,
+    agentId: response.message.agentId,
+    taskId: response.taskId,
+    consumedAt: "2026-07-23T00:01:01.000Z",
+    deliveryMode: "queued" as const,
+  };
+  await eventBus.publishAndWait(AgentEvents.message.consumed, responseConsumption);
 
   assert.deepEqual(store.listForTask("task-1"), [{
     ...request,
+    requestConsumption,
     response: {
       body: response.body,
       respondedAt: response.respondedAt,
       message: response.message,
+      consumption: responseConsumption,
     },
   }]);
+
+  await assert.rejects(
+    eventBus.publishAndWait(AgentEvents.message.consumed, requestConsumption),
+    /Human input request .* was consumed more than once/,
+  );
+  await assert.rejects(
+    eventBus.publishAndWait(AgentEvents.message.consumed, responseConsumption),
+    /Human input response .* was consumed more than once/,
+  );
 });
 
 test("AgentHumanInputStore restores a cloned projection", (t) => {

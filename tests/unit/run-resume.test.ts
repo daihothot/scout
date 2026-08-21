@@ -17,12 +17,21 @@ import { agent } from "../../src/agent/context/agent-attachments.js";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import { CoordinatorRunner } from "../../src/agent/runner/coordinator/coordinator-runner.js";
+import { TaskRunner } from "../../src/agent/runner/task/task-runner.js";
 import { WorkerRunner } from "../../src/agent/runner/worker/worker-runner.js";
+import { ScoutAgent } from "../../src/agent/core/scout-agent.js";
+import { Result } from "../../src/core/result.js";
+import type { AgentMessage } from "../../src/agent/message/types.js";
 import {
-  AgentTaskStepStatuses,
+  AgentTaskDispositionKinds,
   AgentTaskStatuses,
   type AgentTaskState,
+  type SendAgentMessageInput,
 } from "../../src/agent/task/types.js";
+import {
+  AgentStepStatuses,
+  type AgentStepState,
+} from "../../src/agent/step/types.js";
 import {
   ScoutAgentPermissionProfiles,
   ScoutAgentPhases,
@@ -295,15 +304,17 @@ test("Coordinator resume actions compose independent task checkpoints without pr
     taskId: "verifier-task-interrupted",
     agentId: ScoutAgentRoles.Verifier,
     role: ScoutAgentRoles.Verifier,
-    steps: [{
-      stepId: "verifier-task-interrupted-step-0001",
-      taskId: "verifier-task-interrupted",
-      status: AgentTaskStepStatuses.Interrupted,
-      prompt: agent.turn.message("恢复中断验证"),
-      toolCalls: [],
-      startedAt: "2026-07-22T00:00:01.000Z",
-      finishedAt: "2026-07-22T00:00:02.000Z",
-    }],
+    stepIds: ["verifier-task-interrupted-step-0001"],
+  });
+  const interruptedStep = agentStepState({
+    stepId: "verifier-task-interrupted-step-0001",
+    agentId: ScoutAgentRoles.Verifier,
+    taskId: interruptedTask.taskId,
+    status: AgentStepStatuses.Interrupted,
+    prompt: agent.turn.message("恢复中断验证"),
+    startedAt: "2026-07-22T00:00:01.000Z",
+    finishedAt: "2026-07-22T00:00:02.000Z",
+    updatedAt: "2026-07-22T00:00:02.000Z",
   });
   const terminatedTask = taskState({
     taskId: "validator-task-terminated",
@@ -323,6 +334,7 @@ test("Coordinator resume actions compose independent task checkpoints without pr
       submittedAt: "2026-07-22T00:01:00.000Z",
     }),
     scoutEvent(AgentEvents.task.assigned, interruptedTask),
+    scoutEvent(AgentEvents.step.interrupted, interruptedStep),
     scoutEvent(AgentEvents.task.assigned, taskState({
       taskId: terminatedTask.taskId,
       agentId: terminatedTask.agentId,
@@ -609,6 +621,88 @@ test("Pending human responses stay in the delivery queue instead of Resume Packe
   assert.match(body ?? "", /human-response-message/);
 });
 
+test("Run projection persists one consumption fact for each Human Input direction", () => {
+  const task = taskState();
+  const requestMessage = {
+    messageId: "human-consumption-request",
+    agentId: ScoutAgentRoles.Coordinator,
+    body: agent.turn.wait_for_human_request("请选择目标。"),
+    queuedAt: "2026-07-22T00:01:00.000Z",
+  };
+  const responseMessage = {
+    messageId: "human-consumption-response",
+    agentId: task.agentId,
+    taskId: task.taskId,
+    body: agent.turn.human_response("使用测试账号。"),
+    queuedAt: "2026-07-22T00:01:02.000Z",
+  };
+  const requestConsumption = {
+    messageId: requestMessage.messageId,
+    agentId: requestMessage.agentId,
+    consumedAt: "2026-07-22T00:01:01.000Z",
+    deliveryMode: "queued" as const,
+  };
+  const responseConsumption = {
+    messageId: responseMessage.messageId,
+    agentId: responseMessage.agentId,
+    taskId: task.taskId,
+    consumedAt: "2026-07-22T00:01:03.000Z",
+    deliveryMode: "queued" as const,
+  };
+  const projection = projectRun(journalEvents(
+    scoutEvent(AgentEvents.task.assigned, task),
+    scoutEvent(AgentEvents.humanInput.requested, {
+      requestId: "human-consumption",
+      taskId: task.taskId,
+      agentId: task.agentId,
+      body: "请选择目标。",
+      requestedAt: requestMessage.queuedAt,
+      message: requestMessage,
+    }),
+    scoutEvent(AgentEvents.message.consumed, requestConsumption),
+    scoutEvent(AgentEvents.humanInput.responded, {
+      requestId: "human-consumption",
+      taskId: task.taskId,
+      agentId: task.agentId,
+      body: "使用测试账号。",
+      respondedAt: responseMessage.queuedAt,
+      message: responseMessage,
+    }),
+    scoutEvent(AgentEvents.message.consumed, responseConsumption),
+  ));
+
+  assert.deepEqual(projection.humanInputRequests, [{
+    requestId: "human-consumption",
+    taskId: task.taskId,
+    agentId: task.agentId,
+    body: "请选择目标。",
+    requestedAt: requestMessage.queuedAt,
+    message: requestMessage,
+    requestConsumption,
+    response: {
+      body: "使用测试账号。",
+      respondedAt: responseMessage.queuedAt,
+      message: responseMessage,
+      consumption: responseConsumption,
+    },
+  }]);
+  assert.deepEqual(projection.pendingMessages, []);
+
+  assert.throws(() => projectRun(journalEvents(
+    scoutEvent(AgentEvents.task.assigned, task),
+    scoutEvent(AgentEvents.humanInput.requested, {
+      requestId: "human-consumption",
+      taskId: task.taskId,
+      agentId: task.agentId,
+      body: "请选择目标。",
+      requestedAt: requestMessage.queuedAt,
+      message: requestMessage,
+    }),
+    scoutEvent(AgentEvents.message.consumed, requestConsumption),
+    scoutEvent(AgentEvents.message.consumed, requestConsumption),
+  )), /Human input request .* was consumed more than once/);
+});
+
 test("Archived tasks do not retain unresolved Human Gates or their pending delivery", () => {
   const task = taskState();
   const projection = projectRun(journalEvents(
@@ -736,7 +830,7 @@ test("Resume Packet bounds long outcomes and keeps artifact refs without message
   assert.equal(workerPacket.reported?.[0]?.outcome?.truncated, true);
 });
 
-test("WorkerRunner injects restored context once and consumes restored messages once", async (t) => {
+test("TaskRunner injects restored context once and consumes restored messages once", async (t) => {
   const eventBus = new InMemoryEventBus();
   installTestRunScope(t, {
     runId: "worker-runner-restored-context",
@@ -757,35 +851,40 @@ test("WorkerRunner injects restored context once and consumes restored messages 
     body: agent.turn.message("恢复前已消费"),
     queuedAt: "2026-07-22T00:00:00.500Z",
   };
-  let runner: WorkerRunner;
-  runner = new WorkerRunner({
-    host: workerHost(async (input) => {
+  let runner: TaskRunner;
+  const host = workerHost(async (input) => {
       prompts.push(input.prompt);
       const finalResponse = `turn-${prompts.length}`;
       const turnId = `turn-${finalResponse}`;
       const request = `Need input ${prompts.length}.`;
       const callId = `human-${prompts.length}`;
-      runner.beginHumanInput({ request, turnId, callId });
-      await runner.completeHumanInput({
+      const task = runner.snapshot().activeTask;
+      if (!task) throw new Error("Restored Worker has no active task.");
+      const stepId = task.stepIds.at(-1);
+      if (!stepId) throw new Error("Restored Worker has no current step.");
+      const disposition = {
+        kind: AgentTaskDispositionKinds.WaitingForHuman,
+        stepId,
         request,
         requestId: `${callId}-request`,
         turnId,
         callId,
-      });
+        timestamp: new Date().toISOString(),
+      } as const;
+      const recordedTask = currentRunScope().taskStore.recordDisposition(task.taskId, disposition);
+      currentRunScope().eventBus.publish(AgentEvents.task.dispositionRecorded, {
+        task: recordedTask,
+        disposition,
+      }, { occurredAt: disposition.timestamp });
       return completedTurn(finalResponse);
-    }),
+    });
+  const workerRunner = new WorkerRunner({ host });
+  runner = new TaskRunner({
+    host,
     taskSequence: 1,
     restoredTask: task,
   });
-  runner.restoreState({
-    acceptedMessages: [consumedDelivery],
-    pendingMessages: [{
-      messageId: "restored-message",
-      agentId: "researcher",
-      taskId: task.taskId,
-      body: agent.turn.message("恢复消息"),
-      queuedAt: "2026-07-22T00:00:01.000Z",
-    }],
+  runner.restoreExecutionState({
     resumeContext: attachments.addTagBlock(
       "resume",
       JSON.stringify({
@@ -798,13 +897,77 @@ test("WorkerRunner injects restored context once and consumes restored messages 
     ),
     resumeImmediately: true,
   });
+  const acceptedMessages = new Map<string, AgentMessage>([[consumedDelivery.messageId, consumedDelivery]]);
+  let pendingMessages: AgentMessage[] = [{
+    messageId: "restored-message",
+    agentId: "researcher",
+    taskId: task.taskId,
+    body: agent.turn.message("恢复消息"),
+    queuedAt: "2026-07-22T00:00:01.000Z",
+  }];
+  let messageSequence = 0;
+  const runPreparedSteps = async (): Promise<void> => {
+    while (true) {
+      const preparation = runner.prepareStep(structuredClone(pendingMessages));
+      if (!preparation) return;
+      const result = await workerRunner.runStep({
+        taskId: preparation.taskId,
+        stepId: preparation.stepId,
+        prompt: preparation.prompt,
+        onStarted: (step) => {
+          runner.recordStepStarted(preparation, step);
+          const consumed = new Set(preparation.messagesToConsume.map((message) => message.messageId));
+          pendingMessages = pendingMessages.filter((message) => !consumed.has(message.messageId));
+          for (const message of preparation.messagesToConsume) {
+            const consumedAt = new Date().toISOString();
+            eventBus.publish(AgentEvents.message.consumed, {
+              messageId: message.messageId,
+              agentId: message.agentId,
+              taskId: message.taskId,
+              consumedAt,
+              deliveryMode: "queued",
+            }, { occurredAt: consumedAt });
+          }
+          if (preparation.messagesToConsume.length > 0) {
+            runner.recordPendingMessagesDrained(preparation.taskId);
+          }
+        },
+      });
+      await runner.recordStepFinished(preparation, result);
+    }
+  };
+  const queueMessage = async (input: SendAgentMessageInput): Promise<void> => {
+    const target = runner.assertCanReceiveMessage(input.taskId);
+    const message = {
+      messageId: input.delivery?.messageId ?? `researcher-message-${++messageSequence}`,
+      agentId: "researcher",
+      taskId: target.taskId,
+      body: attachments.compose(input.message),
+      queuedAt: input.delivery?.queuedAt ?? new Date().toISOString(),
+      ...(input.deliveryMode === undefined ? {} : { deliveryMode: input.deliveryMode }),
+    };
+    const accepted = acceptedMessages.get(message.messageId);
+    if (accepted && (
+      accepted.agentId !== message.agentId
+      || accepted.taskId !== message.taskId
+      || accepted.body !== message.body
+      || accepted.queuedAt !== message.queuedAt
+      || accepted.deliveryMode !== message.deliveryMode
+    )) {
+      throw new Error(`Message ${message.messageId} does not match its Worker delivery.`);
+    }
+    if (accepted) return;
+    acceptedMessages.set(message.messageId, structuredClone(message));
+    pendingMessages = [...pendingMessages, message];
+    runner.recordMessageQueued(target.taskId);
+  };
 
   await Promise.resolve();
   assert.equal(prompts.length, 0);
-  runner.activateRestoredTask();
-  await runner.runTasksToIdle();
-  await runner.queueMessage({ taskId: task.taskId, message: agent.turn.message("下一轮") });
-  await runner.runTasksToIdle();
+  assert.equal(runner.shouldActivateRestoredTask(pendingMessages.length), true);
+  await runPreparedSteps();
+  await queueMessage({ taskId: task.taskId, message: agent.turn.message("下一轮") });
+  await runPreparedSteps();
 
   assert.equal(prompts.length, 2);
   assert.match(prompts[0] ?? "", /<resume>/);
@@ -814,7 +977,7 @@ test("WorkerRunner injects restored context once and consumes restored messages 
     consumedMessageIds.filter((messageId) => messageId === "restored-message").length,
     1,
   );
-  await runner.queueMessage({
+  await queueMessage({
     taskId: task.taskId,
     message: consumedDelivery.body,
     delivery: {
@@ -822,10 +985,10 @@ test("WorkerRunner injects restored context once and consumes restored messages 
       queuedAt: consumedDelivery.queuedAt,
     },
   });
-  await runner.runTasksToIdle();
+  await runPreparedSteps();
   assert.equal(prompts.length, 2);
   await assert.rejects(
-    runner.queueMessage({
+    queueMessage({
       taskId: task.taskId,
       message: agent.turn.message("冲突正文"),
       delivery: {
@@ -837,11 +1000,171 @@ test("WorkerRunner injects restored context once and consumes restored messages 
   );
 });
 
-test("CoordinatorRunner restores accepted delivery ids without replaying them", async (t) => {
+test("TaskRunner restores a pending protocol correction from Task facts", (t) => {
+  installTestRunScope(t, { runId: "task-protocol-correction-restore" });
+  const sourceStepId = "researcher-task-0001-step-0001";
+  const sourceTurnId = "turn-missing-disposition";
+  const task = taskState({
+    startedAt: "2026-07-22T00:00:00.000Z",
+    protocolRepairAttempts: 1,
+    stepIds: [sourceStepId],
+    dispositions: [{
+      kind: AgentTaskDispositionKinds.ProtocolViolation,
+      stepId: sourceStepId,
+      turnId: sourceTurnId,
+      callId: null,
+      timestamp: "2026-07-22T00:00:02.000Z",
+      reason: "WORKER_DISPOSITION_REQUIRED",
+    }],
+  });
+  const runner = new TaskRunner({
+    host: workerHost(async () => completedTurn("unused")),
+    taskSequence: task.taskSequence,
+    restoredTask: task,
+  });
+  runner.restoreExecutionState({
+    resumeContext: attachments.addTagBlock("resume", "restored task context"),
+    resumeImmediately: false,
+  });
+
+  assert.equal(runner.shouldActivateRestoredTask(0), true);
+  const preparation = runner.prepareStep([]);
+  assert.ok(preparation);
+  assert.equal(preparation.isProtocolCorrection, true);
+  assert.equal(preparation.stepId, "researcher-task-0001-step-0002");
+  assert.equal(runner.currentProtocolCorrectionSourceTurnId(), sourceTurnId);
+  assert.match(preparation.prompt, /运行时协议修正/);
+  assert.match(preparation.prompt, new RegExp(sourceStepId));
+  assert.doesNotMatch(preparation.prompt, /restored task context/);
+});
+
+test("TaskRunner restores protocol correction after its Step was interrupted", (t) => {
+  installTestRunScope(t, { runId: "task-protocol-correction-interrupted" });
+  const sourceStepId = "researcher-task-0001-step-0001";
+  const correctionStepId = "researcher-task-0001-step-0002";
+  const sourceTurnId = "turn-missing-disposition";
+  const task = taskState({
+    startedAt: "2026-07-22T00:00:00.000Z",
+    protocolRepairAttempts: 1,
+    stepIds: [sourceStepId, correctionStepId],
+    dispositions: [{
+      kind: AgentTaskDispositionKinds.ProtocolViolation,
+      stepId: sourceStepId,
+      turnId: sourceTurnId,
+      callId: null,
+      timestamp: "2026-07-22T00:00:02.000Z",
+      reason: "WORKER_DISPOSITION_REQUIRED",
+    }],
+  });
+  const runner = new TaskRunner({
+    host: workerHost(async () => completedTurn("unused")),
+    taskSequence: task.taskSequence,
+    restoredTask: task,
+  });
+
+  assert.equal(runner.shouldActivateRestoredTask(0), true);
+  const preparation = runner.prepareStep([]);
+  assert.ok(preparation);
+  assert.equal(preparation.isProtocolCorrection, true);
+  assert.equal(preparation.stepId, "researcher-task-0001-step-0003");
+  assert.equal(runner.currentProtocolCorrectionSourceTurnId(), sourceTurnId);
+});
+
+test("TaskRunner does not restore correction after a later lifecycle disposition", (t) => {
+  installTestRunScope(t, { runId: "task-protocol-correction-resolved" });
+  const sourceStepId = "researcher-task-0001-step-0001";
+  const resolvedStepId = "researcher-task-0001-step-0002";
+  const task = taskState({
+    startedAt: "2026-07-22T00:00:00.000Z",
+    protocolRepairAttempts: 0,
+    stepIds: [sourceStepId, resolvedStepId],
+    dispositions: [{
+      kind: AgentTaskDispositionKinds.ProtocolViolation,
+      stepId: sourceStepId,
+      turnId: "turn-missing-disposition",
+      callId: null,
+      timestamp: "2026-07-22T00:00:02.000Z",
+      reason: "WORKER_DISPOSITION_REQUIRED",
+    }, {
+      kind: AgentTaskDispositionKinds.WaitingForHuman,
+      stepId: resolvedStepId,
+      turnId: "turn-waiting-for-human",
+      callId: "call-waiting-for-human",
+      timestamp: "2026-07-22T00:00:04.000Z",
+      requestId: "request-waiting-for-human",
+      request: "需要人工输入。",
+    }],
+  });
+  const runner = new TaskRunner({
+    host: workerHost(async () => completedTurn("unused")),
+    taskSequence: task.taskSequence,
+    restoredTask: task,
+  });
+  const message: AgentMessage = {
+    messageId: "researcher-message-0001",
+    agentId: task.agentId,
+    taskId: task.taskId,
+    body: agent.turn.message("人工输入已经返回。"),
+    queuedAt: "2026-07-22T00:00:05.000Z",
+  };
+
+  const preparation = runner.prepareStep([message]);
+  assert.ok(preparation);
+  assert.equal(preparation.isProtocolCorrection, false);
+  assert.deepEqual(preparation.messagesToConsume, [message]);
+  assert.doesNotMatch(preparation.prompt, /运行时协议修正/);
+});
+
+class RestorableMessageAgent extends ScoutAgent {
+  constructor() {
+    super({
+      agentId: "coordinator",
+      agentMount: { mountRoot: "/repo" } as never,
+      assetCommit: {} as never,
+      spec: {
+        role: ScoutAgentRoles.Coordinator,
+        phases: [ScoutAgentPhases.Coordinate],
+        cwd: "/repo",
+        approvalPolicy: "never",
+        permissionProfile: ScoutAgentPermissionProfiles.Coordinator,
+        contextBundleId: "context-1",
+        model: {
+          id: "gpt-5.5",
+          provider: "GuruOpenAI",
+          reasoningEffort: "high",
+          reasoningSummary: "concise",
+        },
+      },
+    });
+  }
+
+  async sendMessage(input: SendAgentMessageInput): Promise<Result<void, string>> {
+    await this.enqueueMessageDelivery(input, { deliveryName: "Coordinator" });
+    return Result.ok(undefined);
+  }
+
+  restoreMessages(input: {
+    acceptedMessages: AgentMessage[];
+    pendingMessages: AgentMessage[];
+  }): void {
+    this.restoreMessageState({ ...input, deliveryName: "Coordinator" });
+  }
+
+  protected async stopExecution(): Promise<void> {}
+}
+
+test("ScoutAgent restores accepted delivery ids without replaying them", async (t) => {
   const eventBus = new InMemoryEventBus();
   installTestRunScope(t, {
     runId: "coordinator-runner-restored-deliveries",
     eventBus,
+    appServer: {} as CodexAppServerClient,
+    environment: {
+      contextBundle: {
+        runId: "coordinator-runner-restored-deliveries",
+        contextBundleId: "context-1",
+      },
+    } as never,
   });
   const accepted = {
     messageId: "coordinator-consumed-before-resume",
@@ -849,30 +1172,22 @@ test("CoordinatorRunner restores accepted delivery ids without replaying them", 
     body: agent.turn.message("恢复前已消费"),
     queuedAt: "2026-07-22T00:00:00.500Z",
   };
-  const runner = new CoordinatorRunner({
-    host: {
-      agentId: "coordinator",
-      runTurn: async () => {
-        throw new Error("Accepted delivery must not start another Coordinator turn.");
-      },
-    },
-  });
-  runner.restoreState({
+  const runtime = new RestorableMessageAgent();
+  runtime.restoreMessages({
     acceptedMessages: [accepted],
     pendingMessages: [],
-    resumeContext: "",
   });
 
-  await runner.queueMessage({
+  await runtime.sendMessage({
     message: accepted.body,
     delivery: {
       messageId: accepted.messageId,
       queuedAt: accepted.queuedAt,
     },
   });
-  assert.equal(runner.snapshot().pendingMessageCount, 0);
+  assert.equal(runtime.snapshot().pendingMessageCount, 0);
   await assert.rejects(
-    runner.queueMessage({
+    runtime.sendMessage({
       message: agent.turn.message("冲突正文"),
       delivery: {
         messageId: accepted.messageId,
@@ -881,7 +1196,6 @@ test("CoordinatorRunner restores accepted delivery ids without replaying them", 
     }),
     /does not match its Coordinator delivery/,
   );
-  await runner.stop("test_complete");
 });
 
 for (const status of ["failed", "interrupted"] as const) {
@@ -914,9 +1228,12 @@ for (const status of ["failed", "interrupted"] as const) {
       },
     });
 
-    await runner.queueMessage({ message: agent.turn.message("触发 Coordinator turn") });
+    const result = await runner.runStep({
+      prompt: agent.turn.message("触发 Coordinator turn"),
+    });
     await runner.stop("test_complete");
 
+    assert.equal(result.step.status, status);
     assert.deepEqual(producedMessages, []);
   });
 }
@@ -1349,16 +1666,16 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     "",
   ].join("\n"), "utf8");
 
+  const researcherStep = agentStepState({
+    stepId: "researcher-task-0001-step-0001",
+    taskId: "researcher-task-0001",
+    status: AgentStepStatuses.Running,
+    prompt: agent.turn.message("恢复前中断的 Research step"),
+    startedAt: "2026-07-22T00:00:01.000Z",
+  });
   const researcherTask = taskState({
     startedAt: "2026-07-22T00:00:00.000Z",
-    steps: [{
-      stepId: "researcher-task-0001-step-0001",
-      taskId: "researcher-task-0001",
-      status: AgentTaskStepStatuses.Running,
-      prompt: agent.turn.message("恢复前中断的 Research step"),
-      toolCalls: [],
-      startedAt: "2026-07-22T00:00:01.000Z",
-    }],
+    stepIds: [researcherStep.stepId],
   });
   const validatorTask = taskState({
     taskId: "validator-task-0001",
@@ -1409,6 +1726,11 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     { occurredAt: researcherTask.createdAt },
   );
   await initialEventBus.publishAndWait(
+    AgentEvents.step.started,
+    researcherStep,
+    { occurredAt: researcherStep.startedAt },
+  );
+  await initialEventBus.publishAndWait(
     AgentEvents.task.assigned,
     validatorTask,
     { occurredAt: validatorTask.createdAt },
@@ -1429,7 +1751,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     role: ScoutAgentRoles.Researcher,
     taskId: researcherTask.taskId,
     threadId: "researcher-old-thread",
-    prompt: researcherTask.steps?.[0]?.prompt ?? "",
+    prompt: researcherStep.prompt,
     startedAt: "2026-07-22T00:00:01.000Z",
   }, {
     occurredAt: "2026-07-22T00:00:01.000Z",
@@ -1715,16 +2037,17 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     task.taskId === researcherTask.taskId
   );
   assert.equal(restoredResearcher?.status, AgentTaskStatuses.Running);
+  const restoredResearcherStep = projection.steps.find((step) =>
+    step.stepId === researcherStep.stepId
+  );
   assert.equal(
-    restoredResearcher?.steps?.[0]?.status,
-    AgentTaskStepStatuses.Interrupted,
+    restoredResearcherStep?.status,
+    AgentStepStatuses.Interrupted,
   );
   assert.ok(restoredEvents.some((event) =>
-    AgentEvents.task.stepInterrupted.is(event)
-    && event.payload.steps?.some((step) =>
-      step.stepId === "researcher-task-0001-step-0001"
-      && step.status === AgentTaskStepStatuses.Interrupted
-    )
+    AgentEvents.step.interrupted.is(event)
+    && event.payload.stepId === researcherStep.stepId
+    && event.payload.status === AgentStepStatuses.Interrupted
   ));
   assert.equal(
     projection.turns.find((turn) => turn.invocationId === "researcher-old-invocation")?.status,
@@ -1985,15 +2308,15 @@ async function assertThreadRestoreFailure(
   await new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
   }).start();
+  const step = agentStepState({
+    stepId: "researcher-task-0001-step-0001",
+    taskId: "researcher-task-0001",
+    status: AgentStepStatuses.Running,
+    prompt: agent.turn.message("恢复原 thread"),
+    startedAt: "2026-07-22T00:00:01.000Z",
+  });
   const task = taskState({
-    steps: [{
-      stepId: "researcher-task-0001-step-0001",
-      taskId: "researcher-task-0001",
-      status: AgentTaskStepStatuses.Running,
-      prompt: agent.turn.message("恢复原 thread"),
-      toolCalls: [],
-      startedAt: "2026-07-22T00:00:01.000Z",
-    }],
+    stepIds: [step.stepId],
   });
   const thread = {
     agentId: ScoutAgentRoles.Researcher,
@@ -2013,13 +2336,14 @@ async function assertThreadRestoreFailure(
   } satisfies AgentThreadSnapshot;
   await eventBus.publishAndWait(AgentEvents.thread.started, thread);
   await eventBus.publishAndWait(AgentEvents.task.assigned, task);
+  await eventBus.publishAndWait(AgentEvents.step.started, step);
   await eventBus.publishAndWait(AgentEvents.turn.started, {
     invocationId: "researcher-original-invocation-0001",
     agentId: task.agentId,
     role: task.role,
     taskId: task.taskId,
     threadId: thread.threadId,
-    prompt: task.steps?.[0]?.prompt ?? "",
+    prompt: step.prompt,
     startedAt: "2026-07-22T00:00:01.000Z",
   });
   writePersistedRollout({
@@ -2168,6 +2492,29 @@ function taskState(input: Partial<AgentTaskState> = {}): AgentTaskState {
     createdAt: "2026-07-22T00:00:00.000Z",
     updatedAt: "2026-07-22T00:00:00.000Z",
     ...input,
+    stepIds: input.stepIds ?? [],
+    dispositions: input.dispositions ?? [],
+  };
+}
+
+function agentStepState(input: Partial<AgentStepState> = {}): AgentStepState {
+  const startedAt = input.startedAt ?? "2026-07-22T00:00:01.000Z";
+  return {
+    stepId: input.stepId ?? "researcher-task-0001-step-0001",
+    agentId: input.agentId ?? ScoutAgentRoles.Researcher,
+    taskId: input.taskId ?? "researcher-task-0001",
+    turnId: input.turnId,
+    status: input.status ?? AgentStepStatuses.Running,
+    prompt: input.prompt ?? agent.turn.message("研究当前行为"),
+    finalResponse: input.finalResponse,
+    toolCalls: input.toolCalls ?? [],
+    plan: input.plan,
+    humanInputResponse: input.humanInputResponse,
+    startedAt,
+    updatedAt: input.updatedAt ?? startedAt,
+    finishedAt: input.finishedAt,
+    durationMs: input.durationMs,
+    error: input.error,
   };
 }
 

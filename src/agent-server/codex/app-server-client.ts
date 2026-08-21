@@ -80,6 +80,12 @@ export interface TurnStartResponse {
   response: unknown;
 }
 
+/** Response returned after appending input to an already active turn. */
+export interface TurnSteerResponse {
+  turnId: string;
+  response: unknown;
+}
+
 /** Process, environment, and diagnostic paths used to launch one app-server. */
 export interface CodexAppServerOptions {
   codexPath?: string;
@@ -485,6 +491,26 @@ export class CodexAppServerClient {
     }));
     return {
       turnId: readTurnId(response),
+      response,
+    };
+  }
+
+  /** Appends user input to the currently active turn without creating a turn. */
+  async steerTurn(input: {
+    threadId: string;
+    expectedTurnId: string;
+    prompt: string;
+    clientUserMessageId?: string;
+  }): Promise<TurnSteerResponse> {
+    const response = await this.request("turn/steer", cleanUndefined({
+      threadId: input.threadId,
+      expectedTurnId: input.expectedTurnId,
+      clientUserMessageId: input.clientUserMessageId,
+      input: [{ type: "text", text: input.prompt, text_elements: [] }],
+    }));
+    const turnId = readTurnId(response) ?? input.expectedTurnId;
+    return {
+      turnId,
       response,
     };
   }

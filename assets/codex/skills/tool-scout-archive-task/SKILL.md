@@ -1,7 +1,7 @@
 ---
 assetKind: scout.skill
 name: tool-scout-archive-task
-description: Coordinator 确认 Worker task 不再需要继续后使用 ArchiveTask 释放该 Worker runner。
+description: Coordinator 确认 Worker task 不再需要继续后使用 ArchiveTask 归档该 task。
 id: tool-scout-archive-task
 version: 1.0.0
 phase: [coordinate]
@@ -28,7 +28,6 @@ summary: 规定 ArchiveTask 的调用时机和归档边界。
 
 ## Result Rules
 
-- `status: archived` 表示当前 Worker runner 已释放，Agent thread 保留，可在后续接收新 task。
+- `status: archived` 表示当前 TaskRunner 已释放；Worker 的 Agent thread 和 StepRunner 保留，可在后续接收新 task。
 - 归档不等于 handoff accepted、领域 gate 通过或全局目标完成。
 - task 未达到可归档状态、归属不匹配或工具失败时先处理该状态，不得把失败解释为已释放 Worker。
-

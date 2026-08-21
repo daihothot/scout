@@ -40,6 +40,9 @@ export class MountMaterializer {
   /** Reconstructs a mount projection from a manifest without rewriting files. */
   buildReusableMount(manifest: MountManifest): CodexMount {
     const { context } = this;
+    // The temp root is runtime-only and is intentionally absent from the
+    // portable mount manifest; recreate it when a copied run reuses a mount.
+    ensureDir(context.tempRoot);
     const shellToolsById = new Map(context.profiledShellTools.map((tool) => [tool.id, tool] as const));
     return {
       agentId: context.agentId,
@@ -52,6 +55,7 @@ export class MountMaterializer {
       runRoot: context.runRoot,
       artifactRoot: context.artifactRoot,
       logsRoot: context.logsRoot,
+      tempRoot: context.tempRoot,
       issues: manifest.issues,
       readableRoots: context.readableRoots,
       writableRoots: context.writableRoots,
@@ -82,6 +86,7 @@ export class MountMaterializer {
       agentRoot,
       artifactRoot,
       logsRoot,
+      tempRoot,
       mountRoot,
       agentProfile,
       profiledMcpServers,
@@ -118,6 +123,7 @@ export class MountMaterializer {
     options.onMaterializationStep?.("wipe");
     ensureDir(artifactRoot);
     ensureDir(logsRoot);
+    ensureDir(tempRoot);
     ensureDir(join(mountRoot, ".codex"));
     ensureDir(join(mountRoot, ".codex", "agents"));
     ensureDir(join(mountRoot, ".agents", "skills"));
@@ -131,11 +137,13 @@ export class MountMaterializer {
     const builtMcpServers = new McpServerBuilder({
       mountRoot,
       assetsRoot,
+      tempRoot,
       dynamicValues: buildMountMacroValues({
         scoutRoot,
         runRoot,
         mountRoot,
         artifactRoot,
+        tempRoot,
         assetCommitId,
       }),
     }).build(profiledMcpServers);
@@ -181,7 +189,7 @@ export class MountMaterializer {
     options.onMaterializationStep?.("skills");
     const pluginNames = materializePlugins(assetsRoot, mountRoot, profiledPluginPaths);
     options.onMaterializationStep?.("plugins");
-    const shellBuild = new ShellToolBuilder(mountRoot, assetsRoot).build(profiledShellTools);
+    const shellBuild = new ShellToolBuilder(mountRoot, assetsRoot, tempRoot).build(profiledShellTools);
     for (const builtTool of shellBuild.tools) {
       writeTextFile(builtTool.wrapperPath, builtTool.wrapperContent);
       chmodSync(builtTool.wrapperPath, 0o755);
@@ -238,6 +246,7 @@ export class MountMaterializer {
       runRoot,
       artifactRoot,
       logsRoot,
+      tempRoot,
       issues: shellBuild.issues,
       readableRoots,
       writableRoots,

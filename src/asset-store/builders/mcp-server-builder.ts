@@ -20,6 +20,7 @@ export interface BuiltMcpServer {
 export interface McpServerBuilderOptions {
   mountRoot: string;
   assetsRoot: string;
+  tempRoot: string;
   dynamicValues: Record<string, string | undefined>;
 }
 
@@ -78,6 +79,12 @@ export class McpServerBuilder {
         wrapperContent: [
           "#!/bin/sh",
           ...exports,
+          `export TMPDIR=${JSON.stringify(this.options.tempRoot)}`,
+          "export GIT_CONFIG_COUNT=1",
+          "export GIT_CONFIG_KEY_0=core.excludesFile",
+          "export GIT_CONFIG_VALUE_0=/dev/null",
+          "export GIT_CONFIG_GLOBAL=/dev/null",
+          "export GIT_CONFIG_NOSYSTEM=1",
           `exec ${JSON.stringify(command)} ${args.map((argument) => JSON.stringify(argument)).join(" ")} "$@"`,
           "",
         ].join("\n"),

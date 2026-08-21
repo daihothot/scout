@@ -6,6 +6,7 @@ export const MountMacros = {
   RunRoot: "SCOUT_RUN_ROOT",
   MountRoot: "SCOUT_MOUNT_ROOT",
   ArtifactRoot: "SCOUT_ARTIFACT_ROOT",
+  TempRoot: "SCOUT_TEMP_ROOT",
   AssetCommitId: "SCOUT_ASSET_COMMIT_ID",
   RunId: "SCOUT_RUN_ID",
 } as const;
@@ -19,6 +20,7 @@ export interface MountMacroValuesInput {
   runRoot: string;
   mountRoot: string;
   artifactRoot: string;
+  tempRoot: string;
   assetCommitId: string;
   runId?: string;
 }
@@ -30,6 +32,7 @@ export type MountMacroValues = Record<MountMacro, string | undefined>;
 export interface MountShellEnvironmentInput {
   runRoot: string;
   artifactRoot: string;
+  tempRoot: string;
   assetCommitId: string;
   runId?: string;
 }
@@ -41,6 +44,7 @@ export function buildMountMacroValues(input: MountMacroValuesInput): MountMacroV
     [MountMacros.RunRoot]: input.runRoot,
     [MountMacros.MountRoot]: input.mountRoot,
     [MountMacros.ArtifactRoot]: input.artifactRoot,
+    [MountMacros.TempRoot]: input.tempRoot,
     [MountMacros.AssetCommitId]: input.assetCommitId,
     [MountMacros.RunId]: input.runId ?? runIdFromRunRoot(input.runRoot),
   };
@@ -61,6 +65,10 @@ export function buildMountShellEnvironment(input: MountShellEnvironmentInput): R
     [MountMacros.RunRoot]: input.runRoot,
     [MountMacros.ArtifactRoot]: input.artifactRoot,
     [MountMacros.AssetCommitId]: input.assetCommitId,
+    TMPDIR: input.tempRoot,
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "core.excludesFile",
+    GIT_CONFIG_VALUE_0: "/dev/null",
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_NOSYSTEM: "1",
   };

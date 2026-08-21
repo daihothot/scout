@@ -1,6 +1,5 @@
 import type { AgentTaskState } from "../../../agent/task/types.js";
 import { AgentEvents } from "../../../agent/events/index.js";
-import { sameAgentTaskDisposition } from "../../../agent/task/agent-task-store.js";
 import type { RunJournalEvent } from "../../journal/index.js";
 
 /** Task state retained after an archive event removes it from the active queue. */
@@ -12,8 +11,7 @@ export interface ProjectedArchivedTask {
 /**
  * Applies one task-domain journal event to the maps owned by `projectRun`.
  * Returns whether the event belongs to task projection; archive removes the
- * active task, and disposition records are checked against the embedded task
- * before the snapshot is accepted.
+ * active task. Step lifecycle facts are projected separately.
  */
 export function applyTaskJournalEvent(
   tasks: Map<string, AgentTaskState>,
@@ -38,18 +36,6 @@ export function applyTaskJournalEvent(
   }
   if (AgentEvents.task.dispositionRecorded.is(event)) {
     const task = event.payload.task;
-    const recorded = task.steps
-      ?.find((step) => step.stepId === event.payload.disposition.stepId)
-      ?.disposition;
-    if (
-      !recorded
-      || recorded.timestamp !== event.payload.disposition.timestamp
-      || !sameAgentTaskDisposition(recorded, event.payload.disposition)
-    ) {
-      throw new Error(
-        `Task disposition event does not match step ${event.payload.disposition.stepId}.`,
-      );
-    }
     tasks.set(task.taskId, structuredClone(task));
     return true;
   }

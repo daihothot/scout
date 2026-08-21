@@ -5,6 +5,7 @@ import {
 import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
 import type { AgentMessage } from "../message/types.js";
+import type { AgentMessageConsumedEvent } from "../message/message-events.js";
 import type {
   AgentHumanInputRequestedEvent,
   AgentHumanInputRespondedEvent,
@@ -12,10 +13,12 @@ import type {
 
 /** Persisted request state, including an optional response delivered later. */
 export interface AgentHumanInputState extends AgentHumanInputRequestedEvent {
+  requestConsumption?: AgentMessageConsumedEvent;
   response?: {
     body: string;
     respondedAt: string;
     message: AgentMessage;
+    consumption?: AgentMessageConsumedEvent;
   };
 }
 
@@ -38,6 +41,13 @@ export class AgentHumanInputStore {
       eventBus.subscribe(AgentEvents.humanInput.responded, (event) => {
         if (AgentEvents.humanInput.responded.is(event)) {
           this.applyResponded(event.payload);
+        }
+      }, {
+        priority: EventSubscriptionPriorities.Normal,
+      }),
+      eventBus.subscribe(AgentEvents.message.consumed, (event) => {
+        if (AgentEvents.message.consumed.is(event)) {
+          this.applyMessageConsumed(event.payload);
         }
       }, {
         priority: EventSubscriptionPriorities.Normal,
@@ -100,6 +110,34 @@ export class AgentHumanInputStore {
       },
     });
   }
+
+  private applyMessageConsumed(consumption: AgentMessageConsumedEvent): void {
+    for (const request of this.requests.values()) {
+      if (request.message.messageId === consumption.messageId) {
+        if (request.requestConsumption) {
+          throw new Error(`Human input request ${request.requestId} was consumed more than once.`);
+        }
+        this.requests.set(request.requestId, {
+          ...request,
+          requestConsumption: structuredClone(consumption),
+        });
+        return;
+      }
+      if (request.response?.message.messageId === consumption.messageId) {
+        if (request.response.consumption) {
+          throw new Error(`Human input response ${request.requestId} was consumed more than once.`);
+        }
+        this.requests.set(request.requestId, {
+          ...request,
+          response: {
+            ...request.response,
+            consumption: structuredClone(consumption),
+          },
+        });
+        return;
+      }
+    }
+  }
 }
 
 function sameRequest(
@@ -119,5 +157,6 @@ function sameMessage(left: AgentMessage, right: AgentMessage): boolean {
     && left.agentId === right.agentId
     && left.taskId === right.taskId
     && left.body === right.body
-    && left.queuedAt === right.queuedAt;
+    && left.queuedAt === right.queuedAt
+    && left.deliveryMode === right.deliveryMode;
 }

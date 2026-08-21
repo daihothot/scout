@@ -82,10 +82,11 @@ import type { LogEvent, Logger } from "../../src/core/logging/index.js";
 import type { WorkerAgent } from "../../src/agent/roles/worker-agent.js";
 import type { RunLifecycleSnapshot } from "../../src/run/lifecycle/index.js";
 import {
+  AgentTaskDispositionKinds,
   AgentTaskStatuses,
   type AgentTaskState,
-  type AgentTaskStepToolCall,
 } from "../../src/agent/task/types.js";
+import type { AgentStepToolCall } from "../../src/agent/step/types.js";
 import {
   RunJournal,
   RunJournalWriter,
@@ -112,7 +113,7 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
   const tools = agent.spec.dynamicTools ?? [];
 
   assert.ok(agent instanceof CoordinatorAgent);
-  assert.equal(agent.runner.runnerKind, "coordinator");
+  assert.equal(agent.stepRunner.agentId, agent.agentId);
   assert.deepEqual(agent.spec.model, {
     id: "gpt-5.5",
     provider: "GuruOpenAI",
@@ -175,7 +176,7 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   const tools = agent.spec.dynamicTools ?? [];
 
   assert.ok(agent instanceof ResearcherAgent);
-  assert.equal(agent.runner, undefined);
+  assert.equal(agent.taskRunner, undefined);
   assert.deepEqual(agent.spec.config, {
     features: {
       multi_agent: true,
@@ -309,7 +310,7 @@ test("ScoutAgent omits a null app-server turn error", async () => {
   assert.equal(outcome.turn.error, undefined);
 });
 
-test("WorkerAgent keeps its bound runner and reports a rejected task assignment", async () => {
+test("WorkerAgent keeps its bound TaskRunner and reports a rejected task assignment", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-task-not-assigned", []);
   const fixture = createAgentFixture("worker-task-not-assigned", { appServer, domain });
@@ -338,8 +339,9 @@ test("WorkerAgent keeps its bound runner and reports a rejected task assignment"
   });
   assert.equal(firstAssignment.ok, true);
   if (!firstAssignment.ok) throw new Error("Expected the first task to be assigned.");
-  const boundRunner = worker.runner;
+  const boundRunner = worker.taskRunner;
   assert.ok(boundRunner);
+  const reusableStepRunner = worker.stepRunner;
 
   assert.ok(appServer.handler);
   const secondAssignmentPromise = appServer.handler({
@@ -354,7 +356,7 @@ test("WorkerAgent keeps its bound runner and reports a rejected task assignment"
       prompt: "Research another BDD.",
     },
   });
-  boundRunner.stop("test_cleanup");
+  await worker.stopTask(firstAssignment.value.taskId, "test_cleanup");
   const secondAssignment = await secondAssignmentPromise;
   const rejectionReason = "The worker agent already has a task that has not been archived.";
 
@@ -366,7 +368,7 @@ test("WorkerAgent keeps its bound runner and reports a rejected task assignment"
     activeTaskId: "researcher-task-0001",
     reason: rejectionReason,
   });
-  assert.equal(worker.runner, boundRunner);
+  assert.equal(worker.taskRunner, boundRunner);
   assert.equal(fixture.taskStore.listTasks().length, 1);
   assert.deepEqual(notAssignedEvents, [{
     agentId: ScoutAgentRoles.Researcher,
@@ -381,7 +383,21 @@ test("WorkerAgent keeps its bound runner and reports a rejected task assignment"
       .some((observation) => observation.activeTaskId === "researcher-task-0001"
         && observation.reason === rejectionReason)
   );
-  coordinatorAgent.runner.stop();
+
+  await worker.archiveTask(firstAssignment.value.taskId);
+  const assignmentAfterArchive = await worker.assignTask({
+    description: "Research another BDD after archive",
+    subagentType: ScoutAgentRoles.Researcher,
+    prompt: agent.turn.message("Research another BDD after archive."),
+    isBackgrounded: true,
+  });
+  assert.equal(assignmentAfterArchive.ok, true);
+  if (!assignmentAfterArchive.ok) throw new Error("Expected assignment after archive to succeed.");
+  assert.notEqual(worker.taskRunner, boundRunner);
+  assert.equal(worker.stepRunner, reusableStepRunner);
+  await worker.stopTask(assignmentAfterArchive.value.taskId, "test_cleanup");
+  await worker.archiveTask(assignmentAfterArchive.value.taskId);
+  await coordinatorAgent.stopAgent("test_cleanup");
 });
 
 test("WorkerAgent keeps restored failed and stopped tasks bound until archive", async () => {
@@ -411,6 +427,8 @@ test("WorkerAgent keeps restored failed and stopped tasks bound until archive", 
       initialPrompt: agent.turn.message("恢复未归档终态任务。"),
       status,
       isBackgrounded: true,
+      stepIds: [],
+      dispositions: [],
       createdAt: now,
       updatedAt: now,
       finishedAt: now,
@@ -427,7 +445,7 @@ test("WorkerAgent keeps restored failed and stopped tasks bound until archive", 
     assert.equal(assignment.ok, false);
     if (assignment.ok) throw new Error("Expected restored terminal task to reject assignment.");
     assert.equal(assignment.error.activeTaskId, task.taskId);
-    assert.equal(worker.runner?.snapshot().activeTask?.status, status);
+    assert.equal(worker.taskRunner?.snapshot().activeTask?.status, status);
     await worker.archiveTask(task.taskId);
   }
 });
@@ -684,7 +702,7 @@ test("ScoutAgent returns no goal when setting a goal fails", async () => {
   });
 
   assert.equal(goal, undefined);
-  coordinator.runner.stop();
+  await coordinator.stopAgent("test_cleanup");
 });
 
 test("AgentBackend does not publish app-server agent message deltas as activity", () => {
@@ -1136,7 +1154,7 @@ test("Unknown threads remain unauthorized for domain dynamic tools", async () =>
   assert.match(result.contentItems[0]?.text ?? "", /Unknown dynamic tool caller thread: thread-unknown/);
 });
 
-test("SendMessage reports an undelivered message when the target Worker has no runner", async () => {
+test("SendMessage reports an undelivered message when the target Worker has no TaskRunner", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-send-message-no-worker-runner", []);
   const fixture = createAgentFixture("send-message-no-worker-runner", { appServer, domain });
@@ -1164,7 +1182,7 @@ test("SendMessage reports an undelivered message when the target Worker has no r
   });
 
   assert.equal(result.success, false);
-  assert.match(result.contentItems[0]?.text ?? "", /has no task runner/);
+  assert.match(result.contentItems[0]?.text ?? "", /has no TaskRunner/);
 });
 
 test("Worker SendMessage reaches Coordinator and Coordinator output reaches the interaction port", async () => {
@@ -1214,12 +1232,12 @@ test("Worker SendMessage reaches Coordinator and Coordinator output reaches the 
   ));
 });
 
-test("Coordinator journals messages received after its runner stops without starting another turn", async () => {
+test("Coordinator journals messages received after the Agent stops without starting another turn", async () => {
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("coordinator-stopped-message", { appServer });
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
-  await coordinator.runner.stop("test_shutdown");
+  await coordinator.stopAgent("test_shutdown");
   const turnCount = appServer.turnInputs.length;
   const queuedAt = "2026-07-23T00:00:00.000Z";
 
@@ -1250,13 +1268,24 @@ test("Coordinator journals messages received after its runner stops without star
 test("Human input tools deliver through Coordinator and update the bound task", async () => {
   let verifier: WorkerAgent | undefined;
   let requestSucceeded = false;
+  let repeatedRequestSucceeded = false;
   let submitSucceeded = false;
   let staleRequestError = "";
   let staleSubmitError = "";
+  let markResponseTurnStarted: (() => void) | undefined;
+  const responseTurnStarted = new Promise<void>((resolve) => {
+    markResponseTurnStarted = resolve;
+  });
+  let releaseResponseTurn: (() => void) | undefined;
+  const responseTurnRelease = new Promise<void>((resolve) => {
+    releaseResponseTurn = resolve;
+  });
   const appServer = createFakeAppServer({
     turnIdForTurn: (turn) => turn.prompt?.includes("<human-response>")
       ? "turn-human-response-worker"
-      : "turn-human-request-worker",
+      : turn.prompt?.includes("Restate the existing request")
+        ? "turn-human-request-repeat-worker"
+        : "turn-human-request-worker",
     onRunTurn: async (turn) => {
       const prompt = turn.prompt ?? "";
       if (!verifier || !appServer.handler) return;
@@ -1293,7 +1322,31 @@ test("Human input tools deliver through Coordinator and update the bound task", 
           success: result.success,
         }];
       }
+      if (prompt.includes("<message>\nRestate the existing request.\n</message>")) {
+        const result = await appServer.handler({
+          threadId: verifier.threadId ?? "",
+          turnId: "turn-human-request-repeat-worker",
+          callId: "call-wait-for-human-input-repeat",
+          namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+          tool: "RequestHumanInput",
+          arguments: {
+            request: "Need target account.",
+          },
+        });
+        repeatedRequestSucceeded = result.success;
+        return [{
+          namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+          tool: "RequestHumanInput",
+          callId: "call-wait-for-human-input-repeat",
+          arguments: {
+            request: "Need target account.",
+          },
+          success: result.success,
+        }];
+      }
       if (prompt.includes("<human-response>\nUse staging account.\n</human-response>")) {
+        markResponseTurnStarted?.();
+        await responseTurnRelease;
         const stale = await appServer.handler({
           threadId: verifier.threadId ?? "",
           turnId: "turn-stale-submit",
@@ -1338,10 +1391,10 @@ test("Human input tools deliver through Coordinator and update the bound task", 
     isBackgrounded: true,
   });
   assert.equal(assignment.ok, true);
-  if (!assignment.ok || !verifier.runner) throw new Error("Expected the Worker task assignment to succeed.");
-  const runner = verifier.runner;
+  if (!assignment.ok || !verifier.taskRunner) throw new Error("Expected the Worker task assignment to succeed.");
+  const runner = verifier.taskRunner;
 
-  await runner.runTasksToIdle();
+  await verifier.runToIdle();
 
   assert.equal(requestSucceeded, true);
   assert.match(
@@ -1349,9 +1402,21 @@ test("Human input tools deliver through Coordinator and update the bound task", 
     /owns active app-server turn turn-human-request-worker, not turn-stale-request/,
   );
   assert.equal(runner.snapshot().activeTask?.status, AgentTaskStatuses.Running);
-  assert.deepEqual(runner.snapshot().activeTask?.steps?.[0]?.humanInputRequest, {
-    body: "Need target account.",
-  });
+  const waitingStep = fixture.stepStore.list({ taskId: assignment.value.taskId }).find((step) =>
+    step.turnId === "turn-human-request-worker"
+  );
+  const waitingDisposition = runner.snapshot().activeTask?.dispositions.find((disposition) =>
+    disposition.stepId === waitingStep?.stepId
+  );
+  assert.equal(waitingDisposition?.kind, "waiting_for_human");
+  assert.equal(
+    waitingDisposition?.kind === "waiting_for_human"
+      ? waitingDisposition.request
+      : undefined,
+    "Need target account.",
+  );
+  assert.equal(waitingDisposition?.turnId, "turn-human-request-worker");
+  assert.equal(waitingDisposition?.callId, "call-wait-for-human-input");
   assert.ok(appServer.turnInputs.some((turn) =>
     turn.prompt?.includes("<wait-for-human-request>\nNeed target account.\n</wait-for-human-request>")
   ));
@@ -1387,6 +1452,27 @@ test("Human input tools deliver through Coordinator and update the bound task", 
     1,
   );
 
+  const repeatedDelivery = await verifier.sendMessage({
+    taskId: assignment.value.taskId,
+    message: agent.turn.message("Restate the existing request."),
+  });
+  assert.equal(repeatedDelivery.ok, true);
+  await verifier.runToIdle();
+  assert.equal(repeatedRequestSucceeded, true);
+  assert.equal(runner.snapshot().activeTask?.status, AgentTaskStatuses.Running);
+  assert.equal(
+    runner.snapshot().activeTask?.dispositions.filter((disposition) =>
+      disposition.kind === AgentTaskDispositionKinds.WaitingForHuman
+    ).length,
+    1,
+  );
+  assert.equal(
+    fixture.journal.readAll().filter((event) =>
+      AgentEvents.humanInput.requested.is(event)
+    ).length,
+    1,
+  );
+
   assert.ok(appServer.handler);
   const response = await appServer.handler({
     threadId: "thread-coordinator",
@@ -1400,7 +1486,31 @@ test("Human input tools deliver through Coordinator and update the bound task", 
     },
   });
   assert.equal(response.success, true);
-  await runner.runTasksToIdle();
+  await responseTurnStarted;
+
+  const stepCountAfterResponse = fixture.stepStore.list({ taskId: assignment.value.taskId }).length;
+  const repeatedResponse = await appServer.handler({
+    threadId: "thread-coordinator",
+    turnId: "turn-human-response-repeat",
+    callId: "call-human-response-repeat",
+    namespace: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
+    tool: "RespondHumanInput",
+    arguments: {
+      task_id: assignment.value.taskId,
+      response: "Use staging account.",
+    },
+  });
+  assert.equal(repeatedResponse.success, true);
+  assert.equal(
+    JSON.parse(repeatedResponse.contentItems[0]?.text ?? "{}").status,
+    "accepted",
+  );
+  assert.equal(
+    fixture.stepStore.list({ taskId: assignment.value.taskId }).length,
+    stepCountAfterResponse,
+  );
+  releaseResponseTurn?.();
+  await verifier.runToIdle();
 
   assert.equal(submitSucceeded, true);
   assert.match(
@@ -1408,9 +1518,18 @@ test("Human input tools deliver through Coordinator and update the bound task", 
     /owns active app-server turn turn-human-response-worker, not turn-stale-submit/,
   );
   assert.equal(runner.snapshot().activeTask?.status, AgentTaskStatuses.Done);
-  assert.deepEqual(runner.snapshot().activeTask?.steps?.[1]?.humanInputResponse, {
+  const submittedStep = fixture.stepStore.list({ taskId: assignment.value.taskId }).find((step) =>
+    step.turnId === "turn-human-response-worker"
+  );
+  assert.deepEqual(submittedStep?.humanInputResponse, {
     body: "Use staging account.",
   });
+  const submittedDisposition = runner.snapshot().activeTask?.dispositions.find((disposition) =>
+    disposition.stepId === submittedStep?.stepId
+  );
+  assert.equal(submittedDisposition?.kind, "handoff_submitted");
+  assert.equal(submittedDisposition?.turnId, "turn-human-response-worker");
+  assert.equal(submittedDisposition?.callId, "call-submit-task");
   assert.ok(appServer.turnInputs.some((turn) =>
     turn.prompt?.includes(
       "<task-outcome>\n## Outcome\n\n- Artifact: ${SCOUT_RUN_ROOT}/verifier/artifacts/result.md\n</task-outcome>",
@@ -1423,6 +1542,30 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   assert.equal(
     submittedOutcome.payload.outcome,
     "## Outcome\n\n- Artifact: ${SCOUT_RUN_ROOT}/verifier/artifacts/result.md",
+  );
+  const humanResponseEvent = fixture.journal.readAll().find((event) =>
+    AgentEvents.humanInput.responded.is(event)
+  );
+  assert.ok(humanResponseEvent && AgentEvents.humanInput.responded.is(humanResponseEvent));
+  assert.equal(
+    fixture.journal.readAll().filter((event) =>
+      AgentEvents.humanInput.responded.is(event)
+    ).length,
+    1,
+  );
+  assert.equal(
+    fixture.journal.readAll().filter((event) =>
+      AgentEvents.message.queued.is(event)
+      && event.payload.messageId === humanResponseEvent.payload.message.messageId
+    ).length,
+    1,
+  );
+  assert.equal(
+    fixture.journal.readAll().filter((event) =>
+      AgentEvents.message.consumed.is(event)
+      && event.payload.messageId === humanResponseEvent.payload.message.messageId
+    ).length,
+    1,
   );
 
   const coordinatorRequest = await appServer.handler({
@@ -1451,10 +1594,10 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   });
   assert.equal(workerResponse.success, false);
   assert.match(workerResponse.contentItems[0]?.text ?? "", /only available to the Coordinator agent/);
-  coordinator.runner.stop();
+  await coordinator.stopAgent("test_cleanup");
 });
 
-test("ArchiveTask releases a Worker runner while preserving its thread and task sequence", async () => {
+test("ArchiveTask releases one TaskRunner while preserving its thread and Step runner", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-archive-task", []);
   const fixture = createAgentFixture("archive-task", { appServer, domain });
@@ -1467,6 +1610,7 @@ test("ArchiveTask releases a Worker runner while preserving its thread and task 
   await coordinator.startThread();
   const verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
   await verifier.startThread();
+  const stepRunner = verifier.stepRunner;
   fixture.registry.bindThread(coordinator.agentId, "thread-coordinator");
   const workerThreadId = verifier.threadId;
   const firstAssignment = await verifier.assignTask({
@@ -1499,8 +1643,9 @@ test("ArchiveTask releases a Worker runner while preserving its thread and task 
     role: ScoutAgentRoles.Verifier,
   });
   assert.equal(fixture.taskStore.getTask("verifier-task-0001"), undefined);
-  assert.equal(verifier.runner, undefined);
+  assert.equal(verifier.taskRunner, undefined);
   assert.equal(verifier.threadId, workerThreadId);
+  assert.equal(verifier.stepRunner, stepRunner);
 
   const secondAssignment = await verifier.assignTask({
     description: "Verify the second BDD",
@@ -1513,9 +1658,10 @@ test("ArchiveTask releases a Worker runner while preserving its thread and task 
   assert.equal(secondAssignment.value.taskId, "verifier-task-0002");
   assert.equal(secondAssignment.value.taskSequence, 2);
   assert.equal(verifier.threadId, workerThreadId);
+  assert.equal(verifier.stepRunner, stepRunner);
 
   await verifier.archiveTask(secondAssignment.value.taskId);
-  coordinator.runner.stop();
+  await coordinator.stopAgent("test_cleanup");
 });
 
 test("ArchiveTask rejects non-Coordinator callers", async () => {
@@ -1568,7 +1714,7 @@ test("SubmitTask rejects a Coordinator caller", async () => {
 
   assert.equal(submitResult.success, false);
   assert.match(submitResult.contentItems[0]?.text ?? "", /only available to Worker agents/);
-  coordinator.runner.stop();
+  await coordinator.stopAgent("test_cleanup");
 });
 
 test("AgentTaskStore snapshots are immutable from callers", () => {
@@ -1583,6 +1729,8 @@ test("AgentTaskStore snapshots are immutable from callers", () => {
     initialPrompt: "Do work",
     status: AgentTaskStatuses.Queued,
     isBackgrounded: true,
+    stepIds: [],
+    dispositions: [],
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
@@ -1609,6 +1757,7 @@ function createAgentFixture(
   preparedAgents: RunEnvironment["agents"];
   registry: AgentRegistry;
   taskStore: AgentTaskStore;
+  stepStore: RunScope["stepStore"];
   eventBus: InMemoryEventBus;
   logger: Logger;
   journal: RunJournal;
@@ -1682,6 +1831,7 @@ function createAgentFixture(
   };
   const registry = scope.agentRegistry;
   const taskStore = scope.taskStore;
+  const stepStore = scope.stepStore;
   const options: ScoutAgentOptions = {
     agentMount: mount,
     assetCommit,
@@ -1694,6 +1844,7 @@ function createAgentFixture(
     preparedAgents,
     registry,
     taskStore,
+    stepStore,
     eventBus,
     logger,
     journal,
@@ -1728,9 +1879,11 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
   const mountRoot = join(root, role, "mount");
   const artifactRoot = join(root, role, "artifacts");
   const logsRoot = join(root, role, "logs");
+  const tempRoot = join(root, role, "tmp");
   mkdirSync(join(mountRoot, "agents"), { recursive: true });
   mkdirSync(artifactRoot, { recursive: true });
   mkdirSync(logsRoot, { recursive: true });
+  mkdirSync(tempRoot, { recursive: true });
   writeFileSync(join(mountRoot, "AGENTS.md"), "common instructions", "utf8");
   for (const agentRole of Object.values(ScoutAgentRoles)) {
     writeFileSync(
@@ -1785,6 +1938,7 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
     runRoot: root,
     artifactRoot,
     logsRoot,
+    tempRoot,
     issues: [],
     readableRoots: [root],
     writableRoots: [artifactRoot],
@@ -1964,7 +2118,7 @@ function readMarkdownListValue(markdown: string, label: string): string | undefi
 function createFakeAppServer(options: {
   onRunTurn?: (
     turn: { prompt?: string },
-  ) => AgentTaskStepToolCall[] | void | Promise<AgentTaskStepToolCall[] | void>;
+  ) => AgentStepToolCall[] | void | Promise<AgentStepToolCall[] | void>;
   onBeforeTurnStarted?: (turn: { prompt?: string }) => void | Promise<void>;
   onInterruptTurn?: (input: { threadId: string; turnId: string }) => void | Promise<void>;
   onCancelTurnWait?: (threadId: string, error: Error) => void;

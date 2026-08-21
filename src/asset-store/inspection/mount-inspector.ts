@@ -18,6 +18,7 @@ import { MountFilesystemInspector } from "./mount-filesystem-inspector.js";
 import { MountShellToolsInspector } from "./mount-shell-tools-inspector.js";
 import { MountSourceInventoryInspector } from "./mount-source-inventory-inspector.js";
 import { runInspectionCheck } from "./diagnostics.js";
+import { sameAgentProfile } from "./comparison.js";
 
 interface MountReuseInspection {
   reusable: boolean;
@@ -33,6 +34,7 @@ export class MountInspector {
     private readonly context: MountContext,
     private readonly existingManifest: MountManifest | undefined,
     private readonly persistedIdentity?: PersistedMountIdentity,
+    private readonly allowAssetResourceDrift = false,
   ) {}
 
   /** Returns a reuse/rebuild decision and the first actionable mismatch. */
@@ -54,6 +56,17 @@ export class MountInspector {
           this.existingManifest!,
         ).inspect(),
       );
+      if (this.allowAssetResourceDrift
+        && sourceReason
+        && (reusable.reason?.startsWith("resource hash changed:")
+          || reusable.reason?.startsWith("persisted resource hash changed:"))
+        && sameAgentProfile(this.existingManifest.agentProfile, this.context.agentProfile)) {
+        return {
+          decision: "rebuild",
+          reason: `asset resource drift allowed: ${sourceReason}`,
+          resourceDrift: true,
+        };
+      }
       throw new Error(
         `Persisted asset changed for ${this.context.agentId}: resource inventory`
         + (sourceReason ?? reusable.reason ? `; ${sourceReason ?? reusable.reason}` : ""),
@@ -116,15 +129,18 @@ export class MountInspector {
     const shellTools = new ShellToolBuilder(
       this.context.mountRoot,
       this.context.assetsRoot,
+      this.context.tempRoot,
     ).build(this.context.profiledShellTools).tools;
     const mcpServers = new McpServerBuilder({
       mountRoot: this.context.mountRoot,
       assetsRoot: this.context.assetsRoot,
+      tempRoot: this.context.tempRoot,
       dynamicValues: buildMountMacroValues({
         scoutRoot: this.context.scoutRoot,
         runRoot: this.context.runRoot,
         mountRoot: this.context.mountRoot,
         artifactRoot: this.context.artifactRoot,
+        tempRoot: this.context.tempRoot,
         assetCommitId: this.context.assetCommitId,
         runId: this.context.runId,
       }),

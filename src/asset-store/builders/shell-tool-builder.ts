@@ -5,6 +5,7 @@ import type {
 import type { ShellToolContract } from "../contracts/resources.js";
 import { resolveAssetArg } from "../files/asset-paths.js";
 import { resolveShellToolCommand } from "../files/command-resolution.js";
+import { buildMountShellPath } from "../mount/macros.js";
 
 /** Canonical current-device wrapper projection for one resolved shell tool. */
 export interface BuiltShellTool {
@@ -26,6 +27,7 @@ export class ShellToolBuilder {
   constructor(
     private readonly mountRoot: string,
     private readonly assetsRoot: string,
+    private readonly tempRoot: string,
   ) {}
 
   build(contracts: ShellToolContract[]): ShellToolBuildResult {
@@ -58,6 +60,13 @@ export class ShellToolBuilder {
         args,
         wrapperContent: [
           "#!/bin/sh",
+          `export PATH=${JSON.stringify(buildMountShellPath(this.mountRoot))}`,
+          `export TMPDIR=${JSON.stringify(this.tempRoot)}`,
+          "export GIT_CONFIG_COUNT=1",
+          "export GIT_CONFIG_KEY_0=core.excludesFile",
+          "export GIT_CONFIG_VALUE_0=/dev/null",
+          "export GIT_CONFIG_GLOBAL=/dev/null",
+          "export GIT_CONFIG_NOSYSTEM=1",
           `exec ${JSON.stringify(command)} ${args.map((argument) => JSON.stringify(argument)).join(" ")} "$@"`,
           "",
         ].join("\n"),

@@ -6,6 +6,7 @@ import {
 } from "../../src/interaction/tui/panels/tasks-drawer.js";
 import { buildTaskStepDisplay } from "../../src/interaction/tui/rows/task-summary-row.js";
 import { selectTaskSummaries } from "../../src/interaction/tui/selectors/task-summaries.js";
+import { selectCoordinatorSteps } from "../../src/interaction/tui/selectors/coordinator-steps.js";
 import { terminalDisplayWidth } from "../../src/interaction/tui/terminal-text.js";
 import {
   resolveTuiWidths,
@@ -201,6 +202,51 @@ test("task step statuses start in one aligned column", () => {
   assert.ok(rows.every((row) =>
     terminalDisplayWidth(`${row.marker} ${row.label}${row.labelPadding}${row.status}`) <= 46
   ));
+});
+
+test("Coordinator steps and their plans are projected into the shared work drawer", () => {
+  const state: TuiState = {
+    runtime: {
+      cwd: "/repo/scout",
+      version: "0.1.0",
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+      status: "ready",
+    },
+    logs: [],
+    tasks: [],
+    steps: [{
+      stepId: "coordinator-step-0001",
+      agentId: "coordinator",
+      turnId: "turn-1",
+      status: "completed",
+      prompt: "coordinate",
+      toolCalls: [],
+      plan: {
+        explanation: "Review the worker result.",
+        steps: [
+          { step: "Read handoff", status: "completed", raw: {} },
+          { step: "Decide next action", status: "inProgress", raw: {} },
+        ],
+      },
+      startedAt: "2026-07-10T00:00:00.000Z",
+      updatedAt: "2026-07-10T00:00:02.000Z",
+    }],
+    activities: [],
+    turnActivities: [],
+  };
+
+  assert.deepEqual(selectCoordinatorSteps(state), [{
+    stepId: "coordinator-step-0001",
+    turnId: "turn-1",
+    status: "completed",
+    updatedAt: "2026-07-10T00:00:02.000Z",
+    planExplanation: "Review the worker result.",
+    planSteps: [
+      { step: "Read handoff", status: "completed" },
+      { step: "Decide next action", status: "inProgress" },
+    ],
+  }]);
 });
 
 test("TUI widths derive every horizontal region from terminal columns", () => {

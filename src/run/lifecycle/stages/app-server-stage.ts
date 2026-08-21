@@ -8,7 +8,7 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import {
   createCodexAppServerClient,
@@ -186,6 +186,7 @@ function buildClientRootPlan(options: {
     role: ScoutAgentRole;
     mountRoot: string;
     artifactRoot: string;
+    tempRoot: string;
     readableRoots: string[];
     writableRoots: string[];
   }> = [];
@@ -195,6 +196,8 @@ function buildClientRootPlan(options: {
     const agentRoot = join(runRoot, "agents", role);
     const mountRoot = join(agentRoot, "mount");
     const artifactRoot = join(agentRoot, "artifacts");
+    const tempRoot = join(agentRoot, "tmp");
+    mkdirSync(tempRoot, { recursive: true });
     mountRoots.push(mountRoot);
     const profileReadableRoots = resolveProfileRoots({
       roots: profile.readableRoots,
@@ -202,6 +205,7 @@ function buildClientRootPlan(options: {
       runRoot,
       mountRoot,
       artifactRoot,
+      tempRoot,
     });
     const profileWritableRoots = resolveProfileRoots({
       roots: profile.writableRoots,
@@ -209,6 +213,7 @@ function buildClientRootPlan(options: {
       runRoot,
       mountRoot,
       artifactRoot,
+      tempRoot,
     });
     const runtimeReadableRoots = resolveRoleRuntimeReadableRoots({
       assetsRoot,
@@ -217,11 +222,12 @@ function buildClientRootPlan(options: {
       shellTools: shellTools.tools,
     });
     readableRoots.push(mountRoot, ...profileReadableRoots, ...runtimeReadableRoots);
-    writableRoots.push(artifactRoot, ...profileWritableRoots);
+    writableRoots.push(tempRoot, artifactRoot, ...profileWritableRoots);
     roleRoots.push({
       role,
       mountRoot,
       artifactRoot,
+      tempRoot,
       readableRoots: [...profileReadableRoots, ...runtimeReadableRoots],
       writableRoots: profileWritableRoots,
     });
@@ -230,6 +236,7 @@ function buildClientRootPlan(options: {
       runRoot,
       mountRoot,
       artifactRoot,
+      tempRoot,
       assetCommitId: "",
       runId: basename(runRoot),
     });
@@ -264,6 +271,7 @@ function buildPreparedClientRootPlan(
     role: agent.role,
     mountRoot: agent.mount.mountRoot,
     artifactRoot: agent.mount.artifactRoot,
+    tempRoot: agent.mount.tempRoot,
     readableRoots: [
       ...agent.mount.readableRoots,
       ...resolveRoleRuntimeReadableRoots({
@@ -273,7 +281,7 @@ function buildPreparedClientRootPlan(
         shellTools: shellTools.tools,
       }),
     ],
-    writableRoots: agent.mount.writableRoots,
+    writableRoots: [agent.mount.tempRoot, ...agent.mount.writableRoots],
   }));
   return {
     mountRoots,
@@ -281,7 +289,10 @@ function buildPreparedClientRootPlan(
       ...environment.rootAccess.readableRoots,
       ...roleRoots.flatMap((role) => role.readableRoots),
     ]),
-    writableRoots: uniqueResolved(environment.rootAccess.writableRoots),
+    writableRoots: uniqueResolved([
+      ...environment.rootAccess.writableRoots,
+      ...roleRoots.map((role) => role.tempRoot),
+    ]),
     permissionProfiles: buildPermissionProfiles({
       scoutRoot,
       roleRoots,
@@ -371,6 +382,7 @@ function buildPermissionProfiles(input: {
     role: ScoutAgentRole;
     mountRoot: string;
     artifactRoot: string;
+    tempRoot: string;
     readableRoots: string[];
     writableRoots: string[];
   }>;
@@ -380,6 +392,12 @@ function buildPermissionProfiles(input: {
   const logicalSkillRoot = join(scoutRoot, "assets", "codex", "skills");
   const canonicalSkillRoot = realpathSync(logicalSkillRoot);
   const artifactRoots = input.roleRoots.map((role) => role.artifactRoot);
+  const macosRuntimeReadableRoots = process.platform === "darwin"
+    ? ["/System/Library/OpenSSL"]
+    : [];
+  const macosRuntimeWritableRoots = process.platform === "darwin"
+    ? uniqueResolved([tmpdir(), realpathSync(tmpdir())])
+    : [];
   return Object.fromEntries(input.roleRoots.map((role) => [
     role.role,
     {
@@ -389,10 +407,13 @@ function buildPermissionProfiles(input: {
         role.mountRoot,
         ...artifactRoots,
         ...role.readableRoots,
+        ...macosRuntimeReadableRoots,
       ]),
       writableRoots: uniqueResolved([
         role.artifactRoot,
+        role.tempRoot,
         ...role.writableRoots,
+        ...macosRuntimeWritableRoots,
       ]),
       deniedRoots: uniqueResolved([
         runsRoot,
@@ -517,12 +538,14 @@ function resolveProfileRoots(input: {
   runRoot: string;
   mountRoot: string;
   artifactRoot: string;
+  tempRoot: string;
 }): string[] {
   const dynamicValues = buildMountMacroValues({
     scoutRoot: input.scoutRoot,
     runRoot: input.runRoot,
     mountRoot: input.mountRoot,
     artifactRoot: input.artifactRoot,
+    tempRoot: input.tempRoot,
     assetCommitId: "",
   });
   return (input.roots ?? [])

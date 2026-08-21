@@ -564,6 +564,49 @@ test("CodexAppServerClient exposes turn interrupt without coupling it to runTurn
   }
 });
 
+test("CodexAppServerClient steers an active turn with its expected turn id", async () => {
+  const fakeServer = writeFakeAppServer(`
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin });
+    function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+    rl.on("line", (line) => {
+      const message = JSON.parse(line);
+      if (message.method === "initialize") {
+        send({ id: message.id, result: { ok: true } });
+        return;
+      }
+      if (message.method === "turn/steer") {
+        send({ id: message.id, result: { turnId: message.params.expectedTurnId, params: message.params } });
+      }
+    });
+  `);
+  const client = new CodexAppServerClient({
+    codexPath: fakeServer,
+    home: tmpdir(),
+    codexHome: tmpdir(),
+    providerName: "missing-provider",
+  });
+
+  try {
+    await client.startSession();
+    const result = await client.steerTurn({
+      threadId: "thread-1",
+      expectedTurnId: "turn-1",
+      prompt: "处理这个紧急事件",
+      clientUserMessageId: "message-1",
+    });
+    assert.equal(result.turnId, "turn-1");
+    assert.deepEqual((result.response as { params: Record<string, unknown> }).params, {
+      threadId: "thread-1",
+      expectedTurnId: "turn-1",
+      clientUserMessageId: "message-1",
+      input: [{ type: "text", text: "处理这个紧急事件", text_elements: [] }],
+    });
+  } finally {
+    client.close();
+  }
+});
+
 test("CodexAppServerClient persists stderr diagnostics and optional NDJSON transport", async () => {
   const fakeServer = writeFakeAppServer(`
     const readline = require("node:readline");

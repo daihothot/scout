@@ -564,6 +564,7 @@ function testMount(input: {
   plugins?: string[];
   shellTools?: ShellToolContract[];
 }): CodexMount {
+  mkdirSync(join(input.root, "tmp"), { recursive: true });
   return {
     agentId: "coordinator",
     agentProfile: {
@@ -592,6 +593,7 @@ function testMount(input: {
     runRoot: input.root,
     artifactRoot: input.artifactRoot,
     logsRoot: join(input.root, "logs"),
+    tempRoot: join(input.root, "tmp"),
     issues: [],
     readableRoots: input.readableRoots,
     writableRoots: input.writableRoots,

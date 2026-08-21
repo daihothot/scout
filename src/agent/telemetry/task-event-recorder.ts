@@ -32,11 +32,6 @@ export class TaskEventRecorder {
       this.write(event, rejection.agentId, rejection.activeTaskId, { ...rejection });
       return;
     }
-    if (AgentEvents.task.dispositionRecorded.is(event)) {
-      const { task, disposition } = event.payload;
-      this.write(event, task.agentId, task.taskId, { ...disposition });
-      return;
-    }
     if (AgentEvents.task.outcomeSubmitted.is(event)) {
       const submission = event.payload;
       this.write(event, submission.task.agentId, submission.task.taskId, {
@@ -46,6 +41,14 @@ export class TaskEventRecorder {
         status: submission.task.status,
         outcome: submission.outcome,
         submittedAt: submission.submittedAt,
+      });
+      return;
+    }
+    if (AgentEvents.task.dispositionRecorded.is(event)) {
+      const { task, disposition } = event.payload;
+      this.write(event, task.agentId, task.taskId, {
+        status: task.status,
+        disposition,
       });
       return;
     }
@@ -99,33 +102,6 @@ export class TaskEventRecorder {
       });
       return;
     }
-    if (AgentEvents.task.stepStarted.is(event)) {
-      const step = task.steps?.at(-1);
-      this.write(event, task.agentId, task.taskId, {
-        stepId: step?.stepId,
-        status: step?.status,
-        prompt: step?.prompt,
-        startedAt: step?.startedAt,
-        humanInputResponse: step?.humanInputResponse,
-      });
-      return;
-    }
-    if (AgentEvents.task.stepCompleted.is(event)) {
-      const step = task.steps?.at(-1);
-      this.write(event, task.agentId, task.taskId, {
-        stepId: step?.stepId,
-        turnId: step?.turnId,
-        status: step?.status,
-        finalResponse: step?.finalResponse,
-        toolCalls: step?.toolCalls,
-        humanInputRequest: step?.humanInputRequest,
-        finishedAt: step?.finishedAt,
-        durationMs: step?.durationMs,
-        protocolWarnings: step?.protocolWarnings,
-        error: step?.error,
-      });
-      return;
-    }
     if (AgentEvents.task.failed.is(event)) {
       this.write(event, task.agentId, task.taskId, {
         status: task.status,
@@ -133,10 +109,6 @@ export class TaskEventRecorder {
         finishedAt: task.finishedAt,
         updatedAt: task.updatedAt,
       });
-      return;
-    }
-    if (AgentEvents.task.planUpdated.is(event)) {
-      this.write(event, task.agentId, task.taskId, task.plan ?? {});
       return;
     }
     if (AgentEvents.task.terminal.is(event)) {

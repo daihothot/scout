@@ -78,6 +78,12 @@ export class MountPreparation {
         inspection = cached.inspection;
       }
     }
+    if (inspection.resourceDrift) {
+      context = new MountContextBuilder({
+        ...options,
+        persistedIdentity: undefined,
+      }).build();
+    }
     if (inspection.decision === "reused") {
       options.onPreparationDecision?.("reused");
       return {
@@ -86,16 +92,23 @@ export class MountPreparation {
       };
     }
     options.onPreparationDecision?.("rebuild", inspection.reason);
-    const materializeOptions = options.runId && !observeMaterializationStep
-      ? options
-      : {
+    const identityOptions = inspection.resourceDrift
+      ? {
         ...options,
-        runId: options.runId ?? context.runId,
+        persistedIdentity: undefined,
+        persistedManifest: undefined,
+      }
+      : options;
+    const materializeOptions = identityOptions.runId && !observeMaterializationStep
+      ? identityOptions
+      : {
+        ...identityOptions,
+        runId: identityOptions.runId ?? context.runId,
         ...(observeMaterializationStep
           ? {
             onMaterializationStep: (step: Parameters<NonNullable<MaterializeOptions["onMaterializationStep"]>>[0]) => {
               observeMaterializationStep(step);
-              options.onMaterializationStep?.(step);
+              identityOptions.onMaterializationStep?.(step);
             },
           }
           : {}),
@@ -139,6 +152,7 @@ function materializeOptionsFingerprint(options: MaterializeOptions): string {
     agentId: options.agentId,
     parentAssetCommitId: options.parentAssetCommitId,
     persistedIdentity: options.persistedIdentity,
+    allowAssetResourceDrift: options.allowAssetResourceDrift,
     cleanRunRoot: options.cleanRunRoot,
   });
 }
@@ -177,6 +191,7 @@ function inspectMountState(
       context,
       manifestFile.manifest,
       options.persistedIdentity,
+      options.allowAssetResourceDrift,
     ).inspect(),
   };
 }

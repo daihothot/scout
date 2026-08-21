@@ -53,6 +53,7 @@ export class MountContextBuilder {
     const agentRoot = join(runRoot, "agents", agentId);
     const artifactRoot = join(agentRoot, "artifacts");
     const logsRoot = join(agentRoot, "logs");
+    const tempRoot = join(agentRoot, "tmp");
     const mountRoot = join(agentRoot, "mount");
     const agentProfile = resolveAgentProfile(readAgentProfilesForScoutRoot(scoutRoot), agentId);
     const mcpServers = readJsonFile<McpServersFile>(join(assetsRoot, CodexAssetLayout.mcpServers));
@@ -103,6 +104,7 @@ export class MountContextBuilder {
       runRoot,
       mountRoot,
       artifactRoot,
+      tempRoot,
     });
     const writableRoots = resolveAgentProfileRoots({
       roots: agentProfile.writableRoots,
@@ -110,6 +112,7 @@ export class MountContextBuilder {
       runRoot,
       mountRoot,
       artifactRoot,
+      tempRoot,
     });
     return {
       scoutRoot,
@@ -120,6 +123,7 @@ export class MountContextBuilder {
       agentRoot,
       artifactRoot,
       logsRoot,
+      tempRoot,
       mountRoot,
       agentProfile,
       profiledMcpServers,
@@ -289,12 +293,14 @@ function resolveAgentProfileRoots(input: {
   runRoot: string;
   mountRoot: string;
   artifactRoot: string;
+  tempRoot: string;
 }): string[] {
   const dynamicValues = buildMountMacroValues({
     scoutRoot: input.scoutRoot,
     runRoot: input.runRoot,
     mountRoot: input.mountRoot,
     artifactRoot: input.artifactRoot,
+    tempRoot: input.tempRoot,
     assetCommitId: "",
   });
   return uniqueStrings((input.roots ?? [])

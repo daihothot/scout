@@ -51,6 +51,10 @@ export class InteractionGateway {
         AgentEvents.task,
         (event) => this.handleTaskEvent(event),
       ),
+      scope.eventBus.subscribe(
+        AgentEvents.step,
+        (event) => this.handleStepEvent(event),
+      ),
       scope.eventBus.subscribe<CoordinatorMessageProducedPayload>(
         AgentEvents.coordinator.messageProduced,
         (event) => this.handleAgentMessageProduced(event),
@@ -168,6 +172,17 @@ export class InteractionGateway {
           eventKey: event.key.routeKey,
         },
       );
+    }
+  }
+
+  private async handleStepEvent(event: ScoutEvent): Promise<void> {
+    try {
+      await currentRunScope().interactionPort.publishStepEvent?.(event);
+    } catch (error) {
+      this.warnInteractionError("step_event_failed", "Failed to publish an agent step event.", error, {
+        eventId: event.id,
+        eventKey: event.key.routeKey,
+      });
     }
   }
 

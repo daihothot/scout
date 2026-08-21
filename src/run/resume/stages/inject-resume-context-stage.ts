@@ -1,4 +1,5 @@
 import { WorkerAgent } from "../../../agent/roles/worker-agent.js";
+import { CoordinatorAgent } from "../../../agent/roles/coordinator-agent.js";
 import { AgentTaskStatuses } from "../../../agent/task/types.js";
 import { ScoutAgentRoles } from "../../../agent/thread/types.js";
 import type { RunStage } from "../../lifecycle/index.js";
@@ -19,14 +20,18 @@ import {
 export class InjectResumeContextStage implements RunStage {
   readonly id = "inject_resume_context";
   private readonly workersToActivate: WorkerAgent[] = [];
-  private coordinatorRunner?: import("../../../agent/runner/coordinator/coordinator-runner.js").CoordinatorRunner;
+  private coordinator?: CoordinatorAgent;
   private activateCoordinator = false;
 
   /** Loads journal-derived context into interaction stores and agent runners. */
   async start(): Promise<void> {
     const scope = currentRunScope();
     const projection = projectRun(scope.journal.readAll());
+    scope.stepStore.restore(projection.steps);
     scope.humanInputStore.restore(projection.humanInputRequests);
+    for (const step of projection.steps) {
+      await scope.interactionPort.restoreStepSnapshot?.(step);
+    }
     const transcript = [
       ...projection.userMessages.map((message) => ({
         kind: "user" as const,
@@ -64,23 +69,25 @@ export class InjectResumeContextStage implements RunStage {
           || candidate.status === AgentTaskStatuses.Done
         )
       );
-      if (!task) continue;
       const worker = scope.agentRegistry.resolveAgent(role);
       if (!(worker instanceof WorkerAgent)) {
         throw new Error(`Restored agent ${role} is not a Worker agent.`);
       }
+      worker.restoreMessages({
+        acceptedMessages: projection.messageDeliveries.filter((message) =>
+          message.agentId === worker.agentId
+        ),
+        pendingMessages: projection.pendingMessages.filter((message) =>
+          message.agentId === worker.agentId
+        ),
+      });
+      if (!task) continue;
       const resumeActions = planResumeActions({
         projection,
         agentId: worker.agentId,
         role,
       });
-      worker.restoreState({
-        acceptedMessages: projection.messageDeliveries.filter((message) =>
-          message.agentId === worker.agentId && message.taskId === task.taskId
-        ),
-        pendingMessages: projection.pendingMessages.filter((message) =>
-          message.agentId === worker.agentId && message.taskId === task.taskId
-        ),
+      worker.restoreTaskExecution({
         resumeContext: buildResumePacket({
           projection,
           agentId: worker.agentId,
@@ -96,18 +103,17 @@ export class InjectResumeContextStage implements RunStage {
     }
 
     const coordinator = scope.agentRegistry.resolveAgent(ScoutAgentRoles.Coordinator);
-    const runner = coordinator.runner;
-    if (!runner || runner.runnerKind !== "coordinator") {
-      throw new Error("Restored Coordinator runner is unavailable.");
+    if (!(coordinator instanceof CoordinatorAgent)) {
+      throw new Error("Restored Coordinator agent is unavailable.");
     }
-    this.coordinatorRunner = runner as import("../../../agent/runner/coordinator/coordinator-runner.js").CoordinatorRunner;
+    this.coordinator = coordinator;
     const coordinatorResumeActions = planResumeActions({
       projection,
       agentId: coordinator.agentId,
       role: ScoutAgentRoles.Coordinator,
     });
     this.activateCoordinator = coordinatorResumeActions.length > 0;
-    this.coordinatorRunner.restoreState({
+    this.coordinator.restoreState({
       acceptedMessages: projection.messageDeliveries.filter((message) =>
         message.agentId === coordinator.agentId
       ),
@@ -128,7 +134,7 @@ export class InjectResumeContextStage implements RunStage {
   activate(): void {
     for (const worker of this.workersToActivate) worker.activateRestoredTask();
     if (this.activateCoordinator) {
-      this.coordinatorRunner?.activateRestoredState();
+      this.coordinator?.activateRestoredState();
     }
   }
 }

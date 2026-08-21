@@ -2,10 +2,15 @@ import type { CodexAppServerClient } from "../agent-server/codex/app-server-clie
 import { AgentRegistry } from "../agent/core/agent-registry.js";
 import { AgentHumanInputStore } from "../agent/human-input/index.js";
 import { AgentTaskStore } from "../agent/task/agent-task-store.js";
+import { AgentStepStore } from "../agent/step/agent-step-store.js";
 import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
 import type { ScoutDomain } from "../domain/index.js";
 import type { RuntimeInteractionPort } from "../interaction/protocol/port.js";
+import {
+  defaultScoutConfig,
+  type ScoutConfig,
+} from "../system/config/index.js";
 import type {
   RunContextBundle,
   RunEnvironment,
@@ -22,6 +27,7 @@ export interface RunScopeOptions {
   eventBus: EventBus;
   interactionPort: RuntimeInteractionPort;
   domain: ScoutDomain;
+  scoutConfig?: ScoutConfig;
   journal: RunJournal;
   manifestStore: RunManifestStore;
   terminate(reason: string): Promise<void>;
@@ -41,8 +47,10 @@ export class RunScope {
   readonly interactionPort: RuntimeInteractionPort;
   readonly agentRegistry = new AgentRegistry();
   readonly taskStore = new AgentTaskStore();
+  readonly stepStore = new AgentStepStore();
   readonly humanInputStore: AgentHumanInputStore;
   readonly domain: ScoutDomain;
+  readonly scoutConfig: ScoutConfig;
   readonly journal: RunJournal;
   readonly manifestStore: RunManifestStore;
   private readonly terminateRun: RunScopeOptions["terminate"];
@@ -58,6 +66,7 @@ export class RunScope {
     this.interactionPort = options.interactionPort;
     this.humanInputStore = new AgentHumanInputStore();
     this.domain = options.domain;
+    this.scoutConfig = options.scoutConfig ?? defaultScoutConfig;
     this.journal = options.journal;
     this.manifestStore = options.manifestStore;
     this.terminateRun = options.terminate;

@@ -9,6 +9,7 @@ import type {
   AgentTurnActivity,
 } from "../../src/agent/activity/activity-event.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
+import type { AgentStepState } from "../../src/agent/step/types.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
@@ -264,15 +265,9 @@ test("TuiStore retains the latest lifecycle state for each Agent turn", () => {
 test("TuiStore ignores task updates until assignment is confirmed", () => {
   const store = createStore();
   const bus = new InMemoryEventBus();
-  const unassigned = taskState({
-    plan: {
-      turnId: "turn-1",
-      explanation: "Research the selected BDD.",
-      steps: [{ step: "Locate BDD", status: "inProgress", raw: {} }],
-    },
-  });
+  const unassigned = taskState({ stepIds: ["step-1"] });
 
-  store.addTaskEvent(bus.publish(AgentEvents.task.planUpdated, unassigned));
+  store.addTaskEvent(bus.publish(AgentEvents.task.stepStarted, unassigned));
 
   assert.deepEqual(store.snapshot().tasks, []);
   assert.deepEqual(store.snapshot().logs, []);
@@ -291,31 +286,26 @@ test("TuiStore restores the same task projection that normal events would displa
     steps: [{ step: "Complete the contract", status: "completed" as const, raw: {} }],
   };
 
+  store.restoreStepSnapshot(stepState({
+    stepId: "step-1",
+    turnId: "turn-1",
+    status: "interrupted",
+    prompt: "first",
+    plan: firstPlan,
+    startedAt: "2026-07-10T00:00:00.000Z",
+  }));
+  store.restoreStepSnapshot(stepState({
+    stepId: "step-2",
+    turnId: "turn-2",
+    status: "completed",
+    prompt: "resumed",
+    plan: resumedPlan,
+    startedAt: "2026-07-10T00:00:01.000Z",
+  }));
   store.restoreTaskSnapshot(taskState({
     status: "done",
     updatedAt: "2026-07-10T00:00:03.000Z",
-    plan: resumedPlan,
-    planRecords: [firstPlan, resumedPlan],
-    steps: [
-      {
-        stepId: "step-1",
-        taskId: "researcher-task-0001",
-        turnId: "turn-1",
-        status: "interrupted",
-        prompt: "first",
-        toolCalls: [],
-        startedAt: "2026-07-10T00:00:00.000Z",
-      },
-      {
-        stepId: "step-2",
-        taskId: "researcher-task-0001",
-        turnId: "turn-2",
-        status: "completed",
-        prompt: "resumed",
-        toolCalls: [],
-        startedAt: "2026-07-10T00:00:01.000Z",
-      },
-    ],
+    stepIds: ["step-1", "step-2"],
   }));
 
   assert.deepEqual(store.snapshot().tasks, [{
@@ -375,16 +365,35 @@ test("TuiStore keeps plans separated by turn and retains them after archive", ()
     ],
   };
 
-  store.addTaskEvent(bus.publish(AgentEvents.task.assigned, assigned));
-  store.addTaskEvent(bus.publish(AgentEvents.task.planUpdated, taskState({
+  store.addTaskEvent(bus.publish(AgentEvents.task.assigned, {
+    ...assigned,
+    stepIds: ["step-1", "step-2"],
+  }));
+  store.addStepEvent(bus.publish(AgentEvents.step.started, stepState({
+    stepId: "step-1",
+    turnId: "turn-1",
     plan: firstPlan,
-    planRecords: [firstPlan],
+  })));
+  store.addStepEvent(bus.publish(AgentEvents.step.completed, stepState({
+    stepId: "step-1",
+    turnId: "turn-1",
+    status: "completed",
+    plan: completedFirstPlan,
+    finishedAt: "2026-07-10T00:00:02.000Z",
+  })));
+  store.addStepEvent(bus.publish(AgentEvents.step.completed, stepState({
+    stepId: "step-2",
+    turnId: "turn-2",
+    status: "completed",
+    plan: secondPlan,
+    startedAt: "2026-07-10T00:00:02.000Z",
+    finishedAt: "2026-07-10T00:00:03.000Z",
+    updatedAt: "2026-07-10T00:00:03.000Z",
   })));
   store.addTaskEvent(bus.publish(AgentEvents.task.done, taskState({
     status: "done",
     updatedAt: "2026-07-10T00:00:03.000Z",
-    plan: secondPlan,
-    planRecords: [completedFirstPlan, secondPlan],
+    stepIds: ["step-1", "step-2"],
   })));
 
   assert.deepEqual(store.snapshot().tasks, [{
@@ -398,6 +407,7 @@ test("TuiStore keeps plans separated by turn and retains them after archive", ()
     turns: [
       {
         turnId: "turn-1",
+        status: "completed",
         planSteps: [
           { step: "Read role and skills", status: "completed" },
           { step: "Locate BDD", status: "completed" },
@@ -405,6 +415,7 @@ test("TuiStore keeps plans separated by turn and retains them after archive", ()
       },
       {
         turnId: "turn-2",
+        status: "completed",
         planSteps: [
           { step: "Write research artifact", status: "completed" },
           { step: "Submit research handoff", status: "completed" },
@@ -423,6 +434,7 @@ test("TuiStore keeps plans separated by turn and retains them after archive", ()
   const archivedEvent = bus.publish(AgentEvents.task.archived, taskState({
     status: "done",
     updatedAt: "2026-07-10T00:00:04.000Z",
+    stepIds: ["step-1", "step-2"],
   }));
   store.addTaskEvent(archivedEvent);
 
@@ -437,6 +449,7 @@ test("TuiStore keeps plans separated by turn and retains them after archive", ()
     turns: [
       {
         turnId: "turn-1",
+        status: "completed",
         planSteps: [
           { step: "Read role and skills", status: "completed" },
           { step: "Locate BDD", status: "completed" },
@@ -444,6 +457,7 @@ test("TuiStore keeps plans separated by turn and retains them after archive", ()
       },
       {
         turnId: "turn-2",
+        status: "completed",
         planSteps: [
           { step: "Write research artifact", status: "completed" },
           { step: "Submit research handoff", status: "completed" },
@@ -468,31 +482,28 @@ test("TuiStore keeps an interrupted turn separate from its resumed turn", () => 
     steps: [{ step: "Read the contract again", status: "completed" as const, raw: {} }],
   };
 
-  store.addTaskEvent(bus.publish(AgentEvents.task.assigned, taskState()));
+  store.addTaskEvent(bus.publish(AgentEvents.task.assigned, taskState({
+    stepIds: ["step-1", "step-2"],
+  })));
+  store.addStepEvent(bus.publish(AgentEvents.step.interrupted, stepState({
+    stepId: "step-1",
+    turnId: "turn-interrupted",
+    status: "interrupted",
+    prompt: "first",
+    plan: firstPlan,
+    startedAt: "2026-07-10T00:00:00.000Z",
+  })));
+  store.addStepEvent(bus.publish(AgentEvents.step.failed, stepState({
+    stepId: "step-2",
+    turnId: "turn-resumed",
+    status: "failed",
+    prompt: "resumed",
+    plan: resumedPlan,
+    startedAt: "2026-07-10T00:00:01.000Z",
+  })));
   store.addTaskEvent(bus.publish(AgentEvents.task.done, taskState({
     status: "failed",
-    plan: resumedPlan,
-    planRecords: [firstPlan, resumedPlan],
-    steps: [
-      {
-        stepId: "step-1",
-        taskId: "researcher-task-0001",
-        turnId: "turn-interrupted",
-        status: "interrupted",
-        prompt: "first",
-        toolCalls: [],
-        startedAt: "2026-07-10T00:00:00.000Z",
-      },
-      {
-        stepId: "step-2",
-        taskId: "researcher-task-0001",
-        turnId: "turn-resumed",
-        status: "failed",
-        prompt: "resumed",
-        toolCalls: [],
-        startedAt: "2026-07-10T00:00:01.000Z",
-      },
-    ],
+    stepIds: ["step-1", "step-2"],
   })));
 
   assert.deepEqual(store.snapshot().tasks[0]?.turns, [
@@ -512,20 +523,32 @@ test("TuiStore keeps an interrupted turn separate from its resumed turn", () => 
 test("TuiStore reports human confirmation without projecting a waiting task status", () => {
   const store = createStore();
   const bus = new InMemoryEventBus();
-  store.addTaskEvent(bus.publish(AgentEvents.task.assigned, taskState()));
-  store.addTaskEvent(bus.publish(AgentEvents.task.stepCompleted, taskState({
-    status: "running",
-    steps: [{
+  const step = stepState({
+    stepId: "researcher-task-0001-step-0001",
+    status: "completed",
+    prompt: "查证当前版本。",
+    finishedAt: "2026-07-10T00:00:01.000Z",
+  });
+  const disposition = {
+      kind: "waiting_for_human",
       stepId: "researcher-task-0001-step-0001",
-      taskId: "researcher-task-0001",
-      status: "completed",
-      prompt: "查证当前版本。",
-      toolCalls: [],
-      startedAt: "2026-07-10T00:00:00.000Z",
-      finishedAt: "2026-07-10T00:00:01.000Z",
-      humanInputRequest: { body: "请确认目标版本。" },
-    }],
+      turnId: "turn-1",
+      callId: "call-human-1",
+      requestId: "request-human-1",
+      request: "请确认目标版本。",
+      timestamp: "2026-07-10T00:00:01.000Z",
+  } as const;
+  store.addTaskEvent(bus.publish(AgentEvents.task.assigned, taskState({
+    stepIds: [step.stepId],
   })));
+  const disposedTask = taskState({
+    stepIds: [step.stepId],
+    dispositions: [disposition],
+  });
+  store.addTaskEvent(bus.publish(AgentEvents.task.dispositionRecorded, {
+    task: disposedTask,
+    disposition,
+  }));
 
   assert.equal(store.snapshot().tasks[0]?.status, "running");
   assert.equal(
@@ -590,6 +613,23 @@ function taskState(input: Partial<AgentTaskState> = {}): AgentTaskState {
     isBackgrounded: true,
     createdAt: "2026-07-10T00:00:00.000Z",
     updatedAt: "2026-07-10T00:00:00.000Z",
+    ...input,
+    stepIds: input.stepIds ?? [],
+    dispositions: input.dispositions ?? [],
+  };
+}
+
+function stepState(input: Partial<AgentStepState> = {}): AgentStepState {
+  return {
+    stepId: "researcher-task-0001-step-0001",
+    agentId: "researcher",
+    taskId: "researcher-task-0001",
+    turnId: "turn-1",
+    status: "running",
+    prompt: "Research BDD evidence",
+    toolCalls: [],
+    startedAt: "2026-07-10T00:00:00.000Z",
+    updatedAt: input.updatedAt ?? "2026-07-10T00:00:01.000Z",
     ...input,
   };
 }

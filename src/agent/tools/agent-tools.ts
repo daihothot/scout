@@ -1,6 +1,7 @@
 import type { AgentDynamicToolSpec, AgentJsonValue } from "./types.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 import { ScoutAgentRoles } from "../thread/types.js";
+import type { AgentMessageDeliveryMode } from "../message/types.js";
 
 /**
  * Declares the typed dynamic-tool protocol exposed to Scout agents. This
@@ -59,6 +60,7 @@ export interface SendMessageToolCall {
   tool: "SendMessage";
   to: string;
   message: string;
+  delivery_mode?: AgentMessageDeliveryMode;
 }
 
 /** Input contract for a worker request that pauses on human confirmation. */
@@ -140,6 +142,11 @@ export function buildSendMessageDynamicTool(): AgentDynamicToolSpec {
         type: "string",
         description: "投递给目标 agent 的普通中文消息正文。",
       },
+      delivery_mode: {
+        type: "string",
+        enum: ["steer", "queued"],
+        description: "可选。默认 steer：有 active turn 时追加到当前 turn；queued 等当前 turn 结束后再启动新 turn。",
+      },
     }, ["to", "message"]),
   };
 }
@@ -202,7 +209,7 @@ export function buildArchiveTaskDynamicTool(): AgentDynamicToolSpec {
     guidanceSkill: "tool-scout-archive-task",
     namespace: AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
     name: "ArchiveTask",
-    description: "仅供 Coordinator 归档指定 Worker task；归档会释放该 Worker 的当前 runner，但保留 agent thread。",
+    description: "仅供 Coordinator 归档指定 Worker task。",
     inputSchema: objectSchema({
       task_id: {
         type: "string",
@@ -258,10 +265,15 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
       if (typeof message !== "string" || message.trim().length === 0) {
         throw new Error("SendMessage message must be a non-empty string.");
       }
+      const deliveryMode = input.delivery_mode;
+      if (deliveryMode !== undefined && deliveryMode !== "steer" && deliveryMode !== "queued") {
+        throw new Error("SendMessage delivery_mode must be steer or queued.");
+      }
       return {
         tool: "SendMessage",
         to: target.trim(),
         message: message.trim(),
+        ...(deliveryMode === undefined ? {} : { delivery_mode: deliveryMode }),
       };
     }
     case "RequestHumanInput": {

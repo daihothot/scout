@@ -3,6 +3,7 @@ import type {
 } from "../../agent-server/codex/app-server-event-store.js";
 import { AgentActivityBackend } from "./agent-activity-backend.js";
 import { AgentTaskBackend } from "./agent-task-backend.js";
+import { AgentStepBackend } from "./agent-step-backend.js";
 import { AgentToolBackend } from "./agent-tool-backend.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
@@ -16,6 +17,7 @@ export class AgentBackend {
   readonly registry: RunScope["agentRegistry"];
   readonly activity: AgentActivityBackend;
   readonly task: AgentTaskBackend;
+  readonly step: AgentStepBackend;
   readonly tool: AgentToolBackend;
   readonly domain: RunScope["domain"];
   private readonly scope: RunScope;
@@ -29,6 +31,7 @@ export class AgentBackend {
     this.registry = scope.agentRegistry;
     this.activity = new AgentActivityBackend();
     this.task = new AgentTaskBackend();
+    this.step = new AgentStepBackend();
     this.tool = new AgentToolBackend({
       taskBackend: this.task,
     });
@@ -81,7 +84,7 @@ export class AgentBackend {
     entry: AppServerTimelineEntry,
   ): void {
     this.logAppServerHealthEvent(entry, agent);
-    this.task.handleAppServerTimelineEntry(agent, entry, (timelineEntry) =>
+    this.step.handleAppServerTimelineEntry(agent, entry, (timelineEntry) =>
       this.scope.appServer.resolveTimelineEntry(timelineEntry)
     );
     this.activity.handleAppServerTimelineEntry(

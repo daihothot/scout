@@ -7,12 +7,9 @@ import type { AssetCommit } from "../../asset-store/contracts/asset-commit.js";
 import type { CodexMount } from "../../asset-store/contracts/mount.js";
 import type { Result } from "../../core/result.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
-import { AgentRunner } from "../runner/types.js";
-import type {
-  AgentTaskStepToolCall,
-  AgentTaskState,
-  SendAgentMessageInput,
-} from "../task/types.js";
+import type { AgentTaskState, SendAgentMessageInput } from "../task/types.js";
+import type { AgentStepToolCall } from "../step/types.js";
+import type { AgentMessage } from "../message/types.js";
 import type {
   AgentThreadSnapshot,
   AgentThreadSpec,
@@ -22,6 +19,8 @@ import {
   type ScoutAgentThreadPreflightSnapshot,
 } from "../thread/thread-preflight.js";
 import { AgentEvents } from "../events/index.js";
+import { attachments } from "../context/attachments.js";
+import { randomUUID } from "node:crypto";
 
 /** Input contract for one app-server turn owned by a Scout agent. */
 export interface ScoutAgentTurnInput {
@@ -46,14 +45,19 @@ export interface ScoutAgentTurnRecord {
   error?: string;
 }
 
-/** Turn result plus app-server projections consumed by task runners. */
+/** Turn result plus app-server projections consumed by Agent execution policy. */
 export interface ScoutAgentTurnOutcome {
   turn: ScoutAgentTurnRecord;
   finalResponse?: string;
-  toolCalls?: AgentTaskStepToolCall[];
+  toolCalls?: AgentStepToolCall[];
   plan?: AppServerPlanState;
   goal?: AppServerThreadGoalState;
 }
+
+/** Result of attempting to append input to an active turn. */
+export type ScoutAgentSteerResult =
+  | { steered: true; turnId: string }
+  | { steered: false };
 
 /** Snapshot exposed to run persistence and resume assembly. */
 export interface ScoutAgentSnapshot {
@@ -90,7 +94,7 @@ class AgentTurnInterruptedError extends Error {
 
 /**
  * Owns one role's app-server thread, turn lifecycle, and registry identity.
- * Concrete role agents provide runner behavior; this base keeps thread and
+ * Concrete role agents provide execution behavior; this base keeps thread and
  * interruption facts consistent for startup, telemetry, and resume.
  */
 export abstract class ScoutAgent {
@@ -103,7 +107,6 @@ export abstract class ScoutAgent {
   protected readonly assetCommit: AssetCommit;
   protected readonly eventBus: RunScope["eventBus"];
   protected readonly registry: RunScope["agentRegistry"];
-  runner?: AgentRunner;
   private thread?: AgentThreadSnapshot;
   private threadPreflight?: ScoutAgentThreadPreflightSnapshot;
   private threadPreflightPromise?: Promise<void>;
@@ -111,6 +114,9 @@ export abstract class ScoutAgent {
   private inFlightTurn?: InFlightTurnOwnership;
   private stopping = false;
   private stopPromise?: Promise<void>;
+  private readonly acceptedMessages = new Map<string, AgentMessage>();
+  private pendingMessages: AgentMessage[] = [];
+  private messageDeliveryChain: Promise<void> = Promise.resolve();
 
   constructor(input: ScoutAgentOptions & {
     spec: AgentThreadSpec;
@@ -152,6 +158,112 @@ export abstract class ScoutAgent {
   }
 
   abstract sendMessage(input: SendAgentMessageInput): Promise<Result<void, string>>;
+
+  protected abstract stopExecution(reason: string): Promise<void>;
+
+  protected taskSnapshot(): AgentTaskState | undefined {
+    return undefined;
+  }
+
+  protected get isStopping(): boolean {
+    return this.stopping;
+  }
+
+  protected get pendingMessageCount(): number {
+    return this.pendingMessages.length;
+  }
+
+  protected pendingMessagesSnapshot(): AgentMessage[] {
+    return structuredClone(this.pendingMessages);
+  }
+
+  protected enqueueMessageDelivery(input: SendAgentMessageInput, options: {
+    taskId?: string;
+    deliveryName: string;
+    onAccepted?: (message: AgentMessage) => void | Promise<void>;
+  }): Promise<boolean> {
+    let acceptedNewMessage = false;
+    const delivery = this.messageDeliveryChain.then(async () => {
+      const message: AgentMessage = {
+        messageId: input.delivery?.messageId ?? `${this.agentId}-message-${randomUUID()}`,
+        agentId: this.agentId,
+        ...(options.taskId === undefined ? {} : { taskId: options.taskId }),
+        body: attachments.compose(input.message),
+        queuedAt: input.delivery?.queuedAt ?? new Date().toISOString(),
+        ...(input.deliveryMode === undefined ? {} : { deliveryMode: input.deliveryMode }),
+      };
+      const accepted = this.acceptedMessages.get(message.messageId);
+      if (accepted && !sameAgentMessage(accepted, message)) {
+        throw new Error(`Message ${message.messageId} does not match its ${options.deliveryName} delivery.`);
+      }
+      if (accepted) return;
+      acceptedNewMessage = true;
+      this.acceptedMessages.set(message.messageId, structuredClone(message));
+      this.pendingMessages = [...this.pendingMessages, message];
+      this.eventBus.publish(AgentEvents.message.queued, message, { occurredAt: message.queuedAt });
+      await options.onAccepted?.(message);
+      if (message.deliveryMode !== "queued") {
+        const steered = await this.steerActiveTurn({
+          message: message.body,
+          messageId: message.messageId,
+        });
+        if (steered.steered) {
+          this.pendingMessages = this.pendingMessages.filter((candidate) =>
+            candidate.messageId !== message.messageId
+          );
+          this.publishMessageConsumed(message, "steer", steered.turnId);
+        }
+      }
+    });
+    this.messageDeliveryChain = delivery.catch(() => undefined);
+    return delivery.then(() => acceptedNewMessage);
+  }
+
+  protected consumeQueuedMessages(messages: AgentMessage[]): void {
+    const consumed = new Set(messages.map((message) => message.messageId));
+    this.pendingMessages = this.pendingMessages.filter((message) =>
+      !consumed.has(message.messageId)
+    );
+    for (const message of messages) this.publishMessageConsumed(message, "queued");
+  }
+
+  protected clearPendingMessages(): void {
+    this.pendingMessages = [];
+  }
+
+  protected restoreMessageState(input: {
+    acceptedMessages: AgentMessage[];
+    pendingMessages: AgentMessage[];
+    deliveryName: string;
+  }): void {
+    if (this.acceptedMessages.size > 0 || this.pendingMessages.length > 0) {
+      throw new Error(`Agent ${this.agentId} message state is already restored.`);
+    }
+    this.pendingMessages = structuredClone(input.pendingMessages);
+    for (const message of [...input.acceptedMessages, ...this.pendingMessages]) {
+      const accepted = this.acceptedMessages.get(message.messageId);
+      if (accepted && !sameAgentMessage(accepted, message)) {
+        throw new Error(`Message ${message.messageId} does not match its ${input.deliveryName} delivery.`);
+      }
+      this.acceptedMessages.set(message.messageId, structuredClone(message));
+    }
+  }
+
+  private publishMessageConsumed(
+    message: AgentMessage,
+    deliveryMode: "steer" | "queued",
+    turnId?: string,
+  ): void {
+    const consumedAt = new Date().toISOString();
+    this.eventBus.publish(AgentEvents.message.consumed, {
+      messageId: message.messageId,
+      agentId: message.agentId,
+      taskId: message.taskId,
+      consumedAt,
+      deliveryMode,
+      ...(turnId === undefined ? {} : { turnId }),
+    }, { occurredAt: consumedAt });
+  }
 
   async startThread(): Promise<AgentThreadSnapshot> {
     if (this.thread?.status === "active") return this.thread;
@@ -295,9 +407,9 @@ export abstract class ScoutAgent {
   }
 
   private async stopAgentOnce(reason: string): Promise<void> {
-    // Calling runner.stop() synchronously seals the loop before the current turn can roll over.
-    const runnerStop = this.stopRunner(reason);
-    void runnerStop.catch(() => undefined);
+    // Stop scheduling synchronously before the current turn can roll over.
+    const executionStop = this.stopExecution(reason);
+    void executionStop.catch(() => undefined);
     const errors: unknown[] = [];
     try {
       try {
@@ -312,9 +424,9 @@ export abstract class ScoutAgent {
       }
       try {
         await withTimeout(
-          runnerStop,
+          executionStop,
           AGENT_STOP_TIMEOUT_MS,
-          `Timed out stopping the runner for agent ${this.agentId}.`,
+          `Timed out stopping execution for agent ${this.agentId}.`,
         );
       } catch (error) {
         errors.push(error);
@@ -335,10 +447,6 @@ export abstract class ScoutAgent {
         this.eventBus.publish(AgentEvents.thread.closed, structuredClone(this.thread));
       }
     }
-  }
-
-  private async stopRunner(reason: string): Promise<void> {
-    await this.runner?.stop(reason);
   }
 
   private interruptOwnedTurn(): Promise<void> {
@@ -525,6 +633,42 @@ export abstract class ScoutAgent {
     };
   }
 
+  /**
+   * Attempts to append a message to this agent's active app-server turn.
+   * `{ steered: false }` means the turn completed (or never became active)
+   * before steer could be submitted; callers should then enqueue the message
+   * for a fresh turn.
+   */
+  async steerActiveTurn(input: {
+    message: string;
+    messageId?: string;
+  }): Promise<ScoutAgentSteerResult> {
+    if (typeof this.appServer.steerTurn !== "function") return { steered: false };
+    const ownership = this.inFlightTurn;
+    if (!ownership || ownership.completed) return { steered: false };
+    const turnId = ownership.turnId ?? await ownership.turnIdReady;
+    if (!turnId || ownership.completed) return { steered: false };
+    try {
+      await this.appServer.steerTurn({
+        threadId: ownership.threadId,
+        expectedTurnId: turnId,
+        prompt: input.message,
+        clientUserMessageId: input.messageId,
+      });
+      return { steered: true, turnId };
+    } catch (error) {
+      const turn = this.appServer.turnSnapshot(ownership.threadId, turnId);
+      if (
+        ownership.completed
+        || turn?.completedAt
+        || isTerminalTurnStatus(turn?.status)
+      ) {
+        return { steered: false };
+      }
+      throw error;
+    }
+  }
+
   private claimTurnOwnership(
     invocationId: string,
     threadId: string,
@@ -606,13 +750,11 @@ export abstract class ScoutAgent {
   }
 
   snapshot(): ScoutAgentSnapshot {
-    const taskSnapshot = this.runner?.snapshot() ?? {
-      pendingMessageCount: 0,
-    };
     return {
       agentId: this.agentId,
       thread: this.thread,
-      ...taskSnapshot,
+      activeTask: this.taskSnapshot(),
+      pendingMessageCount: this.pendingMessages.length,
     };
   }
 
@@ -673,7 +815,7 @@ async function withTimeout<T>(
   }
 }
 
-function extractToolCalls(progressItems: NonNullable<Awaited<ReturnType<CodexAppServerClient["runTurn"]>>["progressItems"]>): AgentTaskStepToolCall[] {
+function extractToolCalls(progressItems: NonNullable<Awaited<ReturnType<CodexAppServerClient["runTurn"]>>["progressItems"]>): AgentStepToolCall[] {
   return progressItems.flatMap((progressItem) => {
     const item = progressItem.item;
     if (item.type === "dynamicToolCall") {
@@ -701,4 +843,12 @@ function extractToolCalls(progressItems: NonNullable<Awaited<ReturnType<CodexApp
 
 function readOptionalString(object: Record<string, unknown>, key: string): string | undefined {
   return typeof object[key] === "string" ? object[key] : undefined;
+}
+
+function sameAgentMessage(left: AgentMessage, right: AgentMessage): boolean {
+  return left.agentId === right.agentId
+    && left.taskId === right.taskId
+    && left.body === right.body
+    && left.queuedAt === right.queuedAt
+    && left.deliveryMode === right.deliveryMode;
 }

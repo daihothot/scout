@@ -1,8 +1,5 @@
 import { AgentEvents } from "../../../agent/events/index.js";
-import {
-  AgentTaskStepStatuses,
-  type AgentTaskState,
-} from "../../../agent/task/types.js";
+import { AgentStepStatuses } from "../../../agent/step/types.js";
 import { RunEvents } from "../../events/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
@@ -39,35 +36,33 @@ export class RecordResumeInterruptionsStage implements RunStage {
 
     projection = projectRun(scope.journal.readAll());
     const interruptionReason = "previous_runtime_ended_before_step_completion";
-    for (const projectedTask of projection.tasks) {
-      let task = projectedTask;
-      for (const step of task.steps ?? []) {
-        if (step.status !== AgentTaskStepStatuses.Running) continue;
-        const interruptedAt = new Date().toISOString();
-        task = {
-          ...task,
-          steps: (task.steps ?? []).map((candidate) =>
-            candidate.stepId === step.stepId
-              ? {
-                ...candidate,
-                status: AgentTaskStepStatuses.Interrupted,
-                finishedAt: interruptedAt,
-                durationMs: Math.max(
-                  0,
-                  new Date(interruptedAt).getTime() - new Date(candidate.startedAt).getTime(),
-                ),
-                error: interruptionReason,
-              }
-              : candidate
-          ),
-          updatedAt: interruptedAt,
-        } satisfies AgentTaskState;
-        scope.eventBus.publish(
-          AgentEvents.task.stepInterrupted,
-          task,
-          { occurredAt: interruptedAt },
-        );
-      }
+    for (const step of projection.steps) {
+      if (step.status !== AgentStepStatuses.Running) continue;
+      const interruptedAt = new Date().toISOString();
+      const interruptedStep = {
+        ...step,
+        status: AgentStepStatuses.Interrupted,
+        finishedAt: interruptedAt,
+        durationMs: Math.max(
+          0,
+          new Date(interruptedAt).getTime() - new Date(step.startedAt).getTime(),
+        ),
+        error: interruptionReason,
+        updatedAt: interruptedAt,
+      };
+      scope.eventBus.publish(
+        AgentEvents.step.interrupted,
+        interruptedStep,
+        { occurredAt: interruptedAt },
+      );
+      if (!step.taskId) continue;
+      const task = projection.tasks.find((candidate) => candidate.taskId === step.taskId);
+      if (!task) throw new Error(`Interrupted Agent step ${step.stepId} references unknown task ${step.taskId}.`);
+      scope.eventBus.publish(
+        AgentEvents.task.stepInterrupted,
+        { ...task, updatedAt: interruptedAt },
+        { occurredAt: interruptedAt },
+      );
     }
 
     projection = projectRun(scope.journal.readAll());
