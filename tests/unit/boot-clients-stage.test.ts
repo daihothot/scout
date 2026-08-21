@@ -83,6 +83,7 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   const runRoot = resolve(fixtureRoot, "run", runId);
   const coordinatorArtifact = resolve(runRoot, "agents", "coordinator", "artifacts");
   const researcherArtifact = resolve(runRoot, "agents", "researcher", "artifacts");
+  const researcherTemp = resolve(runRoot, "agents", "researcher", "tmp");
   const logicalSkillRoot = resolve(fixtureRoot, "assets", "codex", "skills");
   const researcherSkillRoot = join(logicalSkillRoot, "domain-validation-researcher");
   const coordinatorSkillRoot = join(logicalSkillRoot, "domain-validation-coordinator");
@@ -94,6 +95,12 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   assert.ok(researcherPermissions?.readableRoots.includes(researcherMount));
   assert.ok(researcherPermissions?.readableRoots.includes(coordinatorArtifact));
   assert.ok(researcherPermissions?.writableRoots.includes(researcherArtifact));
+  assert.ok(researcherPermissions?.writableRoots.includes(researcherTemp));
+  if (process.platform === "darwin") {
+    assert.ok(researcherPermissions?.readableRoots.includes("/System/Library/OpenSSL"));
+    assert.ok(researcherPermissions?.writableRoots.includes(resolve(tmpdir())));
+    assert.ok(researcherPermissions?.writableRoots.includes(realpathSync(tmpdir())));
+  }
   assert.ok(researcherPermissions?.deniedRoots.includes(runsRoot));
   assert.ok(researcherPermissions?.deniedRoots.includes(logicalSkillRoot));
   assert.ok(researcherPermissions?.deniedRoots.includes(realpathSync(logicalSkillRoot)));
@@ -132,6 +139,14 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   assert.match(configToml, new RegExp(escapeRegExp(`"${researcherMount}" = "read"`)));
   assert.match(configToml, new RegExp(escapeRegExp(`"${coordinatorArtifact}" = "read"`)));
   assert.match(configToml, new RegExp(escapeRegExp(`"${researcherArtifact}" = "write"`)));
+  assert.match(configToml, new RegExp(escapeRegExp(`"${researcherTemp}" = "write"`)));
+  if (process.platform === "darwin") {
+    assert.match(configToml, /^"\/System\/Library\/OpenSSL" = "read"$/m);
+    assert.match(
+      configToml,
+      new RegExp(`^"${escapeRegExp(realpathSync(tmpdir()))}" = "write"$`, "m"),
+    );
+  }
   assert.match(configToml, new RegExp(escapeRegExp(`"${logicalSkillRoot}" = "deny"`)));
   assert.match(configToml, new RegExp(escapeRegExp(`"${researcherSkillRoot}" = "read"`)));
   assert.doesNotMatch(configToml, /^sandbox_mode\s*=/m);

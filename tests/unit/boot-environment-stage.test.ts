@@ -40,6 +40,7 @@ import {
   installRunScope,
   RunScope,
 } from "../../src/run/run-scope.js";
+import type { ScoutConfig } from "../../src/system/config/index.js";
 import type { RunJournal } from "../../src/run/journal/index.js";
 import type { RunManifestStore } from "../../src/run/persistence/index.js";
 import {
@@ -231,6 +232,57 @@ test("RestoreEnvironmentStage rejects source asset drift", async (t) => {
     new RestoreEnvironmentStage().start(),
     /Persisted asset changed/,
   );
+});
+
+test("RestoreEnvironmentStage applies the explicit global resource-drift policy", async (t) => {
+  const fixtureRoot = createFixture("scout-restore-environment-drift-allowed-");
+  const initial = installEnvironmentScope(t, fixtureRoot, "restore-environment-drift-allowed");
+  let initialReleased = false;
+  t.after(() => {
+    if (!initialReleased) initial.release();
+  });
+  await new PrepareEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+
+  const coordinator = initial.scope.environment.agents[ScoutAgentRoles.Coordinator];
+  const previousResourceHash = coordinator.mount.resourceHash;
+  const mountManifest = JSON.parse(
+    readFileSync(coordinator.mount.manifestPath, "utf8"),
+  ) as MountManifest;
+  const sourceAsset = mountManifest.assets.find((asset) => asset.type !== "plugin");
+  assert.ok(sourceAsset);
+  writeFileSync(resolve(fixtureRoot, sourceAsset.sourcePath), "changed", "utf8");
+
+  const journal = initial.scope.journal;
+  const manifestStore = initial.scope.manifestStore;
+  initial.release();
+  initialReleased = true;
+  const resumed = installExistingEnvironmentScope(
+    fixtureRoot,
+    "restore-environment-drift-allowed",
+    journal,
+    manifestStore,
+    new NoopRuntimeInteractionPort(),
+    { restore: { allowAssetResourceDrift: true } },
+  );
+  let resumedReleased = false;
+  t.after(() => {
+    if (!resumedReleased) resumed.release();
+  });
+
+  await new RestoreEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+
+  const current = resumed.scope.environment.agents[ScoutAgentRoles.Coordinator];
+  assert.notEqual(current.mount.resourceHash, previousResourceHash);
+  assert.equal(
+    JSON.parse(readFileSync(current.mount.manifestPath, "utf8")).resourceHash,
+    current.mount.resourceHash,
+  );
+  resumed.release();
+  resumedReleased = true;
 });
 
 for (const scenario of [
@@ -686,6 +738,7 @@ function installEnvironmentScope(
   scoutRoot: string,
   runId: string,
   interactionPort: RuntimeInteractionPort = new NoopRuntimeInteractionPort(),
+  scoutConfig?: ScoutConfig,
 ): {
   scope: RunScope;
   appServer: CodexAppServerClient;
@@ -698,6 +751,7 @@ function installEnvironmentScope(
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort,
+    scoutConfig,
     domain: {
       domainId: "test",
       name: "test",
@@ -730,6 +784,7 @@ function installExistingEnvironmentScope(
   journal: RunJournal,
   manifestStore: RunManifestStore,
   interactionPort: RuntimeInteractionPort,
+  scoutConfig?: ScoutConfig,
 ): {
   scope: RunScope;
   appServer: CodexAppServerClient;
@@ -743,6 +798,7 @@ function installExistingEnvironmentScope(
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort,
+    scoutConfig,
     domain: {
       domainId: "test",
       name: "test",

@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   AssetStore,
   inspectCodexMount,
@@ -30,6 +30,7 @@ import {
   type ShellToolsFile,
 } from "../../src/asset-store/index.js";
 import { MountInspector } from "../../src/asset-store/inspection/mount-inspector.js";
+import { buildMountShellPath } from "../../src/asset-store/mount/macros.js";
 
 const scoutRoot = process.cwd();
 
@@ -1043,6 +1044,153 @@ test("Skill resource hashes cover the complete profiled Skill directory", () => 
   assert.notEqual(afterAsset.hash, beforeAsset.hash);
 });
 
+test("AssetStore allows explicit source-resource drift only with fresh mount identity", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-resource-drift-policy-");
+  const store = new AssetStore();
+  const runId = "run-asset-resource-drift-policy";
+  const initial = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId,
+    agentId: "researcher",
+  });
+  const persistedManifest = JSON.parse(
+    readFileSync(initial.manifestPath, "utf8"),
+  ) as MountManifest;
+  const sourceAsset = persistedManifest.assets.find((asset) => asset.id !== "codex.shell_tools");
+  assert.ok(sourceAsset);
+  writeFileSync(resolve(fixtureRoot, sourceAsset.sourcePath), "changed source resource\n", "utf8");
+
+  const persistedIdentity = mountIdentity(initial);
+  const baseOptions = {
+    scoutRoot: fixtureRoot,
+    runId,
+    agentId: "researcher",
+    cleanRunRoot: false,
+    persistedManifest,
+    persistedIdentity,
+  };
+  assert.throws(
+    () => store.inspectMount(baseOptions),
+    /Persisted asset changed/,
+  );
+
+  const allowedOptions = {
+    ...baseOptions,
+    allowAssetResourceDrift: true,
+  };
+  const inspection = store.inspectMount(allowedOptions);
+  assert.deepEqual(inspection, {
+    decision: "rebuild",
+    reason: inspection.reason,
+    resourceDrift: true,
+  });
+  assert.match(inspection.reason ?? "", /asset resource drift allowed/);
+
+  const rebuilt = store.prepareMount(allowedOptions);
+  assert.equal(rebuilt.decision, "rebuild");
+  assert.notEqual(rebuilt.mount.resourceHash, initial.resourceHash);
+  assert.notEqual(rebuilt.mount.assetCommitId, initial.assetCommitId);
+  assert.notEqual(rebuilt.mount.mountId, initial.mountId);
+  const rebuiltManifest = JSON.parse(
+    readFileSync(rebuilt.mount.manifestPath, "utf8"),
+  ) as MountManifest;
+  assert.equal(rebuiltManifest.resourceHash, rebuilt.mount.resourceHash);
+  assert.equal(rebuiltManifest.assetCommitId, rebuilt.mount.assetCommitId);
+  assert.equal(rebuiltManifest.mountId, rebuilt.mount.mountId);
+
+  const reused = store.prepareMount({
+    ...allowedOptions,
+    persistedManifest: rebuiltManifest,
+    persistedIdentity: mountIdentity(rebuilt.mount),
+  });
+  assert.equal(reused.decision, "reused");
+});
+
+test("AssetStore does not allow resource drift to change an agent profile", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-resource-drift-profile-");
+  const store = new AssetStore();
+  const runId = "run-asset-resource-drift-profile";
+  const initial = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId,
+    agentId: "researcher",
+  });
+  const persistedManifest = JSON.parse(
+    readFileSync(initial.manifestPath, "utf8"),
+  ) as MountManifest;
+  const profilesPath = join(fixtureRoot, "assets", "codex", "agents", "agent-profiles.json");
+  const profiles = JSON.parse(readFileSync(profilesPath, "utf8")) as AgentProfilesFile;
+  profiles.profiles.researcher.maxThreads += 1;
+  writeFileSync(profilesPath, JSON.stringify(profiles, null, 2) + "\n", "utf8");
+
+  assert.throws(
+    () => store.inspectMount({
+      scoutRoot: fixtureRoot,
+      runId,
+      agentId: "researcher",
+      cleanRunRoot: false,
+      persistedManifest,
+      persistedIdentity: mountIdentity(initial),
+      allowAssetResourceDrift: true,
+    }),
+    /Persisted asset changed/,
+  );
+});
+
+test("AssetStore does not let resource drift bypass a persisted mount identity mismatch", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-resource-drift-identity-");
+  const store = new AssetStore();
+  const runId = "run-asset-resource-drift-identity";
+  const initial = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId,
+    agentId: "researcher",
+  });
+  const persistedManifest = JSON.parse(
+    readFileSync(initial.manifestPath, "utf8"),
+  ) as MountManifest;
+  const sourceAsset = persistedManifest.assets.find((asset) => asset.id !== "codex.shell_tools");
+  assert.ok(sourceAsset);
+  writeFileSync(resolve(fixtureRoot, sourceAsset.sourcePath), "changed source resource\n", "utf8");
+
+  assert.throws(
+    () => store.inspectMount({
+      scoutRoot: fixtureRoot,
+      runId,
+      agentId: "researcher",
+      cleanRunRoot: false,
+      persistedManifest,
+      persistedIdentity: {
+        ...mountIdentity(initial),
+        mountId: "tampered-mount-id",
+      },
+      allowAssetResourceDrift: true,
+    }),
+    /Persisted asset changed/,
+  );
+});
+
+test("Scout system config is outside Agent resource identity", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-system-config-resource-boundary-");
+  const configPath = join(fixtureRoot, "assets", "scout", "config", "scout.config.json");
+  mkdirSync(join(fixtureRoot, "assets", "scout", "config"), { recursive: true });
+  writeFileSync(configPath, "{\n  \"restore\": {\n    \"allowAssetResourceDrift\": false\n  }\n}\n", "utf8");
+  const store = new AssetStore();
+  const initial = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-system-config-resource-boundary",
+    agentId: "coordinator",
+  });
+  writeFileSync(configPath, "{\n  \"restore\": {\n    \"allowAssetResourceDrift\": true\n  }\n}\n", "utf8");
+  const current = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-system-config-resource-boundary-current",
+    agentId: "coordinator",
+  });
+
+  assert.equal(current.resourceHash, initial.resourceHash);
+});
+
 test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-unity-signals-");
   const store = new AssetStore();
@@ -1227,8 +1375,14 @@ test("AssetStore resolves asset-local shell tool commands against the Scout root
     agentId: "coordinator",
   });
   const wrapperPath = join(mount.mountRoot, "bin", "asset-local-tool");
+  const wrapper = readFileSync(wrapperPath, "utf8");
 
-  assert.ok(readFileSync(wrapperPath, "utf8").includes(toolPath));
+  assert.ok(wrapper.includes(toolPath));
+  assert.ok(
+    wrapper.includes(
+      `export PATH=${JSON.stringify(buildMountShellPath(mount.mountRoot))}\n`,
+    ),
+  );
   assert.equal(execFileSync(wrapperPath, [], {
     cwd: mount.mountRoot,
     encoding: "utf8",

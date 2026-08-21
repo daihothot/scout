@@ -32,6 +32,7 @@ export class MountGeneratedFilesBuilder {
           mountRoot: context.mountRoot,
           runRoot: context.runRoot,
           artifactRoot: context.artifactRoot,
+          tempRoot: context.tempRoot,
           runId: context.runId,
           assetCommitId: context.assetCommitId,
           mcpServers: this.mcpServers,

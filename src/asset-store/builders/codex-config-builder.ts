@@ -7,6 +7,7 @@ export interface GenerateCodexConfigOptions {
   mountRoot: string;
   runRoot: string;
   artifactRoot: string;
+  tempRoot: string;
   runId: string;
   assetCommitId: string;
   mcpServers: MaterializedMcpServer[];
@@ -26,6 +27,7 @@ export class CodexConfigBuilder {
       ...Object.entries(buildMountShellEnvironment({
         runRoot: input.runRoot,
         artifactRoot: input.artifactRoot,
+        tempRoot: input.tempRoot,
         assetCommitId: input.assetCommitId,
         runId: input.runId,
       })).map(([key, value]) => `${key} = "${escapeToml(value)}"`),

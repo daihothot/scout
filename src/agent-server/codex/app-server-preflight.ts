@@ -224,6 +224,7 @@ async function smokeShellTools(
     ...buildMountShellEnvironment({
       runRoot: mount.runRoot,
       artifactRoot: mount.artifactRoot,
+      tempRoot: mount.tempRoot,
       assetCommitId: mount.assetCommitId,
     }),
   };
@@ -392,6 +393,7 @@ function preflightPassed(result: AgentServerPreflightReport): boolean {
 function inspectRootAccess(mount: CodexMount): NonNullable<AgentServerPreflightReport["rootAccess"]> {
   const writableRoots = new Set([
     mount.artifactRoot,
+    mount.tempRoot,
     ...mount.writableRoots,
     ...mount.mcpServers.flatMap((server) => server.writableRoots),
   ]);

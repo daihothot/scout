@@ -18,6 +18,7 @@ import type {
   AgentTurnActivity,
 } from "../../src/agent/activity/activity-event.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
+import type { AgentStepState } from "../../src/agent/step/types.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type {
@@ -140,19 +141,30 @@ test("interaction gateway publishes every task event once", async (t) => {
     AgentEvents.task.assigned,
     taskState({ status: AgentTaskStatuses.Queued }),
   );
-  await bus.publishAndWait(
-    AgentEvents.task.planUpdated,
-    taskState({ plan: taskPlan("inProgress") }),
-  );
+  const disposed = taskState({
+    stepIds: ["researcher-task-0001-step-0001"],
+    dispositions: [{
+      kind: "protocol_violation",
+      stepId: "researcher-task-0001-step-0001",
+      turnId: "turn-1",
+      callId: null,
+      timestamp: "2026-07-10T00:00:02.000Z",
+      reason: "missing disposition",
+    }],
+  });
+  await bus.publishAndWait(AgentEvents.task.dispositionRecorded, {
+    task: disposed,
+    disposition: disposed.dispositions[0]!,
+  });
   await bus.publishAndWait(AgentEvents.task.done, taskState({
     status: AgentTaskStatuses.Done,
     updatedAt: "2026-07-10T00:00:03.000Z",
-    plan: taskPlan("completed"),
+    stepIds: ["researcher-task-0001-step-0001"],
   }));
   await bus.publishAndWait(AgentEvents.task.archived, taskState({
     status: AgentTaskStatuses.Done,
     updatedAt: "2026-07-10T00:00:04.000Z",
-    plan: taskPlan("completed"),
+    stepIds: ["researcher-task-0001-step-0001"],
   }));
   gateway.stop();
 
@@ -160,7 +172,7 @@ test("interaction gateway publishes every task event once", async (t) => {
     port.taskEvents.map((event) => event.key.routeKey),
     [
       AgentEvents.task.assigned.routeKey,
-      AgentEvents.task.planUpdated.routeKey,
+      AgentEvents.task.dispositionRecorded.routeKey,
       AgentEvents.task.done.routeKey,
       AgentEvents.task.archived.routeKey,
     ],
@@ -185,11 +197,18 @@ test("interaction gateway projects assigned task plan and Worker activity into T
   gateway.start();
   await bus.publishAndWait(
     AgentEvents.task.assigned,
-    taskState({ status: AgentTaskStatuses.Queued }),
+    taskState({
+      status: AgentTaskStatuses.Queued,
+      stepIds: ["researcher-task-0001-step-0001"],
+    }),
   );
   await bus.publishAndWait(
-    AgentEvents.task.planUpdated,
-    taskState({ plan: taskPlan("inProgress") }),
+    AgentEvents.step.started,
+    stepState({ plan: taskPlan("inProgress") }),
+  );
+  await bus.publishAndWait(
+    AgentEvents.step.planUpdated,
+    stepState({ plan: taskPlan("inProgress") }),
   );
   await bus.publishAndWait(AgentEvents.activity.observed, {
     seq: 1,
@@ -217,6 +236,7 @@ test("interaction gateway projects assigned task plan and Worker activity into T
 
   assert.deepEqual(store.snapshot().tasks[0]?.turns, [{
     turnId: "turn-1",
+    status: "running",
     planSteps: [{
       step: "Locate BDD and Behavior source",
       status: "inProgress",
@@ -228,7 +248,13 @@ test("interaction gateway projects assigned task plan and Worker activity into T
   await bus.publishAndWait(AgentEvents.task.done, taskState({
     status: AgentTaskStatuses.Done,
     updatedAt: "2026-07-10T00:00:03.000Z",
+    stepIds: ["researcher-task-0001-step-0001"],
+  }));
+  await bus.publishAndWait(AgentEvents.step.completed, stepState({
+    status: "completed",
     plan: taskPlan("completed"),
+    finishedAt: "2026-07-10T00:00:03.000Z",
+    updatedAt: "2026-07-10T00:00:03.000Z",
   }));
 
   assert.equal(store.snapshot().tasks.length, 1);
@@ -238,7 +264,7 @@ test("interaction gateway projects assigned task plan and Worker activity into T
   await bus.publishAndWait(AgentEvents.task.archived, taskState({
     status: AgentTaskStatuses.Done,
     updatedAt: "2026-07-10T00:00:04.000Z",
-    plan: taskPlan("completed"),
+    stepIds: ["researcher-task-0001-step-0001"],
   }));
   gateway.stop();
 
@@ -252,6 +278,7 @@ class TestInteractionPort implements RuntimeInteractionPort {
   private sendHandler?: (message: AgentMessageSend) => void | Promise<void>;
   readonly receivedMessages: AgentMessageReply[] = [];
   readonly taskEvents: ScoutEvent[] = [];
+  readonly stepEvents: ScoutEvent[] = [];
 
   async publishRunLifecycleSnapshot(_snapshot: RunLifecycleSnapshot): Promise<void> {
     return undefined;
@@ -275,6 +302,10 @@ class TestInteractionPort implements RuntimeInteractionPort {
 
   async publishTaskEvent(event: ScoutEvent): Promise<void> {
     this.taskEvents.push(event);
+  }
+
+  async publishStepEvent(event: ScoutEvent): Promise<void> {
+    this.stepEvents.push(event);
   }
 
   async restoreTaskSnapshot(_task: AgentTaskState): Promise<void> {
@@ -329,6 +360,23 @@ function taskState(input: Partial<AgentTaskState> = {}): AgentTaskState {
     status: AgentTaskStatuses.Running,
     isBackgrounded: true,
     createdAt: "2026-07-10T00:00:00.000Z",
+    updatedAt: "2026-07-10T00:00:01.000Z",
+    ...input,
+    stepIds: input.stepIds ?? [],
+    dispositions: input.dispositions ?? [],
+  };
+}
+
+function stepState(input: Partial<AgentStepState> = {}): AgentStepState {
+  return {
+    stepId: "researcher-task-0001-step-0001",
+    agentId: "researcher",
+    taskId: "researcher-task-0001",
+    turnId: "turn-1",
+    status: "running",
+    prompt: "Research current BDD evidence",
+    toolCalls: [],
+    startedAt: "2026-07-10T00:00:01.000Z",
     updatedAt: "2026-07-10T00:00:01.000Z",
     ...input,
   };

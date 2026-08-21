@@ -10,6 +10,7 @@ import {
   NoopRuntimeInteractionPort,
   type RuntimeDisclosureEvent,
 } from "../../interaction/index.js";
+import { loadScoutConfig } from "../../system/config/index.js";
 import { SystemEvents } from "../../system/events/index.js";
 import { RunJournal } from "../journal/index.js";
 import { RunEvents } from "../events/index.js";
@@ -36,6 +37,7 @@ export async function startRun(
   const interactionPort = options.interactionPort ?? new NoopRuntimeInteractionPort();
   const runId = buildRunId();
   const scoutRoot = resolve(options.cwd);
+  const scoutConfig = loadScoutConfig(scoutRoot);
   const runRoot = join(scoutRoot, "run", runId);
   const runtimeLogger = new Logger({
     runId,
@@ -66,6 +68,7 @@ export async function startRun(
     eventBus,
     interactionPort,
     domain,
+    scoutConfig,
     journal,
     manifestStore,
     terminate: (reason) => executor.terminate(reason),

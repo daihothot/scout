@@ -82,6 +82,16 @@ test("agent tool parser validates and normalizes each supported payload", () => 
     to: " researcher ",
     message: " 继续验证 ",
   }), { tool: "SendMessage", to: "researcher", message: "继续验证" });
+  assert.deepEqual(parseAgentDynamicToolCall("SendMessage", {
+    to: " researcher ",
+    message: " 立即处理 ",
+    delivery_mode: "queued",
+  }), {
+    tool: "SendMessage",
+    to: "researcher",
+    message: "立即处理",
+    delivery_mode: "queued",
+  });
   assert.deepEqual(parseAgentDynamicToolCall("RequestHumanInput", {
     request: " 请选择目标账号 ",
   }), { tool: "RequestHumanInput", request: "请选择目标账号" });

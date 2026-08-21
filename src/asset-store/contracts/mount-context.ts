@@ -16,6 +16,8 @@ export interface MountContext {
   agentRoot: string;
   artifactRoot: string;
   logsRoot: string;
+  /** Run-scoped writable temporary directory for this Agent's shell tools. */
+  tempRoot: string;
   mountRoot: string;
   agentProfile: AgentProfile;
   profiledMcpServers: McpServersFile;

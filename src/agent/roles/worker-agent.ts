@@ -10,34 +10,60 @@ import { ScoutAgent, type ScoutAgentOptions } from "../core/scout-agent.js";
 import { ScoutAgentRoles, type AgentThreadSpec } from "../thread/types.js";
 import {
   WorkerRunner,
-  type WorkerHumanInputDisposition,
-  type WorkerLifecycleToolCall,
-  type WorkerTaskSubmission,
 } from "../runner/worker/worker-runner.js";
+import {
+  TaskRunner,
+  type TaskStepPreparation,
+} from "../runner/task/task-runner.js";
 import { agent } from "../context/agent-attachments.js";
 import type { AgentMessage } from "../message/types.js";
-import { canonicalizeAgentArtifactReferences } from "../task/artifact-references.js";
+import { AgenticLoop } from "../core/agentic-loop.js";
 
 /**
- * Base implementation for role-specific workers. It owns task runner binding
- * and lifecycle-tool delegation while the concrete role supplies its thread
- * specification.
+ * Base implementation for role-specific workers. It owns one reusable Step
+ * runner and zero or one unarchived TaskRunner.
  */
 export abstract class WorkerAgent extends ScoutAgent {
-  declare runner: WorkerRunner | undefined;
+  readonly stepRunner: WorkerRunner;
+  private readonly loop: AgenticLoop<TaskStepPreparation>;
+  private currentTaskRunner?: TaskRunner;
   private taskSequence = 0;
+  private archivingTask = false;
 
   constructor(options: ScoutAgentOptions & { spec: AgentThreadSpec }) {
     super(options);
+    const worker = this;
+    this.stepRunner = new WorkerRunner({
+      host: {
+        get agentId() {
+          return worker.agentId;
+        },
+        runTurn: (turnInput) => worker.runTurn(turnInput),
+      },
+    });
+    this.loop = new AgenticLoop({
+      agentId: this.agentId,
+      takeTick: () => this.currentTaskRunner?.prepareStep(this.pendingMessagesSnapshot()),
+      runTick: (preparation) => this.runWorkerTick(preparation),
+      isStopped: () => this.isStopping || this.archivingTask,
+      onError: (error) => this.currentTaskRunner?.failActiveTask(error),
+    });
+  }
+
+  get taskRunner(): TaskRunner | undefined {
+    return this.currentTaskRunner;
   }
 
   async assignTask(
     input: AssignAgentTaskInput,
   ): Promise<Result<AgentTaskState, AgentTaskNotAssignedEventPayload>> {
-    if (this.runner) {
-      const activeTask = this.runner.snapshot().activeTask;
+    if (this.isStopping) {
+      throw new Error(`Worker agent ${this.agentId} is stopping and cannot accept another task.`);
+    }
+    if (this.currentTaskRunner) {
+      const activeTask = this.currentTaskRunner.snapshot().activeTask;
       if (!activeTask) {
-        throw new Error(`Worker agent ${this.agentId} has a runner without a bound task.`);
+        throw new Error(`Worker agent ${this.agentId} has a TaskRunner without a bound task.`);
       }
       const reason = "The worker agent already has a task that has not been archived.";
       const rejection = {
@@ -52,131 +78,148 @@ export abstract class WorkerAgent extends ScoutAgent {
     }
 
     const taskSequence = this.taskSequence + 1;
-    const runner = this.createWorkerRunner({ taskSequence });
-    const task = await runner.assignTask(input);
-    this.taskSequence = taskSequence;
-    this.runner = runner;
-    return Result.ok(task);
+    const runner = this.createTaskRunner({ taskSequence });
+    this.currentTaskRunner = runner;
+    try {
+      const task = await runner.assignTask(input);
+      this.taskSequence = taskSequence;
+      queueMicrotask(() => this.loop.schedule());
+      return Result.ok(task);
+    } catch (error) {
+      if (this.currentTaskRunner === runner) this.currentTaskRunner = undefined;
+      throw error;
+    }
   }
 
   async sendMessage(input: SendAgentMessageInput): Promise<Result<void, string>> {
-    const runner = this.runner;
+    const runner = this.currentTaskRunner;
     if (!runner) {
-      return Result.err(`Worker agent ${this.agentId} has no task runner to receive a message.`);
+      return Result.err(`Worker agent ${this.agentId} has no TaskRunner to receive a message.`);
     }
-    await runner.queueMessage(input);
+    const task = runner.assertCanReceiveMessage(input.taskId);
+    const accepted = await this.enqueueMessageDelivery(input, {
+      taskId: task.taskId,
+      deliveryName: "Worker",
+      onAccepted: () => runner.recordMessageQueued(task.taskId),
+    });
+    if (accepted && !this.isStopping && !this.archivingTask) this.loop.schedule();
     return Result.ok(undefined);
   }
 
-  async submitTask(input: WorkerTaskSubmission): Promise<Result<AgentTaskState, string>> {
-    const runner = this.runner;
-    const task = runner?.snapshot().activeTask;
-    if (!runner || !task) {
-      return Result.err(`Worker agent ${this.agentId} has no active task to submit.`);
-    }
-    try {
-      return Result.ok(await runner.submitTask({
-        ...input,
-        outcome: canonicalizeAgentArtifactReferences(input.outcome, {
-          runRoot: this.agentMount.runRoot,
-          artifactRoot: this.agentMount.artifactRoot,
-        }),
-      }));
-    } catch (error) {
-      return Result.err(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  beginHumanInput(
-    input: WorkerLifecycleToolCall & { request: string },
-  ): Result<AgentTaskState, string> {
-    const runner = this.runner;
-    if (!runner) {
-      return Result.err(`Worker agent ${this.agentId} has no active task for RequestHumanInput.`);
-    }
-    try {
-      return Result.ok(runner.beginHumanInput(input));
-    } catch (error) {
-      return Result.err(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async completeHumanInput(
-    input: WorkerHumanInputDisposition,
-  ): Promise<Result<AgentTaskState, string>> {
-    const runner = this.runner;
-    if (!runner) {
-      return Result.err(`Worker agent ${this.agentId} has no active task for RequestHumanInput.`);
-    }
-    try {
-      return Result.ok(await runner.completeHumanInput(input));
-    } catch (error) {
-      return Result.err(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  abortHumanInput(input: WorkerLifecycleToolCall & { request: string }): void {
-    this.runner?.abortHumanInput(input);
-  }
-
   async archiveTask(taskId: string): Promise<AgentTaskState> {
-    const runner = this.runner;
+    const runner = this.currentTaskRunner;
     if (!runner) {
-      throw new Error(`Worker agent ${this.agentId} has no task runner to archive.`);
+      throw new Error(`Worker agent ${this.agentId} has no TaskRunner to archive.`);
     }
     const task = runner.snapshot().activeTask;
     if (!task || task.taskId !== taskId) {
       throw new Error(`Worker agent ${this.agentId} does not own task ${taskId}.`);
     }
-    const archived = await runner.archiveTask(taskId);
-    if (this.runner === runner) {
-      this.runner = undefined;
+    this.archivingTask = true;
+    this.loop.stop();
+    runner.cancelPreparedStep();
+    try {
+      await this.loop.runToIdle();
+      const archived = await runner.archiveTask(taskId);
+      this.clearPendingMessages();
+      if (this.currentTaskRunner === runner) {
+        this.currentTaskRunner = undefined;
+      }
+      return archived;
+    } finally {
+      this.archivingTask = false;
     }
-    return archived;
+  }
+
+  async stopTask(
+    taskId: string,
+    reason = "任务已被 Coordinator 停止。",
+  ): Promise<AgentTaskState> {
+    const runner = this.currentTaskRunner;
+    if (!runner) {
+      throw new Error(`Worker agent ${this.agentId} has no TaskRunner for task ${taskId}.`);
+    }
+    if (runner.snapshot().activeTask?.taskId !== taskId) {
+      throw new Error(`Worker agent ${this.agentId} does not own task ${taskId}.`);
+    }
+    this.clearPendingMessages();
+    runner.cancelPreparedStep();
+    return runner.stopTask(taskId, reason);
   }
 
   restoreTask(input: {
     task: AgentTaskState;
     maxTaskSequence: number;
   }): void {
-    if (this.runner) {
-      throw new Error(`Worker agent ${this.agentId} already has a runner.`);
+    if (this.currentTaskRunner) {
+      throw new Error(`Worker agent ${this.agentId} already has a TaskRunner.`);
     }
     this.taskSequence = Math.max(this.taskSequence, input.maxTaskSequence);
-    this.runner = this.createWorkerRunner({
+    this.currentTaskRunner = this.createTaskRunner({
       taskSequence: input.task.taskSequence,
       restoredTask: input.task,
     });
   }
 
-  restoreState(input: {
+  restoreMessages(input: {
     acceptedMessages: AgentMessage[];
     pendingMessages: AgentMessage[];
+  }): void {
+    this.restoreMessageState({
+      acceptedMessages: input.acceptedMessages,
+      pendingMessages: input.pendingMessages,
+      deliveryName: "Worker",
+    });
+  }
+
+  restoreTaskExecution(input: {
     resumeContext: string;
     resumeImmediately: boolean;
   }): void {
-    if (!this.runner) throw new Error(`Worker agent ${this.agentId} has no restored runner.`);
-    this.runner.restoreState(input);
+    const runner = this.currentTaskRunner;
+    if (!runner) throw new Error(`Worker agent ${this.agentId} has no restored Task runner.`);
+    runner.restoreExecutionState({
+      resumeContext: input.resumeContext,
+      resumeImmediately: input.resumeImmediately,
+    });
   }
 
   restoreTaskSequence(taskSequence: number): void {
-    if (this.runner) {
+    if (this.currentTaskRunner) {
       throw new Error(`Worker agent ${this.agentId} cannot change task sequence with an active runner.`);
     }
     this.taskSequence = Math.max(this.taskSequence, taskSequence);
   }
 
   activateRestoredTask(): void {
-    if (!this.runner) throw new Error(`Worker agent ${this.agentId} has no restored runner.`);
-    this.runner.activateRestoredTask();
+    const runner = this.currentTaskRunner;
+    if (!runner) throw new Error(`Worker agent ${this.agentId} has no restored TaskRunner.`);
+    if (runner.shouldActivateRestoredTask(this.pendingMessageCount)) this.loop.schedule();
   }
 
-  private createWorkerRunner(input: {
+  async runToIdle(): Promise<void> {
+    await this.loop.runToIdle();
+  }
+
+  protected override taskSnapshot(): AgentTaskState | undefined {
+    return this.currentTaskRunner?.snapshot().activeTask;
+  }
+
+  protected async stopExecution(reason: string): Promise<void> {
+    this.loop.stop();
+    this.currentTaskRunner?.cancelPreparedStep();
+    await Promise.all([
+      this.loop.runToIdle(),
+      this.stepRunner.stop(reason),
+    ]);
+  }
+
+  private createTaskRunner(input: {
     taskSequence: number;
     restoredTask?: AgentTaskState;
-  }): WorkerRunner {
+  }): TaskRunner {
     const worker = this;
-    return new WorkerRunner({
+    return new TaskRunner({
       ...input,
       host: {
         get agentId() {
@@ -185,10 +228,6 @@ export abstract class WorkerAgent extends ScoutAgent {
         get role() {
           return worker.role;
         },
-        get spec() {
-          return worker.spec;
-        },
-        runTurn: (turnInput) => worker.runTurn(turnInput),
         deliverTaskOutcome: async (outcome) => {
           const coordinator = worker.registry.listAgents().find((candidate) =>
             candidate.role === ScoutAgentRoles.Coordinator
@@ -215,5 +254,25 @@ export abstract class WorkerAgent extends ScoutAgent {
         },
       },
     });
+  }
+
+  private async runWorkerTick(preparation: TaskStepPreparation): Promise<void> {
+    const taskRunner = this.currentTaskRunner;
+    if (!taskRunner || taskRunner.snapshot().activeTask?.taskId !== preparation.taskId) {
+      throw new Error(`Worker agent ${this.agentId} has no Task runner for ${preparation.taskId}.`);
+    }
+    const result = await this.stepRunner.runStep({
+      taskId: preparation.taskId,
+      stepId: preparation.stepId,
+      prompt: preparation.prompt,
+      onStarted: (step) => {
+        taskRunner.recordStepStarted(preparation, step);
+        if (preparation.messagesToConsume.length > 0) {
+          this.consumeQueuedMessages(preparation.messagesToConsume);
+          taskRunner.recordPendingMessagesDrained(preparation.taskId);
+        }
+      },
+    });
+    await taskRunner.recordStepFinished(preparation, result);
   }
 }

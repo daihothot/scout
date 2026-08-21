@@ -9,6 +9,7 @@ import type {
 import { AgentEvents } from "../../../agent/events/index.js";
 import type { AgentHumanInputState } from "../../../agent/human-input/index.js";
 import type { AgentMessage } from "../../../agent/message/types.js";
+import type { AgentStepState } from "../../../agent/step/types.js";
 import { ValidationEvents } from "../../../domain/validation/validation-events.js";
 import { SystemEvents } from "../../../system/events/index.js";
 import { RunEvents } from "../../events/index.js";
@@ -90,6 +91,7 @@ export interface RunProjection {
   pendingMessages: AgentMessage[];
   humanInputRequests: ProjectedHumanInputRequest[];
   turns: ProjectedTurn[];
+  steps: AgentStepState[];
   taskOutcomes: ProjectedTaskOutcome[];
   artifacts: ProjectedArtifact[];
   gates: ProjectedGate[];
@@ -130,6 +132,7 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
   const consumedMessages = new Set<string>();
   const humanRequests = new Map<string, ProjectedHumanInputRequest>();
   const turns = new Map<string, ProjectedTurn>();
+  const steps = new Map<string, AgentStepState>();
   const outcomes: ProjectedTaskOutcome[] = [];
   const artifacts: ProjectedArtifact[] = [];
   const gates: ProjectedGate[] = [];
@@ -200,6 +203,15 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
       }
       continue;
     }
+    if (AgentEvents.step.started.is(event)
+      || AgentEvents.step.completed.is(event)
+      || AgentEvents.step.interrupted.is(event)
+      || AgentEvents.step.failed.is(event)
+      || AgentEvents.step.planUpdated.is(event)
+    ) {
+      steps.set(event.payload.stepId, structuredClone(event.payload));
+      continue;
+    }
     if (SystemEvents.interaction.userMessageSubmitted.is(event)) {
       userMessages.push({
         messageId: event.payload.messageId,
@@ -226,6 +238,7 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
         || existing.taskId !== event.payload.taskId
         || existing.body !== event.payload.body
         || existing.queuedAt !== event.payload.queuedAt
+        || existing.deliveryMode !== event.payload.deliveryMode
       )) {
         throw new Error(`Message ${event.payload.messageId} has conflicting queued deliveries.`);
       }
@@ -245,6 +258,31 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
       continue;
     }
     if (AgentEvents.message.consumed.is(event)) {
+      for (const request of humanRequests.values()) {
+        if (request.message.messageId === event.payload.messageId) {
+          if (request.requestConsumption) {
+            throw new Error(`Human input request ${request.requestId} was consumed more than once.`);
+          }
+          humanRequests.set(request.requestId, {
+            ...request,
+            requestConsumption: structuredClone(event.payload),
+          });
+          break;
+        }
+        if (request.response?.message.messageId === event.payload.messageId) {
+          if (request.response.consumption) {
+            throw new Error(`Human input response ${request.requestId} was consumed more than once.`);
+          }
+          humanRequests.set(request.requestId, {
+            ...request,
+            response: {
+              ...request.response,
+              consumption: structuredClone(event.payload),
+            },
+          });
+          break;
+        }
+      }
       consumedMessages.add(event.payload.messageId);
       continue;
     }
@@ -348,7 +386,8 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
     [...humanRequests.values()]
       .filter((request) => {
         const task = tasks.get(request.taskId);
-        return task?.status === AgentTaskStatuses.Done
+        return request.response !== undefined
+          || task?.status === AgentTaskStatuses.Done
           || task?.status === AgentTaskStatuses.Failed
           || task?.status === AgentTaskStatuses.Stopped;
       })
@@ -393,10 +432,26 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
       .map(({ message }) => structuredClone(message)),
     humanInputRequests: [...humanRequests.values()].map((request) => structuredClone(request)),
     turns: [...turns.values()].map((turn) => structuredClone(turn)),
+    steps: [...steps.values()].map((step) => structuredClone(step)),
     taskOutcomes: outcomes,
     artifacts,
     gates,
     userMessages,
     coordinatorMessages,
   };
+}
+
+/** Resolves one task's ordered step references from the projected Step authority. */
+export function projectedStepsForTask(
+  projection: Pick<RunProjection, "steps">,
+  task: AgentTaskState,
+): AgentStepState[] {
+  return task.stepIds.map((stepId) => {
+    const step = projection.steps.find((candidate) => candidate.stepId === stepId);
+    if (!step) throw new Error(`Task ${task.taskId} references unknown Agent step ${stepId}.`);
+    if (step.taskId !== task.taskId || step.agentId !== task.agentId) {
+      throw new Error(`Agent step ${stepId} does not belong to task ${task.taskId}.`);
+    }
+    return structuredClone(step);
+  });
 }

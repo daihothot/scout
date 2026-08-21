@@ -1,13 +1,13 @@
 import {
   AgentTaskStatuses,
-  AgentTaskStepStatuses,
   type AgentTaskState,
 } from "../../../agent/task/types.js";
+import { AgentStepStatuses } from "../../../agent/step/types.js";
 import {
   ScoutAgentRoles,
   type ScoutAgentRole,
 } from "../../../agent/thread/types.js";
-import type { RunProjection } from "./run-projector.js";
+import { projectedStepsForTask, type RunProjection } from "./run-projector.js";
 
 /** Ordered recovery checkpoints inferred from persisted task and turn facts. */
 export const TaskRecoveryCheckpoints = {
@@ -85,9 +85,10 @@ export function inferTaskRecoveryCheckpoint(
   );
   if (unresolvedHumanRequest) return TaskRecoveryCheckpoints.WaitingForHumanInput;
   if (task.status === AgentTaskStatuses.Queued) return TaskRecoveryCheckpoints.Queued;
+  const currentStep = projectedStepsForTask(projection, task).at(-1);
   if (
-    task.steps?.at(-1)?.status === AgentTaskStepStatuses.Running
-    || task.steps?.at(-1)?.status === AgentTaskStepStatuses.Interrupted
+    currentStep?.status === AgentStepStatuses.Running
+    || currentStep?.status === AgentStepStatuses.Interrupted
   ) {
     return TaskRecoveryCheckpoints.Interrupted;
   }

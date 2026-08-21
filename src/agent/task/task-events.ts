@@ -1,9 +1,6 @@
 import { event } from "../../core/events/index.js";
 import { AgentEvents } from "../events/catalog.js";
-import type {
-  AgentTaskDisposition,
-  AgentTaskState,
-} from "./types.js";
+import type { AgentTaskDisposition, AgentTaskState } from "./types.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 
 /** Fact emitted when a Worker submits a completed task outcome. */
@@ -16,7 +13,7 @@ export interface AgentTaskOutcomeSubmission {
   submittedAt: string;
 }
 
-/** Fact emitted when Runtime records a step lifecycle disposition. */
+/** Fact emitted when Runtime records a Worker Task lifecycle disposition. */
 export interface AgentTaskDispositionRecorded {
   task: AgentTaskState;
   disposition: AgentTaskDisposition;
@@ -37,7 +34,6 @@ const taskEventCatalog = {
     dispositionRecorded: event<AgentTaskDispositionRecorded>(),
     outcomeSubmitted: event<AgentTaskOutcomeSubmission>(),
     failed: event<AgentTaskState>(),
-    planUpdated: event<AgentTaskState>(),
     terminal: event<AgentTaskState>(),
   },
 } as const;

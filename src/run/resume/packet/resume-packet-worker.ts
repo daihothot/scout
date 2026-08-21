@@ -1,8 +1,9 @@
 import {
   AgentTaskStatuses,
-  AgentTaskStepStatuses,
 } from "../../../agent/task/types.js";
+import { AgentStepStatuses } from "../../../agent/step/types.js";
 import { inferTaskRecoveryCheckpoint } from "../projection/task-recovery.js";
+import { projectedStepsForTask } from "../projection/run-projector.js";
 import {
   boundedText,
   renderArtifact,
@@ -37,10 +38,11 @@ export function buildWorkerResumePacket(
       && (turn.completedAt === undefined || turn.status === "interrupted")
     )
     : [];
+  const taskSteps = task ? projectedStepsForTask(input.projection, task) : [];
+  const currentStep = taskSteps.at(-1);
 
   const renderTask = (): Record<string, unknown> | undefined => {
     if (!task) return undefined;
-    const currentStep = task.steps?.at(-1);
     return {
       id: task.taskId,
       status: task.status,
@@ -80,15 +82,15 @@ export function buildWorkerResumePacket(
       }));
 
   const renderOpen = (): Array<Record<string, unknown>> => [
-    ...(task?.steps?.at(-1)?.status === AgentTaskStepStatuses.Running
-      || task?.steps?.at(-1)?.status === AgentTaskStepStatuses.Interrupted
+    ...(currentStep?.status === AgentStepStatuses.Running
+      || currentStep?.status === AgentStepStatuses.Interrupted
       ? [{
-        type: task.steps.at(-1)?.status === AgentTaskStepStatuses.Interrupted
+        type: currentStep.status === AgentStepStatuses.Interrupted
           ? "interrupted_task_step"
           : "incomplete_task_step",
-        step_id: task.steps.at(-1)?.stepId,
-        started_at: task.steps.at(-1)?.startedAt,
-        prompt: boundedText(task.steps.at(-1)?.prompt),
+        step_id: currentStep.stepId,
+        started_at: currentStep.startedAt,
+        prompt: boundedText(currentStep.prompt),
       }]
       : []),
     ...requests.filter((request) =>

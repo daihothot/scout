@@ -100,6 +100,7 @@ export class RestoreEnvironmentStage implements RunStage {
           mountId: persisted.assetCommit.mountId,
           resourceHash: persisted.assetCommit.resourceHash,
         },
+        allowAssetResourceDrift: scope.scoutConfig.restore.allowAssetResourceDrift,
         onPreparationDecision: (decision, reason) => {
           const planned = plansByRole.get(persisted.role)?.inspection.decision;
           if (planned && planned !== decision) {

@@ -30,6 +30,8 @@ export interface CodexMount {
   runRoot: string;
   artifactRoot: string;
   logsRoot: string;
+  /** Run-scoped writable temporary directory for this Agent's shell tools. */
+  tempRoot: string;
   issues: MountMaterializationIssue[];
   readableRoots: string[];
   writableRoots: string[];

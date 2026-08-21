@@ -1,6 +1,7 @@
 import {
   AgentActivityRecorder,
   AgentThreadRecorder,
+  StepEventRecorder,
   TaskEventRecorder,
 } from "../../../agent/telemetry/index.js";
 import { currentRunScope } from "../../run-scope.js";
@@ -10,18 +11,26 @@ import type { RunStage } from "../run-stage.js";
 export class AgentTelemetryStage implements RunStage {
   readonly id = "agent_telemetry";
   private taskRecorder?: TaskEventRecorder;
+  private stepRecorder?: StepEventRecorder;
   private activityRecorder?: AgentActivityRecorder;
   private threadRecorder?: AgentThreadRecorder;
 
   async start(): Promise<void> {
     const taskRecorder = new TaskEventRecorder();
+    const stepRecorder = new StepEventRecorder();
     const activityRecorder = new AgentActivityRecorder();
     const threadRecorder = new AgentThreadRecorder();
     threadRecorder.start();
     try {
       taskRecorder.start();
       try {
-        activityRecorder.start();
+        stepRecorder.start();
+        try {
+          activityRecorder.start();
+        } catch (error) {
+          stepRecorder.stop();
+          throw error;
+        }
       } catch (error) {
         taskRecorder.stop();
         throw error;
@@ -32,6 +41,7 @@ export class AgentTelemetryStage implements RunStage {
     }
     this.threadRecorder = threadRecorder;
     this.taskRecorder = taskRecorder;
+    this.stepRecorder = stepRecorder;
     this.activityRecorder = activityRecorder;
   }
 
@@ -43,6 +53,12 @@ export class AgentTelemetryStage implements RunStage {
       errors.push(error);
     }
     this.activityRecorder = undefined;
+    try {
+      this.stepRecorder?.stop();
+    } catch (error) {
+      errors.push(error);
+    }
+    this.stepRecorder = undefined;
     try {
       this.taskRecorder?.stop();
     } catch (error) {

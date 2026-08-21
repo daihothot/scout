@@ -14,6 +14,8 @@ export interface MaterializeOptions {
   persistedManifest?: MountManifest;
   parentAssetCommitId?: string;
   persistedIdentity?: PersistedMountIdentity;
+  /** Allows restore to rebuild from current portable assets when their inventory drifted. */
+  allowAssetResourceDrift?: boolean;
   cleanRunRoot?: boolean;
   onPreparationDecision?(decision: MountPreparationDecision, reason?: string): void;
   onMaterializationStep?(step: MountMaterializationStep): void;
@@ -26,6 +28,8 @@ export type MountPreparationDecision = "reused" | "rebuild";
 export interface MountPreparationInspection {
   decision: MountPreparationDecision;
   reason?: string;
+  /** Set only when the rebuild is explicitly caused by allowed source-resource drift. */
+  resourceDrift?: true;
 }
 
 /** Filesystem materialization phases reported by the asset store. */

@@ -51,7 +51,7 @@ export class RestoreAgentsStage implements RunStage {
           turn.agentId === thread.agentId && turn.threadId === thread.threadId
         );
         const hasTaskSteps = projection.tasks.some((task) =>
-          task.agentId === thread.agentId && (task.steps?.length ?? 0) > 0
+          task.agentId === thread.agentId && task.stepIds.length > 0
         );
         return hasThreadTurns || hasTaskSteps;
       })
@@ -110,7 +110,7 @@ export class RestoreAgentsStage implements RunStage {
         )
       : [];
     const taskHasSteps = projection.tasks.some((task) =>
-      task.agentId === agent.agentId && (task.steps?.length ?? 0) > 0
+      task.agentId === agent.agentId && task.stepIds.length > 0
     );
 
     if (!thread) {

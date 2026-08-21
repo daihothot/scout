@@ -10,12 +10,18 @@ import { join } from "node:path";
 import test from "node:test";
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
-import { TaskEventRecorder } from "../../src/agent/telemetry/task-event-recorder.js";
+import {
+  StepEventRecorder,
+  TaskEventRecorder,
+} from "../../src/agent/telemetry/index.js";
+import {
+  AgentStepStatuses,
+  type AgentStepState,
+} from "../../src/agent/step/index.js";
 import { AgentTaskStore } from "../../src/agent/task/agent-task-store.js";
 import {
   AgentTaskDispositionKinds,
   AgentTaskStatuses,
-  AgentTaskStepStatuses,
   type AgentTaskDisposition,
   type AgentTaskState,
 } from "../../src/agent/task/types.js";
@@ -24,7 +30,7 @@ import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { projectRun } from "../../src/run/resume/projection/run-projector.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
-test("AgentTaskStore records each disposition kind and rejects a conflicting step disposition", () => {
+test("AgentTaskStore records each disposition kind and rejects a conflicting disposition", () => {
   const dispositions: AgentTaskDisposition[] = [
     {
       kind: AgentTaskDispositionKinds.HandoffSubmitted,
@@ -56,9 +62,9 @@ test("AgentTaskStore records each disposition kind and rejects a conflicting ste
 
   for (const disposition of dispositions) {
     const taskId = disposition.stepId.replace(/-step-0001$/, "");
-    store.addTask(taskState(taskId, disposition.stepId, disposition.turnId));
-    const updated = store.recordTaskDisposition(taskId, disposition);
-    assert.deepEqual(updated.steps?.[0]?.disposition, disposition);
+    store.addTask(taskState(taskId, [disposition.stepId]));
+    const updated = store.recordDisposition(taskId, disposition);
+    assert.deepEqual(updated.dispositions, [disposition]);
     assert.equal(updated.updatedAt, disposition.timestamp);
   }
 
@@ -66,18 +72,18 @@ test("AgentTaskStore records each disposition kind and rejects a conflicting ste
   if (!handoff || handoff.kind !== AgentTaskDispositionKinds.HandoffSubmitted) {
     throw new Error("Expected a handoff disposition fixture.");
   }
-  const retried = store.recordTaskDisposition("task-handoff", {
+  const handoffTaskId = handoff.stepId.replace(/-step-0001$/, "");
+  const retried = store.recordDisposition(handoffTaskId, {
     ...handoff,
     timestamp: "2026-08-01T00:00:04.000Z",
   });
-  assert.equal(retried.steps?.[0]?.disposition?.timestamp, handoff.timestamp);
-  const callerSnapshot = store.getTask("task-handoff");
-  const callerDisposition = callerSnapshot?.steps?.[0]?.disposition;
+  assert.equal(retried.dispositions[0]?.timestamp, handoff.timestamp);
+  const callerDisposition = retried.dispositions[0];
   if (callerDisposition?.kind !== AgentTaskDispositionKinds.HandoffSubmitted) {
     throw new Error("Expected the stored handoff disposition.");
   }
   callerDisposition.outcome = "mutated outside the store";
-  const storedDisposition = store.getTask("task-handoff")?.steps?.[0]?.disposition;
+  const storedDisposition = store.getTask(handoffTaskId)?.dispositions[0];
   assert.equal(
     storedDisposition?.kind === AgentTaskDispositionKinds.HandoffSubmitted
       ? storedDisposition.outcome
@@ -85,7 +91,7 @@ test("AgentTaskStore records each disposition kind and rejects a conflicting ste
     handoff.outcome,
   );
   assert.throws(
-    () => store.recordTaskDisposition("task-handoff", {
+    () => store.recordDisposition(handoffTaskId, {
       kind: AgentTaskDispositionKinds.WaitingForHuman,
       stepId: handoff.stepId,
       turnId: handoff.turnId,
@@ -96,9 +102,16 @@ test("AgentTaskStore records each disposition kind and rejects a conflicting ste
     }),
     /already has a different disposition/,
   );
+  assert.throws(
+    () => store.recordDisposition(handoffTaskId, {
+      ...handoff,
+      stepId: "other-step",
+    }),
+    /does not own Agent step/,
+  );
 });
 
-test("disposition events persist, restore task state, and write task telemetry", async (t) => {
+test("Task disposition persists in Task state and stays out of Step telemetry", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-task-disposition-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const logsRoot = join(root, "agents", "researcher", "logs");
@@ -113,16 +126,27 @@ test("disposition events persist, restore task state, and write task telemetry",
       return { logsRoot };
     },
   } as ScoutAgent);
-  const recorder = new TaskEventRecorder();
-  recorder.start();
-  t.after(() => recorder.stop());
+  const taskRecorder = new TaskEventRecorder();
+  const stepRecorder = new StepEventRecorder();
+  taskRecorder.start();
+  stepRecorder.start();
+  t.after(() => {
+    stepRecorder.stop();
+    taskRecorder.stop();
+  });
 
-  const task = scope.taskStore.addTask(taskState(
-    "researcher-task-0001",
+  const task = scope.taskStore.addTask(taskState("researcher-task-0001"));
+  await eventBus.publishAndWait(AgentEvents.task.assigned, task);
+  const startedStep = scope.stepStore.addStep(stepState(
+    task.taskId,
     "researcher-task-0001-step-0001",
     "turn-1",
   ));
-  await eventBus.publishAndWait(AgentEvents.task.assigned, task);
+  const taskWithStep = scope.taskStore.updateTask(task.taskId, (current) => ({
+    ...current,
+    stepIds: [...current.stepIds, startedStep.stepId],
+  }));
+  await eventBus.publishAndWait(AgentEvents.step.started, startedStep);
   const disposition = {
     kind: AgentTaskDispositionKinds.HandoffSubmitted,
     stepId: "researcher-task-0001-step-0001",
@@ -131,7 +155,7 @@ test("disposition events persist, restore task state, and write task telemetry",
     timestamp: "2026-08-01T00:01:00.000Z",
     outcome: "## Outcome\n\n- artifact: result.md",
   } satisfies AgentTaskDisposition;
-  const disposedTask = scope.taskStore.recordTaskDisposition(task.taskId, disposition);
+  const disposedTask = scope.taskStore.recordDisposition(task.taskId, disposition);
   await eventBus.publishAndWait(AgentEvents.task.dispositionRecorded, {
     task: disposedTask,
     disposition,
@@ -144,12 +168,14 @@ test("disposition events persist, restore task state, and write task telemetry",
     AgentEvents.task.dispositionRecorded.routeKey,
   );
   const projection = projectRun(scope.journal.readAll());
-  assert.deepEqual(projection.tasks[0]?.steps?.[0]?.disposition, disposition);
+  assert.deepEqual(projection.tasks[0]?.dispositions, [disposition]);
+  assert.equal(Object.hasOwn(projection.steps[0] ?? {}, "disposition"), false);
 
   const submittedAt = "2026-08-01T00:01:01.000Z";
   await eventBus.publishAndWait(AgentEvents.task.outcomeSubmitted, {
     task: {
-      ...disposedTask,
+      ...taskWithStep,
+      dispositions: [disposition],
       status: AgentTaskStatuses.Done,
       updatedAt: submittedAt,
     },
@@ -161,26 +187,25 @@ test("disposition events persist, restore task state, and write task telemetry",
   }, {
     occurredAt: submittedAt,
   });
-  recorder.stop();
+  stepRecorder.stop();
+  taskRecorder.stop();
 
   const taskLogPath = join(logsRoot, `${task.taskId}.log`);
   assert.equal(existsSync(taskLogPath), true);
   const text = readFileSync(taskLogPath, "utf8");
   assert.match(text, /event=agent\.task\.disposition_recorded/);
   assert.match(text, /kind: "handoff_submitted"/);
-  assert.match(text, /turnId: "turn-1"/);
-  assert.match(text, /callId: "call-submit-1"/);
-  assert.match(text, /timestamp: "2026-08-01T00:01:00\.000Z"/);
   assert.match(text, /event=agent\.task\.outcome_submitted/);
   assert.match(text, /submittedAt: "2026-08-01T00:01:01\.000Z"/);
   assert.match(text, /artifact: result\.md/);
-  const outcomeRecord = text.slice(text.indexOf("event=agent.task.outcome_submitted"));
-  assert.match(outcomeRecord, /stepId: "researcher-task-0001-step-0001"/);
-  assert.match(outcomeRecord, /turnId: "turn-1"/);
-  assert.match(outcomeRecord, /callId: "call-submit-1"/);
+
+  const stepText = readFileSync(join(logsRoot, "steps.log"), "utf8");
+  assert.match(stepText, /event=agent\.step\.started/);
+  assert.doesNotMatch(stepText, /event=agent\.task\.disposition_recorded/);
+  assert.doesNotMatch(stepText, /handoff_submitted/);
 });
 
-function taskState(taskId: string, stepId: string, turnId: string): AgentTaskState {
+function taskState(taskId: string, stepIds: string[] = []): AgentTaskState {
   return {
     type: "local_agent",
     taskId,
@@ -194,15 +219,21 @@ function taskState(taskId: string, stepId: string, turnId: string): AgentTaskSta
     createdAt: "2026-08-01T00:00:00.000Z",
     updatedAt: "2026-08-01T00:00:00.000Z",
     startedAt: "2026-08-01T00:00:00.000Z",
-    steps: [{
-      stepId,
-      taskId,
-      turnId,
-      status: AgentTaskStepStatuses.Running,
-      prompt: "Perform the current task.",
-      toolCalls: [],
-      startedAt: "2026-08-01T00:00:00.000Z",
-      requiresDisposition: true,
-    }],
+    stepIds,
+    dispositions: [],
+  };
+}
+
+function stepState(taskId: string, stepId: string, turnId: string): AgentStepState {
+  return {
+    stepId,
+    agentId: ScoutAgentRoles.Researcher,
+    taskId,
+    turnId,
+    status: AgentStepStatuses.Running,
+    prompt: "Perform the current task.",
+    toolCalls: [],
+    startedAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
   };
 }

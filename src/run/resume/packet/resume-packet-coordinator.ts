@@ -1,8 +1,9 @@
-import { AgentTaskStepStatuses } from "../../../agent/task/types.js";
+import { AgentStepStatuses } from "../../../agent/step/types.js";
 import {
   inferTaskRecoveryCheckpoint,
   TaskRecoveryCheckpoints,
 } from "../projection/task-recovery.js";
+import { projectedStepsForTask } from "../projection/run-projector.js";
 import {
   boundedText,
   renderArtifact,
@@ -95,19 +96,22 @@ export function buildCoordinatorResumePacket(
 
   const renderOpen = (): Array<Record<string, unknown>> => [
     ...openTasks
-      .filter((task) =>
-        task.steps?.at(-1)?.status === AgentTaskStepStatuses.Running
-        || task.steps?.at(-1)?.status === AgentTaskStepStatuses.Interrupted
-      )
-      .map((task) => ({
-        type: task.steps?.at(-1)?.status === AgentTaskStepStatuses.Interrupted
+      .flatMap((task) => {
+        const step = projectedStepsForTask(input.projection, task).at(-1);
+        if (
+          step?.status !== AgentStepStatuses.Running
+          && step?.status !== AgentStepStatuses.Interrupted
+        ) return [];
+        return [{
+        type: step.status === AgentStepStatuses.Interrupted
           ? "interrupted_task_step"
           : "incomplete_task_step",
         task_id: task.taskId,
-        step_id: task.steps?.at(-1)?.stepId,
-        started_at: task.steps?.at(-1)?.startedAt,
-        prompt: boundedText(task.steps?.at(-1)?.prompt),
-      })),
+        step_id: step.stepId,
+        started_at: step.startedAt,
+        prompt: boundedText(step.prompt),
+      }];
+      }),
     ...input.projection.humanInputRequests
       .filter((request) =>
         !request.response
