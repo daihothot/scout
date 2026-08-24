@@ -31,7 +31,7 @@ Agent 可访问的运行时目录结构为：
     │   ├── artifacts/                【用途：正式产物和交接引用】【权限：可读可写】
     │   └── tmp/                      【用途：工具运行临时数据】【权限：可读可写】
     └── <other-role>/
-        └── artifacts/                【用途：读取正式 ref 指向的 handoff 产物】【权限：仅可读】
+        └── artifacts/                【用途：读取其它 <role> 的正式交付产物】【权限：仅可读】
 ```
 
 Runtime 自动注入的规则文件，遗忘规则时可以读取：
@@ -45,7 +45,7 @@ agents/worker.AGENTS.md     【已注入 <worker>】
 ### Skill Navigation
 
 - `Skill` 是 Agent 执行任务时使用的专项规则和方法，入口文件为 `SKILL.md`。
-- `family` 是由一个或多个有序目录名组成的 Skill 分类路径。
+- `family` 是 `SKILL.md` 顶部 frontmatter 中的 Skill 分类字段，由一个或多个有序目录名组成。
 - `family-path` 是 `family` 在 `.scout/skill/` 下生成的目录路径。
 
   ```yaml
@@ -96,6 +96,20 @@ agents/worker.AGENTS.md     【已注入 <worker>】
   cat .scout/skill/internal/skill-composition/internal-skill-composition/SKILL.md
   ```
 
+### Domain-Driven Skill Types
+
+`Skill type` 表示 Skill 在 `<domain>` 工作中承担的职责。
+
+| 类型 | 在 `<domain>` 工作中的职责 |
+| --- | --- |
+| `Domain Skill` | 驱动当前 `<role>` 的领域工作，定义领域输入、工作流程、输出和交接。 |
+| `Tool Skill` | 定义特定操作能力的调用方法、输入、结果和失败边界。 |
+| `Single Skill` | 围绕单一领域能力、信号或规则提供可组合的专项 contract。 |
+
+`Domain Skill` 组织当前领域工作，`Single Skill` 提供领域判断所需的专项 contract，`Tool Skill` 提供执行操作所需的调用 contract。
+
+Skill 之间的依赖、组合/继承以及接口与实现读取遵循 `internal-skill-composition`。
+
 ## Scout Domain-Driven Working
 
 ### Working Model
@@ -107,9 +121,8 @@ Scout 以 `<domain>` 组织业务工作。
 | `Runtime` | 提供环境、资源和通信能力。 |
 | `<domain>` | 提供稳定的业务边界和统一语义。 |
 | `<role>` | 承担 `<domain>` 中特定的协作职责。 |
-| `task` | 表示 `<domain>` 内的一次具体工作，承载目标、输入、约束、正式 ref 和状态。 |
+| `task` | Scout 中 `<role>` 之间协作的基本工作单元，承载 `<domain>` 内一次具体工作的目标、输入、约束、正式引用和状态。 |
 | `Skill` | 提供 Agent 判断和执行工作所需的规则与方法。 |
-| `Domain Skill` | 将 `<domain>` 的规则落实为当前 `<role>` 可执行的工作规范。 |
 | `Tool` | 执行 Agent 发起的操作并返回结果或状态。 |
 
 ### Tool Model
@@ -122,16 +135,15 @@ Scout 以 `<domain>` 组织业务工作。
 | `Shell Tool` | 通过当前 Runtime 的 shell 环境执行命令。 |
 | `MCP Tool` | 通过当前 mount 配置的 MCP Server 调用外部能力。 |
 
-`Tool Skill` 是规定对应 `Tool` 调用方法、输入、结果和失败边界的 Skill。
-
 ### Working Interaction
 
-- 各 `<role>` 通过 `<task>` 围绕具体工作协作，并按 `<role>.AGENTS.md` 规定的职责推进 `<task>`。
+- 各 `<role>` 按 `<role>.AGENTS.md` 规定的职责通过 `<task>` 协作；`<worker>` 同时遵循 `worker.AGENTS.md`。
 - `Domain Skill` 将 `<domain>` 的规则应用于 `<task>`，驱动当前 `<role>` 的判断和工作过程。
-- 当前适用的其他 Skill 按 `internal-skill-composition` 的规则提供专项规则与方法。
-- `Domain Skill` 或专项 Skill 在消费 `Tool Skill` 时，确定调用目的并解释业务结果。
-- `Tool Skill` 规定调用 contract，对应的 `Tool` 执行操作并返回结果或状态。
-- `<task>` 状态、`Tool` 结果和角色通信持续更新工作上下文，当前 `<role>` 根据新状态继续响应。
+- 当前适用的 `Single Skill` 为 `<task>` 提供领域判断所需的专项 contract。
+- 当前 `<role>` 根据 `Domain Skill` 及当前适用的 `Single Skill` 确定 `Tool` 的调用目的和业务结果解释。
+- 当前 `<role>` 按 `Tool Skill` 的 contract 调用对应 `Tool`。
+- Scout 采用响应式交互机制：Runtime 根据 `<task>` 状态、`Tool` 结果和角色通信更新工作上下文，并在状态变化时触发相关 `<role>`。
+- 当前 `<role>` 完成本次可执行工作后，必须立即结束响应并将控制权交还 Runtime；后续状态变化由 Runtime 触发新的响应。
 
 ## Scout Delivery
 
@@ -141,7 +153,29 @@ Scout 通过持久产物、稳定引用和正式角色交接完成工作交付�
 
 | 要素 | 在 Scout 交付中的作用 |
 | --- | --- |
-| `artifact` | 当前 `<role>` 持久化保存的正式工作产物。 |
-| `ref` | 定位正式内容的稳定引用，支持其它 `<role>` 读取和 Runtime 恢复。 |
-| `outcome` | `<task>` 的完整 Markdown 结果，汇总结论并引用相关 `<artifact>`。 |
+| `artifact` | 当前 `<role>` 持久化保存的正式文件或目录。 |
+| `ref` | 标识 `<artifact>` 位置的字符串。 |
+| `outcome` | `<task>` 的完整 Markdown 结果，包含结论和相关 `<ref>`。 |
 | `handoff` | `<worker>` 将 `<outcome>` 正式提交给 `<coordinator>` 的 Runtime 交接记录。 |
+
+### Delivery Interaction
+
+- `<role>.AGENTS.md` 定义当前 `<role>` 的交付职责。
+- `worker.AGENTS.md` 定义 `<worker>` 的通用 handoff 规则。
+- `Domain Skill` 定义 `<domain>` 的输出和交接。
+- `<worker>` 根据 `Domain Skill` 处理 `<task>`，按其输出定义生成 `<artifact>`，并将 `<ref>` 写入 `<outcome>`。
+- Runtime 记录 `<handoff>` 时，将 `<outcome>` 中的 `<ref>` 规范化为 run 内稳定引用，并随 `<outcome>` 持久化和传递。
+- `<coordinator>` 从 `<handoff>` 的 `<outcome>` 获取 `<ref>`，并通过它定位对应 `<artifact>`。
+- 下游 `<worker>` 从当前 `<task>` 获取正式 `<ref>`，并通过它定位对应 `<artifact>`。
+- `<coordinator>` 根据 `Domain Skill` 处理 `<handoff>`，继续协调工作或形成面向用户的交付。
+
+## Scout Constitutional Prohibitions
+
+以下禁止项统一适用于所有 `<role>`、`<domain>` 和 `<task>`。所有 `<role>` 必须无条件遵守；违反任一禁止项即为无效执行。
+
+- **严禁无目标探索**：不得为定位已有入口或恢复已有上下文而全量扫描运行时目录、Skill 或 `<artifact>`。遗忘规则时，必须读取 `Runtime Layout` 中列出的对应规则原件；执行当前 `<task>` 时，必须使用明确的 Skill 入口。
+- **严禁猜测路径**：不得脱离已定义的导航、当前 Runtime 信息或正式 `<ref>`，猜测或反复试探 `<run-root>`、mount、`<skill-path>`、`<artifact>` 或 `<ref>` 的位置。
+- **严禁无效重复工作**：已有结果足以推进当前 `<task>`，且执行目的、输入和相关状态均未变化时，不得重新执行同一工作。
+- **严禁向用户索取内部信息**：不得向用户索取能够从当前上下文、Runtime、`<task>`、`<handoff>`、Tool 结果或现有 `<artifact>` 恢复的 Scout 内部状态、引用或路径。
+- **严禁无目的调用 Tool**：不得在没有明确执行目的时调用 Tool，不得脱离 `Tool Skill` 的失败边界反复重试。
+- **严禁轮询或监听其它角色任务**：当前 `<role>` 不得轮询或监听其它 `<role>` 正在执行的 `<task>`。完成本次可执行工作后，必须立即结束响应并将控制权交还 Runtime；Runtime 在该 `<task>` 状态更新后重新触发相关 `<role>`，以确保其能够立即响应更新后的工作上下文。
