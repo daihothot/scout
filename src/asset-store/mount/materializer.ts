@@ -24,6 +24,7 @@ import { ShellToolBuilder } from "../builders/shell-tool-builder.js";
 import {
   assertAssetFileExists,
   customAgentNameFromPath,
+  relativeOrSelf,
   resolveAssetRelativePath,
   skillNameFromPath,
 } from "../files/asset-paths.js";
@@ -218,8 +219,11 @@ export class MountMaterializer {
       parentAssetCommitId,
       mountId,
       mountRoot,
-      readableRoots,
-      writableRoots,
+      runtimeRoots: [
+        { name: "mount", path: ".", access: "read" },
+        { name: "artifacts", path: relativeOrSelf(mountRoot, artifactRoot), access: "read-write" },
+        { name: "tmp", path: relativeOrSelf(mountRoot, tempRoot), access: "read-write" },
+      ],
       issues: shellBuild.issues,
       resourceHash,
       mcpServers: materializedMcpServers,
@@ -276,7 +280,15 @@ function materializeSkills(
     if (!skillPath) throw new Error(`Missing source path for Scout Skill ${skill.name}.`);
     const source = resolveAssetRelativePath(skillPath, assetsRoot);
     safeSymlink(resolve(source, ".."), join(mountRoot, dirname(skill.path)));
-    return { name: skill.name, path: skill.path };
+    return {
+      name: skill.name,
+      description: skill.description,
+      summary: skill.summary,
+      phase: [...skill.phase],
+      family: [...skill.family],
+      requiredSkills: [...skill.requiredSkills],
+      path: skill.path,
+    };
   });
 }
 

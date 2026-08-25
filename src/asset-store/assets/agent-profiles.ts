@@ -13,7 +13,7 @@ import {
   ScoutAgentPhases,
   type ScoutAgentPhase,
 } from "../../agent/thread/types.js";
-import { readJsonFile } from "../../core/fs.js";
+import { readJsonFile, sha256Text, stableJson } from "../../core/fs.js";
 import { CodexAssetLayout } from "./asset-layout.js";
 import type {
   AgentProfile,
@@ -64,6 +64,20 @@ export function resolveAgentProfile(
     ? normalizeModelConfig(definition.model, `model for agent ${agentId}`)
     : resolveDefaultAgentModel(profiles);
   return cloneAgentProfile(definition, model);
+}
+
+/** Returns the profile fields that describe resources, excluding device roots. */
+export function profileResourceProjection(profile: AgentProfile): Omit<
+  AgentProfile,
+  "readableRoots" | "writableRoots"
+> {
+  const { readableRoots: _readableRoots, writableRoots: _writableRoots, ...resources } = profile;
+  return resources;
+}
+
+/** Hashes the resource-bearing profile fields while ignoring external root bindings. */
+export function profileResourceHash(profile: AgentProfile): string {
+  return sha256Text(stableJson(profileResourceProjection(profile)));
 }
 
 function cloneAgentProfile(

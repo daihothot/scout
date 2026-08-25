@@ -1,11 +1,8 @@
 import type { PersistedMountIdentity } from "../contracts/identity.js";
 import type { MountManifest } from "../contracts/manifest.js";
-import {
-  relativeOrSelf,
-} from "../files/asset-paths.js";
 import type { MountContext } from "../contracts/mount-context.js";
 import {
-  sameAgentProfile,
+  sameAgentProfileResources,
   sameUnorderedStrings,
 } from "./comparison.js";
 
@@ -37,20 +34,23 @@ export class MountIdentityInspector {
     if (manifest.resourceHash !== context.resourceHash) {
       return `resource hash changed: persisted=${manifest.resourceHash} current=${context.resourceHash}`;
     }
-    if (!sameAgentProfile(manifest.agentProfile, context.agentProfile)) {
+    if (!sameAgentProfileResources(manifest.agentProfile, context.agentProfile)) {
       return "agent profile changed";
     }
 
-    const readableRoots = context.readableRoots.map((root) =>
-      relativeOrSelf(context.mountRoot, root)
-    );
-    if (!Array.isArray(manifest.readableRoots)
-      || !sameUnorderedStrings(manifest.readableRoots, readableRoots)) {
-      return "readable roots changed";
+    if (!Array.isArray(manifest.profileReadableRoots)
+      || !sameUnorderedStrings(
+        manifest.profileReadableRoots,
+        context.agentProfile.readableRoots ?? [],
+      )) {
+      return "profile readable roots changed";
     }
-    const writableRoots = context.writableRoots.map((root) => relativeOrSelf(context.mountRoot, root));
-    if (!sameUnorderedStrings(manifest.writableRoots, writableRoots)) {
-      return "writable roots changed";
+    if (!Array.isArray(manifest.profileWritableRoots)
+      || !sameUnorderedStrings(
+        manifest.profileWritableRoots,
+        context.agentProfile.writableRoots ?? [],
+      )) {
+      return "profile writable roots changed";
     }
 
     if (this.persistedIdentity
