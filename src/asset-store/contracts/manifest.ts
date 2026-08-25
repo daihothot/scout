@@ -7,6 +7,13 @@ import type { MaterializedMcpServer } from "./resources.js";
 import type { MountMaterializationIssue } from "./mount.js";
 import type { MaterializedSkill } from "./skill.js";
 
+/** Named runtime root projected for Agent resource navigation. */
+export interface MountRuntimeRoot {
+  name: "mount" | "artifacts" | "tmp";
+  path: string;
+  access: "read" | "read-write";
+}
+
 /** Portable manifest used to verify and reconstruct a role mount later. */
 export interface MountManifest {
   resourceInventoryVersion: 1;
@@ -16,8 +23,9 @@ export interface MountManifest {
   mountId: string;
   agentProfile: AgentProfile;
   mountRoot: string;
-  readableRoots: string[];
-  writableRoots: string[];
+  runtimeRoots: MountRuntimeRoot[];
+  profileReadableRoots: string[];
+  profileWritableRoots: string[];
   resourceHash: string;
   generatedAt: string;
   issues: MountMaterializationIssue[];

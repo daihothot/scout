@@ -4,6 +4,7 @@ import { CodexAssetLayout, roleAgentPath } from "../assets/asset-layout.js";
 import {
   assetSourcePath,
   customAgentNameFromPath,
+  relativeOrSelf,
 } from "../files/asset-paths.js";
 import type { MountContext } from "../contracts/mount-context.js";
 import {
@@ -38,9 +39,34 @@ export class MountManifestInspector {
     if (!Array.isArray(manifest.skills)
       || !sameValue(
         manifest.skills,
-        context.skillCatalog.map(({ name, path }) => ({ name, path })),
+        context.skillCatalog.map((skill) => ({
+          name: skill.name,
+          description: skill.description,
+          summary: skill.summary,
+          phase: [...skill.phase],
+          family: [...skill.family],
+          requiredSkills: [...skill.requiredSkills],
+          path: skill.path,
+        })),
       )) {
       return "Skill inventory changed";
+    }
+    const expectedRuntimeRoots = [
+      { name: "mount", path: ".", access: "read" },
+      {
+        name: "artifacts",
+        path: relativeOrSelf(context.mountRoot, context.artifactRoot),
+        access: "read-write",
+      },
+      {
+        name: "tmp",
+        path: relativeOrSelf(context.mountRoot, context.tempRoot),
+        access: "read-write",
+      },
+    ];
+    if (!Array.isArray(manifest.runtimeRoots)
+      || !sameValue(manifest.runtimeRoots, expectedRuntimeRoots)) {
+      return "Runtime root inventory changed";
     }
     if (!Array.isArray(manifest.plugins)
       || !sameUnorderedStrings(

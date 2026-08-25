@@ -28,6 +28,7 @@ import {
 } from "../mount/macros.js";
 import {
   readAgentProfilesForScoutRoot,
+  profileResourceHash,
   resolveAgentProfile,
 } from "../assets/agent-profiles.js";
 import {
@@ -337,9 +338,8 @@ export function computeResourceHash(input: {
 }): string {
   const parts = [
     `agent:${input.agentId}`,
-    `agentProfile:${JSON.stringify(input.agentProfile)}`,
+    `agentProfile:${profileResourceHash(input.agentProfile)}`,
     `agents:${sha256File(join(input.assetsRoot, CodexAssetLayout.agentsMd))}`,
-    `agentProfiles:${sha256File(join(input.assetsRoot, CodexAssetLayout.agentProfiles))}`,
     `config:${input.agentProfile.config}:${sha256File(join(input.assetsRoot, input.agentProfile.config))}`,
     `mcpServers:${sha256File(join(input.assetsRoot, CodexAssetLayout.mcpServers))}`,
     ...computeMcpServerResourceHashParts(input.assetsRoot, input.mcpServers),

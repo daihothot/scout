@@ -3,6 +3,7 @@ import type {
   AgentProfile,
 } from "../contracts/profile.js";
 import type { MaterializedMcpServer } from "../contracts/resources.js";
+import { profileResourceProjection } from "../assets/agent-profiles.js";
 
 /** Compares JSON-shaped values without making object property order significant. */
 export function sameValue(actual: unknown, expected: unknown): boolean {
@@ -24,6 +25,14 @@ export function sameUnorderedStrings(actual: string[], expected: string[]): bool
 /** Compares profiles while treating only permission roots as unordered sets. */
 export function sameAgentProfile(actual: AgentProfile, expected: AgentProfile): boolean {
   return sameValue(normalizeAgentProfile(actual), normalizeAgentProfile(expected));
+}
+
+/** Compares only resource-bearing profile fields; external root bindings may drift. */
+export function sameAgentProfileResources(actual: AgentProfile, expected: AgentProfile): boolean {
+  return sameValue(
+    profileResourceProjection(actual),
+    profileResourceProjection(expected),
+  );
 }
 
 /** Compares one resolved MCP contract, preserving argument order but not object/root order. */

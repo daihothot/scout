@@ -6,6 +6,7 @@ import type {
   McpServersFile,
   ShellToolContract,
 } from "../contracts/resources.js";
+import { profileResourceHash } from "../assets/agent-profiles.js";
 import type { AgentProfile } from "../contracts/profile.js";
 import type { MountManifest } from "../contracts/manifest.js";
 import type { MountMaterializationIssue } from "../contracts/mount.js";
@@ -42,8 +43,7 @@ export type MountManifestInput = AssetInventoryInput & {
   parentAssetCommitId?: string;
   mountId: string;
   mountRoot: string;
-  readableRoots: string[];
-  writableRoots: string[];
+  runtimeRoots: MountManifest["runtimeRoots"];
   issues: MountMaterializationIssue[];
   resourceHash: string;
   mcpServers: MaterializedMcpServer[];
@@ -139,7 +139,7 @@ function buildAssetInventoryInternal(input: AssetInventoryInput): MountManifest[
       id: `codex.agents.profile.${input.agentId}`,
       type: "agent_profile",
       sourcePath: assetSourcePath(CodexAssetLayout.agentProfiles),
-      hash: sha256File(resolveAssetRelativePath(CodexAssetLayout.agentProfiles, input.assetsRoot)),
+      hash: profileResourceHash(input.agentProfile),
     },
     ...Object.entries(input.roleAgentPaths).map(([role]) => ({
       id: `codex.agents.${role}`,
@@ -244,8 +244,9 @@ function buildMountManifestInternal(input: MountManifestInput): MountManifest {
     mountId: input.mountId,
     agentProfile: input.agentProfile,
     mountRoot: ".",
-    readableRoots: input.readableRoots.map((root) => relativeOrSelf(input.mountRoot, root)),
-    writableRoots: input.writableRoots.map((root) => relativeOrSelf(input.mountRoot, root)),
+    runtimeRoots: input.runtimeRoots,
+    profileReadableRoots: [...(input.agentProfile.readableRoots ?? [])],
+    profileWritableRoots: [...(input.agentProfile.writableRoots ?? [])],
     resourceHash: input.resourceHash,
     generatedAt: new Date().toISOString(),
     issues: input.issues,
