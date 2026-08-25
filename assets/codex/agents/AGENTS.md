@@ -105,7 +105,7 @@ agents/worker.AGENTS.md     【已注入 worker】
 
 所有 `role` 必须首先读取的 Internal Skill：
 
-- `internal-runtime-inspector`：检查 Scout Runtime、`mount`、manifest、权限和 canonical path。
+- `internal-runtime-inspector`：使用 `pwd`、`scout-assets` 和当前可用 Shell Tool 定位当前 `role` 的 Runtime 资源并检查访问路径。
 
   ```bash
   cat .scout/skill/internal/runtime-inspector/internal-runtime-inspector/SKILL.md
