@@ -83,6 +83,11 @@ export class RunManifestStore {
     return structuredClone(stored);
   }
 
+  /** Restores an exact manifest snapshot as part of a multi-file transaction. */
+  restore(manifest: RunManifest): void {
+    this.write(structuredClone(manifest));
+  }
+
   private write(manifest: RunManifest): void {
     mkdirSync(dirname(this.path), { recursive: true });
     const temporaryPath = `${this.path}.${process.pid}.tmp`;

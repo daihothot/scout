@@ -42,7 +42,7 @@ import {
 } from "../../src/run/run-scope.js";
 import type { ScoutConfig } from "../../src/system/config/index.js";
 import type { RunJournal } from "../../src/run/journal/index.js";
-import type { RunManifestStore } from "../../src/run/persistence/index.js";
+import { RunManifestStore } from "../../src/run/persistence/index.js";
 import {
   createTestRunPersistence,
   installTestRunScope,
@@ -281,8 +281,93 @@ test("RestoreEnvironmentStage applies the explicit global resource-drift policy"
     JSON.parse(readFileSync(current.mount.manifestPath, "utf8")).resourceHash,
     current.mount.resourceHash,
   );
+  const restoredEntry = resumed.scope.manifestStore.read().agents?.[
+    ScoutAgentRoles.Coordinator
+  ];
+  assert.ok(restoredEntry);
+  assert.equal(restoredEntry.mountId, current.mount.mountId);
+  assert.equal(restoredEntry.assetCommitId, current.assetCommit.assetCommitId);
+  assert.equal(restoredEntry.resourceHash, current.assetCommit.resourceHash);
   resumed.release();
   resumedReleased = true;
+
+  const second = installExistingEnvironmentScope(
+    fixtureRoot,
+    "restore-environment-drift-allowed",
+    journal,
+    manifestStore,
+    new NoopRuntimeInteractionPort(),
+    { restore: { allowAssetResourceDrift: true } },
+  );
+  let secondReleased = false;
+  t.after(() => {
+    if (!secondReleased) second.release();
+  });
+  await new RestoreEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+  assert.equal(
+    second.scope.environment.agents[ScoutAgentRoles.Coordinator].mount.mountId,
+    current.mount.mountId,
+  );
+  second.release();
+  secondReleased = true;
+});
+
+test("RestoreEnvironmentStage rolls back the run index when metadata commit fails", async (t) => {
+  const fixtureRoot = createFixture("scout-restore-environment-metadata-rollback-");
+  const runId = "restore-environment-metadata-rollback";
+  const initial = installEnvironmentScope(t, fixtureRoot, runId);
+  let initialReleased = false;
+  t.after(() => {
+    if (!initialReleased) initial.release();
+  });
+  await new PrepareEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+
+  const coordinator = initial.scope.environment.agents[ScoutAgentRoles.Coordinator];
+  const previousManifest = readFileSync(coordinator.mount.manifestPath, "utf8");
+  const previousAssetCommit = readFileSync(coordinator.assetCommitPath, "utf8");
+  const previousPreflight = readFileSync(coordinator.preflightPath, "utf8");
+  const previousRunManifest = initial.scope.manifestStore.read();
+  const sourceAsset = (JSON.parse(previousManifest) as MountManifest).assets
+    .find((asset) => asset.type !== "plugin");
+  assert.ok(sourceAsset);
+  writeFileSync(resolve(fixtureRoot, sourceAsset.sourcePath), "changed", "utf8");
+
+  const journal = initial.scope.journal;
+  initial.release();
+  initialReleased = true;
+  const failingManifestStore = new FailOnceManifestUpdateStore(
+    join(fixtureRoot, "run", runId),
+  );
+  const failed = installExistingEnvironmentScope(
+    fixtureRoot,
+    runId,
+    journal,
+    failingManifestStore,
+    new NoopRuntimeInteractionPort(),
+    { restore: { allowAssetResourceDrift: true } },
+  );
+  let failedReleased = false;
+  t.after(() => {
+    if (!failedReleased) failed.release();
+  });
+
+  await assert.rejects(
+    new RestoreEnvironmentStage({
+      preflightMount: async () => ({ status: "passed" }),
+    }).start(),
+    /Injected run manifest update failure/,
+  );
+
+  assert.equal(readFileSync(coordinator.mount.manifestPath, "utf8"), previousManifest);
+  assert.equal(readFileSync(coordinator.assetCommitPath, "utf8"), previousAssetCommit);
+  assert.equal(readFileSync(coordinator.preflightPath, "utf8"), previousPreflight);
+  assert.deepEqual(failingManifestStore.read(), previousRunManifest);
+  failed.release();
+  failedReleased = true;
 });
 
 for (const scenario of [
@@ -849,6 +934,18 @@ class FailOnceAfterConfigAssetStore extends AssetStore {
         throw new Error(`Injected materialization failure after config for ${this.targetRole}`);
       }
     });
+  }
+}
+
+class FailOnceManifestUpdateStore extends RunManifestStore {
+  private failed = false;
+
+  override update(update: Parameters<RunManifestStore["update"]>[0]) {
+    if (!this.failed) {
+      this.failed = true;
+      throw new Error("Injected run manifest update failure");
+    }
+    return super.update(update);
   }
 }
 

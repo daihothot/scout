@@ -1,5 +1,11 @@
 import { summarizeAgentServerPreflight } from "../../agent-server/codex/app-server-preflight.js";
 import { writeJsonFile } from "../../core/fs.js";
+import type {
+  RunAgentManifestEntry,
+  RunManifest,
+  RunManifestStore,
+} from "../persistence/index.js";
+import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import type { RunAgentEnvironment } from "../types.js";
 import type {
   EnvironmentRoleRunnerResult,
@@ -8,9 +14,8 @@ import type {
 
 /**
  * Persists the two role artifacts whose content is produced by the shared
- * mount/preflight pipeline. It does not update the run index; that policy is
- * owned by the lifecycle stage because startup and resume update different
- * manifest fields.
+ * mount/preflight pipeline. Run identity indexing is coordinated by the
+ * metadata transaction below so rebuilt mounts cannot drift from run.json.
  */
 export class EnvironmentArtifactWriter {
   write(agents: EnvironmentRoleRunnerResult): void {
@@ -27,7 +32,10 @@ export class EnvironmentArtifactWriter {
 
 /** Restores the persisted role artifacts captured by the snapshot loader. */
 export class EnvironmentMetadataRollback {
-  constructor(private readonly snapshot: EnvironmentSnapshot) {}
+  constructor(
+    private readonly snapshot: EnvironmentSnapshot,
+    private readonly manifestStore: RunManifestStore,
+  ) {}
 
   restore(): void {
     let firstError: unknown;
@@ -44,6 +52,11 @@ export class EnvironmentMetadataRollback {
         }
       }
     }
+    try {
+      this.manifestStore.restore(this.snapshot.manifest);
+    } catch (error) {
+      firstError ??= error;
+    }
     if (firstError !== undefined) {
       throw firstError;
     }
@@ -57,12 +70,17 @@ export class EnvironmentMetadataTransaction {
   constructor(
     private readonly input: {
       readonly rollback: EnvironmentMetadataRollback;
+      readonly manifestStore: RunManifestStore;
     },
   ) {}
 
   commit(agents: EnvironmentRoleRunnerResult): void {
     try {
       this.writer.write(agents);
+      this.input.manifestStore.update((manifest) => ({
+        ...manifest,
+        agents: updateManifestAgents(manifest, agents),
+      }));
     } catch (error) {
       try {
         this.input.rollback.restore();
@@ -85,4 +103,31 @@ export class EnvironmentMetadataTransaction {
 /** Narrow helper for stages that need to persist one completed role eagerly. */
 export function writeEnvironmentAgentArtifacts(agent: RunAgentEnvironment): void {
   new EnvironmentArtifactWriter().write({ [agent.role]: agent });
+}
+
+function updateManifestAgents(
+  manifest: RunManifest,
+  agents: EnvironmentRoleRunnerResult,
+): Record<ScoutAgentRole, RunAgentManifestEntry> {
+  if (!manifest.agents) {
+    throw new Error(`Run ${manifest.runId} has no persisted agent index.`);
+  }
+  const next = { ...manifest.agents };
+  for (const [role, agent] of Object.entries(agents) as Array<[
+    ScoutAgentRole,
+    RunAgentEnvironment | undefined,
+  ]>) {
+    if (!agent) continue;
+    const existing = next[role];
+    if (!existing) {
+      throw new Error(`Run ${manifest.runId} has no persisted agent index for ${role}.`);
+    }
+    next[role] = {
+      ...existing,
+      mountId: agent.mount.mountId,
+      assetCommitId: agent.assetCommit.assetCommitId,
+      resourceHash: agent.assetCommit.resourceHash,
+    };
+  }
+  return next;
 }

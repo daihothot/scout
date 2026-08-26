@@ -580,7 +580,7 @@ test("Validation domain Skills do not branch on concrete Unity Signals", () => {
     const text = readFileSync(join(scoutRoot, "assets/codex/skills", skill, "SKILL.md"), "utf8");
     assert.doesNotMatch(
       text,
-      /signal-unity-runtime-log|signal-unity-runtime-log-unity-pipeline-cli|signal-unity-callback-event-by-runtime-log|signal-unity-local-storage|tool-unity-pipeline-cli/,
+      /signal-unity-runtime-log|signal-unity-runtime-log-via-unity-pipeline-cli|signal-unity-callback-event-by-runtime-log|signal-unity-local-storage|tool-unity-pipeline-cli/,
       `${skill} must keep concrete Signal and Acquisition selection outside the domain contract`,
     );
   }
@@ -641,11 +641,11 @@ test("callback-event Signal declares one runtime-log Source Signal", () => {
 test("Unity Pipeline runtime-log Acquisition owns raw file export without Console fallback", () => {
   const text = readFileSync(join(
     scoutRoot,
-    "assets/codex/skills/signal-unity-runtime-log-unity-pipeline-cli/SKILL.md",
+    "assets/codex/skills/signal-unity-runtime-log-via-unity-pipeline-cli/SKILL.md",
   ), "utf8");
 
-  assert.match(text, /^name: signal-unity-runtime-log-unity-pipeline-cli$/m);
-  assert.match(text, /^id: signal-unity-runtime-log-unity-pipeline-cli$/m);
+  assert.match(text, /^name: signal-unity-runtime-log-via-unity-pipeline-cli$/m);
+  assert.match(text, /^id: signal-unity-runtime-log-via-unity-pipeline-cli$/m);
   assert.match(
     text,
     /^\s+required: \[signal-unity-runtime-log, tool-unity-pipeline-cli\]$/m,

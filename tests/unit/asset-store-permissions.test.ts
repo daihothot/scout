@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import {
   AssetStore,
   type AgentProfilesFile,
@@ -26,8 +26,8 @@ test("AssetStore materializes read and write roots from agent profile", () => {
     agentId: "verifier",
   });
   const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as {
-    readableRoots: string[];
-    writableRoots: string[];
+    profileReadableRoots: string[];
+    profileWritableRoots: string[];
     agentProfile: AgentProfilesFile["profiles"][string] & {
       model: NonNullable<AgentProfilesFile["profiles"][string]["model"]>;
     };
@@ -45,14 +45,14 @@ test("AssetStore materializes read and write roots from agent profile", () => {
     join(homedir(), ".guru", "knowledge"),
     join(homedir(), ".codegraph"),
   ].sort());
-  assert.deepEqual(manifest.writableRoots.sort(), [
-    relativeFromMount(expectedMountRoot, join(homedir(), ".guru", "codebase")),
-    relativeFromMount(expectedMountRoot, join(homedir(), ".codegraph")),
+  assert.deepEqual(manifest.profileWritableRoots.sort(), [
+    "~/.guru/codebase",
+    "~/.codegraph",
   ].sort());
-  assert.deepEqual(manifest.readableRoots.sort(), [
-    relativeFromMount(expectedMountRoot, fixtureRoot),
-    relativeFromMount(expectedMountRoot, join(homedir(), ".guru", "knowledge")),
-    relativeFromMount(expectedMountRoot, join(homedir(), ".codegraph")),
+  assert.deepEqual(manifest.profileReadableRoots.sort(), [
+    "${SCOUT_ROOT}",
+    "~/.guru/knowledge",
+    "~/.codegraph",
   ].sort());
   assert.equal(mount.mcpServers.some((server) => server.name === "codegraph"), false);
   assert.deepEqual(mount.agentProfile.model, {
@@ -430,13 +430,4 @@ function updateAgentProfile(
     delete mutableProfile[key];
   }
   writeFileSync(path, JSON.stringify(profiles, null, 2) + "\n", "utf8");
-}
-
-function relativeFromMount(mountRoot: string, target: string): string {
-  const relative = relativePath(mountRoot, target);
-  return relative || ".";
-}
-
-function relativePath(from: string, to: string): string {
-  return relative(from, to);
 }
