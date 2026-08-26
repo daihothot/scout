@@ -502,8 +502,8 @@ test("AssetStore compares persisted manifest objects by semantics rather than ke
   manifest.agentProfile = reverseObjectKeys(manifest.agentProfile);
   manifest.agentProfile.readableRoots?.reverse();
   manifest.agentProfile.writableRoots?.reverse();
-  manifest.readableRoots.reverse();
-  manifest.writableRoots.reverse();
+  manifest.profileReadableRoots.reverse();
+  manifest.profileWritableRoots.reverse();
   manifest.roleAgents = reverseObjectKeys(manifest.roleAgents);
   manifest.mcpServers = manifest.mcpServers
     .map((server) => ({
@@ -966,12 +966,23 @@ test("AssetStore persists only each materialized Skill identity and filesystem p
   assert.equal(existsSync(catalogPath), false);
   assert.equal("skillCatalog" in manifest, false);
   assert.deepEqual(manifest.skills, mount.skills);
+  assert.deepEqual(manifest.runtimeRoots, [
+    { name: "mount", path: ".", access: "read" },
+    { name: "artifacts", path: "../artifacts", access: "read-write" },
+    { name: "tmp", path: "../tmp", access: "read-write" },
+  ]);
   assert.deepEqual(readdirSync(join(mount.mountRoot, ".agents", "skills")), []);
   const entrySkill = mount.skills.find((skill) => skill.name === "domain-validation-researcher");
   const serviceSkill = mount.skills.find((skill) =>
     skill.name === "domain-validation-research-pack"
   );
   assert.ok(entrySkill);
+  assert.deepEqual(entrySkill.family, ["validation", "workflow"]);
+  assert.deepEqual(entrySkill.phase, ["research"]);
+  assert.deepEqual(entrySkill.requiredSkills, [
+    "domain-validation-research-pack",
+    "internal-skill-consumption",
+  ]);
   assert.equal(
     entrySkill.path,
     ".scout/skill/validation/workflow/domain-validation-researcher/SKILL.md",
@@ -1137,6 +1148,58 @@ test("AssetStore does not allow resource drift to change an agent profile", () =
   );
 });
 
+test("AssetStore rebuilds when only profile roots change and preserves resource identity", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-profile-root-drift-");
+  const store = new AssetStore();
+  const runId = "run-asset-profile-root-drift";
+  const initial = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId,
+    agentId: "researcher",
+  });
+  const persistedManifest = JSON.parse(
+    readFileSync(initial.manifestPath, "utf8"),
+  ) as MountManifest;
+  const profilesPath = join(fixtureRoot, "assets", "codex", "agents", "agent-profiles.json");
+  const profiles = JSON.parse(readFileSync(profilesPath, "utf8")) as AgentProfilesFile;
+  profiles.profiles.researcher.readableRoots = [
+    ...(profiles.profiles.researcher.readableRoots ?? []),
+    "${SCOUT_ROOT}/migrated-source",
+  ];
+  writeFileSync(profilesPath, JSON.stringify(profiles, null, 2) + "\n", "utf8");
+
+  const inspection = store.inspectMount({
+    scoutRoot: fixtureRoot,
+    runId,
+    agentId: "researcher",
+    cleanRunRoot: false,
+    persistedManifest,
+    persistedIdentity: mountIdentity(initial),
+  });
+  assert.equal(inspection.decision, "rebuild");
+  assert.match(inspection.reason ?? "", /profile readable roots changed/);
+
+  const rebuilt = store.prepareMount({
+    scoutRoot: fixtureRoot,
+    runId,
+    agentId: "researcher",
+    cleanRunRoot: false,
+    persistedManifest,
+    persistedIdentity: mountIdentity(initial),
+  });
+  assert.equal(rebuilt.decision, "rebuild");
+  assert.equal(rebuilt.mount.resourceHash, initial.resourceHash);
+  assert.equal(rebuilt.mount.assetCommitId, initial.assetCommitId);
+  assert.equal(rebuilt.mount.mountId, initial.mountId);
+  const currentManifest = JSON.parse(
+    readFileSync(rebuilt.mount.manifestPath, "utf8"),
+  ) as MountManifest;
+  assert.deepEqual(
+    currentManifest.profileReadableRoots,
+    profiles.profiles.researcher.readableRoots,
+  );
+});
+
 test("AssetStore does not let resource drift bypass a persisted mount identity mismatch", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-resource-drift-identity-");
   const store = new AssetStore();
@@ -1232,7 +1295,7 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-runtime-log-acquisition-");
   const store = new AssetStore();
   const toolSkill = "tool-unity-pipeline-cli";
-  const acquisitionSkill = "signal-unity-runtime-log-unity-pipeline-cli";
+  const acquisitionSkill = "signal-unity-runtime-log-via-unity-pipeline-cli";
 
   const verifierMount = store.materializeMount({
     scoutRoot: fixtureRoot,

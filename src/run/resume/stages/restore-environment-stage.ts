@@ -171,7 +171,7 @@ export class RestoreEnvironmentStage implements RunStage {
       },
     });
 
-    const rollback = new EnvironmentMetadataRollback(snapshot);
+    const rollback = new EnvironmentMetadataRollback(snapshot, scope.manifestStore);
     let result: EnvironmentRoleRunnerResult;
     let metadataTransactionStarted = false;
     try {
@@ -188,6 +188,7 @@ export class RestoreEnvironmentStage implements RunStage {
       });
       const transaction = new EnvironmentMetadataTransaction({
         rollback,
+        manifestStore: scope.manifestStore,
       });
       metadataTransactionStarted = true;
       transaction.commit(result);
