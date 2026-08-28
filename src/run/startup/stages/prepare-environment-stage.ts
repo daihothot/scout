@@ -9,7 +9,7 @@ import {
   type CodexMount,
   type MaterializeOptions,
 } from "../../../asset-store/index.js";
-import { ScoutAgentRoles, type ScoutAgentRole } from "../../../agent/thread/types.js";
+import type { ScoutAgentRole } from "../../../agent/thread/types.js";
 import { isPathWithin } from "../../../core/path.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunAgentManifestEntry } from "../../persistence/index.js";
@@ -92,7 +92,8 @@ export class PrepareEnvironmentStage implements RunStage {
     const scope = currentRunScope();
     const scoutRoot = resolve(scope.scoutRoot);
     const runRoot = resolve(scope.runRoot);
-    const roles = this.options.agentRoles ?? Object.values(ScoutAgentRoles);
+    const roles = this.options.agentRoles
+      ?? scope.scheduler.snapshot().roles.map((role) => role.name);
     assertMaterializationPath(scoutRoot, runRoot);
     assertMaterializationPath(scoutRoot, join(runRoot, "agents"));
 
@@ -111,6 +112,7 @@ export class PrepareEnvironmentStage implements RunStage {
         scoutRoot,
         runId: scope.runId,
         agentId: role,
+        workflowProfileName: scope.scoutConfig.workflow.profile,
         cleanRunRoot: false,
         onPreparationDecision: (decision, reason) => {
           const planned = plansByRole.get(role)?.inspection.decision;
@@ -197,6 +199,7 @@ export class PrepareEnvironmentStage implements RunStage {
     const environment = new RunEnvironmentBuilder(assetStore).build({
       runId: scope.runId,
       agents,
+      graphState: scope.scheduler.snapshot(),
     });
     this.preparedRootAccess = environment.rootAccess;
     scope.setEnvironment(environment);

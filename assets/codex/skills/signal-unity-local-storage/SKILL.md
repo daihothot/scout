@@ -4,7 +4,7 @@ name: signal-unity-local-storage
 description: 定义或解释 Unity local storage 快照、SQLite store、记录定位、匹配语义及输出契约时使用。
 id: signal-unity-local-storage
 version: 0.1.2
-phase: [research, verify, validate]
+phase: [research, verify, research-reviewer, verify-reviewer]
 family: [validation, single, unity, local, general]
 tags: [signal, unity, local-storage, sqlite]
 devices: [any]

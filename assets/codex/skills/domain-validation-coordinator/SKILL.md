@@ -4,7 +4,7 @@ name: domain-validation-coordinator
 description: Scout Coordinator 在 Validation Domain 中接收 BDD 目标，组织 Research、Verification 与两类 Validator Gate 往返，并综合当前验证状态时使用。
 id: domain-validation-coordinator
 version: 0.3.2
-phase: [coordinate]
+phase: [Synthesis]
 family: [validation, workflow]
 tags: [scout, validation, bdd, coordination, workflow]
 devices: [any]
@@ -19,7 +19,7 @@ summary: 规范 Research Pack Gate、Verification 和 Verification Report Gate �
 
 ## Skill Type
 
-- type: workflow
+- type: domain
 - structure_level: full
 - note: 本技能是 Coordinator 的 Validation 领域工作流，不承担 Worker 业务执行。
 
@@ -43,6 +43,10 @@ summary: 规范 Research Pack Gate、Verification 和 Verification Report Gate �
 
 ## Validation Coordination Model
 
+- 每个 Coordinator Step 都包含 `<workflow_phase>` Attachment；`current_phase` 是当前唯一可执行的 Worker Phase。
+- Coordinator 根据 `current_phase` 形成当前 Task，不自行选择 role、Agent 或其它 Phase。
+- 新 Task 使用 AssignTask；Runtime 由当前 Phase 选择第一个空闲 Worker。已有 Task 的补充工作使用 SendMessage 投递到原 `taskId`。
+- 当前 Phase 得到足以判断的结果后，Coordinator 使用 SubmitPhaseOutcome 提交 `completed` 或 `error`。Task 归档与 Phase 推进是两个独立动作。
 - 当前流程状态来自 task 生命周期、正式 Human Input Request / Response、Worker 正式 handoff、artifact refs、digest 和 Validator Gate，不依赖已废弃的 schema 状态投影。
 - Coordinator 只判断输入形态是否足以派发；BDD 是否真实存在、是否唯一匹配由 Researcher 确认。
 - Worker progress、工具活动、普通 summary 和共享记忆不是 Validation 结论。
@@ -143,11 +147,24 @@ summary: 规范 Research Pack Gate、Verification 和 Verification Report Gate �
 - Coordinator 只消费 handoff 明确引用的 Gate，不扫描 Validator artifact root 猜测最新记录。
 - Gate accepted 证明报告可消费，不会把 report 中的 `insufficient_evidence`、`blocked` 或 `not_verified` 改写为 `verified`。
 
-## Validation Coordination Workflow
+## Workflow Phase Contract
 
-- Phase 1：判断输入形态并综合稳定目标。
-- Phase 2：完成 Researcher 与 Research Validator 的 Research Pack Gate 循环。
-- Phase 3：完成 Verifier 与 Verification Validator 的 Verification Report Gate 循环并形成 synthesis。
+| `current_phase` | 当前 Task | `completed` | `error` |
+| --- | --- | --- | --- |
+| `research` | 定位 BDD 并生产 Research pack | Researcher 已提交可供检查的正式 Research handoff | 当前 Research 无法形成可检查结果 |
+| `research-reviewer` | 检查 Research pack 并形成 Research Pack Gate | Gate 为 `accepted` | Gate 要求返回 Research 修正 |
+| `verify` | 根据 accepted Research Pack Gate 执行验证并形成 Verification Report | Verifier 已提交可供检查的正式 Verification handoff | 当前 Verification 无法形成可检查结果 |
+| `verify-reviewer` | 检查 Verification Report 并形成 Verification Report Gate | Gate 为 `accepted` | Gate 要求返回 Verification 修正 |
+
+提交规则：
+
+1. 只处理 `<workflow_phase>` 中声明的当前 Phase。
+2. 当前 Phase 的新 Task 调用 AssignTask，不传 Phase、role 或 Agent。
+3. Worker 正式 handoff 到达后，根据当前 Phase contract 判断结果。
+4. 需要保留原 Task 继续修正时，使用 SendMessage 投递到原 `taskId`。
+5. 独立完成必要的 Task 归档后，调用 SubmitPhaseOutcome 提交当前 Phase 结果。
+6. SubmitPhaseOutcome 返回 `cycleCompleted: false` 时结束当前 response，等待 Runtime 以新 Phase 启动下一 Coordinator Step。
+7. SubmitPhaseOutcome 返回 `cycleCompleted: true` 时结束当前 response；Run 保持 idle，等待下一轮输入。
 
 ## Coordinator Output Layout
 
@@ -171,7 +188,7 @@ summary: 规范 Research Pack Gate、Verification 和 Verification Report Gate �
 - 下游引用规则：各 Worker task prompt 只要求对应角色 Skill 定义的固定 handoff；不得增加 artifact 摘要、证据正文或检查过程字段。
 - Ref 字段策略：引用已有 ref；不得用聊天摘要制造新的 artifact ref 或 evidence ref。
 
-## Phase 1: Qualify and Synthesize Input
+## Qualify and Synthesize Input
 ---
 
 本阶段判断输入是否足以进入 Validation 工作流，并把多轮已确认意图收敛为稳定目标。
@@ -194,7 +211,7 @@ Partial：
 
 - 已确认部分目标但仍缺 BDD 定位信息时，只输出 clarification request，不派发 Worker。
 
-## Phase 2: Complete Research Pack Gate
+## Complete Research Pack Gate
 ---
 
 本阶段根据正式 handoff 和 task 生命周期完成 Researcher 与 Research Validator 的检查往返。
@@ -234,7 +251,7 @@ Partial：
 
 - 已有部分 Worker 结果但不满足下一角色输入时，整理为状态说明，不伪造后续 task。
 
-## Phase 3: Complete Verification Report Gate
+## Complete Verification Report Gate
 ---
 
 本阶段以 accepted Research Pack Gate 为唯一入口，完成 Verifier 与新的 Verification Validator task 的报告检查往返。

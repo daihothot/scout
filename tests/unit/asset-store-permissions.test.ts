@@ -14,11 +14,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AssetStore,
-  type AgentProfilesFile,
-  resolveAgentProfile,
+  type AgentProfile,
+  type WorkflowProfile,
 } from "../../src/asset-store/index.js";
 
 const scoutRoot = process.cwd();
+type Mutable<T> = {
+  -readonly [Key in keyof T]: T[Key] extends readonly (infer Item)[]
+    ? Mutable<Item>[]
+    : T[Key] extends object
+      ? Mutable<T[Key]>
+      : T[Key];
+};
 
 test("AssetStore materializes read and write roots from agent profile", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-asset-store-permissions-"));
@@ -36,9 +43,7 @@ test("AssetStore materializes read and write roots from agent profile", () => {
   const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as {
     profileReadableRoots: string[];
     profileWritableRoots: string[];
-    agentProfile: AgentProfilesFile["profiles"][string] & {
-      model: NonNullable<AgentProfilesFile["profiles"][string]["model"]>;
-    };
+    agentProfile: AgentProfile;
   };
   const expectedMountRoot = join(fixtureRoot, "run", runId, "agents", "verifier", "mount");
   const expectedArtifactRoot = join(fixtureRoot, "run", runId, "agents", "verifier", "artifacts");
@@ -79,30 +84,6 @@ test("AssetStore materializes read and write roots from agent profile", () => {
   assert.equal(manifest.agentProfile.maxThreads, 6);
   assert.equal(manifest.agentProfile.maxDepth, 1);
   assert.deepEqual(manifest.agentProfile.customAgents, ["scout-helper"]);
-});
-
-test("Agent profiles reject invalid native subagent settings", () => {
-  const path = join(scoutRoot, "assets", "codex", "agents", "agent-profiles.json");
-  const original = JSON.parse(readFileSync(path, "utf8")) as AgentProfilesFile;
-  const cases: Array<{
-    key: "multiAgent" | "maxThreads" | "maxDepth" | "customAgents";
-    value: unknown;
-  }> = [
-    { key: "multiAgent", value: "true" },
-    { key: "maxThreads", value: 0 },
-    { key: "maxDepth", value: -1 },
-    { key: "customAgents", value: [""] },
-  ];
-
-  for (const invalid of cases) {
-    const profiles = structuredClone(original);
-    const profile = profiles.profiles.researcher as unknown as Record<string, unknown>;
-    profile[invalid.key] = invalid.value;
-    assert.throws(
-      () => resolveAgentProfile(profiles, "researcher"),
-      new RegExp(`agent profile ${invalid.key}`),
-    );
-  }
 });
 
 test("AssetStore rejects a profile that references an unknown custom agent", () => {
@@ -149,14 +130,14 @@ test("AssetStore rejects an incomplete per-agent model override", () => {
     model: {
       id: "gpt-5.4",
       provider: "GuruOpenAI",
-    } as NonNullable<AgentProfilesFile["profiles"][string]["model"]>,
+    } as NonNullable<WorkflowProfile["roles"][string]["model"]>,
   });
 
   assert.throws(() => new AssetStore().materializeMount({
     scoutRoot: fixtureRoot,
     runId: "run-incomplete-model-override-test",
     agentId: "coordinator",
-  }), /model for agent coordinator\.reasoningEffort/);
+  }), /roles\.coordinator\.model\.reasoningEffort/);
 });
 
 test("AssetStore exposes effective permission roots", () => {
@@ -217,7 +198,7 @@ test("AssetStore resolves local profile roots relative to the Scout root", () =>
   assert.deepEqual(mount.writableRoots, [join(fixtureRoot, "local", "writable")]);
 });
 
-test("AssetStore treats omitted profile shellTools as an empty shell tool set", () => {
+test("AssetStore accepts an empty Synthesis shell tool set", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-permissions-");
   updateAgentProfile(fixtureRoot, "coordinator", {
     shellTools: undefined,
@@ -232,7 +213,7 @@ test("AssetStore treats omitted profile shellTools as an empty shell tool set", 
   assert.deepEqual(mount.shellTools, []);
 });
 
-test("AssetStore mounts only global instructions for every role", () => {
+test("AssetStore mounts shared Worker instructions only for Worker roles", () => {
   const fixtureRoot = createCodexAssetFixture("scout-agent-instructions-");
   const store = new AssetStore();
   for (const agentId of ["coordinator", "researcher", "verifier", "validator"]) {
@@ -247,18 +228,24 @@ test("AssetStore mounts only global instructions for every role", () => {
     };
 
     assert.equal(existsSync(join(mount.mountRoot, "AGENTS.md")), true);
-    assert.deepEqual(readdirSync(join(mount.mountRoot, "agents")), []);
+    const isCoordinator = agentId === "coordinator";
+    assert.deepEqual(
+      readdirSync(join(mount.mountRoot, "agents")),
+      isCoordinator ? [] : ["worker.AGENTS.md"],
+    );
     assert.deepEqual(
       manifest.assets
-        .filter((asset) => asset.type === "agents_md")
+        .filter((asset) => asset.type === "agents_md" || asset.type === "worker_agents_md")
         .map((asset) => asset.id),
-      ["codex.agents.default"],
+      isCoordinator
+        ? ["codex.agents.default"]
+        : ["codex.agents.default", "codex.agents.worker"],
     );
     assert.deepEqual(
       manifest.linkedFiles
         .filter((file) => file.path.endsWith("AGENTS.md"))
         .map((file) => file.path),
-      ["AGENTS.md"],
+      isCoordinator ? ["AGENTS.md"] : ["AGENTS.md", "agents/worker.AGENTS.md"],
     );
   }
 });
@@ -320,7 +307,7 @@ test("AssetStore mounts scout-helper only for Worker profiles", () => {
   }
 });
 
-test("Every role resource hash depends on global instructions", () => {
+test("Only Worker resource hashes depend on shared Worker instructions", () => {
   const fixtureRoot = createCodexAssetFixture("scout-agent-instructions-hash-");
   const store = new AssetStore();
   const coordinatorBefore = store.materializeMount({
@@ -335,8 +322,8 @@ test("Every role resource hash depends on global instructions", () => {
   });
 
   writeFileSync(
-    join(fixtureRoot, "assets", "codex", "agents", "AGENTS.md"),
-    "updated global instructions\n",
+    join(fixtureRoot, "assets", "codex", "agents", "worker.AGENTS.md"),
+    "updated worker instructions\n",
     "utf8",
   );
 
@@ -351,7 +338,7 @@ test("Every role resource hash depends on global instructions", () => {
     agentId: "researcher",
   });
 
-  assert.notEqual(coordinatorAfter.resourceHash, coordinatorBefore.resourceHash);
+  assert.equal(coordinatorAfter.resourceHash, coordinatorBefore.resourceHash);
   assert.notEqual(researcherAfter.resourceHash, researcherBefore.resourceHash);
 });
 
@@ -402,19 +389,27 @@ function createCodexAssetFixture(prefix: string): string {
 function updateAgentProfile(
   fixtureRoot: string,
   agentId: string,
-  patch: Partial<AgentProfilesFile["profiles"][string]>,
+  patch: Partial<AgentProfile>,
 ): void {
-  const path = join(fixtureRoot, "assets", "codex", "agents", "agent-profiles.json");
-  const profiles = JSON.parse(readFileSync(path, "utf8")) as AgentProfilesFile;
-  const profile = profiles.profiles[agentId];
-  profiles.profiles[agentId] = {
-    ...profile,
-    ...Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)),
-  };
-  for (const [key, value] of Object.entries(patch)) {
-    if (value !== undefined) continue;
-    const mutableProfile: Record<string, unknown> = profiles.profiles[agentId] as unknown as Record<string, unknown>;
-    delete mutableProfile[key];
+  const path = join(fixtureRoot, "assets", "codex", "workflows", "domain-validation.json");
+  const workflow = JSON.parse(readFileSync(path, "utf8")) as Mutable<WorkflowProfile>;
+  const role = workflow.roles[agentId];
+  if (!role) throw new Error(`Missing Workflow role ${agentId}.`);
+  if (patch.multiAgent !== undefined) role.multiAgent = patch.multiAgent;
+  if (patch.customAgents !== undefined) role.customAgents = [...patch.customAgents];
+  if (patch.model !== undefined) role.model = { ...patch.model };
+  if (patch.config !== undefined) workflow.defaults.config = patch.config;
+  if (patch.maxThreads !== undefined) workflow.defaults.maxThreads = patch.maxThreads;
+  if (patch.maxDepth !== undefined) workflow.defaults.maxDepth = patch.maxDepth;
+  const resources = agentId === "coordinator"
+    ? [workflow.phases.synthesis]
+    : (role.phases ?? []).map((phase) => workflow.phases.workers[phase]!);
+  for (const resource of resources) {
+    if (Object.hasOwn(patch, "shellTools")) resource.shellTools = [...(patch.shellTools ?? [])];
+    if (patch.mcpServers !== undefined) resource.mcpServers = [...patch.mcpServers];
+    if (patch.plugins !== undefined) resource.plugins = [...patch.plugins];
+    if (patch.readableRoots !== undefined) resource.readableRoots = [...patch.readableRoots];
+    if (patch.writableRoots !== undefined) resource.writableRoots = [...patch.writableRoots];
   }
-  writeFileSync(path, JSON.stringify(profiles, null, 2) + "\n", "utf8");
+  writeFileSync(path, JSON.stringify(workflow, null, 2) + "\n", "utf8");
 }

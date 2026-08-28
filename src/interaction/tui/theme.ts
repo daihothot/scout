@@ -13,11 +13,12 @@ export type TuiColor =
 
 /** Selects the stable role color used across task and activity rows. */
 export function roleColor(role: ScoutAgentRole | string | undefined): TuiColor {
-  if (role === "coordinator") return "cyan";
-  if (role === "researcher") return "green";
-  if (role === "verifier") return "magenta";
-  if (role === "validator") return "yellow";
-  return "gray";
+  if (!role) return "gray";
+  const palette = ["cyan", "green", "magenta", "yellow", "blue"] as const;
+  const index = [...role].reduce((hash, character) =>
+    (hash * 31 + character.codePointAt(0)!) >>> 0, 0
+  ) % palette.length;
+  return palette[index]!;
 }
 
 /** Selects a semantic color for a task or lifecycle status. */

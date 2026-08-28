@@ -1,16 +1,18 @@
 import { resumeRun, startRun } from "./index.js";
 import { startScoutTui } from "../interaction/tui/run-tui.js";
-import {
-  readAgentProfilesForScoutRoot,
-  resolveDefaultAgentModel,
-} from "../asset-store/assets/agent-profiles.js";
+import { readWorkflowProfile } from "../asset-store/assets/workflow-profiles.js";
+import { loadScoutConfig } from "../system/config/index.js";
 
 /** Starts either a new or resumed run and keeps the TUI alive for disclosure. */
 export async function runScoutTui(input: {
   cwd: string;
   resume?: string;
 }): Promise<void> {
-  const defaultModel = resolveDefaultAgentModel(readAgentProfilesForScoutRoot(input.cwd));
+  const scoutConfig = loadScoutConfig(input.cwd);
+  const defaultModel = readWorkflowProfile(
+    input.cwd,
+    scoutConfig.workflow.profile,
+  ).profile.defaults.model;
   const tui = startScoutTui({
     cwd: input.cwd,
     version: process.env.npm_package_version ?? "0.1.0",

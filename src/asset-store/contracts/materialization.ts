@@ -11,6 +11,8 @@ export interface MaterializeOptions {
   scoutRoot: string;
   runId?: string;
   agentId: string;
+  /** Selected Workflow Profile that declares this role and its Phase resources. */
+  workflowProfileName?: string;
   persistedManifest?: MountManifest;
   parentAssetCommitId?: string;
   persistedIdentity?: PersistedMountIdentity;

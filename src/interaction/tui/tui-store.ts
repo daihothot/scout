@@ -41,6 +41,7 @@ export interface TuiTaskSummary {
   taskSequence: number;
   agentId?: string;
   role?: string;
+  phase?: string;
   status?: string;
   description?: string;
   updatedAt: string;
@@ -435,6 +436,7 @@ function projectTaskSummary(
     taskSequence: task.taskSequence,
     agentId: task.agentId,
     role: task.role,
+    phase: task.phase,
     status,
     description: task.description,
     updatedAt,

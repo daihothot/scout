@@ -1,4 +1,4 @@
-import { ScoutAgentRoles, type ScoutAgentRole } from "../../../agent/thread/types.js";
+import type { ScoutAgentRole } from "../../../agent/thread/types.js";
 import type {
   AgentActivity,
   AgentTurnActivity,
@@ -135,8 +135,6 @@ function activityText(activity: AgentActivity, status = activity.status): string
 }
 
 function roleLabel(role: ScoutAgentRole): string {
-  if (role === ScoutAgentRoles.Coordinator) return "COORD";
-  if (role === ScoutAgentRoles.Researcher) return "RES";
-  if (role === ScoutAgentRoles.Verifier) return "VER";
-  return "VAL";
+  const label = role.replace(/[^A-Za-z0-9]/g, "").slice(0, 5).toUpperCase();
+  return label || "ROLE";
 }

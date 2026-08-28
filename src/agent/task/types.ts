@@ -67,6 +67,7 @@ export interface AgentTaskState {
   taskSequence: number;
   agentId: string;
   role: ScoutAgentRole;
+  phase: string;
   description: string;
   initialPrompt: string;
   status: AgentTaskStatus;
@@ -85,9 +86,8 @@ export interface AgentTaskState {
 /** Request to create or assign a Worker task. */
 export interface AssignAgentTaskInput {
   taskId?: string;
-  agentId?: string;
+  phase: string;
   description: string;
-  subagentType: ScoutAgentRole;
   prompt: string;
   isBackgrounded?: boolean;
 }

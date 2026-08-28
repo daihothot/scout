@@ -579,7 +579,7 @@ function testMount(input: {
         reasoningEffort: "high",
         reasoningSummary: "concise",
       },
-      phase: "coordinate",
+      phases: ["Synthesis"],
       shellTools: [],
       mcpServers: [],
       plugins: input.plugins ?? [],

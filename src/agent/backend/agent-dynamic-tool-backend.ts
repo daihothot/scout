@@ -3,7 +3,7 @@ import type {
   DynamicToolCallResponse,
 } from "../../agent-server/types.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
-import { ScoutAgentRoles } from "../thread/types.js";
+import { CoordinatorAgent } from "../roles/coordinator-agent.js";
 import {
   type ArchiveTaskToolCall,
   type AssignTaskToolCall,
@@ -14,10 +14,10 @@ import {
   type RespondHumanInputToolCall,
   type SendMessageToolCall,
   type SubmitTaskToolCall,
+  type SubmitPhaseOutcomeToolCall,
   type AgentDynamicToolCall,
 } from "../tools/agent-tools.js";
 import type { AgentTaskBackend } from "./agent-task-backend.js";
-import type { AgentTaskState } from "../task/types.js";
 import { WorkerAgent } from "../roles/worker-agent.js";
 import { agent } from "../context/agent-attachments.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
@@ -31,15 +31,9 @@ type AssignTaskToolResponse =
   | {
     status: "assigned";
     taskId: string;
-    agentId: string;
-    role: AgentTaskState["role"];
-    description: string;
   }
   | {
     status: "not_assigned";
-    agentId: string;
-    role: AgentTaskState["role"];
-    activeTaskId: string;
     reason: string;
   };
 
@@ -52,6 +46,7 @@ export class AgentDynamicToolBackend {
   private readonly taskStore: RunScope["taskStore"];
   private readonly taskBackend: AgentTaskBackend;
   private readonly domain: RunScope["domain"];
+  private readonly scheduler: RunScope["scheduler"];
   private unsubscribeDynamicTools?: () => void;
 
   constructor(options: AgentDynamicToolBackendOptions) {
@@ -60,6 +55,7 @@ export class AgentDynamicToolBackend {
     this.taskStore = scope.taskStore;
     this.taskBackend = options.taskBackend;
     this.domain = scope.domain;
+    this.scheduler = scope.scheduler;
   }
 
   start(): void {
@@ -126,11 +122,24 @@ export class AgentDynamicToolBackend {
   private async handleAssignTaskToolCall(
     call: AssignTaskToolCall,
   ): Promise<AssignTaskToolResponse> {
-    const worker = this.resolveAssignableWorker(call);
+    const phase = this.scheduler.current();
+    const workerRole = phase.selectAvailableRole((role) => {
+      const candidate = this.registry.findAgent(role);
+      return candidate instanceof WorkerAgent && candidate.taskRunner === undefined;
+    });
+    if (!workerRole) {
+      return {
+        status: "not_assigned",
+        reason: `Workflow Phase ${phase.name} has no available Worker.`,
+      };
+    }
+    const worker = this.registry.resolveAgent(workerRole);
+    if (!(worker instanceof WorkerAgent)) {
+      throw new Error(`Workflow Phase ${phase.name} role ${workerRole} is not a Worker agent.`);
+    }
     const assignment = await worker.assignTask({
-      agentId: worker.agentId,
+      phase: phase.name,
       description: call.description,
-      subagentType: call.subagent_type,
       prompt: agent.turn.message(call.prompt),
       isBackgrounded: true,
     });
@@ -138,9 +147,6 @@ export class AgentDynamicToolBackend {
       const rejection = assignment.error;
       return {
         status: "not_assigned",
-        agentId: rejection.agentId,
-        role: rejection.role,
-        activeTaskId: rejection.activeTaskId,
         reason: rejection.reason,
       };
     }
@@ -148,9 +154,19 @@ export class AgentDynamicToolBackend {
     return {
       status: "assigned",
       taskId: task.taskId,
-      agentId: task.agentId,
-      role: task.role,
-      description: task.description,
+    };
+  }
+
+  private handleSubmitPhaseOutcomeToolCall(
+    call: SubmitPhaseOutcomeToolCall,
+    caller: CoordinatorAgent,
+  ): Record<string, unknown> {
+    const advanced = this.scheduler.advance(call.outcome);
+    if (!advanced.cycleCompleted) caller.scheduleCurrentPhaseStep();
+    return {
+      status: "accepted",
+      currentPhase: advanced.state.currentPhase,
+      cycleCompleted: advanced.cycleCompleted,
     };
   }
 
@@ -158,7 +174,7 @@ export class AgentDynamicToolBackend {
     call: ArchiveTaskToolCall,
     caller: ScoutAgent,
   ): Promise<Record<string, unknown>> {
-    if (caller.role !== ScoutAgentRoles.Coordinator) {
+    if (!(caller instanceof CoordinatorAgent)) {
       throw new Error("ArchiveTask is only available to the Coordinator agent.");
     }
     const archived = await this.taskBackend.archiveAgentTask(call.task_id);
@@ -230,7 +246,7 @@ export class AgentDynamicToolBackend {
     caller: ScoutAgent,
     delivery: DynamicToolCallInput,
   ): Promise<Record<string, unknown>> {
-    if (caller.role !== ScoutAgentRoles.Coordinator) {
+    if (!(caller instanceof CoordinatorAgent)) {
       throw new Error("RespondHumanInput is only available to the Coordinator agent.");
     }
     return this.taskBackend.respondHumanInput({ call, caller, delivery });
@@ -254,21 +270,11 @@ export class AgentDynamicToolBackend {
         return this.handleSubmitTaskToolCall(call, caller, delivery);
       case "ArchiveTask":
         return this.handleArchiveTaskToolCall(call, caller);
+      case "SubmitPhaseOutcome":
+        return this.handleSubmitPhaseOutcomeToolCall(call, caller as CoordinatorAgent);
       default:
         throw new Error(`Unsupported agent tool: ${String((call as { tool?: unknown }).tool)}`);
     }
-  }
-
-  private resolveAssignableWorker(call: AssignTaskToolCall): WorkerAgent {
-    const agent = this.registry.resolveAgent(call.agent_id ?? call.subagent_type);
-    if (!(agent instanceof WorkerAgent)) {
-      throw new Error(`Agent ${agent.agentId} is not a Worker agent.`);
-    }
-    const worker = agent;
-    if (worker.role !== call.subagent_type) {
-      throw new Error(`Agent ${worker.agentId} is ${worker.role}, not ${call.subagent_type}.`);
-    }
-    return worker;
   }
 
 }

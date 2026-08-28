@@ -3,10 +3,7 @@ import {
   type AgentTaskState,
 } from "../../../agent/task/types.js";
 import { AgentStepStatuses } from "../../../agent/step/types.js";
-import {
-  ScoutAgentRoles,
-  type ScoutAgentRole,
-} from "../../../agent/thread/types.js";
+import type { ScoutAgentRole } from "../../../agent/thread/types.js";
 import { projectedStepsForTask, type RunProjection } from "./run-projector.js";
 
 /** Ordered recovery checkpoints inferred from persisted task and turn facts. */
@@ -112,6 +109,7 @@ export function planResumeActions(input: {
   projection: RunProjection;
   agentId: string;
   role: ScoutAgentRole;
+  synthesisRole: ScoutAgentRole;
 }): ResumeAction[] {
   const actions: ResumeAction[] = input.projection.pendingMessages
     .filter((message) => message.agentId === input.agentId)
@@ -120,11 +118,11 @@ export function planResumeActions(input: {
       messageId: message.messageId,
     }));
 
-  if (input.role === ScoutAgentRoles.Coordinator) {
+  if (input.role === input.synthesisRole) {
     const completedCoordinatorTurns = input.projection.turns
       .filter((turn) =>
         turn.agentId === input.agentId
-        && turn.role === ScoutAgentRoles.Coordinator
+        && turn.role === input.synthesisRole
         && turn.status === "completed"
         && turn.completedAt !== undefined
       );

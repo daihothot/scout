@@ -18,13 +18,13 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
-import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import {
   AssetStore,
   type MaterializeOptions,
   type MountManifest,
 } from "../../src/asset-store/index.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
+import { Scheduler } from "../../src/core/workflow/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import {
   NoopRuntimeInteractionPort,
@@ -44,6 +44,7 @@ import type { ScoutConfig } from "../../src/system/config/index.js";
 import type { RunJournal } from "../../src/run/journal/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import {
+  createTestScheduler,
   createTestRunPersistence,
   installTestRunScope,
 } from "../helpers/run-persistence.js";
@@ -64,7 +65,7 @@ test("PrepareEnvironmentStage materializes, preflights, and commits every agent 
 
   await stage.start();
 
-  const roles = Object.values(ScoutAgentRoles);
+  const roles = createTestScheduler().snapshot().roles.map((role) => role.name);
   assert.deepEqual(preflightedAgents.sort(), [...roles].sort());
   assert.deepEqual(Object.keys(stage.agents).sort(), [...roles].sort());
   for (const role of roles) {
@@ -147,12 +148,12 @@ test("PrepareEnvironmentStage reports six rebuild units per role", async (t) => 
     snapshot.phase === "running" && snapshot.descriptor.progress,
   );
   assert.ok(rebuildingSnapshots.every((snapshot) =>
-    snapshot.totalUnits === Object.values(ScoutAgentRoles).length * 6
+    snapshot.totalUnits === createTestScheduler().snapshot().roles.map((role) => role.name).length * 6
   ));
   const final = snapshots.at(-1);
   assert.ok(final);
   assert.equal(final.phase, "done");
-  assert.equal(final.totalUnits, Object.values(ScoutAgentRoles).length * 6);
+  assert.equal(final.totalUnits, createTestScheduler().snapshot().roles.map((role) => role.name).length * 6);
   assert.equal(final.completedUnits, final.totalUnits);
   for (let index = 1; index < snapshots.length; index += 1) {
     assert.ok(snapshots[index]!.completedUnits >= snapshots[index - 1]!.completedUnits);
@@ -173,7 +174,7 @@ test("PrepareEnvironmentStage collects every role before reporting a failed pref
   const stage = new PrepareEnvironmentStage({
     preflightMount: async (mount) => {
       preflightedAgents.push(mount.agentId);
-      return mount.agentId === ScoutAgentRoles.Coordinator
+      return mount.agentId === "coordinator"
         ? { status: "failed" }
         : { status: "passed" };
     },
@@ -181,22 +182,22 @@ test("PrepareEnvironmentStage collects every role before reporting a failed pref
 
   await assert.rejects(stage.start(), /preflight failed/);
 
-  const roles = Object.values(ScoutAgentRoles);
+  const roles = createTestScheduler().snapshot().roles.map((role) => role.name);
   assert.deepEqual(preflightedAgents.sort(), [...roles].sort());
   assert.equal(stage.prepared, true);
   assert.ok(Object.values(stage.agents).every((agent) =>
     existsSync(agent.preflightPath) && existsSync(agent.assetCommitPath)
   ));
-  assert.equal(stage.agents[ScoutAgentRoles.Coordinator].assetCommit.status, "preflight_failed");
+  assert.equal(stage.agents["coordinator"].assetCommit.status, "preflight_failed");
   assert.ok(Object.values(stage.agents)
-    .filter((agent) => agent.role !== ScoutAgentRoles.Coordinator)
+    .filter((agent) => agent.role !== "coordinator")
     .every((agent) => agent.assetCommit.status === "preflight_passed"));
   assert.equal(runtime.scope.hasEnvironment, true);
   const failed = interactionPort.progress.filter((snapshot) => snapshot.phase === "failed").at(-1);
   assert.ok(failed);
   assert.equal(
     failed.descriptor.status.detail,
-    `${ScoutAgentRoles.Coordinator} preflight`,
+    `${"coordinator"} preflight`,
   );
   for (const role of roles) {
     assert.ok(existsSync(join(
@@ -220,7 +221,7 @@ test("RestoreEnvironmentStage rejects source asset drift", async (t) => {
   });
   await startStage.start();
 
-  const coordinator = runtime.scope.environment.agents[ScoutAgentRoles.Coordinator];
+  const coordinator = runtime.scope.environment.agents["coordinator"];
   const mountManifest = JSON.parse(
     readFileSync(coordinator.mount.manifestPath, "utf8"),
   ) as MountManifest;
@@ -245,7 +246,7 @@ test("RestoreEnvironmentStage applies the explicit global resource-drift policy"
     preflightMount: async () => ({ status: "passed" }),
   }).start();
 
-  const coordinator = initial.scope.environment.agents[ScoutAgentRoles.Coordinator];
+  const coordinator = initial.scope.environment.agents["coordinator"];
   const previousResourceHash = coordinator.mount.resourceHash;
   const mountManifest = JSON.parse(
     readFileSync(coordinator.mount.manifestPath, "utf8"),
@@ -264,7 +265,10 @@ test("RestoreEnvironmentStage applies the explicit global resource-drift policy"
     journal,
     manifestStore,
     new NoopRuntimeInteractionPort(),
-    { restore: { allowAssetResourceDrift: true } },
+    {
+      workflow: { profile: "domain-validation" },
+      restore: { allowAssetResourceDrift: true },
+    },
   );
   let resumedReleased = false;
   t.after(() => {
@@ -275,14 +279,14 @@ test("RestoreEnvironmentStage applies the explicit global resource-drift policy"
     preflightMount: async () => ({ status: "passed" }),
   }).start();
 
-  const current = resumed.scope.environment.agents[ScoutAgentRoles.Coordinator];
+  const current = resumed.scope.environment.agents["coordinator"];
   assert.notEqual(current.mount.resourceHash, previousResourceHash);
   assert.equal(
     JSON.parse(readFileSync(current.mount.manifestPath, "utf8")).resourceHash,
     current.mount.resourceHash,
   );
   const restoredEntry = resumed.scope.manifestStore.read().agents?.[
-    ScoutAgentRoles.Coordinator
+    "coordinator"
   ];
   assert.ok(restoredEntry);
   assert.equal(restoredEntry.mountId, current.mount.mountId);
@@ -297,7 +301,10 @@ test("RestoreEnvironmentStage applies the explicit global resource-drift policy"
     journal,
     manifestStore,
     new NoopRuntimeInteractionPort(),
-    { restore: { allowAssetResourceDrift: true } },
+    {
+      workflow: { profile: "domain-validation" },
+      restore: { allowAssetResourceDrift: true },
+    },
   );
   let secondReleased = false;
   t.after(() => {
@@ -307,7 +314,7 @@ test("RestoreEnvironmentStage applies the explicit global resource-drift policy"
     preflightMount: async () => ({ status: "passed" }),
   }).start();
   assert.equal(
-    second.scope.environment.agents[ScoutAgentRoles.Coordinator].mount.mountId,
+    second.scope.environment.agents["coordinator"].mount.mountId,
     current.mount.mountId,
   );
   second.release();
@@ -326,7 +333,7 @@ test("RestoreEnvironmentStage rolls back the run index when metadata commit fail
     preflightMount: async () => ({ status: "passed" }),
   }).start();
 
-  const coordinator = initial.scope.environment.agents[ScoutAgentRoles.Coordinator];
+  const coordinator = initial.scope.environment.agents["coordinator"];
   const previousManifest = readFileSync(coordinator.mount.manifestPath, "utf8");
   const previousAssetCommit = readFileSync(coordinator.assetCommitPath, "utf8");
   const previousPreflight = readFileSync(coordinator.preflightPath, "utf8");
@@ -348,7 +355,10 @@ test("RestoreEnvironmentStage rolls back the run index when metadata commit fail
     journal,
     failingManifestStore,
     new NoopRuntimeInteractionPort(),
-    { restore: { allowAssetResourceDrift: true } },
+    {
+      workflow: { profile: "domain-validation" },
+      restore: { allowAssetResourceDrift: true },
+    },
   );
   let failedReleased = false;
   t.after(() => {
@@ -444,7 +454,7 @@ test("RestoreEnvironmentStage rejects a symlinked Agent root before rebuilding a
     "run",
     prepared.runtime.scope.runId,
     "agents",
-    ScoutAgentRoles.Validator,
+    "validator",
   );
   const outsideValidatorRoot = join(prepared.fixtureRoot, "outside-validator");
   renameSync(validatorRoot, outsideValidatorRoot);
@@ -493,7 +503,7 @@ for (const ref of [
       prepared.runtime.scope.runId,
     );
     const entry = prepared.runtime.scope.manifestStore.read().agents?.[
-      ScoutAgentRoles.Validator
+      "validator"
     ];
     assert.ok(entry);
     const refPath = resolve(runRoot, entry[ref[0]]);
@@ -519,7 +529,7 @@ test("RestoreEnvironmentStage rejects an intermediate symlink before rebuilding 
     "run",
     prepared.runtime.scope.runId,
     "agents",
-    ScoutAgentRoles.Validator,
+    "validator",
     "artifacts",
   );
   const outsideArtifacts = join(prepared.fixtureRoot, "outside-validator-artifacts");
@@ -578,7 +588,7 @@ test("RestoreEnvironmentStage rebuilds only damaged roles and is idempotent", as
     preflightMount: async () => ({ status: "passed" }),
   }).start();
 
-  const roles = Object.values(ScoutAgentRoles);
+  const roles = createTestScheduler().snapshot().roles.map((role) => role.name);
   const sentinels = new Map<string, string>();
   const mountTimes = new Map<string, number>();
   for (const role of roles) {
@@ -588,7 +598,7 @@ test("RestoreEnvironmentStage rebuilds only damaged roles and is idempotent", as
     sentinels.set(role, sentinel);
     mountTimes.set(role, statSync(mountRoot).mtimeMs);
   }
-  const damagedRole = ScoutAgentRoles.Validator;
+  const damagedRole = "validator";
   const damagedConfig = join(
     initial.scope.environment.agents[damagedRole].mount.mountRoot,
     ".codex",
@@ -663,6 +673,85 @@ test("RestoreEnvironmentStage rebuilds only damaged roles and is idempotent", as
   secondReleased = true;
 });
 
+test("RestoreEnvironmentStage follows current GraphState roles and retains removed role history", async (t) => {
+  const fixtureRoot = createFixture("scout-restore-dynamic-roles-");
+  const runId = "restore-dynamic-roles";
+  const initial = installEnvironmentScope(t, fixtureRoot, runId);
+  let initialReleased = false;
+  t.after(() => {
+    if (!initialReleased) initial.release();
+  });
+  await new PrepareEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+  const removedMountRoot = initial.scope.environment.agents.verifier.mount.mountRoot;
+  const journal = initial.scope.journal;
+  const manifestStore = initial.scope.manifestStore;
+  initial.release();
+  initialReleased = true;
+
+  const workflowPath = join(
+    fixtureRoot,
+    "assets",
+    "codex",
+    "workflows",
+    "domain-validation.json",
+  );
+  const workflow = JSON.parse(readFileSync(workflowPath, "utf8")) as {
+    roles: Record<string, {
+      phases?: string[];
+      multiAgent: boolean;
+      customAgents: string[];
+    }>;
+  };
+  delete workflow.roles.verifier;
+  workflow.roles.auditor = {
+    phases: ["verify"],
+    multiAgent: true,
+    customAgents: ["scout-helper"],
+  };
+  writeFileSync(workflowPath, JSON.stringify(workflow, null, 2) + "\n", "utf8");
+
+  const scheduler = new Scheduler(
+    new AssetStore().buildWorkflow(fixtureRoot, "domain-validation"),
+    new InMemoryEventBus(),
+  );
+  const resumed = installExistingEnvironmentScope(
+    fixtureRoot,
+    runId,
+    journal,
+    manifestStore,
+    new NoopRuntimeInteractionPort(),
+    {
+      workflow: { profile: "domain-validation" },
+      restore: { allowAssetResourceDrift: true },
+    },
+    scheduler,
+  );
+  let resumedReleased = false;
+  t.after(() => {
+    if (!resumedReleased) resumed.release();
+  });
+
+  await new RestoreEnvironmentStage({
+    preflightMount: async () => ({ status: "passed" }),
+  }).start();
+
+  assert.deepEqual(Object.keys(resumed.scope.environment.agents), [
+    "coordinator",
+    "researcher",
+    "validator",
+    "auditor",
+  ]);
+  assert.equal(existsSync(removedMountRoot), true);
+  assert.ok(existsSync(resumed.scope.environment.agents.auditor.mount.manifestPath));
+  const manifest = manifestStore.read();
+  assert.ok(manifest.agents?.verifier);
+  assert.ok(manifest.agents?.auditor);
+  resumed.release();
+  resumedReleased = true;
+});
+
 test("RestoreEnvironmentStage self-heals a partial mount without rebuilding completed roles", async (t) => {
   const fixtureRoot = createLinkedAssetsFixture(t, "scout-restore-partial-mount-");
   const runId = "restore-partial-mount";
@@ -700,7 +789,7 @@ test("RestoreEnvironmentStage self-heals a partial mount without rebuilding comp
   });
   await assert.rejects(
     new RestoreEnvironmentStage({
-      assetStore: new FailOnceAfterConfigAssetStore(ScoutAgentRoles.Coordinator),
+      assetStore: new FailOnceAfterConfigAssetStore("coordinator"),
       preflightMount: async () => ({ status: "passed" }),
     }).start(),
     /Injected materialization failure after config for coordinator/,
@@ -768,7 +857,7 @@ test("RestoreEnvironmentStage self-heals a partial mount without rebuilding comp
   }).start();
   const final = finalProgress.progress.at(-1);
   assert.ok(final);
-  assert.equal(final.totalUnits, Object.values(ScoutAgentRoles).length);
+  assert.equal(final.totalUnits, createTestScheduler().snapshot().roles.map((role) => role.name).length);
   assert.equal(final.descriptor.status.detail, "Mount · ready · 4/4 reusable");
   assert.ok(finalProgress.progress.every((snapshot) => !snapshot.descriptor.progress));
   assert.equal(readFileSync(coordinatorSentinel, "utf8"), "preserve\n");
@@ -811,7 +900,7 @@ async function prepareLinkedEnvironment(
     preflightMount: async () => ({ status: "passed" }),
   }).start();
   const coordinatorSentinel = join(
-    runtime.scope.environment.agents[ScoutAgentRoles.Coordinator].mount.mountRoot,
+    runtime.scope.environment.agents["coordinator"].mount.mountRoot,
     "containment-sentinel.txt",
   );
   writeFileSync(coordinatorSentinel, "preserve until validation finishes\n", "utf8");
@@ -870,6 +959,7 @@ function installExistingEnvironmentScope(
   manifestStore: RunManifestStore,
   interactionPort: RuntimeInteractionPort,
   scoutConfig?: ScoutConfig,
+  scheduler: Scheduler = createTestScheduler(),
 ): {
   scope: RunScope;
   appServer: CodexAppServerClient;
@@ -882,6 +972,7 @@ function installExistingEnvironmentScope(
     runRoot: join(scoutRoot, "run", runId),
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
+    scheduler,
     interactionPort,
     scoutConfig,
     domain: {

@@ -25,9 +25,9 @@
 
 ### Roles
 
-- 当前 `role` 的值为 `coordinator`、`researcher`、`validator` 或 `verifier`。
+- 当前 `run` 的 `role` 清单由 Workflow Profile 声明；除 `coordinator` 外，其它 `role` 的名称和数量不固定。
 - `coordinator` 负责协调任务和 `role` 之间的协作。
-- `worker` 是 `researcher`、`validator` 和 `verifier` 的共同协作类别，负责执行被指派的任务；`worker` 不是具体的 `role` 值。
+- `worker` 是所有可接收 `task` 的 `role` 的共同协作类别；`worker` 不是具体的 `role` 值。
 
 ### Runtime Layout
 
@@ -43,6 +43,8 @@
     ├── <role>/
     │   ├── mount/                    【用途：当前工作目录】【权限：仅可读】
     │   │   ├── AGENTS.md             【本文件】【用途：通用规则原件】【权限：仅可读】
+    │   │   ├── agents/
+    │   │   │   └── worker.AGENTS.md  【仅 worker】【用途：worker 通用规则原件】【权限：仅可读】
     │   │   └── .scout/skill/         【用途：当前可见 Skill 根目录】【权限：仅可读】
     │   ├── artifacts/                【用途：正式产物和交接引用】【权限：可读可写】
     │   └── tmp/                      【用途：工具运行临时数据】【权限：可读可写】
@@ -53,7 +55,8 @@
 Scout Runtime 自动注入的规则文件，遗忘规则时可以读取：
 
 ```text
-AGENTS.md    【已注入所有 role】
+AGENTS.md                  【已注入所有 role】
+agents/worker.AGENTS.md    【已注入 worker】
 ```
 
 ### Skill Navigation
@@ -157,6 +160,7 @@ Scout 以 `<domain>` 组织业务工作。
 ### Working Interaction
 
 - 各 `<role>` 按当前适用的 `Domain Skill` 所规定的职责通过 `task` 协作。
+- `worker` 同时遵循 `worker.AGENTS.md` 中的通用执行和交接规则。
 - `Domain Skill` 将 `<domain>` 的规则应用于 `task`，驱动当前 `<role>` 的判断和工作过程。
 - 当前适用的 `Single Skill` 为 `task` 提供领域判断所需的专项 contract。
 - 当前 `<role>` 根据 `Domain Skill` 及当前适用的 `Single Skill` 确定 `Tool` 的调用目的和业务结果解释。
@@ -181,6 +185,7 @@ Scout 通过持久产物、稳定引用和正式角色交接完成工作交付�
 ### Delivery Interaction
 
 - `AGENTS.md` 定义所有 `role` 共同遵循的交付规则。
+- `worker.AGENTS.md` 定义所有 `worker` 共同遵循的 handoff 规则。
 - `Domain Skill` 定义 `<domain>` 中各 `role` 的交付职责、输出和交接。
 - `worker` 根据 `Domain Skill` 处理 `task`，按其输出定义生成 `artifact`，并将 `ref` 写入 `outcome`。
 - Scout Runtime 记录 `handoff` 时，将 `outcome` 中的 `ref` 规范化为 `run` 内稳定引用，并随 `outcome` 持久化和传递。

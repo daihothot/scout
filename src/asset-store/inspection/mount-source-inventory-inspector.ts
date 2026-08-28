@@ -64,6 +64,7 @@ export class MountSourceInventoryInspector {
       customAgentPaths: context.profiledCustomAgentPaths,
       skillPaths: context.profiledSkillPaths,
       pluginPaths: context.profiledPluginPaths,
+      workflowProfileAsset: context.workflowProfileAsset,
       shellToolsRegistryHash: sha256File(
         resolveAssetRelativePath(CodexAssetLayout.shellTools, context.assetsRoot),
       ),

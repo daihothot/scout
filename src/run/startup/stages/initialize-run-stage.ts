@@ -16,6 +16,7 @@ export class InitializeRunStage implements RunStage {
     }, {
       occurredAt: createdAt,
     });
+    scope.scheduler.initialize();
     scope.manifestStore.create({
       runId: scope.runId,
       scoutRoot: scope.scoutRoot,

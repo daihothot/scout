@@ -4,7 +4,7 @@ name: internal-skill-consumption
 description: 读取一个 Scout Skill 时，确定还必须读取的关联 Skill 和附属文件，并在全部规则就绪后开始执行。
 id: internal-skill-consumption
 version: 1.0.0
-phase: [coordinate, research, verify, validate]
+phase: [Synthesis, research, verify, research-reviewer, verify-reviewer]
 family: [internal, skill-consumption]
 tags: [scout, skill, dependency, composition, contract]
 devices: [any]

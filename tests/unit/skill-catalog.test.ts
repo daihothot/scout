@@ -11,14 +11,14 @@ import {
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import {
+  AssetStore,
   buildScoutSkillCatalog,
   listScoutSkillPaths,
   parseScoutSkillMetadata,
   parseScoutSkillResourceMetadata,
-  resolveScoutSkillsForPhase,
+  resolveScoutSkillsForPhases,
   resolveSkillDependencyLoadOrder,
   validateScoutSkillCatalog,
-  type AgentProfilesFile,
   type ScoutSkillCatalogEntry,
 } from "../../src/asset-store/index.js";
 
@@ -56,11 +56,8 @@ test("every Scout Skill has a phase, filesystem family, and canonical mount path
   ]);
 });
 
-test("each profile phase projects every visible Skill and its dependency closure", () => {
-  const profiles = JSON.parse(readFileSync(
-    join(assetsRoot, "agents", "agent-profiles.json"),
-    "utf8",
-  )) as AgentProfilesFile;
+test("each Workflow role projects every visible Skill and its dependency closure", () => {
+  const graph = new AssetStore().buildWorkflow(scoutRoot, "domain-validation");
   const catalog = buildScoutSkillCatalog({
     assetsRoot,
     skillPaths: listScoutSkillPaths(assetsRoot),
@@ -74,6 +71,7 @@ test("each profile phase projects every visible Skill and its dependency closure
       "tool-scout-assign-task",
       "tool-scout-respond-human-input",
       "tool-scout-send-message",
+      "tool-scout-submit-phase-outcome",
     ],
     researcher: [
       "domain-validation-research-pack",
@@ -122,13 +120,15 @@ test("each profile phase projects every visible Skill and its dependency closure
     ],
   };
 
-  for (const [role, profile] of Object.entries(profiles.profiles)) {
-    const projected = resolveScoutSkillsForPhase(catalog, profile.phase);
+  for (const role of graph.roles) {
+    const projected = resolveScoutSkillsForPhases(catalog, role.phases);
     assert.deepEqual(
       projected.map((skill) => skill.name).sort(),
-      expectedInventories[role]?.sort(),
+      expectedInventories[role.name]?.sort(),
     );
-    assert.ok(projected.every((skill) => skill.phase.includes(profile.phase)));
+    assert.ok(projected.every((skill) =>
+      skill.phase.some((phase) => role.phases.includes(phase))
+    ));
     assert.equal(projected.some((skill) => skill.name === "internal-skill-creator"), false);
   }
 });
@@ -245,12 +245,15 @@ test("Scout Skill catalog recursively discovers resources and rejects resource s
   }
 });
 
-test("Scout Skill metadata requires current phase, family, tags, and token formats", () => {
+test("Scout Skill metadata accepts Workflow Phase names and validates other token fields", () => {
   assert.throws(() => parseMetadata("missing-phase", { phase: null }), /must define phase/);
   assert.deepEqual(parseMetadata("off-runtime", { phase: "[]" }).phase, []);
   assert.throws(() => parseMetadata("missing-family", { family: null }), /must define non-empty family/);
   assert.throws(() => parseMetadata("missing-tags", { tags: null }), /must define non-empty tags/);
-  assert.throws(() => parseMetadata("unsupported-phase", { phase: "[deploy]" }), /unsupported phase: deploy/);
+  assert.deepEqual(parseMetadata("workflow-phase", { phase: "[Synthesis, deploy]" }).phase, [
+    "Synthesis",
+    "deploy",
+  ]);
   assert.throws(() => parseMetadata("invalid-family", { family: "[Validation]" }), /family has invalid token/);
   assert.throws(() => parseMetadata("duplicate-tag", { tags: "[research, research]" }), /tags contains duplicate token/);
   assert.throws(() => parseMetadata("duplicate-family", { family: "[domain, domain]" }), /family contains duplicate token/);

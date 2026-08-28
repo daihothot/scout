@@ -1,6 +1,7 @@
 import { basename, join } from "node:path";
 import type { MountManifest } from "../contracts/manifest.js";
 import { CodexAssetLayout } from "../assets/asset-layout.js";
+import { SynthesisPhase } from "../../core/workflow/index.js";
 import {
   assetSourcePath,
   customAgentNameFromPath,
@@ -84,6 +85,12 @@ export class MountManifestInspector {
     if (!Array.isArray(this.manifest.linkedFiles)) return "linked file inventory is not an array";
     const expected = new Map<string, string>([
       ["AGENTS.md", assetSourcePath(CodexAssetLayout.agentsMd)],
+      ...(this.context.agentProfile.phases.includes(SynthesisPhase)
+        ? []
+        : [[
+          join("agents", "worker.AGENTS.md"),
+          assetSourcePath(CodexAssetLayout.workerAgentsMd),
+        ]] as Array<[string, string]>),
       ...this.context.profiledCustomAgentPaths.map((path) => [
         join(".codex", "agents", customAgentNameFromPath(path) + ".toml"),
         assetSourcePath(path),

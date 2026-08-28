@@ -1,6 +1,9 @@
 import { AgentEvents } from "../../../agent/events/index.js";
 import { WorkerAgent } from "../../../agent/roles/worker-agent.js";
-import { ScoutAgentRoles } from "../../../agent/thread/types.js";
+import {
+  listWorkerRoles,
+  resolveSynthesisRole,
+} from "../../../core/workflow/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import { projectRun } from "../projection/index.js";
@@ -16,16 +19,17 @@ export class RestoreTasksStage implements RunStage {
   /** Restores active and archived task projections for every worker role. */
   async start(): Promise<void> {
     const scope = currentRunScope();
-    const projection = projectRun(scope.journal.readAll());
+    const graphState = scope.scheduler.snapshot();
+    const projection = projectRun(
+      scope.journal.readAll(),
+      resolveSynthesisRole(graphState).name,
+    );
     const allTasks = [
       ...projection.tasks,
       ...projection.archivedTasks.map(({ task }) => task),
     ];
-    for (const role of [
-      ScoutAgentRoles.Researcher,
-      ScoutAgentRoles.Verifier,
-      ScoutAgentRoles.Validator,
-    ] as const) {
+    const workerRoles = listWorkerRoles(graphState).map((role) => role.name);
+    for (const role of workerRoles) {
       const worker = scope.agentRegistry.resolveAgent(role);
       if (!(worker instanceof WorkerAgent)) {
         throw new Error(`Restored agent ${role} is not a Worker agent.`);

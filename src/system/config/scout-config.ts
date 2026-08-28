@@ -3,6 +3,9 @@ import { readJsonFile } from "../../core/fs.js";
 
 /** The global Scout configuration consumed by lifecycle services. */
 export interface ScoutConfig {
+  readonly workflow: {
+    readonly profile: string;
+  };
   readonly restore: {
     readonly allowAssetResourceDrift: boolean;
   };
@@ -10,6 +13,9 @@ export interface ScoutConfig {
 
 /** The fail-closed configuration used by isolated scope/unit-test construction. */
 export const defaultScoutConfig: ScoutConfig = Object.freeze({
+  workflow: Object.freeze({
+    profile: "domain-validation",
+  }),
   restore: Object.freeze({
     allowAssetResourceDrift: false,
   }),
@@ -30,7 +36,15 @@ function parseScoutConfig(value: unknown, path: string): ScoutConfig {
   if (!isRecord(value)) {
     throw new Error(`Invalid Scout config at ${path}: expected a JSON object.`);
   }
-  assertKeys(value, ["restore"], path, "top-level");
+  assertKeys(value, ["workflow", "restore"], path, "top-level");
+  const workflow = value.workflow;
+  if (!isRecord(workflow)) {
+    throw new Error(`Invalid Scout config at ${path}: workflow must be an object.`);
+  }
+  assertKeys(workflow, ["profile"], path, "workflow");
+  if (typeof workflow.profile !== "string" || workflow.profile.trim().length === 0) {
+    throw new Error(`Invalid Scout config at ${path}: workflow.profile must be a string.`);
+  }
   const restore = value.restore;
   if (!isRecord(restore)) {
     throw new Error(`Invalid Scout config at ${path}: restore must be an object.`);
@@ -42,6 +56,9 @@ function parseScoutConfig(value: unknown, path: string): ScoutConfig {
     );
   }
   return {
+    workflow: {
+      profile: workflow.profile.trim(),
+    },
     restore: {
       allowAssetResourceDrift: restore.allowAssetResourceDrift,
     },

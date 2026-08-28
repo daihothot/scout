@@ -4,6 +4,7 @@ import type {
   UnsubscribeEventHandler,
 } from "../../core/events/index.js";
 import { EventSubscriptionPriorities } from "../../core/events/index.js";
+import { WorkflowEvents } from "../../core/workflow/index.js";
 import { ValidationEvents } from "../../domain/validation/validation-events.js";
 import { SystemEvents } from "../../system/events/index.js";
 import { RunEvents } from "../events/index.js";
@@ -11,6 +12,8 @@ import { currentRunScope } from "../run-scope.js";
 
 const persistedEventTypes: EventType[] = [
   RunEvents.run.created,
+  WorkflowEvents.workflow.initialized,
+  WorkflowEvents.workflow.advanced,
   RunEvents.runtime.attached,
   RunEvents.runtime.ready,
   RunEvents.runtime.detached,

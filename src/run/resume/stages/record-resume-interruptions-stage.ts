@@ -4,6 +4,7 @@ import { RunEvents } from "../../events/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import { projectRun } from "../projection/index.js";
+import { resolveSynthesisRole } from "../../../core/workflow/index.js";
 
 /**
  * Converts evidence of an unclean previous shutdown into journal events.
@@ -18,7 +19,8 @@ export class RecordResumeInterruptionsStage implements RunStage {
   async start(): Promise<void> {
     this.recordPreviousRuntimeInterruption();
     const scope = currentRunScope();
-    let projection = projectRun(scope.journal.readAll());
+    const synthesisRole = resolveSynthesisRole(scope.scheduler.snapshot()).name;
+    let projection = projectRun(scope.journal.readAll(), synthesisRole);
     for (const turn of projection.turns.filter((candidate) => !candidate.completedAt)) {
       const interruptedAt = new Date().toISOString();
       scope.eventBus.publish(AgentEvents.turn.interrupted, {
@@ -34,7 +36,7 @@ export class RecordResumeInterruptionsStage implements RunStage {
       });
     }
 
-    projection = projectRun(scope.journal.readAll());
+    projection = projectRun(scope.journal.readAll(), synthesisRole);
     const interruptionReason = "previous_runtime_ended_before_step_completion";
     for (const step of projection.steps) {
       if (step.status !== AgentStepStatuses.Running) continue;
@@ -65,7 +67,7 @@ export class RecordResumeInterruptionsStage implements RunStage {
       );
     }
 
-    projection = projectRun(scope.journal.readAll());
+    projection = projectRun(scope.journal.readAll(), synthesisRole);
     if (projection.checkpointSeq !== scope.journal.lastSeq) {
       throw new Error(`Run projection did not consume journal tail for ${projection.runId}.`);
     }

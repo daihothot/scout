@@ -4,7 +4,7 @@ name: tool-scout-respond-human-input
 description: Coordinator 将用户对正式人工请求的明确回复送回原 Worker task 时使用 RespondHumanInput。
 id: tool-scout-respond-human-input
 version: 1.0.0
-phase: [coordinate]
+phase: [Synthesis]
 family: [tool, scout, dynamic]
 tags: [scout, dynamic-tool, human-input, task]
 devices: [any]
@@ -31,4 +31,3 @@ summary: 规定人工回复与原请求、原任务的精确匹配和投递语�
 - `status: queued` 表示回复已排队给原 Worker，并返回原 `requestId`；不表示 Worker 已完成后续工作。
 - SendMessage 不能替代本工具关闭人工请求。
 - 没有未解决请求、任务状态不匹配或目标错误时停止，不创建新 task 规避失败。
-

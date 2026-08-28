@@ -1,4 +1,3 @@
-import { ScoutAgentRoles } from "../../../agent/thread/types.js";
 import { attachments } from "../../../agent/context/attachments.js";
 import {
   type ResumePacket,
@@ -20,7 +19,7 @@ export type { ResumePacket } from "./resume-packet-common.js";
  * fails closed instead of silently changing its recovery meaning.
  */
 export function buildResumePacket(input: ResumePacketInput): string {
-  const packet = input.role === ScoutAgentRoles.Coordinator
+  const packet = input.role === input.synthesisRole
     ? buildCoordinatorResumePacket(input)
     : buildWorkerResumePacket(input);
   const rendered = renderPacket(fitPacket(packet));

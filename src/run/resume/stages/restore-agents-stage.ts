@@ -17,10 +17,7 @@ import {
 } from "node:path";
 import { AgentBuilder } from "../../../agent/builder/agent-builder.js";
 import type { ScoutAgent } from "../../../agent/core/scout-agent.js";
-import {
-  ScoutAgentRoles,
-  type ScoutAgentRole,
-} from "../../../agent/thread/types.js";
+import { resolveSynthesisRole } from "../../../core/workflow/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import { isPathWithin } from "../../../core/path.js";
@@ -43,10 +40,17 @@ export class RestoreAgentsStage implements RunStage {
   /** Builds all role agents and restores each role's persisted thread state. */
   async start(): Promise<void> {
     const scope = currentRunScope();
-    const projection = projectRun(scope.journal.readAll());
-    const persistedThreadIds = projection.threads.map((thread) => thread.threadId);
+    const graphState = scope.scheduler.snapshot();
+    const synthesisRole = resolveSynthesisRole(graphState).name;
+    const projection = projectRun(scope.journal.readAll(), synthesisRole);
+    const roles = graphState.roles.map((role) => role.name);
+    const activeRoleNames = new Set(roles);
+    const persistedThreadIds = projection.threads
+      .filter((thread) => activeRoleNames.has(thread.agentId))
+      .map((thread) => thread.threadId);
     const requiredRolloutThreadIds = projection.threads
       .filter((thread) => {
+        if (!activeRoleNames.has(thread.agentId)) return false;
         const hasThreadTurns = projection.turns.some((turn) =>
           turn.agentId === thread.agentId && turn.threadId === thread.threadId
         );
@@ -62,14 +66,13 @@ export class RestoreAgentsStage implements RunStage {
       requiredThreadIds: requiredRolloutThreadIds,
     });
     const builder = new AgentBuilder();
-    const agents = {
-      [ScoutAgentRoles.Coordinator]: builder.buildCoordinator(),
-      [ScoutAgentRoles.Researcher]: builder.buildWorker(ScoutAgentRoles.Researcher),
-      [ScoutAgentRoles.Verifier]: builder.buildWorker(ScoutAgentRoles.Verifier),
-      [ScoutAgentRoles.Validator]: builder.buildWorker(ScoutAgentRoles.Validator),
-    } satisfies Record<ScoutAgentRole, ScoutAgent>;
+    const agents = roles.map((role) =>
+      role === synthesisRole
+        ? builder.buildCoordinator()
+        : builder.buildWorker(role)
+    );
     const settled = await Promise.allSettled(
-      Object.values(agents).map((agent) =>
+      agents.map((agent) =>
         this.restoreAgent(agent, projection, rolloutPaths)
       ),
     );
@@ -149,11 +152,14 @@ export class RestoreAgentsStage implements RunStage {
   /** Stops the coordinator first, then workers, and aggregates cleanup errors. */
   private async stopAgents(reason: string): Promise<void> {
     const agents = currentRunScope().agentRegistry.listAgents();
+    const synthesisRole = resolveSynthesisRole(
+      currentRunScope().scheduler.snapshot(),
+    ).name;
     const coordinator = agents.find((agent) =>
-      agent.role === ScoutAgentRoles.Coordinator
+      agent.role === synthesisRole
     );
     const workers = agents.filter((agent) =>
-      agent.role !== ScoutAgentRoles.Coordinator
+      agent.role !== synthesisRole
     );
     const errors: unknown[] = [];
     if (coordinator) {

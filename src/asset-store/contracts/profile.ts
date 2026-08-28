@@ -5,31 +5,18 @@
 import type { CodexModelConfig } from "../../agent-server/codex/model-config.js";
 import type { ScoutAgentPhase } from "../../agent/thread/types.js";
 
-/** Parsed repository profile document containing defaults and named roles. */
-export interface AgentProfilesFile {
-  defaults: {
-    model: CodexModelConfig;
-  };
-  profiles: Record<string, AgentProfileDefinition>;
-}
-
-/** Profile-owned limits, resources, and permission roots before model defaults are applied. */
-export interface AgentProfileDefinition {
+/** Fully normalized profile used by mount construction, including a required model. */
+export interface AgentProfile {
   config: string;
   multiAgent: boolean;
   maxThreads: number;
   maxDepth: number;
   customAgents: string[];
-  model?: CodexModelConfig;
-  phase: ScoutAgentPhase;
-  shellTools?: string[];
+  model: CodexModelConfig;
+  phases: ScoutAgentPhase[];
+  shellTools: string[];
   mcpServers: string[];
   plugins: string[];
-  readableRoots?: string[];
-  writableRoots?: string[];
-}
-
-/** Fully normalized profile used by mount construction, including a required model. */
-export interface AgentProfile extends AgentProfileDefinition {
-  model: CodexModelConfig;
+  readableRoots: string[];
+  writableRoots: string[];
 }

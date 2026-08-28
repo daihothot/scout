@@ -1,5 +1,6 @@
 import { summarizeAgentServerPreflight } from "../../agent-server/codex/app-server-preflight.js";
 import { writeJsonFile } from "../../core/fs.js";
+import { relative, resolve } from "node:path";
 import type {
   RunAgentManifestEntry,
   RunManifest,
@@ -71,6 +72,7 @@ export class EnvironmentMetadataTransaction {
     private readonly input: {
       readonly rollback: EnvironmentMetadataRollback;
       readonly manifestStore: RunManifestStore;
+      readonly runRoot: string;
     },
   ) {}
 
@@ -79,7 +81,7 @@ export class EnvironmentMetadataTransaction {
       this.writer.write(agents);
       this.input.manifestStore.update((manifest) => ({
         ...manifest,
-        agents: updateManifestAgents(manifest, agents),
+        agents: updateManifestAgents(manifest, agents, this.input.runRoot),
       }));
     } catch (error) {
       try {
@@ -108,6 +110,7 @@ export function writeEnvironmentAgentArtifacts(agent: RunAgentEnvironment): void
 function updateManifestAgents(
   manifest: RunManifest,
   agents: EnvironmentRoleRunnerResult,
+  runRoot: string,
 ): Record<ScoutAgentRole, RunAgentManifestEntry> {
   if (!manifest.agents) {
     throw new Error(`Run ${manifest.runId} has no persisted agent index.`);
@@ -119,11 +122,12 @@ function updateManifestAgents(
   ]>) {
     if (!agent) continue;
     const existing = next[role];
-    if (!existing) {
-      throw new Error(`Run ${manifest.runId} has no persisted agent index for ${role}.`);
-    }
     next[role] = {
-      ...existing,
+      ...(existing ?? {
+        mountManifestRef: relative(resolve(runRoot), agent.mount.manifestPath),
+        assetCommitRef: relative(resolve(runRoot), agent.assetCommitPath),
+        preflightRef: relative(resolve(runRoot), agent.preflightPath),
+      }),
       mountId: agent.mount.mountId,
       assetCommitId: agent.assetCommit.assetCommitId,
       resourceHash: agent.assetCommit.resourceHash,

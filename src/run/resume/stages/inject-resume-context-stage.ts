@@ -1,7 +1,10 @@
 import { WorkerAgent } from "../../../agent/roles/worker-agent.js";
 import { CoordinatorAgent } from "../../../agent/roles/coordinator-agent.js";
 import { AgentTaskStatuses } from "../../../agent/task/types.js";
-import { ScoutAgentRoles } from "../../../agent/thread/types.js";
+import {
+  listWorkerRoles,
+  resolveSynthesisRole,
+} from "../../../core/workflow/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import { buildResumePacket } from "../packet/index.js";
@@ -26,7 +29,9 @@ export class InjectResumeContextStage implements RunStage {
   /** Loads journal-derived context into interaction stores and agent runners. */
   async start(): Promise<void> {
     const scope = currentRunScope();
-    const projection = projectRun(scope.journal.readAll());
+    const graphState = scope.scheduler.snapshot();
+    const synthesisRole = resolveSynthesisRole(graphState).name;
+    const projection = projectRun(scope.journal.readAll(), synthesisRole);
     scope.toolCallStore.restore(projection.toolCalls);
     scope.stepStore.restore(projection.steps);
     scope.humanInputStore.restore(projection.humanInputRequests);
@@ -57,11 +62,8 @@ export class InjectResumeContextStage implements RunStage {
       }
     }
 
-    for (const role of [
-      ScoutAgentRoles.Researcher,
-      ScoutAgentRoles.Verifier,
-      ScoutAgentRoles.Validator,
-    ] as const) {
+    const workerRoles = listWorkerRoles(graphState).map((role) => role.name);
+    for (const role of workerRoles) {
       const task = projection.tasks.find((candidate) =>
         candidate.agentId === role
         && (
@@ -87,12 +89,14 @@ export class InjectResumeContextStage implements RunStage {
         projection,
         agentId: worker.agentId,
         role,
+        synthesisRole,
       });
       worker.restoreTaskExecution({
         resumeContext: buildResumePacket({
           projection,
           agentId: worker.agentId,
           role,
+          synthesisRole,
           assetCommitId: scope.environment.agents[role].assetCommit.assetCommitId,
           resumeActions,
         }),
@@ -103,7 +107,7 @@ export class InjectResumeContextStage implements RunStage {
       this.workersToActivate.push(worker);
     }
 
-    const coordinator = scope.agentRegistry.resolveAgent(ScoutAgentRoles.Coordinator);
+    const coordinator = scope.agentRegistry.resolveAgent(synthesisRole);
     if (!(coordinator instanceof CoordinatorAgent)) {
       throw new Error("Restored Coordinator agent is unavailable.");
     }
@@ -111,7 +115,8 @@ export class InjectResumeContextStage implements RunStage {
     const coordinatorResumeActions = planResumeActions({
       projection,
       agentId: coordinator.agentId,
-      role: ScoutAgentRoles.Coordinator,
+      role: synthesisRole,
+      synthesisRole,
     });
     this.activateCoordinator = coordinatorResumeActions.length > 0;
     this.coordinator.restoreState({
@@ -124,8 +129,9 @@ export class InjectResumeContextStage implements RunStage {
       resumeContext: buildResumePacket({
         projection,
         agentId: coordinator.agentId,
-        role: ScoutAgentRoles.Coordinator,
-        assetCommitId: scope.environment.agents[ScoutAgentRoles.Coordinator].assetCommit.assetCommitId,
+        role: synthesisRole,
+        synthesisRole,
+        assetCommitId: scope.environment.agents[synthesisRole].assetCommit.assetCommitId,
         resumeActions: coordinatorResumeActions,
       }),
     });

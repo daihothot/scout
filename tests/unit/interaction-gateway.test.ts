@@ -363,6 +363,7 @@ function taskState(input: Partial<AgentTaskState> = {}): AgentTaskState {
     taskSequence: 1,
     agentId: "researcher",
     role: "researcher",
+    phase: "research",
     description: "Research current BDD evidence",
     initialPrompt: "Research current BDD evidence",
     status: AgentTaskStatuses.Running,

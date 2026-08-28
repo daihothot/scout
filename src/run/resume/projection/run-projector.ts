@@ -118,7 +118,10 @@ export interface RunProjection {
  * journal sequence as the checkpoint, and fails on contradictory facts rather
  * than inventing state. It is read-only with respect to the journal.
  */
-export function projectRun(events: RunJournalEvent[]): RunProjection {
+export function projectRun(
+  events: RunJournalEvent[],
+  synthesisRole: string,
+): RunProjection {
   const created = events.find((event) => RunEvents.run.created.is(event));
   if (!created || !RunEvents.run.created.is(created)) {
     throw new Error("Run journal is missing run.created.");
@@ -448,7 +451,7 @@ export function projectRun(events: RunJournalEvent[]): RunProjection {
           seq: message.seq,
           message: {
             messageId: message.messageId,
-            agentId: "coordinator",
+            agentId: synthesisRole,
             body: message.attachment,
             queuedAt: message.acceptedAt,
           },

@@ -4,7 +4,7 @@ name: signal-unity-runtime-log-via-unity-pipeline-cli
 description: 通过 Unity Pipeline CLI 从 Unity Editor 导出并原样复制符合 signal-unity-runtime-log 格式的原始日志文件时使用。
 id: signal-unity-runtime-log-via-unity-pipeline-cli
 version: 0.2.2
-phase: [verify, validate]
+phase: [verify, research-reviewer, verify-reviewer]
 family: [validation, single, unity, local, general]
 tags: [signal, unity, verification, runtime, log, pipeline, cli, shell-tool, source]
 devices: [any]

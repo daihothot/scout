@@ -3,7 +3,7 @@ import type {
   AgentProfile,
 } from "../contracts/profile.js";
 import type { MaterializedMcpServer } from "../contracts/resources.js";
-import { profileResourceProjection } from "../assets/agent-profiles.js";
+import { profileResourceProjection } from "../assets/agent-profile.js";
 
 /** Compares JSON-shaped values without making object property order significant. */
 export function sameValue(actual: unknown, expected: unknown): boolean {

@@ -200,7 +200,7 @@ test("task drawer keeps archived tasks after current tasks and summarizes their 
   assert.deepEqual(tasks.map((task) => task.status), ["running", "archived"]);
   assert.equal(
     buildCollapsedTaskSummary(tasks, 120),
-    "▸ Tasks  1 active · VAL:t-0001 running · 1 archived",
+    "▸ Tasks  1 active · VALID:t-0001 running · 1 archived",
   );
   assert.doesNotMatch(buildCollapsedTaskSummary(tasks, 120), /Coordinator|COORD|Observe workers/);
 });

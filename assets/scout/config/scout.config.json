@@ -1,4 +1,7 @@
 {
+  "workflow": {
+    "profile": "domain-validation"
+  },
   "restore": {
     "allowAssetResourceDrift": true
   }

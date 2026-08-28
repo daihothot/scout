@@ -8,40 +8,19 @@ import type {
 } from "../../agent-server/codex/app-server-client.js";
 import type { CodexModelConfig } from "../../agent-server/codex/model-config.js";
 
-/** Stable role identifiers used by mounts, threads, and task routing. */
-export const ScoutAgentRoles = {
-  Coordinator: "coordinator",
-  Researcher: "researcher",
-  Verifier: "verifier",
-  Validator: "validator",
-} as const;
-
-/** Union of roles that can own a Scout thread. */
-export type ScoutAgentRole = typeof ScoutAgentRoles[keyof typeof ScoutAgentRoles];
-
-/** Stable Codex permission profile identifiers selected by each Scout role. */
-export const ScoutAgentPermissionProfiles = {
-  Coordinator: "scout-coordinator",
-  Researcher: "scout-researcher",
-  Verifier: "scout-verifier",
-  Validator: "scout-validator",
-} as const;
+/** Workflow-declared role identity that can own a Scout thread. */
+export type ScoutAgentRole = string;
 
 /** Named permission profile id accepted by Scout Agent threads. */
-export type ScoutAgentPermissionProfile = typeof ScoutAgentPermissionProfiles[
-  keyof typeof ScoutAgentPermissionProfiles
-];
+export type ScoutAgentPermissionProfile = string;
 
-/** Lifecycle phase assigned to a role's tools and Skills. */
-export const ScoutAgentPhases = {
-  Coordinate: "coordinate",
-  Research: "research",
-  Verify: "verify",
-  Validate: "validate",
-} as const;
+/** Returns the permission profile identity owned by one Workflow role. */
+export function scoutAgentPermissionProfile(role: ScoutAgentRole): ScoutAgentPermissionProfile {
+  return `scout-${role}`;
+}
 
-/** Union of phases recognized by agent tool authorization. */
-export type ScoutAgentPhase = typeof ScoutAgentPhases[keyof typeof ScoutAgentPhases];
+/** Workflow-declared Phase identity projected into Agent resources. */
+export type ScoutAgentPhase = string;
 
 /** Immutable thread-start configuration derived from a prepared role mount. */
 export interface AgentThreadSpec {

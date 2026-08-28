@@ -1,8 +1,13 @@
 import { statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { ScoutAgentRoles, type ScoutAgentRole } from "../../agent/thread/types.js";
+import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import { InMemoryEventBus } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
+import {
+  resolveSynthesisRole,
+  Scheduler,
+  type GraphState,
+} from "../../core/workflow/index.js";
 import { ValidationDomain } from "../../domain/index.js";
 import {
   NoopRuntimeInteractionPort,
@@ -26,7 +31,7 @@ import type {
   ResumeRunOptions,
   ScoutRunSummary,
 } from "../types.js";
-import { projectRun } from "./projection/index.js";
+import { projectGraphState, projectRun } from "./projection/index.js";
 import { ResumeRunStageAssembly } from "./resume-run-stage-assembly.js";
 
 /**
@@ -51,6 +56,9 @@ export async function resumeRun(
   }
   const scoutRoot = dirname(runDirectory);
   const scoutConfig = loadScoutConfig(scoutRoot);
+  const journal = RunJournal.open({ runId: manifest.runId, runRoot });
+  const eventBus = new InMemoryEventBus();
+  const scheduler = new Scheduler(projectGraphState(journal.readAll()), eventBus);
   const interactionPort = options.interactionPort ?? new NoopRuntimeInteractionPort();
   const logger = new Logger({
     runId: manifest.runId,
@@ -67,8 +75,6 @@ export async function resumeRun(
       checkpointSeq: manifest.checkpointSeq,
     },
   });
-  const journal = RunJournal.open({ runId: manifest.runId, runRoot });
-  const eventBus = new InMemoryEventBus();
   const executor = new RunStageExecutor({
     runId: manifest.runId,
     logger,
@@ -80,6 +86,7 @@ export async function resumeRun(
     runRoot,
     logger,
     eventBus,
+    scheduler,
     interactionPort,
     domain: new ValidationDomain(),
     scoutConfig,
@@ -138,7 +145,10 @@ export async function resumeRun(
     throw error;
   }
   const scope = currentRunScope();
-  const checkpointSeq = projectRun(scope.journal.readAll()).checkpointSeq;
+  const checkpointSeq = projectRun(
+    scope.journal.readAll(),
+    resolveSynthesisRole(scope.scheduler.snapshot()).name,
+  ).checkpointSeq;
   const agentIds = scope.agentRegistry.listAgents().map((agent) => agent.agentId);
   scope.logger.info({
     module: "run.lifecycle",
@@ -160,7 +170,7 @@ export async function resumeRun(
       checkpointSeq,
     },
   } satisfies RuntimeDisclosureEvent);
-  return toRunSummary(scope.environment);
+  return toRunSummary(scope.environment, scope.scheduler.snapshot());
 }
 
 /** Resolves either a run id beneath `<cwd>/run` or an explicitly supplied run path. */
@@ -198,8 +208,8 @@ function isRunManifest(path: string): boolean {
 }
 
 /** Projects the restored in-memory environment into the public run summary. */
-function toRunSummary(environment: RunEnvironment): ScoutRunSummary {
-  const coordinator = environment.agents[ScoutAgentRoles.Coordinator];
+function toRunSummary(environment: RunEnvironment, graphState: GraphState): ScoutRunSummary {
+  const coordinator = environment.agents[resolveSynthesisRole(graphState).name];
   return {
     status: "passed",
     runId: environment.contextBundle.runId,

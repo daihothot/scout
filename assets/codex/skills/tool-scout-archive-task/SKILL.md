@@ -4,7 +4,7 @@ name: tool-scout-archive-task
 description: Coordinator 确认 Worker task 不再需要继续后使用 ArchiveTask 归档该 task。
 id: tool-scout-archive-task
 version: 1.0.0
-phase: [coordinate]
+phase: [Synthesis]
 family: [tool, scout, dynamic]
 tags: [scout, dynamic-tool, task, archive]
 devices: [any]

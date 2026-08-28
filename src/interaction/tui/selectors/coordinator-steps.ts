@@ -14,7 +14,7 @@ export interface TuiCoordinatorStepDrawerItem {
 /** Selects Coordinator steps in execution order for the shared work drawer. */
 export function selectCoordinatorSteps(state: TuiState): TuiCoordinatorStepDrawerItem[] {
   return [...(state.steps ?? [])]
-    .filter((step) => step.agentId === "coordinator")
+    .filter((step) => step.taskId === undefined)
     .sort((left, right) => left.startedAt.localeCompare(right.startedAt))
     .map(projectCoordinatorStep);
 }

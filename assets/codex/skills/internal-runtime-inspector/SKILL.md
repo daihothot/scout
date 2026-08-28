@@ -4,7 +4,7 @@ name: internal-runtime-inspector
 description: 当前 role 需要使用 pwd、scout-assets 和已物化 Shell Tool 定位 Runtime 资源、解析访问路径或诊断资源缺失时使用。
 id: internal-runtime-inspector
 version: 1.0.0
-phase: [coordinate, research, verify, validate]
+phase: [Synthesis, research, verify, research-reviewer, verify-reviewer]
 family: [internal, runtime-inspector]
 tags: [scout, runtime, resource, mount, manifest, path]
 devices: [any]

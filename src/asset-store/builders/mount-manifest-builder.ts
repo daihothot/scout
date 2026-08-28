@@ -6,11 +6,12 @@ import type {
   McpServersFile,
   ShellToolContract,
 } from "../contracts/resources.js";
-import { profileResourceHash } from "../assets/agent-profiles.js";
+import { profileResourceHash } from "../assets/agent-profile.js";
 import type { AgentProfile } from "../contracts/profile.js";
 import type { MountManifest } from "../contracts/manifest.js";
 import type { MountMaterializationIssue } from "../contracts/mount.js";
 import type { MaterializedSkill } from "../contracts/skill.js";
+import type { WorkflowProfileAsset } from "../contracts/workflow-profile.js";
 import { CodexAssetLayout } from "../assets/asset-layout.js";
 import {
   assertMountPathSegment,
@@ -21,6 +22,7 @@ import {
   relativeOrSelf,
   skillNameFromPath,
 } from "../files/asset-paths.js";
+import { SynthesisPhase } from "../../core/workflow/index.js";
 
 /** Inputs describing the selected source resources before mount files exist. */
 export interface AssetInventoryInput {
@@ -33,6 +35,7 @@ export interface AssetInventoryInput {
   skillPaths: string[];
   pluginPaths: string[];
   shellToolsRegistryHash: string;
+  workflowProfileAsset: WorkflowProfileAsset;
 }
 
 /** Materialized paths and identity fields combined with the source inventory. */
@@ -71,6 +74,7 @@ export class MountManifestBuilder {
 }
 
 function buildAssetInventoryInternal(input: AssetInventoryInput): MountManifest["assets"] {
+  const isSynthesisRole = input.agentProfile.phases.includes(SynthesisPhase);
   const shellToolAssets = input.shellToolContracts.flatMap((tool) => {
     const assets: MountManifest["assets"] = [];
     const appendAsset = (kind: "command" | "arg", assetPath: string, index?: number) => {
@@ -125,10 +129,20 @@ function buildAssetInventoryInternal(input: AssetInventoryInput): MountManifest[
       sourcePath: assetSourcePath(CodexAssetLayout.agentsMd),
       hash: sha256File(resolveAssetRelativePath(CodexAssetLayout.agentsMd, input.assetsRoot)),
     },
+    ...(isSynthesisRole
+      ? []
+      : [{
+        id: "codex.agents.worker",
+        type: "worker_agents_md",
+        sourcePath: assetSourcePath(CodexAssetLayout.workerAgentsMd),
+        hash: sha256File(
+          resolveAssetRelativePath(CodexAssetLayout.workerAgentsMd, input.assetsRoot),
+        ),
+      }]),
     {
       id: `codex.agents.profile.${input.agentId}`,
-      type: "agent_profile",
-      sourcePath: assetSourcePath(CodexAssetLayout.agentProfiles),
+      type: "workflow_role_profile",
+      sourcePath: assetSourcePath(input.workflowProfileAsset.sourcePath),
       hash: profileResourceHash(input.agentProfile),
     },
     {
@@ -137,6 +151,14 @@ function buildAssetInventoryInternal(input: AssetInventoryInput): MountManifest[
       sourcePath: assetSourcePath(input.agentProfile.config),
       hash: sha256File(resolveAssetRelativePath(input.agentProfile.config, input.assetsRoot)),
     },
+    ...(isSynthesisRole
+      ? [{
+        id: `codex.workflow.${input.workflowProfileAsset.name}`,
+        type: "workflow_profile",
+        sourcePath: assetSourcePath(input.workflowProfileAsset.sourcePath),
+        hash: input.workflowProfileAsset.hash,
+      }]
+      : []),
     ...input.customAgentPaths.map((path) => ({
       id: `codex.custom_agent.${customAgentNameFromPath(path)}`,
       type: "custom_agent",
@@ -173,12 +195,20 @@ function buildAssetInventoryInternal(input: AssetInventoryInput): MountManifest[
 }
 
 function buildMountManifestInternal(input: MountManifestInput): MountManifest {
+  const isSynthesisRole = input.agentProfile.phases.includes(SynthesisPhase);
   const linkedFiles = [
     {
       path: "AGENTS.md",
       sourcePath: assetSourcePath(CodexAssetLayout.agentsMd),
       hash: sha256File(join(input.assetsRoot, CodexAssetLayout.agentsMd)),
     },
+    ...(isSynthesisRole
+      ? []
+      : [{
+        path: join("agents", "worker.AGENTS.md"),
+        sourcePath: assetSourcePath(CodexAssetLayout.workerAgentsMd),
+        hash: sha256File(join(input.assetsRoot, CodexAssetLayout.workerAgentsMd)),
+      }]),
     ...input.customAgentPaths.map((path) => ({
       path: join(".codex", "agents", `${customAgentNameFromPath(path)}.toml`),
       sourcePath: assetSourcePath(path),

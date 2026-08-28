@@ -11,7 +11,6 @@ import {
   installRunScope,
   RunScope,
 } from "../../src/run/run-scope.js";
-import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import type { ScoutDomain } from "../../src/domain/index.js";
 import type {
@@ -20,7 +19,10 @@ import type {
 } from "../../src/agent-server/codex/app-server-client.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
-import { createTestRunPersistence } from "../helpers/run-persistence.js";
+import {
+  createTestRunPersistence,
+  createTestScheduler,
+} from "../helpers/run-persistence.js";
 
 const scoutRoot = process.cwd();
 
@@ -33,7 +35,7 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
   const runId = "boot-agents-test";
   const startedThreads: string[] = [];
   const appServer = createAppServer((options) => {
-    const role = Object.values(ScoutAgentRoles).find((candidate) =>
+    const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>
       options.cwd.includes(`${candidate}/mount`)
     ) ?? "unknown";
     const threadId = `thread-${role}`;
@@ -74,17 +76,17 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
   ]);
   assert.deepEqual(
     scope.agentRegistry.listAgents().map((agent) => agent.role).sort(),
-    Object.values(ScoutAgentRoles).sort(),
+    createTestScheduler().snapshot().roles.map((role) => role.name).sort(),
   );
   assert.ok(scope.agentRegistry.listAgents().every((agent) =>
     agent.threadSnapshot?.startInput.ephemeral === false
   ));
   assert.equal(
     scope.agentRegistry.resolveAgentByThreadId("thread-verifier"),
-    scope.agentRegistry.resolveAgent(ScoutAgentRoles.Verifier),
+    scope.agentRegistry.resolveAgent("verifier"),
   );
   assert.equal(
-    scope.agentRegistry.resolveAgent(ScoutAgentRoles.Coordinator).threadPreflightSnapshot?.result.status,
+    scope.agentRegistry.resolveAgent("coordinator").threadPreflightSnapshot?.result.status,
     "passed",
   );
   assert.deepEqual(scope.taskStore.listTasks(), []);
@@ -104,10 +106,10 @@ test("AgentsStage closes started threads when another Agent fails to start", asy
   });
   const runId = "boot-agents-failure-test";
   const appServer = createAppServer((options) => {
-    const role = Object.values(ScoutAgentRoles).find((candidate) =>
+    const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>
       options.cwd.includes(`${candidate}/mount`)
     ) ?? "unknown";
-    if (role === ScoutAgentRoles.Validator) throw new Error("validator thread failed");
+    if (role === "validator") throw new Error("validator thread failed");
     return `thread-${role}`;
   });
   const scope = new RunScope({
@@ -143,7 +145,7 @@ test("AgentsStage closes started threads when another Agent fails to start", asy
     assert.equal(agent.threadSnapshot?.closeReason, "agent_startup_failed");
   }
   assert.equal(
-    scope.agentRegistry.resolveAgent(ScoutAgentRoles.Validator).threadSnapshot,
+    scope.agentRegistry.resolveAgent("validator").threadSnapshot,
     undefined,
   );
 });

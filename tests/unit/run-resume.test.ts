@@ -33,9 +33,7 @@ import {
   type AgentStepState,
 } from "../../src/agent/step/types.js";
 import {
-  ScoutAgentPermissionProfiles,
-  ScoutAgentPhases,
-  ScoutAgentRoles,
+  scoutAgentPermissionProfile,
   type AgentThreadSnapshot,
   type AgentThreadSpec,
 } from "../../src/agent/thread/types.js";
@@ -60,7 +58,7 @@ import { buildResumePacket } from "../../src/run/resume/packet/index.js";
 import {
   inferTaskRecoveryCheckpoint,
   planResumeActions,
-  projectRun,
+  projectRun as projectRunEvents,
   ResumeActionTypes,
   TaskRecoveryCheckpoints,
 } from "../../src/run/resume/projection/index.js";
@@ -70,6 +68,9 @@ import {
   RunScope,
 } from "../../src/run/run-scope.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
+
+const projectRun = (events: Parameters<typeof projectRunEvents>[0]) =>
+  projectRunEvents(events, "coordinator");
 import {
   InitializeRunStage,
   PrepareEnvironmentStage,
@@ -95,7 +96,10 @@ import {
   RunStageExecutor,
   type RunStage,
 } from "../../src/run/lifecycle/index.js";
-import { installTestRunScope } from "../helpers/run-persistence.js";
+import {
+  createTestScheduler,
+  installTestRunScope,
+} from "../helpers/run-persistence.js";
 
 test("Run projection rebuilds pending messages, human gate and interrupted turn", () => {
   const events = journalEvents(
@@ -144,7 +148,7 @@ test("Run projection rebuilds pending messages, human gate and interrupted turn"
     scoutEvent(AgentEvents.turn.started, {
       invocationId: "invocation-1",
       agentId: "researcher",
-      role: ScoutAgentRoles.Researcher,
+      role: "researcher",
       taskId: "researcher-task-0001",
       threadId: "thread-old",
       prompt: agent.turn.message("中断输入"),
@@ -170,9 +174,9 @@ test("Run projection rebuilds pending messages, human gate and interrupted turn"
 
 test("Run projection keeps the original thread snapshot across resume lifecycles", () => {
   const started = {
-    agentId: ScoutAgentRoles.Researcher,
-    role: ScoutAgentRoles.Researcher,
-    phases: [ScoutAgentPhases.Research],
+    agentId: "researcher",
+    role: "researcher",
+    phases: ["research"],
     contextBundleId: "context-1",
     threadId: "thread-researcher",
     createdAt: "2026-07-22T00:00:00.000Z",
@@ -306,7 +310,7 @@ test("Terminal task checkpoints ignore stale unresolved human requests", () => {
     const body = attachments.readTagBlock(buildPlannedResumePacket({
       projection,
       agentId: "coordinator",
-      role: ScoutAgentRoles.Coordinator,
+      role: "coordinator",
       assetCommitId: "ac-coordinator",
     }), "resume")[0]?.body;
     const packet = JSON.parse(body ?? "{}") as {
@@ -346,13 +350,13 @@ test("Coordinator resume actions compose independent task checkpoints without pr
   });
   const interruptedTask = taskState({
     taskId: "verifier-task-interrupted",
-    agentId: ScoutAgentRoles.Verifier,
-    role: ScoutAgentRoles.Verifier,
+    agentId: "verifier",
+    role: "verifier",
     stepIds: ["verifier-task-interrupted-step-0001"],
   });
   const interruptedStep = agentStepState({
     stepId: "verifier-task-interrupted-step-0001",
-    agentId: ScoutAgentRoles.Verifier,
+    agentId: "verifier",
     taskId: interruptedTask.taskId,
     status: AgentStepStatuses.Interrupted,
     prompt: agent.turn.message("恢复中断验证"),
@@ -362,8 +366,8 @@ test("Coordinator resume actions compose independent task checkpoints without pr
   });
   const terminatedTask = taskState({
     taskId: "validator-task-terminated",
-    agentId: ScoutAgentRoles.Validator,
-    role: ScoutAgentRoles.Validator,
+    agentId: "validator",
+    role: "validator",
     status: AgentTaskStatuses.Failed,
     error: "检查失败",
   });
@@ -410,8 +414,9 @@ test("Coordinator resume actions compose independent task checkpoints without pr
   assert.deepEqual(
     planResumeActions({
       projection,
-      agentId: ScoutAgentRoles.Coordinator,
-      role: ScoutAgentRoles.Coordinator,
+      agentId: "coordinator",
+      role: "coordinator",
+      synthesisRole: "coordinator",
     }),
     [
       {
@@ -442,8 +447,8 @@ test("Coordinator does not re-evaluate a completed outcome without newer facts",
     }, "2026-07-22T00:01:00.000Z"),
     scoutEvent(AgentEvents.turn.started, {
       invocationId: "coordinator-invocation-0001",
-      agentId: ScoutAgentRoles.Coordinator,
-      role: ScoutAgentRoles.Coordinator,
+      agentId: "coordinator",
+      role: "coordinator",
       threadId: "coordinator-thread",
       prompt: "检查已提交 outcome",
       startedAt: "2026-07-22T00:02:00.000Z",
@@ -451,8 +456,8 @@ test("Coordinator does not re-evaluate a completed outcome without newer facts",
     scoutEvent(AgentEvents.turn.completed, {
       turn: {
         invocationId: "coordinator-invocation-0001",
-        agentId: ScoutAgentRoles.Coordinator,
-        role: ScoutAgentRoles.Coordinator,
+        agentId: "coordinator",
+        role: "coordinator",
         threadId: "coordinator-thread",
         turnId: "coordinator-turn-0001",
         startedAt: "2026-07-22T00:02:00.000Z",
@@ -465,8 +470,9 @@ test("Coordinator does not re-evaluate a completed outcome without newer facts",
   assert.deepEqual(
     planResumeActions({
       projection,
-      agentId: ScoutAgentRoles.Coordinator,
-      role: ScoutAgentRoles.Coordinator,
+      agentId: "coordinator",
+      role: "coordinator",
+      synthesisRole: "coordinator",
     }),
     [],
   );
@@ -478,8 +484,8 @@ test("Coordinator keeps an outcome when its completed turn started before the ou
     scoutEvent(AgentEvents.task.assigned, taskState()),
     scoutEvent(AgentEvents.turn.started, {
       invocationId: "coordinator-invocation-0001",
-      agentId: ScoutAgentRoles.Coordinator,
-      role: ScoutAgentRoles.Coordinator,
+      agentId: "coordinator",
+      role: "coordinator",
       threadId: "coordinator-thread",
       prompt: "处理其它消息",
       startedAt: "2026-07-22T00:01:00.000Z",
@@ -493,8 +499,8 @@ test("Coordinator keeps an outcome when its completed turn started before the ou
     scoutEvent(AgentEvents.turn.completed, {
       turn: {
         invocationId: "coordinator-invocation-0001",
-        agentId: ScoutAgentRoles.Coordinator,
-        role: ScoutAgentRoles.Coordinator,
+        agentId: "coordinator",
+        role: "coordinator",
         threadId: "coordinator-thread",
         turnId: "coordinator-turn-0001",
         startedAt: "2026-07-22T00:01:00.000Z",
@@ -507,8 +513,9 @@ test("Coordinator keeps an outcome when its completed turn started before the ou
   assert.deepEqual(
     planResumeActions({
       projection,
-      agentId: ScoutAgentRoles.Coordinator,
-      role: ScoutAgentRoles.Coordinator,
+      agentId: "coordinator",
+      role: "coordinator",
+      synthesisRole: "coordinator",
     }),
     [{
       type: ResumeActionTypes.EvaluateOutcome,
@@ -529,8 +536,8 @@ test("Coordinator re-evaluates a completed outcome after a newer outcome or gate
     }, "2026-07-22T00:01:00.000Z"),
     scoutEvent(AgentEvents.turn.started, {
       invocationId: "coordinator-invocation-0001",
-      agentId: ScoutAgentRoles.Coordinator,
-      role: ScoutAgentRoles.Coordinator,
+      agentId: "coordinator",
+      role: "coordinator",
       threadId: "coordinator-thread",
       prompt: "检查已提交 outcome",
       startedAt: "2026-07-22T00:02:00.000Z",
@@ -538,8 +545,8 @@ test("Coordinator re-evaluates a completed outcome after a newer outcome or gate
     scoutEvent(AgentEvents.turn.completed, {
       turn: {
         invocationId: "coordinator-invocation-0001",
-        agentId: ScoutAgentRoles.Coordinator,
-        role: ScoutAgentRoles.Coordinator,
+        agentId: "coordinator",
+        role: "coordinator",
         threadId: "coordinator-thread",
         turnId: "coordinator-turn-0001",
         startedAt: "2026-07-22T00:02:00.000Z",
@@ -559,7 +566,7 @@ test("Coordinator re-evaluates a completed outcome after a newer outcome or gate
     scoutEvent(ValidationEvents.gate.recorded, {
       gateId: "gate-0001",
       taskId: task.taskId,
-      agentId: ScoutAgentRoles.Validator,
+      agentId: "validator",
       checkedRef: "agents/researcher/artifacts/research-pack",
       checkedDigest: "sha256:pack",
       gateRef: "agents/validator/artifacts/research-pack-gate-0001.md",
@@ -572,8 +579,9 @@ test("Coordinator re-evaluates a completed outcome after a newer outcome or gate
     assert.deepEqual(
       planResumeActions({
         projection,
-        agentId: ScoutAgentRoles.Coordinator,
-        role: ScoutAgentRoles.Coordinator,
+        agentId: "coordinator",
+        role: "coordinator",
+        synthesisRole: "coordinator",
       }),
       [{
         type: ResumeActionTypes.EvaluateOutcome,
@@ -595,7 +603,7 @@ test("Coordinator Resume Packet processes pending user input without duplicating
   const body = attachments.readTagBlock(buildPlannedResumePacket({
     projection,
     agentId: "coordinator",
-    role: ScoutAgentRoles.Coordinator,
+    role: "coordinator",
     assetCommitId: "ac-coordinator",
   }), "resume")[0]?.body;
   const packet = JSON.parse(body ?? "{}") as {
@@ -672,7 +680,7 @@ test("Run projection persists one consumption fact for each Human Input directio
   const task = taskState();
   const requestMessage = {
     messageId: "human-consumption-request",
-    agentId: ScoutAgentRoles.Coordinator,
+    agentId: "coordinator",
     body: agent.turn.wait_for_human_request("请选择目标。"),
     queuedAt: "2026-07-22T00:01:00.000Z",
   };
@@ -786,7 +794,7 @@ test("Archived tasks do not retain unresolved Human Gates or their pending deliv
   const body = attachments.readTagBlock(buildPlannedResumePacket({
     projection,
     agentId: "coordinator",
-    role: ScoutAgentRoles.Coordinator,
+    role: "coordinator",
     assetCommitId: "ac-coordinator",
   }), "resume")[0]?.body;
   assert.doesNotMatch(body ?? "", /human_input_request|已经失效的请求/);
@@ -797,7 +805,7 @@ test("Resume Packet is deterministic, role-scoped and escapes closing tags", () 
   const validator = taskState({
     taskId: "validator-task-0001",
     agentId: "validator",
-    role: ScoutAgentRoles.Validator,
+    role: "validator",
     description: "检查私有信息",
     initialPrompt: agent.turn.message("validator secret"),
   });
@@ -815,7 +823,7 @@ test("Resume Packet is deterministic, role-scoped and escapes closing tags", () 
   const input = {
     projection,
     agentId: "researcher",
-    role: ScoutAgentRoles.Researcher,
+    role: "researcher",
     assetCommitId: "ac_research",
   } as const;
   const first = buildPlannedResumePacket(input);
@@ -913,7 +921,7 @@ test("Coordinator resume packet uses its own interrupted Step prompt only", () =
   const coordinatorStep = {
     ...agentStepState({
       stepId: "coordinator-step-resume",
-      agentId: ScoutAgentRoles.Coordinator,
+      agentId: "coordinator",
       prompt: agent.turn.message("Coordinator 上层恢复意图"),
       status: AgentStepStatuses.Interrupted,
     }),
@@ -931,16 +939,16 @@ test("Coordinator resume packet uses its own interrupted Step prompt only", () =
     scoutEvent(AgentEvents.step.interrupted, workerStep),
     scoutEvent(AgentEvents.turn.started, {
       invocationId: "coordinator-resume-invocation",
-      agentId: ScoutAgentRoles.Coordinator,
-      role: ScoutAgentRoles.Coordinator,
+      agentId: "coordinator",
+      role: "coordinator",
       threadId: "coordinator-thread",
       prompt: agent.turn.message("Coordinator App Server prompt"),
       startedAt: "2026-07-22T00:00:01.000Z",
     }),
     scoutEvent(AgentEvents.turn.interrupted, {
       invocationId: "coordinator-resume-invocation",
-      agentId: ScoutAgentRoles.Coordinator,
-      role: ScoutAgentRoles.Coordinator,
+      agentId: "coordinator",
+      role: "coordinator",
       threadId: "coordinator-thread",
       reason: "测试中断",
       interruptedAt: "2026-07-22T00:00:02.000Z",
@@ -948,8 +956,8 @@ test("Coordinator resume packet uses its own interrupted Step prompt only", () =
   ));
   const body = attachments.readTagBlock(buildPlannedResumePacket({
     projection,
-    agentId: ScoutAgentRoles.Coordinator,
-    role: ScoutAgentRoles.Coordinator,
+    agentId: "coordinator",
+    role: "coordinator",
     assetCommitId: "ac-coordinator",
   }), "resume")[0]?.body;
   const packet = JSON.parse(body ?? "{}") as {
@@ -1002,7 +1010,7 @@ test("Resume Packet bounds long outcomes and keeps artifact refs without message
   const rendered = buildPlannedResumePacket({
     projection,
     agentId: "coordinator",
-    role: ScoutAgentRoles.Coordinator,
+    role: "coordinator",
     assetCommitId: "ac_coordinator",
   });
   const body = attachments.readTagBlock(rendered, "resume")[0]?.body;
@@ -1010,7 +1018,7 @@ test("Resume Packet bounds long outcomes and keeps artifact refs without message
   const workerBody = attachments.readTagBlock(buildPlannedResumePacket({
     projection,
     agentId: "researcher",
-    role: ScoutAgentRoles.Researcher,
+    role: "researcher",
     assetCommitId: "ac_researcher",
   }), "resume")[0]?.body;
   const workerPacket = JSON.parse(workerBody ?? "{}") as {
@@ -1316,11 +1324,11 @@ class RestorableMessageAgent extends ScoutAgent {
       agentMount: { mountRoot: "/repo" } as never,
       assetCommit: {} as never,
       spec: {
-        role: ScoutAgentRoles.Coordinator,
-        phases: [ScoutAgentPhases.Coordinate],
+        role: "coordinator",
+        phases: ["Synthesis"],
         cwd: "/repo",
         approvalPolicy: "never",
-        permissionProfile: ScoutAgentPermissionProfiles.Coordinator,
+        permissionProfile: scoutAgentPermissionProfile("coordinator"),
         contextBundleId: "context-1",
         model: {
           id: "gpt-5.5",
@@ -1410,7 +1418,7 @@ for (const status of ["failed", "interrupted"] as const) {
           turn: {
             invocationId: `coordinator-${status}-invocation`,
             agentId: "coordinator",
-            role: ScoutAgentRoles.Coordinator,
+            role: "coordinator",
             threadId: "coordinator-thread",
             turnId: `coordinator-${status}-turn`,
             startedAt: "2026-07-22T00:00:00.000Z",
@@ -1457,7 +1465,7 @@ test("RestoreAgentsStage restarts a journaled thread that Codex never persisted"
   const startedRoles: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
-      const role = Object.values(ScoutAgentRoles).find((candidate) =>
+      const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>
         options.cwd.includes(`${candidate}/mount`)
       ) ?? "unknown";
       startedRoles.push(role);
@@ -1508,10 +1516,10 @@ test("RestoreAgentsStage restarts a journaled thread that Codex never persisted"
   const stage = new RestoreAgentsStage();
   await stage.start();
 
-  assert.deepEqual(startedRoles.sort(), Object.values(ScoutAgentRoles).sort());
+  assert.deepEqual(startedRoles.sort(), createTestScheduler().snapshot().roles.map((role) => role.name).sort());
   assert.equal(
-    noCodexRecord.scope.agentRegistry.resolveAgent(ScoutAgentRoles.Researcher).threadId,
-    `new-thread-${ScoutAgentRoles.Researcher}`,
+    noCodexRecord.scope.agentRegistry.resolveAgent("researcher").threadId,
+    `new-thread-${"researcher"}`,
   );
   assert.equal(restartedEvents.length, 1);
   const restarted = restartedEvents[0];
@@ -1520,7 +1528,7 @@ test("RestoreAgentsStage restarts a journaled thread that Codex never persisted"
   assert.equal(restarted.payload.reason, "codex_rollout_not_persisted");
   assert.equal(
     restarted.payload.newThread.threadId,
-    `new-thread-${ScoutAgentRoles.Researcher}`,
+    `new-thread-${"researcher"}`,
   );
   unsubscribe();
   await stage.stop("test_cleanup");
@@ -1530,10 +1538,10 @@ test("RestoreAgentsStage resumes a persisted thread even when it has no turns", 
   const resumedThreadIds: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
-      if (options.cwd.includes(`${ScoutAgentRoles.Researcher}/mount`)) {
+      if (options.cwd.includes(`${"researcher"}/mount`)) {
         throw new Error("zero-turn persisted thread must not cold-start");
       }
-      const role = Object.values(ScoutAgentRoles).find((candidate) =>
+      const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>
         options.cwd.includes(`${candidate}/mount`)
       ) ?? "unknown";
       const threadId = `new-thread-${role}`;
@@ -1582,7 +1590,7 @@ test("RestoreAgentsStage resumes a persisted thread even when it has no turns", 
   assert.deepEqual(resumedThreadIds, [zeroTurn.thread.threadId]);
   assert.equal(
     zeroTurn.scope.agentRegistry.resolveAgentByThreadId(zeroTurn.thread.threadId)?.agentId,
-    ScoutAgentRoles.Researcher,
+    "researcher",
   );
   await stage.stop("test_cleanup");
 });
@@ -1591,7 +1599,7 @@ test("RestoreAgentsStage restarts a current zero-turn thread after an older turn
   const startedRoles: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
-      const role = Object.values(ScoutAgentRoles).find((candidate) =>
+      const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>
         options.cwd.includes(`${candidate}/mount`)
       ) ?? "unknown";
       startedRoles.push(role);
@@ -1663,10 +1671,10 @@ test("RestoreAgentsStage restarts a current zero-turn thread after an older turn
   const stage = new RestoreAgentsStage();
   await stage.start();
 
-  assert.ok(startedRoles.includes(ScoutAgentRoles.Researcher));
+  assert.ok(startedRoles.includes("researcher"));
   assert.equal(
-    fixture.scope.agentRegistry.resolveAgent(ScoutAgentRoles.Researcher).threadId,
-    `new-thread-${ScoutAgentRoles.Researcher}`,
+    fixture.scope.agentRegistry.resolveAgent("researcher").threadId,
+    `new-thread-${"researcher"}`,
   );
   assert.equal(restartedEvents.length, 1);
   const restarted = restartedEvents[0];
@@ -1674,7 +1682,7 @@ test("RestoreAgentsStage restarts a current zero-turn thread after an older turn
   assert.equal(restarted.payload.previousThreadId, currentThread.threadId);
   assert.equal(
     restarted.payload.newThread.threadId,
-    `new-thread-${ScoutAgentRoles.Researcher}`,
+    `new-thread-${"researcher"}`,
   );
   unsubscribe();
   await stage.stop("test_cleanup");
@@ -1821,6 +1829,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     runRoot,
     logger: noopLogger(),
     eventBus: initialEventBus,
+    scheduler: createTestScheduler(),
     interactionPort: new NoopRuntimeInteractionPort(),
     domain: new ValidationDomain(),
     journal: initialJournal,
@@ -1873,16 +1882,16 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   });
   const validatorTask = taskState({
     taskId: "validator-task-0001",
-    agentId: ScoutAgentRoles.Validator,
-    role: ScoutAgentRoles.Validator,
+    agentId: "validator",
+    role: "validator",
     description: "检查 Research Pack",
     initialPrompt: agent.turn.message("检查 Research Pack"),
     startedAt: "2026-07-22T00:00:00.000Z",
   });
   const verifierRunning = taskState({
     taskId: "verifier-task-0001",
-    agentId: ScoutAgentRoles.Verifier,
-    role: ScoutAgentRoles.Verifier,
+    agentId: "verifier",
+    role: "verifier",
     description: "历史失败任务",
     initialPrompt: agent.turn.message("历史失败任务"),
   });
@@ -1894,15 +1903,15 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     updatedAt: "2026-07-22T00:00:05.000Z",
   } satisfies AgentTaskState;
   const researcherThread = {
-    agentId: ScoutAgentRoles.Researcher,
-    role: ScoutAgentRoles.Researcher,
-    phases: [ScoutAgentPhases.Research],
+    agentId: "researcher",
+    role: "researcher",
+    phases: ["research"],
     contextBundleId: initialScope.contextBundle.contextBundleId,
     threadId: "researcher-old-thread",
     createdAt: "2026-07-22T00:00:00.000Z",
     status: "active",
     startInput: {
-      cwd: initialScope.environment.agents[ScoutAgentRoles.Researcher].mount.mountRoot,
+      cwd: initialScope.environment.agents["researcher"].mount.mountRoot,
       approvalPolicy: "never",
       permissions: "scout-researcher",
       ephemeral: false,
@@ -1941,8 +1950,8 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   );
   await initialEventBus.publishAndWait(AgentEvents.turn.started, {
     invocationId: "researcher-old-invocation",
-    agentId: ScoutAgentRoles.Researcher,
-    role: ScoutAgentRoles.Researcher,
+    agentId: "researcher",
+    role: "researcher",
     taskId: researcherTask.taskId,
     threadId: "researcher-old-thread",
     prompt: researcherStep.prompt,
@@ -1969,7 +1978,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     requestedAt: "2026-07-22T00:00:07.000Z",
     message: {
       messageId: "researcher-human-request",
-      agentId: ScoutAgentRoles.Coordinator,
+      agentId: "coordinator",
       body: agent.turn.wait_for_human_request("请确认 Researcher 版本"),
       queuedAt: "2026-07-22T00:00:07.000Z",
     },
@@ -1980,7 +1989,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     AgentEvents.message.consumed,
     {
       messageId: "researcher-human-request",
-      agentId: ScoutAgentRoles.Coordinator,
+      agentId: "coordinator",
       stepId: "coordinator-step-human-request",
       consumedAt: "2026-07-22T00:00:08.000Z",
     },
@@ -2012,7 +2021,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     requestedAt: "2026-07-22T00:00:10.000Z",
     message: {
       messageId: "validator-human-request",
-      agentId: ScoutAgentRoles.Coordinator,
+      agentId: "coordinator",
       body: agent.turn.wait_for_human_request("请确认 Validator 的边界"),
       queuedAt: "2026-07-22T00:00:10.000Z",
     },
@@ -2138,6 +2147,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     runRoot,
     logger: noopLogger(),
     eventBus: resumedEventBus,
+    scheduler: createTestScheduler(),
     interactionPort: new NoopRuntimeInteractionPort(),
     domain: new ValidationDomain(),
     journal: resumedJournal,
@@ -2182,9 +2192,9 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   assert.equal("assetCommitId" in restoredManifest, false);
   assert.deepEqual(
     Object.keys(restoredManifest.agents ?? {}).sort(),
-    Object.values(ScoutAgentRoles).sort(),
+    createTestScheduler().snapshot().roles.map((role) => role.name).sort(),
   );
-  for (const role of Object.values(ScoutAgentRoles)) {
+  for (const role of createTestScheduler().snapshot().roles.map((role) => role.name)) {
     const restoredAgent = scope.environment.agents[role];
     const entry = restoredManifest.agents?.[role];
     assert.ok(entry);
@@ -2195,14 +2205,14 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   }
   assert.equal(
     scope.contextBundle.assetCommit.assetCommitId,
-    scope.environment.agents[ScoutAgentRoles.Coordinator].assetCommit.assetCommitId,
+    scope.environment.agents["coordinator"].assetCommit.assetCommitId,
   );
   assert.deepEqual(resumedThreadIds, ["researcher-old-thread"]);
   const restoredResearcherMount = scope.environment.agents[
-    ScoutAgentRoles.Researcher
+    "researcher"
   ].mount;
   const researcherAgent = scope.agentRegistry.resolveAgent(
-    ScoutAgentRoles.Researcher,
+    "researcher",
   );
   assert.deepEqual(resumedThreadInputs, [{
     threadId: "researcher-old-thread",
@@ -2213,7 +2223,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     cwd: restoredResearcherMount.mountRoot,
     runtimeWorkspaceRoots: [restoredResearcherMount.mountRoot],
     approvalPolicy: "never",
-    permissions: ScoutAgentPermissionProfiles.Researcher,
+    permissions: scoutAgentPermissionProfile("researcher"),
     config: researcherAgent.spec.config,
     baseInstructions: researcherAgent.spec.baseInstructions,
     developerInstructions: researcherAgent.spec.developerInstructions,
@@ -2333,7 +2343,7 @@ test("ValidationDomain records artifacts after an accepted task outcome event", 
 
   const artifactRef = "agents/researcher/artifacts/account-anon-restore-existing-account-research-pack";
   const artifactPath = join(
-    scope.environment.agents[ScoutAgentRoles.Researcher].mount.artifactRoot,
+    scope.environment.agents["researcher"].mount.artifactRoot,
     "account-anon-restore-existing-account-research-pack",
   );
   mkdirSync(artifactPath, { recursive: true });
@@ -2381,6 +2391,7 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
     runRoot,
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
+    scheduler: createTestScheduler(),
     interactionPort: new NoopRuntimeInteractionPort(),
     domain: new ValidationDomain(),
     journal,
@@ -2410,11 +2421,12 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
 });
 
 function buildPlannedResumePacket(
-  input: Omit<Parameters<typeof buildResumePacket>[0], "resumeActions">,
+  input: Omit<Parameters<typeof buildResumePacket>[0], "resumeActions" | "synthesisRole">,
 ): string {
+  const packetInput = { ...input, synthesisRole: "coordinator" };
   return buildResumePacket({
-    ...input,
-    resumeActions: planResumeActions(input),
+    ...packetInput,
+    resumeActions: planResumeActions(packetInput),
   });
 }
 
@@ -2462,7 +2474,7 @@ async function assertThreadRestoreFailure(
   const resumedThreadIds: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
-      const role = Object.values(ScoutAgentRoles).find((candidate) =>
+      const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>
         options.cwd.includes(`${candidate}/mount`)
       ) ?? "unknown";
       startedRoles.push(role);
@@ -2517,15 +2529,15 @@ async function assertThreadRestoreFailure(
     stepIds: [step.stepId],
   });
   const thread = {
-    agentId: ScoutAgentRoles.Researcher,
-    role: ScoutAgentRoles.Researcher,
-    phases: [ScoutAgentPhases.Research],
+    agentId: "researcher",
+    role: "researcher",
+    phases: ["research"],
     contextBundleId: scope.contextBundle.contextBundleId,
     threadId: "thread-researcher-original",
     createdAt: "2026-07-22T00:00:00.000Z",
     status: "active",
     startInput: {
-      cwd: scope.environment.agents[ScoutAgentRoles.Researcher].mount.mountRoot,
+      cwd: scope.environment.agents["researcher"].mount.mountRoot,
       approvalPolicy: "never",
       permissions: "scout-researcher",
       ephemeral: false,
@@ -2562,9 +2574,9 @@ async function assertThreadRestoreFailure(
     undefined,
   );
   assert.deepEqual(startedRoles.sort(), [
-    ScoutAgentRoles.Coordinator,
-    ScoutAgentRoles.Validator,
-    ScoutAgentRoles.Verifier,
+    "coordinator",
+    "validator",
+    "verifier",
   ].sort());
   await stage.stop("test_cleanup");
 }
@@ -2598,15 +2610,15 @@ async function installRolloutLocatorFixture(
     preflightMount: async () => ({ status: "passed" }),
   }).start();
   const thread = {
-    agentId: ScoutAgentRoles.Researcher,
-    role: ScoutAgentRoles.Researcher,
-    phases: [ScoutAgentPhases.Research],
+    agentId: "researcher",
+    role: "researcher",
+    phases: ["research"],
     contextBundleId: scope.contextBundle.contextBundleId,
     threadId: `thread-${suffix}`,
     createdAt: "2026-07-22T00:00:00.000Z",
     status: "active",
     startInput: {
-      cwd: scope.environment.agents[ScoutAgentRoles.Researcher].mount.mountRoot,
+      cwd: scope.environment.agents["researcher"].mount.mountRoot,
       approvalPolicy: "never",
       permissions: "scout-researcher",
       ephemeral: false,
@@ -2682,7 +2694,8 @@ function taskState(input: Partial<AgentTaskState> = {}): AgentTaskState {
     taskId: "researcher-task-0001",
     taskSequence: 1,
     agentId: "researcher",
-    role: ScoutAgentRoles.Researcher,
+    role: "researcher",
+    phase: "research",
     description: "研究当前行为",
     initialPrompt: agent.turn.message("研究当前行为"),
     status: AgentTaskStatuses.Running,
@@ -2699,7 +2712,7 @@ function agentStepState(input: Partial<AgentStepState> = {}): AgentStepState {
   const startedAt = input.startedAt ?? "2026-07-22T00:00:01.000Z";
   return {
     stepId: input.stepId ?? "researcher-task-0001-step-0001",
-    agentId: input.agentId ?? ScoutAgentRoles.Researcher,
+    agentId: input.agentId ?? "researcher",
     taskId: input.taskId ?? "researcher-task-0001",
     turnId: input.turnId,
     status: input.status ?? AgentStepStatuses.Running,
@@ -2720,11 +2733,11 @@ function workerHost(
   runTurn: (input: { prompt: string }) => Promise<ReturnType<typeof completedTurn>>,
 ) {
   const spec: AgentThreadSpec = {
-    role: ScoutAgentRoles.Researcher,
-    phases: [ScoutAgentPhases.Research],
+    role: "researcher",
+    phases: ["research"],
     cwd: "/repo",
     approvalPolicy: "never",
-    permissionProfile: ScoutAgentPermissionProfiles.Researcher,
+    permissionProfile: scoutAgentPermissionProfile("researcher"),
     contextBundleId: "context-1",
     model: {
       id: "gpt-5.5",
@@ -2735,7 +2748,7 @@ function workerHost(
   };
   return {
     agentId: "researcher",
-    role: ScoutAgentRoles.Researcher,
+    role: "researcher",
     spec,
     runTurn,
     deliverTaskOutcome: async () => undefined,
@@ -2748,7 +2761,7 @@ function completedTurn(finalResponse: string) {
     turn: {
       invocationId: `invocation-${finalResponse}`,
       agentId: "researcher",
-      role: ScoutAgentRoles.Researcher,
+      role: "researcher",
       threadId: "thread-new",
       turnId: `turn-${finalResponse}`,
       startedAt: "2026-07-22T00:00:00.000Z",

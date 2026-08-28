@@ -11,7 +11,6 @@ import type {
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type { AgentStepState } from "../../src/agent/step/types.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
-import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { TuiStore } from "../../src/interaction/tui/tui-store.js";
 import type { RunLifecycleSnapshot } from "../../src/run/lifecycle/index.js";
@@ -313,6 +312,7 @@ test("TuiStore restores the same task projection that normal events would displa
     taskSequence: 1,
     agentId: "researcher",
     role: "researcher",
+    phase: "research",
     status: "done",
     description: "Research BDD evidence",
     updatedAt: "2026-07-10T00:00:03.000Z",
@@ -435,6 +435,7 @@ test("TuiStore keeps plans separated by turn and retains them after archive", ()
     taskSequence: 1,
     agentId: "researcher",
     role: "researcher",
+    phase: "research",
     status: "done",
     description: "Research BDD evidence",
     updatedAt: "2026-07-10T00:00:03.000Z",
@@ -479,6 +480,7 @@ test("TuiStore keeps plans separated by turn and retains them after archive", ()
     taskSequence: 1,
     agentId: "researcher",
     role: "researcher",
+    phase: "research",
     status: "archived",
     description: "Research BDD evidence",
     updatedAt: archivedEvent.occurredAt,
@@ -621,7 +623,7 @@ function turnActivity(input: Partial<AgentTurnActivity> = {}): AgentTurnActivity
 }
 
 function activity(input: {
-  agentId: typeof ScoutAgentRoles.Coordinator | typeof ScoutAgentRoles.Researcher;
+  agentId: "coordinator" | "researcher";
   label: string;
   taskId?: string;
   type?: string;
@@ -646,7 +648,8 @@ function taskState(input: Partial<AgentTaskState> = {}): AgentTaskState {
     taskId: "researcher-task-0001",
     taskSequence: 1,
     agentId: "researcher",
-    role: ScoutAgentRoles.Researcher,
+    role: "researcher",
+    phase: "research",
     description: "Research BDD evidence",
     initialPrompt: "Research BDD evidence",
     status: "running",

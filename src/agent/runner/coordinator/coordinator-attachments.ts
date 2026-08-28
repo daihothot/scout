@@ -5,6 +5,7 @@ import type { ScoutAgentRole } from "../../thread/types.js";
 export const CoordinatorContextTags = {
   User: "coordinator-user",
   Observation: "coordinator-observation",
+  WorkflowPhase: "workflow_phase",
 } as const;
 
 /** User message envelope inserted into the Coordinator prompt. */
@@ -33,6 +34,12 @@ export interface CoordinatorTaskNotAssignedAttachmentInput {
 
 /** Builds structured context blocks consumed by the Coordinator runner. */
 export const coordinator = {
+  workflowPhase(currentPhase: string): string {
+    return attachments.addTagBlock(
+      CoordinatorContextTags.WorkflowPhase,
+      `current_phase: ${currentPhase}`,
+    );
+  },
   user(input: CoordinatorUserAttachmentInput): string {
     return attachments.addTagBlock(CoordinatorContextTags.User, JSON.stringify(input, null, 2));
   },
