@@ -143,7 +143,7 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 
 - 使用 `scout-assets` 查询当前可见能力。
 - 两个 producer Skill 各自负责检查自己的 required capabilities。
-- Single 的完整读取由角色 Domain Skill 与 `internal-single-skill-reader` 负责；本技能只在 Manual 中选择并消费适用 contract，不把完整读取等同于全部适用。
+- Single 的完整读取由角色 Domain Skill 与 `internal-skill-consumption` 负责；本技能只在 Manual 中选择并消费适用 contract，不把完整读取等同于全部适用。
 - 缺少 Domain Skill 直接依赖或任一 producer contract 时，记录为阻塞项并向上游报告。
 
 ### I-003: Producer Scope

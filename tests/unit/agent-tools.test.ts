@@ -140,28 +140,17 @@ test("agent tools are hard-bound to their registered namespaces", () => {
   );
 });
 
-test("role rules bind dynamic tools to independent cross-domain Tool Skills", () => {
+test("global rules keep dynamic tool guidance in independent Tool Skills", () => {
   const agentRoot = join(scoutRoot, "assets", "codex", "agents");
   const skillRoot = join(scoutRoot, "assets", "codex", "skills");
   const commonRules = readFileSync(join(agentRoot, "AGENTS.md"), "utf8");
-  const workerRules = readFileSync(join(agentRoot, "worker.AGENTS.md"), "utf8");
-  const coordinatorRules = readFileSync(join(agentRoot, "coordinator.AGENTS.md"), "utf8");
 
   assert.doesNotMatch(commonRules, /FindSkills|ReadSkillResource|selectionId|loadOrder/);
-  for (const toolName of ["update_plan", "RequestHumanInput", "SubmitTask"]) {
-    assert.match(workerRules, new RegExp(`\\b${toolName}\\b`), toolName);
-  }
-  for (const skillName of [
-    "tool-scout-assign-task",
-    "tool-scout-send-message",
-    "tool-scout-respond-human-input",
-    "tool-scout-archive-task",
-  ]) assert.match(coordinatorRules, new RegExp(skillName));
-  for (const skillName of [
-    "tool-scout-send-message",
-    "tool-scout-request-human-input",
-    "tool-scout-submit-task",
-  ]) assert.match(workerRules, new RegExp(skillName));
+  assert.doesNotMatch(commonRules, /tool-scout-/);
+  assert.deepEqual(
+    readdirSync(agentRoot).filter((name) => name.endsWith(".AGENTS.md")),
+    [],
+  );
   for (const skillName of readdirSync(skillRoot).filter((name) => name.startsWith("tool-scout-"))) {
     assert.equal(readFileSync(join(skillRoot, skillName, "SKILL.md"), "utf8").length > 0, true);
   }

@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -224,54 +232,33 @@ test("AssetStore treats omitted profile shellTools as an empty shell tool set", 
   assert.deepEqual(mount.shellTools, []);
 });
 
-test("AssetStore only exposes worker instructions to worker mounts", () => {
+test("AssetStore mounts only global instructions for every role", () => {
   const fixtureRoot = createCodexAssetFixture("scout-agent-instructions-");
   const store = new AssetStore();
-  const coordinator = store.materializeMount({
-    scoutRoot: fixtureRoot,
-    runId: "run-coordinator-instructions-test",
-    agentId: "coordinator",
-  });
-  const coordinatorManifest = JSON.parse(
-    readFileSync(coordinator.manifestPath, "utf8"),
-  ) as {
-    assets: Array<{ id: string }>;
-    linkedFiles: Array<{ path: string }>;
-    workerAgent?: string;
-  };
-
-  assert.equal(existsSync(join(coordinator.mountRoot, "agents", "worker.AGENTS.md")), false);
-  assert.equal(coordinatorManifest.workerAgent, undefined);
-  assert.equal(
-    coordinatorManifest.assets.some((asset) => asset.id === "codex.agents.worker"),
-    false,
-  );
-  assert.equal(
-    coordinatorManifest.linkedFiles.some((file) => file.path === "agents/worker.AGENTS.md"),
-    false,
-  );
-
-  for (const agentId of ["researcher", "verifier", "validator"]) {
-    const worker = store.materializeMount({
+  for (const agentId of ["coordinator", "researcher", "verifier", "validator"]) {
+    const mount = store.materializeMount({
       scoutRoot: fixtureRoot,
       runId: `run-${agentId}-instructions-test`,
       agentId,
     });
-    const workerManifest = JSON.parse(readFileSync(worker.manifestPath, "utf8")) as {
-      assets: Array<{ id: string }>;
+    const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as {
+      assets: Array<{ id: string; type: string }>;
       linkedFiles: Array<{ path: string }>;
-      workerAgent?: string;
     };
 
-    assert.equal(existsSync(join(worker.mountRoot, "agents", "worker.AGENTS.md")), true);
-    assert.equal(workerManifest.workerAgent, "agents/worker.AGENTS.md");
-    assert.equal(
-      workerManifest.assets.some((asset) => asset.id === "codex.agents.worker"),
-      true,
+    assert.equal(existsSync(join(mount.mountRoot, "AGENTS.md")), true);
+    assert.deepEqual(readdirSync(join(mount.mountRoot, "agents")), []);
+    assert.deepEqual(
+      manifest.assets
+        .filter((asset) => asset.type === "agents_md")
+        .map((asset) => asset.id),
+      ["codex.agents.default"],
     );
-    assert.equal(
-      workerManifest.linkedFiles.some((file) => file.path === "agents/worker.AGENTS.md"),
-      true,
+    assert.deepEqual(
+      manifest.linkedFiles
+        .filter((file) => file.path.endsWith("AGENTS.md"))
+        .map((file) => file.path),
+      ["AGENTS.md"],
     );
   }
 });
@@ -333,7 +320,7 @@ test("AssetStore mounts scout-helper only for Worker profiles", () => {
   }
 });
 
-test("Coordinator resource hash does not depend on worker instructions", () => {
+test("Every role resource hash depends on global instructions", () => {
   const fixtureRoot = createCodexAssetFixture("scout-agent-instructions-hash-");
   const store = new AssetStore();
   const coordinatorBefore = store.materializeMount({
@@ -348,8 +335,8 @@ test("Coordinator resource hash does not depend on worker instructions", () => {
   });
 
   writeFileSync(
-    join(fixtureRoot, "assets", "codex", "agents", "worker.AGENTS.md"),
-    "updated worker instructions\n",
+    join(fixtureRoot, "assets", "codex", "agents", "AGENTS.md"),
+    "updated global instructions\n",
     "utf8",
   );
 
@@ -364,7 +351,7 @@ test("Coordinator resource hash does not depend on worker instructions", () => {
     agentId: "researcher",
   });
 
-  assert.equal(coordinatorAfter.resourceHash, coordinatorBefore.resourceHash);
+  assert.notEqual(coordinatorAfter.resourceHash, coordinatorBefore.resourceHash);
   assert.notEqual(researcherAfter.resourceHash, researcherBefore.resourceHash);
 });
 

@@ -10,10 +10,10 @@ tags: [scout, validation, bdd, verification, evidence, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [tool-jarvis-codebase, internal-single-skill-reader]
+    required: [tool-jarvis-codebase, internal-skill-consumption]
   shellTools:
-    required: [scoutAssets, jarvis, codegraph, git]
-    optional: [rg, sed, find, cat]
+    required: [scoutAssets, jarvis, codegraph, git, find, sort]
+    optional: [rg, sed, cat]
   mcpServers:
     optional: [scout_local_capability]
   plugins:
@@ -29,8 +29,8 @@ summary: 从 accepted Research Pack Gate 进入实际验证并形成 Verificatio
 
 ## Skill Type
 
-- type: workflow
-- structure_level: full
+- type: domain
+- layout: workflow
 - note: 本技能拥有 Validation observed claim 和 Verification Report，不重新定义 Research claim。
 
 ## Core Use
@@ -54,11 +54,43 @@ summary: 从 accepted Research Pack Gate 进入实际验证并形成 Verificatio
 
 ## Single Consumption
 
-- 本领域当前 Single 根目录为 `.scout/skill/validation/single/unity/local/`。
-- 在解释 verification point 或调用采集工具前，先按 `internal-single-skill-reader` 完整读取 `general/` 下当前 verify phase 可见的全部 Single。verify phase 同时可见接口 contract 与相关采集实现，二者都属于通用集合，不能只读其中一类。
-- 从 accepted Research Pack、verification manual 与明确 Capability 选择 capability 目录；一旦选择，必须在执行相关验证点前完整读取该 capability 目录下当前 phase 可见的全部 Single。
-- 接口 Single 定义观察与解释 contract，采集实现 Single 定义具体 acquisition；required Skill 依赖表达二者关系，不允许用实现替代接口，也不允许只读接口后凭工具常识执行。
-- 任一集合未完整读取时，不开始依赖它的采集；只报告受影响验证点和真实缺口，不生成 coverage 记录。
+`Single set` 是当前 Validation role 必须作为一个整体消费的 Single Skill 集合。`general Single set` 是每个 Validation Verification task 都必须消费的通用集合；`capability Single set` 是当前验证点已确认涉及某个 Capability 后必须消费的专项集合。`<capability>` 表示该 Capability 的实际目录名。
+
+本领域当前 Single 根目录为：
+
+```text
+.scout/skill/validation/single/unity/local/
+```
+
+### Freeze General Single Set
+
+在解释 verification point 或调用采集工具前，执行一次以下命令：
+
+```bash
+find -L .scout/skill/validation/single/unity/local/general -mindepth 2 -maxdepth 2 -type f -name 'SKILL.md' -print | sort
+```
+
+将排序后的完整输出冻结为当前 task 的 `general Single list`。verify phase 物化到该目录的 interface contracts 与 implementation candidates 都属于这个固定列表。目录不可读、命令失败或列表为空时，不得开始依赖该集合的验证。
+
+### Freeze Capability Single Set
+
+- 只从 accepted Research Pack、verification manual 与已确认 Capability 选择 `<capability>`。
+- 每选择一个 `<capability>`，在执行相关验证点前执行一次以下命令：
+
+  ```bash
+  find -L .scout/skill/validation/single/unity/local/<capability> -mindepth 2 -maxdepth 2 -type f -name 'SKILL.md' -print | sort
+  ```
+
+- 将排序后的完整输出冻结为该 `<capability>` 的 `capability Single list`。目录不可读、命令失败或列表为空时，不得开始依赖该集合的验证。
+
+### Consume Frozen Sets
+
+1. 按 `general Single list` 的固定顺序，将每个入口分别作为 `<target-skill-path>`，完整执行 `internal-skill-consumption`。
+2. 按每个 `capability Single list` 的固定顺序执行同样处理。
+3. 解析成员之间的 derived 或 implementation composition 时，将 `general Single list` 与全部已选择 `capability Single list` 中的其它成员作为 `internal-skill-consumption` 的 related Skills；不得扫描这些列表外的候选。
+4. 只有集合内每个成员都通过自己的 readiness gate，才能开始依赖该集合的验证；不得因名称、摘要或预判不适用而跳过成员。
+
+Verifier 使用完整集合建立 interface、derived 和 implementation contracts，从 available implementation set 选择适用 acquisition 并执行。required Skill 依赖表达真实组合关系；不允许用实现替代接口，也不允许只读接口后凭工具常识执行。任一集合未完整消费时，不开始依赖它的采集，只报告受影响验证点和真实缺口；不生成 coverage 或 applicability 记录。
 
 ## Validation Verification Model
 

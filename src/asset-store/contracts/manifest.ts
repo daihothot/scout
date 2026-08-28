@@ -61,6 +61,4 @@ export interface MountManifest {
   customAgents: string[];
   skills: MaterializedSkill[];
   plugins: string[];
-  workerAgent?: string;
-  roleAgents: Record<string, string>;
 }

@@ -226,12 +226,6 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
     (await exec(["/usr/bin/touch", join(researcher.mountRoot, "forbidden.txt")])).exitCode,
     0,
   );
-  const coordinatorOwnAgents = await exec(
-    ["/bin/cat", join(coordinator.mountRoot, "agents", "coordinator.AGENTS.md")],
-    coordinator.mountRoot,
-    ScoutAgentPermissionProfiles.Coordinator,
-  );
-  assert.equal(coordinatorOwnAgents.exitCode, 0, coordinatorOwnAgents.stderr);
   const coordinatorTool = await exec(
     [join(coordinator.mountRoot, "bin", "scout-assets"), "--smoke"],
     coordinator.mountRoot,

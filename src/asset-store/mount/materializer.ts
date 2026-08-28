@@ -16,7 +16,7 @@ import type { MaterializeOptions } from "../contracts/materialization.js";
 import type { MountContext } from "../contracts/mount-context.js";
 import type { ShellToolContract } from "../contracts/resources.js";
 import type { MaterializedSkill, ScoutSkillCatalogEntry } from "../contracts/skill.js";
-import { CodexAssetLayout, roleAgentPath } from "../assets/asset-layout.js";
+import { CodexAssetLayout } from "../assets/asset-layout.js";
 import { McpServerBuilder } from "../builders/mcp-server-builder.js";
 import { MountGeneratedFilesBuilder } from "../builders/mount-generated-files-builder.js";
 import { MountManifestBuilder } from "../builders/mount-manifest-builder.js";
@@ -154,10 +154,6 @@ export class MountMaterializer {
     }
     const materializedMcpServers = builtMcpServers.map(({ server }) => server);
     safeSymlink(join(assetsRoot, CodexAssetLayout.agentsMd), join(mountRoot, "AGENTS.md"));
-    const workerAgentPath = agentId === "coordinator"
-      ? undefined
-      : materializeWorkerAgent(assetsRoot, mountRoot);
-    const roleAgentPaths = materializeRoleAgent(assetsRoot, mountRoot, agentId);
     options.onMaterializationStep?.("layout");
 
     const generatedFiles = new MountGeneratedFilesBuilder(
@@ -210,8 +206,6 @@ export class MountMaterializer {
       customAgentPaths: profiledCustomAgentPaths,
       skillPaths: profiledSkillPaths,
       pluginPaths: profiledPluginPaths,
-      workerAgentPath,
-      roleAgentPaths,
       shellToolsRegistryHash,
     });
     const mountManifest = manifestBuilder.build({
@@ -316,27 +310,4 @@ function materializePlugins(assetsRoot: string, mountRoot: string, plugins: stri
     safeSymlink(source, join(mountRoot, "plugins", name));
     return name;
   });
-}
-
-/** Links worker-only instructions and returns the manifest-relative target path. */
-function materializeWorkerAgent(assetsRoot: string, mountRoot: string): string {
-  const targetPath = join("agents", "worker.AGENTS.md");
-  safeSymlink(
-    resolveAssetRelativePath(CodexAssetLayout.workerAgent, assetsRoot),
-    join(mountRoot, targetPath),
-  );
-  return targetPath;
-}
-
-/** Links the role-specific AGENTS file and returns its manifest-relative path. */
-function materializeRoleAgent(
-  assetsRoot: string,
-  mountRoot: string,
-  role: string,
-): Record<string, string> {
-  const agentPath = roleAgentPath(role);
-  assertAssetFileExists(assetsRoot, agentPath, `AGENTS instructions for agent role ${role}`);
-  const targetPath = join("agents", `${role}.AGENTS.md`);
-  safeSymlink(resolveAssetRelativePath(agentPath, assetsRoot), join(mountRoot, targetPath));
-  return { [role]: targetPath };
 }

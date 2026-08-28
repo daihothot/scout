@@ -4,7 +4,7 @@ import {
   ScoutAgentPermissionProfiles,
   ScoutAgentRoles,
 } from "../thread/types.js";
-import { readWorkerRoleInstructions } from "./instructions.js";
+import { readAgentInstructions } from "./instructions.js";
 import { currentRunScope } from "../../run/run-scope.js";
 
 /** Worker role responsible for research-phase tasks. */
@@ -30,7 +30,7 @@ export class ResearcherAgent extends WorkerAgent {
             max_depth: options.agentMount.agentProfile.maxDepth,
           },
         },
-        developerInstructions: readWorkerRoleInstructions(options, ScoutAgentRoles.Researcher),
+        developerInstructions: readAgentInstructions(options),
         dynamicTools: options.dynamicTools,
       },
     });

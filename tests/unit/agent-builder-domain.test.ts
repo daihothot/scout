@@ -142,10 +142,9 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
   assert.equal(tools.some((tool) => tool.namespace === "domain-b"), false);
   const instructions = agent.spec.developerInstructions ?? "";
   assert.match(instructions, /common instructions/);
-  assert.match(instructions, /coordinator instructions/);
   assert.doesNotMatch(instructions, /worker instructions/);
+  assert.doesNotMatch(instructions, /coordinator instructions/);
   assert.equal(instructions.match(/common instructions/g)?.length, 1);
-  assert.ok(instructions.indexOf("common instructions") < instructions.indexOf("coordinator instructions"));
 });
 
 test("AgentBuilder rejects a dynamic tool whose guidance Skill is not mounted", () => {
@@ -200,11 +199,9 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   assert.ok(tools.some((tool) => tool.namespace === "domain-worker" && tool.name === "DomainProbe"));
   const instructions = agent.spec.developerInstructions ?? "";
   assert.match(instructions, /common instructions/);
-  assert.match(instructions, /worker instructions/);
-  assert.match(instructions, /researcher instructions/);
+  assert.doesNotMatch(instructions, /worker instructions/);
+  assert.doesNotMatch(instructions, /researcher instructions/);
   assert.equal(instructions.match(/common instructions/g)?.length, 1);
-  assert.ok(instructions.indexOf("common instructions") < instructions.indexOf("worker instructions"));
-  assert.ok(instructions.indexOf("worker instructions") < instructions.indexOf("researcher instructions"));
 });
 
 test("Validator turns use the role permission profile", async () => {
@@ -1926,14 +1923,6 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
   mkdirSync(logsRoot, { recursive: true });
   mkdirSync(tempRoot, { recursive: true });
   writeFileSync(join(mountRoot, "AGENTS.md"), "common instructions", "utf8");
-  for (const agentRole of Object.values(ScoutAgentRoles)) {
-    writeFileSync(
-      join(mountRoot, "agents", `${agentRole}.AGENTS.md`),
-      `${agentRole} instructions`,
-      "utf8",
-    );
-  }
-  writeFileSync(join(mountRoot, "agents", "worker.AGENTS.md"), "worker instructions", "utf8");
   const guidanceSkills = role === ScoutAgentRoles.Coordinator
     ? [
       "tool-scout-assign-task",

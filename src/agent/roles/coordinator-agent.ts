@@ -7,7 +7,7 @@ import {
   type ScoutAgentOptions,
 } from "../core/scout-agent.js";
 import { CoordinatorRunner } from "../runner/coordinator/coordinator-runner.js";
-import { readRoleAgentInstructions } from "./instructions.js";
+import { readAgentInstructions } from "./instructions.js";
 import { Result } from "../../core/result.js";
 import type { SendAgentMessageInput } from "../task/types.js";
 import { currentRunScope } from "../../run/run-scope.js";
@@ -55,7 +55,7 @@ export class CoordinatorAgent extends ScoutAgent {
           },
         },
         developerInstructions: [
-          readRoleAgentInstructions(options, ScoutAgentRoles.Coordinator),
+          readAgentInstructions(options),
           "当前处于测试阶段。只推进 Research，以及由 Validator 对 Research 相关产出物执行校验；不得指派 Verifier、进入运行验证或把本轮结果描述为完整 Validation 已完成。",
         ].join("\n\n"),
         dynamicTools: options.dynamicTools,

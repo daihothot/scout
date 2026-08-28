@@ -1,7 +1,6 @@
-import { join } from "node:path";
 import { sha256File } from "../../core/fs.js";
 import type { MountManifest } from "../contracts/manifest.js";
-import { CodexAssetLayout, roleAgentPath } from "../assets/asset-layout.js";
+import { CodexAssetLayout } from "../assets/asset-layout.js";
 import {
   resolveAssetRelativePath,
 } from "../files/asset-paths.js";
@@ -65,12 +64,6 @@ export class MountSourceInventoryInspector {
       customAgentPaths: context.profiledCustomAgentPaths,
       skillPaths: context.profiledSkillPaths,
       pluginPaths: context.profiledPluginPaths,
-      workerAgentPath: context.agentId === "coordinator"
-        ? undefined
-        : join("agents", "worker.AGENTS.md"),
-      roleAgentPaths: {
-        [context.agentId]: join("agents", context.agentId + ".AGENTS.md"),
-      },
       shellToolsRegistryHash: sha256File(
         resolveAssetRelativePath(CodexAssetLayout.shellTools, context.assetsRoot),
       ),

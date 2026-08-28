@@ -10,7 +10,9 @@ tags: [scout, validation, bdd, research, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [domain-validation-research-pack, internal-single-skill-reader]
+    required: [domain-validation-research-pack, internal-skill-consumption]
+  shellTools:
+    required: [find, sort]
 summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 handoff。
 ---
 
@@ -22,8 +24,8 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 
 ## Skill Type
 
-- type: workflow
-- structure_level: full
+- type: domain
+- layout: workflow
 - note: 本技能是领域入口 Skill，不复制专项研究 Skill 的模板、命令或证据结构。
 
 ## Core Use
@@ -44,11 +46,43 @@ summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 ha
 
 ## Single Consumption
 
-- 本领域当前 Single 根目录为 `.scout/skill/validation/single/unity/local/`。
-- 在调用知识、代码或其它研究工具前，先按 `internal-single-skill-reader` 完整枚举并读取 `general/` 下当前 research phase 可见的全部 Single；这些内容用于理解可表达的接口 contract，不用于执行采集实现。
-- 根据 BDD 与已确认 Capability 决定是否选择 capability 目录。尚未确认 capability 时不猜测、不预读；一旦选择某个 capability，必须先完整读取该目录下当前 phase 可见的全部 Single，再形成相关 research claim 或 verification manual requirement。
-- 通用 Single 已读不表示任意 capability 已选择；某个 capability 中看起来不重要的 Single 也不得跳过。
-- 完整读取失败时停止受影响研究范围并报告实际缺口；不生成 coverage 或 applicability 记录。
+`Single set` 是当前 Validation role 必须作为一个整体消费的 Single Skill 集合。`general Single set` 是每个 Validation Research task 都必须消费的通用集合；`capability Single set` 是 BDD 已确认涉及某个 Capability 后必须消费的专项集合。`<capability>` 表示该 Capability 的实际目录名。
+
+本领域当前 Single 根目录为：
+
+```text
+.scout/skill/validation/single/unity/local/
+```
+
+### Freeze General Single Set
+
+在调用知识、代码或其它研究工具前，执行一次以下命令：
+
+```bash
+find -L .scout/skill/validation/single/unity/local/general -mindepth 2 -maxdepth 2 -type f -name 'SKILL.md' -print | sort
+```
+
+将排序后的完整输出冻结为当前 task 的 `general Single list`。目录不可读、命令失败或列表为空时，不得开始依赖该集合的研究。
+
+### Freeze Capability Single Set
+
+- 只根据 BDD fact 与已确认 Capability 选择 `<capability>`；尚未确认时不猜测、不预读。
+- 每选择一个 `<capability>`，在形成相关 research claim 或 verification manual requirement 前执行一次以下命令：
+
+  ```bash
+  find -L .scout/skill/validation/single/unity/local/<capability> -mindepth 2 -maxdepth 2 -type f -name 'SKILL.md' -print | sort
+  ```
+
+- 将排序后的完整输出冻结为该 `<capability>` 的 `capability Single list`。目录不可读、命令失败或列表为空时，不得开始依赖该集合的研究。
+
+### Consume Frozen Sets
+
+1. 按 `general Single list` 的固定顺序，将每个入口分别作为 `<target-skill-path>`，完整执行 `internal-skill-consumption`。
+2. 按每个 `capability Single list` 的固定顺序执行同样处理。
+3. 需要解析 composition 时，将 `general Single list` 与全部已选择 `capability Single list` 中的其它成员作为 `internal-skill-consumption` 的 related Skills；不得扫描这些列表外的候选。
+4. 只有集合内每个成员都通过自己的 readiness gate，才能开始依赖该集合的工作；不得因名称、摘要或预判不适用而跳过成员。
+
+Researcher 使用已完成的集合理解 interface contract、derived contract 和可表达的 verification requirement，不选择 implementation candidate，也不执行 acquisition。通用集合完成不表示任意 Capability 已选择。完整消费失败时停止受影响研究范围并报告实际缺口；不生成 coverage 或 applicability 记录。
 
 ## Validation Research Model
 
