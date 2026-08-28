@@ -276,7 +276,6 @@ function createFixture(): {
       path: ".scout/skill/audit/unity/audit-unity/SKILL.md",
     }],
     plugins: ["plugin-a"],
-    roleAgents: { researcher: "agents/researcher.AGENTS.md" },
   }, null, 2));
 
   return { mountRoot, skillLogicalRoot, skillSourceRoot };

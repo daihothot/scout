@@ -43,9 +43,6 @@
     ├── <role>/
     │   ├── mount/                    【用途：当前工作目录】【权限：仅可读】
     │   │   ├── AGENTS.md             【本文件】【用途：通用规则原件】【权限：仅可读】
-    │   │   ├── agents/
-    │   │   │   ├── <role>.AGENTS.md  【当前 <role> 规则原件】【权限：仅可读】
-    │   │   │   └── worker.AGENTS.md  【worker 通用规则原件】【权限：仅可读】
     │   │   └── .scout/skill/         【用途：当前可见 Skill 根目录】【权限：仅可读】
     │   ├── artifacts/                【用途：正式产物和交接引用】【权限：可读可写】
     │   └── tmp/                      【用途：工具运行临时数据】【权限：可读可写】
@@ -56,9 +53,7 @@
 Scout Runtime 自动注入的规则文件，遗忘规则时可以读取：
 
 ```text
-AGENTS.md                   【已注入所有 role】
-agents/<role>.AGENTS.md     【已注入当前 <role>】
-agents/worker.AGENTS.md     【已注入 worker】
+AGENTS.md    【已注入所有 role】
 ```
 
 ### Skill Navigation
@@ -100,8 +95,8 @@ agents/worker.AGENTS.md     【已注入 worker】
 | 分类 | `<family-path>` | 定义与入口 |
 | --- | --- | --- |
 | `internal` | `.scout/skill/internal/` | 所有 `role` 必须首先读取的 Scout 内部 Skill，具体入口见下方命令。 |
-| `scout tool` | `.scout/skill/tool/scout/dynamic/` | Dynamic Tool 的操作 Skill；具体 Skill 入口由 `<role>.AGENTS.md` 或 `worker.AGENTS.md` 提供。 |
-| `domain` | `.scout/skill/<domain>/` | 当前 `<role>` 的领域 Skill；`<role>.AGENTS.md` 提供具体 Skill 入口，定义业务输入、工作流程、输出和交接。 |
+| `scout tool` | `.scout/skill/tool/scout/dynamic/` | Dynamic Tool 的操作 Skill；当前适用的 Domain Skill 根据工作需要指定要消费的 Tool Skill。 |
+| `domain` | `.scout/skill/<domain>/` | 定义当前 `<domain>` 中各 `role` 的业务输入、工作流程、输出和交接。 |
 
 所有 `role` 必须首先读取的 Internal Skill：
 
@@ -161,7 +156,7 @@ Scout 以 `<domain>` 组织业务工作。
 
 ### Working Interaction
 
-- 各 `<role>` 按 `<role>.AGENTS.md` 规定的职责通过 `task` 协作；`worker` 同时遵循 `worker.AGENTS.md`。
+- 各 `<role>` 按当前适用的 `Domain Skill` 所规定的职责通过 `task` 协作。
 - `Domain Skill` 将 `<domain>` 的规则应用于 `task`，驱动当前 `<role>` 的判断和工作过程。
 - 当前适用的 `Single Skill` 为 `task` 提供领域判断所需的专项 contract。
 - 当前 `<role>` 根据 `Domain Skill` 及当前适用的 `Single Skill` 确定 `Tool` 的调用目的和业务结果解释。
@@ -185,9 +180,8 @@ Scout 通过持久产物、稳定引用和正式角色交接完成工作交付�
 
 ### Delivery Interaction
 
-- `<role>.AGENTS.md` 定义当前 `<role>` 的交付职责。
-- `worker.AGENTS.md` 定义 `worker` 的通用 handoff 规则。
-- `Domain Skill` 定义 `<domain>` 的输出和交接。
+- `AGENTS.md` 定义所有 `role` 共同遵循的交付规则。
+- `Domain Skill` 定义 `<domain>` 中各 `role` 的交付职责、输出和交接。
 - `worker` 根据 `Domain Skill` 处理 `task`，按其输出定义生成 `artifact`，并将 `ref` 写入 `outcome`。
 - Scout Runtime 记录 `handoff` 时，将 `outcome` 中的 `ref` 规范化为 `run` 内稳定引用，并随 `outcome` 持久化和传递。
 - `coordinator` 从 `handoff` 的 `outcome` 获取 `ref`，并通过它定位对应 `artifact`。

@@ -504,7 +504,6 @@ test("AssetStore compares persisted manifest objects by semantics rather than ke
   manifest.agentProfile.writableRoots?.reverse();
   manifest.profileReadableRoots.reverse();
   manifest.profileWritableRoots.reverse();
-  manifest.roleAgents = reverseObjectKeys(manifest.roleAgents);
   manifest.mcpServers = manifest.mcpServers
     .map((server) => ({
       ...reverseObjectKeys(server),

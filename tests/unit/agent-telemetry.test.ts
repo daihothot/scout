@@ -572,8 +572,8 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
   assert.doesNotMatch(restartedBlock, /restartedAt/);
   assert.match(restartedBlock, /thread-researcher-restarted/);
   assert.match(text, /- "AGENTS\.md"/);
-  assert.match(text, /- "agents\/worker\.AGENTS\.md"/);
-  assert.match(text, /- "agents\/researcher\.AGENTS\.md"/);
+  assert.doesNotMatch(text, /worker\.AGENTS\.md/);
+  assert.doesNotMatch(text, /researcher\.AGENTS\.md/);
   assert.match(text, /namespace: "agent\.submit-task"/);
   assert.match(text, /name: "SubmitTask"/);
   assert.match(text, /path: "sessions\/rollout\.jsonl"/);
@@ -636,7 +636,7 @@ test("AgentThreadRecorder marks coordinator inline instructions separately from 
 
   const text = readFileSync(join(logsRoot, "thread.log"), "utf8");
   assert.match(text, /- "AGENTS\.md"/);
-  assert.match(text, /- "agents\/coordinator\.AGENTS\.md"/);
+  assert.doesNotMatch(text, /coordinator\.AGENTS\.md/);
   assert.match(text, /hasInlineDeveloperInstructions: true/);
   assert.doesNotMatch(text, /worker\.AGENTS\.md/);
   assert.doesNotMatch(text, /COORDINATOR_INLINE_BODY_MUST_NOT_BE_RECORDED/);

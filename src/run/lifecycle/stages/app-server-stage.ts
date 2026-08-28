@@ -24,10 +24,7 @@ import {
   listScoutSkillPaths,
   resolveScoutSkillsForPhase,
 } from "../../../asset-store/assets/skill-catalog.js";
-import {
-  CodexAssetLayout,
-  roleAgentPath,
-} from "../../../asset-store/assets/asset-layout.js";
+import { CodexAssetLayout } from "../../../asset-store/assets/asset-layout.js";
 import {
   resolveAssetArg,
 } from "../../../asset-store/files/asset-paths.js";
@@ -217,7 +214,6 @@ function buildClientRootPlan(options: {
     });
     const runtimeReadableRoots = resolveRoleRuntimeReadableRoots({
       assetsRoot,
-      role,
       profile,
       shellTools: shellTools.tools,
     });
@@ -276,7 +272,6 @@ function buildPreparedClientRootPlan(
       ...agent.mount.readableRoots,
       ...resolveRoleRuntimeReadableRoots({
         assetsRoot,
-        role: agent.role,
         profile: agent.mount.agentProfile,
         shellTools: shellTools.tools,
       }),
@@ -426,17 +421,12 @@ function buildPermissionProfiles(input: {
 
 function resolveRoleRuntimeReadableRoots(input: {
   assetsRoot: string;
-  role: ScoutAgentRole;
   profile: AgentProfile;
   shellTools: ShellToolContract[];
 }): string[] {
   const roots = [
     ...readablePathVariants(join(input.assetsRoot, CodexAssetLayout.agentsMd)),
-    ...readablePathVariants(join(input.assetsRoot, roleAgentPath(input.role))),
   ];
-  if (input.role !== ScoutAgentRoles.Coordinator) {
-    roots.push(...readablePathVariants(join(input.assetsRoot, CodexAssetLayout.workerAgent)));
-  }
   const skillCatalog = buildScoutSkillCatalog({
     assetsRoot: input.assetsRoot,
     skillPaths: listScoutSkillPaths(input.assetsRoot),

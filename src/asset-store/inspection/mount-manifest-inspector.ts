@@ -1,6 +1,6 @@
 import { basename, join } from "node:path";
 import type { MountManifest } from "../contracts/manifest.js";
-import { CodexAssetLayout, roleAgentPath } from "../assets/asset-layout.js";
+import { CodexAssetLayout } from "../assets/asset-layout.js";
 import {
   assetSourcePath,
   customAgentNameFromPath,
@@ -77,14 +77,6 @@ export class MountManifestInspector {
     }
     const linkedIssue = this.checkLinkedInventory();
     if (linkedIssue) return linkedIssue;
-    const expectedRoleAgents = {
-      [context.agentId]: join("agents", context.agentId + ".AGENTS.md"),
-    };
-    if (!sameValue(manifest.roleAgents, expectedRoleAgents)) return "role agent inventory changed";
-    const expectedWorkerAgent = context.agentId === "coordinator"
-      ? undefined
-      : join("agents", "worker.AGENTS.md");
-    if (manifest.workerAgent !== expectedWorkerAgent) return "worker agent inventory changed";
     return undefined;
   }
 
@@ -92,16 +84,6 @@ export class MountManifestInspector {
     if (!Array.isArray(this.manifest.linkedFiles)) return "linked file inventory is not an array";
     const expected = new Map<string, string>([
       ["AGENTS.md", assetSourcePath(CodexAssetLayout.agentsMd)],
-      ...(this.context.agentId === "coordinator"
-        ? []
-        : [[
-          join("agents", "worker.AGENTS.md"),
-          assetSourcePath(CodexAssetLayout.workerAgent),
-        ]] as Array<[string, string]>),
-      [
-        join("agents", this.context.agentId + ".AGENTS.md"),
-        assetSourcePath(roleAgentPath(this.context.agentId)),
-      ],
       ...this.context.profiledCustomAgentPaths.map((path) => [
         join(".codex", "agents", customAgentNameFromPath(path) + ".toml"),
         assetSourcePath(path),

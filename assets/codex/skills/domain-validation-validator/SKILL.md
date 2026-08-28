@@ -10,10 +10,10 @@ tags: [scout, validation, research, verification, gate, evidence, audit, workflo
 devices: [any]
 dependencies:
   skills:
-    required: [domain-validation-research-pack, tool-guru-knowledge, tool-jarvis-codebase, internal-single-skill-reader]
+    required: [domain-validation-research-pack, tool-guru-knowledge, tool-jarvis-codebase, internal-skill-consumption]
   shellTools:
-    required: [scoutAssets, scoutArtifactDigest]
-    optional: [rg, sed, find, cat]
+    required: [scoutAssets, scoutArtifactDigest, find, sort]
+    optional: [rg, sed, cat]
 summary: 独立形成 Research Pack Gate 或 Verification Report Gate。
 ---
 
@@ -25,8 +25,8 @@ summary: 独立形成 Research Pack Gate 或 Verification Report Gate。
 
 ## Skill Type
 
-- type: workflow
-- structure_level: full
+- type: domain
+- layout: workflow
 - note: 本技能拥有 Gate claim，不拥有 BDD、knowledge、implementation 或 runtime observation claim。
 
 ## Core Use
@@ -55,11 +55,43 @@ summary: 独立形成 Research Pack Gate 或 Verification Report Gate。
 
 ## Single Consumption
 
-- 本领域当前 Single 根目录为 `.scout/skill/validation/single/unity/local/`。
-- 开始语义检查前，先按 `internal-single-skill-reader` 完整读取 `general/` 下当前 validate phase 可见的全部 Single，包括接口 contract 与相关实现 contract。
-- 根据候选 artifact 明确引用的 Capability 选择 capability 目录；一旦选择，必须在检查相关内容前完整读取该 capability 目录下当前 phase 可见的全部 Single。
-- 完整读取用于建立检查 contract；Validator 只检查候选 artifact 实际涉及的 requirement、Signal 与 Acquisition，不执行采集、不重做 Research，也不因已读而扩大 gate 范围。
-- 任一集合未完整读取时，按受影响检查范围形成真实 gate 缺口；不生成 coverage 或 applicability 记录。
+`Single set` 是当前 Validation role 必须作为一个整体消费的 Single Skill 集合。`general Single set` 是每个 Validation Gate task 都必须消费的通用集合；`capability Single set` 是候选 artifact 已明确涉及某个 Capability 后必须消费的专项集合。`<capability>` 表示该 Capability 的实际目录名。
+
+本领域当前 Single 根目录为：
+
+```text
+.scout/skill/validation/single/unity/local/
+```
+
+### Freeze General Single Set
+
+在开始语义检查前，执行一次以下命令：
+
+```bash
+find -L .scout/skill/validation/single/unity/local/general -mindepth 2 -maxdepth 2 -type f -name 'SKILL.md' -print | sort
+```
+
+将排序后的完整输出冻结为当前 task 的 `general Single list`。validate phase 物化到该目录的 interface、derived 与 implementation contracts 都属于这个固定列表。目录不可读、命令失败或列表为空时，不得开始依赖该集合的检查。
+
+### Freeze Capability Single Set
+
+- 只根据候选 artifact 明确引用的 Capability 选择 `<capability>`。
+- 每选择一个 `<capability>`，在检查相关内容前执行一次以下命令：
+
+  ```bash
+  find -L .scout/skill/validation/single/unity/local/<capability> -mindepth 2 -maxdepth 2 -type f -name 'SKILL.md' -print | sort
+  ```
+
+- 将排序后的完整输出冻结为该 `<capability>` 的 `capability Single list`。目录不可读、命令失败或列表为空时，不得开始依赖该集合的检查。
+
+### Consume Frozen Sets
+
+1. 按 `general Single list` 的固定顺序，将每个入口分别作为 `<target-skill-path>`，完整执行 `internal-skill-consumption`。
+2. 按每个 `capability Single list` 的固定顺序执行同样处理。
+3. 检查成员之间的 derived 或 implementation composition 时，将 `general Single list` 与全部已选择 `capability Single list` 中的其它成员作为 `internal-skill-consumption` 的 related Skills；不得扫描这些列表外的候选。
+4. 只有集合内每个成员都通过自己的 readiness gate，才能开始依赖该集合的检查；不得因名称、摘要或预判不适用而跳过成员。
+
+Validator 使用完整集合检查候选 artifact 实际涉及的 requirement、Signal、Acquisition 及其 derived 或 implementation composition，不执行 acquisition、不重新采集信号、不重做 Research，也不因已读而扩大 Gate 范围。任一集合未完整消费时，按受影响检查范围形成真实 Gate 缺口；不生成 coverage 或 applicability 记录。
 
 ## Validation Gate Model
 
@@ -192,7 +224,7 @@ blocked > insufficient_evidence > needs_fix > accepted
 - Phase 3：检查 BDD、knowledge、代码证据和验证点语义。
 - Phase 4：确认 digest 未变化，写入并提交 Research Pack Gate。
 
-Research Pack Gate 的 required contracts 是 `domain-validation-research-pack`、`tool-guru-knowledge`、`tool-jarvis-codebase` 和 `internal-single-skill-reader`。`domain-validation-verifier` 不属于 Research Pack Gate 的无条件输入；只有进入下方 Verification Report Gate 时，才读取并消费它定义的 report contract。
+Research Pack Gate 的 required contracts 是 `domain-validation-research-pack`、`tool-guru-knowledge`、`tool-jarvis-codebase` 和 `internal-skill-consumption`。`domain-validation-verifier` 不属于 Research Pack Gate 的无条件输入；只有进入下方 Verification Report Gate 时，才读取并消费它定义的 report contract。
 
 ## Research Pack Gate Output Layout
 

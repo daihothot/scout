@@ -7,10 +7,7 @@ import { isPathWithin } from "../../core/path.js";
 import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
-import {
-  roleAgentInstructionAssetPaths,
-  workerRoleInstructionAssetPaths,
-} from "../roles/instructions.js";
+import { agentInstructionAssetPaths } from "../roles/instructions.js";
 import type {
   AgentThreadSnapshot,
   ScoutAgentRole,
@@ -293,9 +290,7 @@ function summarizeDeveloperInstructions(
 ): object {
   if (developerInstructions === undefined) return {};
   return {
-    developerInstructions: role === ScoutAgentRoles.Coordinator
-      ? roleAgentInstructionAssetPaths(role)
-      : workerRoleInstructionAssetPaths(role),
+    developerInstructions: agentInstructionAssetPaths(),
     ...(role === ScoutAgentRoles.Coordinator
       ? { hasInlineDeveloperInstructions: true }
       : {}),

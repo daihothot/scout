@@ -14,7 +14,7 @@ import type {
   McpServersFile,
   ShellToolContract,
 } from "../contracts/resources.js";
-import { CodexAssetLayout, roleAgentPath } from "../assets/asset-layout.js";
+import { CodexAssetLayout } from "../assets/asset-layout.js";
 import {
   assertAssetFileExists,
   assertMountPathSegment,
@@ -346,10 +346,6 @@ export function computeResourceHash(input: {
     ...computeShellToolResourceHashParts(input.assetsRoot, input.shellTools),
     ...input.customAgentPaths.map((path) => `customAgent:${path}:${sha256File(join(input.assetsRoot, path))}`),
     ...hashVendorDirectories(input.assetsRoot),
-    ...(input.agentId === "coordinator"
-      ? []
-      : [`workerAgent:${CodexAssetLayout.workerAgent}:${sha256File(join(input.assetsRoot, CodexAssetLayout.workerAgent))}`]),
-    `roleAgent:${input.agentId}:${roleAgentPath(input.agentId)}:${sha256File(join(input.assetsRoot, roleAgentPath(input.agentId)))}`,
     ...input.skillPaths.map((skill) =>
       `skill:${skill}:${hashDirectory(dirname(join(input.assetsRoot, skill)))}`
     ),

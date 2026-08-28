@@ -1,8 +1,8 @@
 ---
 assetKind: scout.skill
-name: signal-unity-runtime-log-unity-pipeline-cli
+name: signal-unity-runtime-log-via-unity-pipeline-cli
 description: 通过 Unity Pipeline CLI 从 Unity Editor 导出并原样复制符合 signal-unity-runtime-log 格式的原始日志文件时使用。
-id: signal-unity-runtime-log-unity-pipeline-cli
+id: signal-unity-runtime-log-via-unity-pipeline-cli
 version: 0.2.2
 phase: [verify, validate]
 family: [validation, single, unity, local, general]
@@ -114,7 +114,7 @@ acquired_at
 一次成功操作产生一份不可变原始日志副本，并记录：
 
 ```text
-acquisition_ref: signal-unity-runtime-log-unity-pipeline-cli
+acquisition_ref: signal-unity-runtime-log-via-unity-pipeline-cli
 signal_ref: signal-unity-runtime-log
 project_path: <当前已确认 Unity project>
 source_path: <命令返回的源日志位置>

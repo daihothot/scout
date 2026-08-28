@@ -100,9 +100,8 @@ Scout Runtime 根据当前 `phase` 选择 Skill，并将 Skill 目录物化为�
 ## Responsibility Placement
 
 - 全部 `role`、全部 domain 都适用的稳定规则放在全局 `AGENTS.md`。
-- 同一 `worker` 或同一 `role` 跨 domain 适用的行为放在 `worker.AGENTS.md` 或 `<role>.AGENTS.md`。
-- 一个 domain 中一个 `role` 的业务约束放在对应 Domain Skill。
-- 每个 Dynamic Tool 必须拥有独立 Tool Skill；跨 domain Dynamic Tool 由 `worker.AGENTS.md` 或 `<role>.AGENTS.md` 提供入口，domain 注入的 Dynamic Tool 由 Domain Skill 提供入口。
+- 一个 domain 中各 `role` 的业务约束放在对应 Domain Skill。
+- 每个 Dynamic Tool 必须拥有独立 Tool Skill；Domain Skill 根据当前工作需要提供对应 Tool Skill 的入口。
 - template 与 reference 只拥有自己服务的结构或资料，不复制所属 Skill 的完整方法论。
 
 ## Directory Structure
