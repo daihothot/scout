@@ -4,7 +4,7 @@ name: signal-unity-runtime-log
 description: 定义或解释 Unity runtime log 信号、日志记录结构、匹配语义及输出契约时使用。
 id: signal-unity-runtime-log
 version: 0.3.2
-phase: [research, verify, validate]
+phase: [research, verify, research-reviewer, verify-reviewer]
 family: [validation, single, unity, local, general]
 tags: [signal, unity, runtime, log]
 devices: [any]

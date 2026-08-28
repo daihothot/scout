@@ -1,6 +1,5 @@
 import {
-  ScoutAgentPermissionProfiles,
-  ScoutAgentRoles,
+  scoutAgentPermissionProfile,
 } from "../thread/types.js";
 import {
   ScoutAgent,
@@ -17,29 +16,35 @@ import type { AgentMessage } from "../message/types.js";
 import type { ScoutEvent } from "../../core/events/index.js";
 import { SystemEvents } from "../../system/events/index.js";
 import { AgentEvents } from "../events/index.js";
-import type { AgentTaskNotAssignedEventPayload } from "../task/task-events.js";
-import type { AgentTaskState } from "../task/types.js";
 import type { UserMessageSubmittedPayload } from "../../interaction/gateway/interaction-events.js";
 import { attachments } from "../context/attachments.js";
 import { coordinator } from "../runner/coordinator/coordinator-attachments.js";
+import { resolveSynthesisRole } from "../../core/workflow/index.js";
+
+interface CoordinatorTick {
+  messages: AgentMessage[];
+  workflowPhaseRequested: boolean;
+}
 
 /** Coordinator role: owns orchestration messages and task assignment, not worker tasks. */
 export class CoordinatorAgent extends ScoutAgent {
   readonly stepRunner: CoordinatorRunner;
-  private readonly loop: AgenticLoop<AgentMessage[]>;
+  private readonly loop: AgenticLoop<CoordinatorTick>;
   private readonly inbox: AgentInbox;
   private resumeContext?: string;
+  private workflowPhaseStepRequested = false;
 
   constructor(options: ScoutAgentOptions) {
     const scope = currentRunScope();
+    const role = resolveSynthesisRole(scope.scheduler.snapshot()).name;
     super({
       ...options,
       spec: {
-        role: ScoutAgentRoles.Coordinator,
-        phases: [options.agentMount.agentProfile.phase],
+        role,
+        phases: [...options.agentMount.agentProfile.phases],
         cwd: options.agentMount.mountRoot,
         approvalPolicy: "never",
-        permissionProfile: ScoutAgentPermissionProfiles.Coordinator,
+        permissionProfile: scoutAgentPermissionProfile(role),
         contextBundleId: scope.contextBundle.contextBundleId,
         model: { ...options.agentMount.agentProfile.model },
         config: {
@@ -54,10 +59,7 @@ export class CoordinatorAgent extends ScoutAgent {
             max_depth: options.agentMount.agentProfile.maxDepth,
           },
         },
-        developerInstructions: [
-          readAgentInstructions(options),
-          "当前处于测试阶段。只推进 Research，以及由 Validator 对 Research 相关产出物执行校验；不得指派 Verifier、进入运行验证或把本轮结果描述为完整 Validation 已完成。",
-        ].join("\n\n"),
+        developerInstructions: readAgentInstructions(options),
         dynamicTools: options.dynamicTools,
       },
     });
@@ -83,8 +85,6 @@ export class CoordinatorAgent extends ScoutAgent {
       onError: (error) => this.publishFailure(error),
     });
     this.inbox.subscribe<UserMessageSubmittedPayload>(SystemEvents.interaction.userMessageSubmitted);
-    this.inbox.subscribe<AgentTaskState>(AgentEvents.task.assigned);
-    this.inbox.subscribe<AgentTaskNotAssignedEventPayload>(AgentEvents.task.notAssigned);
   }
 
   async sendMessage(input: SendAgentMessageInput): Promise<Result<void, string>> {
@@ -122,6 +122,12 @@ export class CoordinatorAgent extends ScoutAgent {
     ]);
   }
 
+  /** Requests a fresh Coordinator Step after Scheduler advances to another Phase. */
+  scheduleCurrentPhaseStep(): void {
+    this.workflowPhaseStepRequested = true;
+    if (!this.isStopping) this.loop.schedule();
+  }
+
   protected async stopExecution(reason: string): Promise<void> {
     this.inbox.stop();
     this.loop.stop();
@@ -132,10 +138,16 @@ export class CoordinatorAgent extends ScoutAgent {
     ]);
   }
 
-  private takeCoordinatorTick(): AgentMessage[] | undefined {
-    return this.pendingMessageCount > 0 || this.resumeContext
-      ? this.pendingMessagesSnapshot()
-      : undefined;
+  private takeCoordinatorTick(): CoordinatorTick | undefined {
+    if (
+      this.pendingMessageCount === 0
+      && !this.resumeContext
+      && !this.workflowPhaseStepRequested
+    ) return undefined;
+    return {
+      messages: this.pendingMessagesSnapshot(),
+      workflowPhaseRequested: this.workflowPhaseStepRequested,
+    };
   }
 
   private async handleInboxEvents(events: ScoutEvent[]): Promise<void> {
@@ -153,35 +165,14 @@ export class CoordinatorAgent extends ScoutAgent {
         }
         continue;
       }
-      if (AgentEvents.task.assigned.is(event)) {
-        const task = event.payload;
-        await this.sendMessage({
-          message: coordinator.taskAssigned({
-            agentId: task.agentId,
-            taskId: task.taskId,
-          }),
-          delivery: {
-            messageId: `task-assigned-${task.taskId}`,
-            queuedAt: task.createdAt,
-          },
-        });
-        continue;
-      }
-      if (AgentEvents.task.notAssigned.is(event)) {
-        await this.sendMessage({
-          message: coordinator.taskNotAssigned(event.payload),
-          delivery: {
-            messageId: event.id,
-            queuedAt: event.occurredAt,
-          },
-        });
-      }
     }
     if (!this.isStopping) this.loop.schedule();
   }
 
-  private async runCoordinatorTick(messages: AgentMessage[]): Promise<void> {
+  private async runCoordinatorTick(tick: CoordinatorTick): Promise<void> {
+    const { messages } = tick;
     const prompt = attachments.compose(
+      coordinator.workflowPhase(currentRunScope().scheduler.snapshot().currentPhase),
       ...(this.resumeContext ? [this.resumeContext] : []),
       ...messages.map((message) => message.body),
     );
@@ -191,6 +182,7 @@ export class CoordinatorAgent extends ScoutAgent {
       onTurnStarted: (step) => {
         this.consumeQueuedMessages(messages, step.stepId);
         this.resumeContext = undefined;
+        if (tick.workflowPhaseRequested) this.workflowPhaseStepRequested = false;
       },
     });
     const { outcome } = result;

@@ -1,9 +1,5 @@
 import { AgentBuilder } from "../../../agent/builder/agent-builder.js";
-import type { ScoutAgent } from "../../../agent/core/scout-agent.js";
-import {
-  ScoutAgentRoles,
-  type ScoutAgentRole,
-} from "../../../agent/thread/types.js";
+import { resolveSynthesisRole } from "../../../core/workflow/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
 
@@ -14,14 +10,16 @@ export class AgentsStage implements RunStage {
 
   async start(): Promise<void> {
     const builder = new AgentBuilder();
-    const agents = {
-      [ScoutAgentRoles.Coordinator]: builder.buildCoordinator(),
-      [ScoutAgentRoles.Researcher]: builder.buildWorker(ScoutAgentRoles.Researcher),
-      [ScoutAgentRoles.Verifier]: builder.buildWorker(ScoutAgentRoles.Verifier),
-      [ScoutAgentRoles.Validator]: builder.buildWorker(ScoutAgentRoles.Validator),
-    } satisfies Record<ScoutAgentRole, ScoutAgent>;
+    const graphState = currentRunScope().scheduler.snapshot();
+    const coordinatorRole = resolveSynthesisRole(graphState).name;
+    const roles = graphState.roles.map((role) => role.name);
+    const agents = roles.map((role) =>
+      role === coordinatorRole
+        ? builder.buildCoordinator()
+        : builder.buildWorker(role)
+    );
     const settled = await Promise.allSettled(
-      Object.values(agents).map((agent) => agent.startThread()),
+      agents.map((agent) => agent.startThread()),
     );
     const errors = settled
       .filter((entry): entry is PromiseRejectedResult => entry.status === "rejected")
@@ -40,11 +38,14 @@ export class AgentsStage implements RunStage {
 
   private async stopAgents(reason: string): Promise<void> {
     const agents = currentRunScope().agentRegistry.listAgents();
+    const coordinatorRole = resolveSynthesisRole(
+      currentRunScope().scheduler.snapshot(),
+    ).name;
     const coordinator = agents.find((agent) =>
-      agent.role === ScoutAgentRoles.Coordinator
+      agent.role === coordinatorRole
     );
     const workers = agents.filter((agent) =>
-      agent.role !== ScoutAgentRoles.Coordinator
+      agent.role !== coordinatorRole
     );
     const errors: unknown[] = [];
     if (coordinator) {

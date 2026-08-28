@@ -26,16 +26,16 @@ import {
   buildMountMacroValues,
   resolveMountMacros,
 } from "../mount/macros.js";
-import {
-  readAgentProfilesForScoutRoot,
-  profileResourceHash,
-  resolveAgentProfile,
-} from "../assets/agent-profiles.js";
+import { profileResourceHash } from "../assets/agent-profile.js";
 import {
   buildScoutSkillCatalog,
   listScoutSkillPaths,
-  resolveScoutSkillsForPhase,
+  resolveScoutSkillsForPhases,
 } from "../assets/skill-catalog.js";
+import { readWorkflowProfile } from "../assets/workflow-profiles.js";
+import type { WorkflowProfileAsset } from "../contracts/workflow-profile.js";
+import { WorkflowBuilder } from "./workflow-builder.js";
+import { SynthesisPhase } from "../../core/workflow/index.js";
 
 /**
  * Derives the immutable per-role runtime description from the Scout checkout.
@@ -51,12 +51,26 @@ export class MountContextBuilder {
     const runId = normalizeRunId(options.runId);
     const runRoot = join(scoutRoot, "run", runId);
     const agentId = sanitizeAgentId(options.agentId);
+    const workflowProfileName = options.workflowProfileName ?? (() => {
+      const workflowRoot = join(assetsRoot, CodexAssetLayout.workflowsRoot);
+      const names = readdirSync(workflowRoot, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+        .map((entry) => entry.name.slice(0, -".json".length))
+        .sort();
+      if (names.length !== 1 || !names[0]) {
+        throw new Error(
+          "MaterializeOptions.workflowProfileName is required unless exactly one Workflow Profile exists.",
+        );
+      }
+      return names[0];
+    })();
+    const workflowProfileAsset = readWorkflowProfile(scoutRoot, workflowProfileName);
     const agentRoot = join(runRoot, "agents", agentId);
     const artifactRoot = join(agentRoot, "artifacts");
     const logsRoot = join(agentRoot, "logs");
     const tempRoot = join(agentRoot, "tmp");
     const mountRoot = join(agentRoot, "mount");
-    const agentProfile = resolveAgentProfile(readAgentProfilesForScoutRoot(scoutRoot), agentId);
+    const agentProfile = new WorkflowBuilder(workflowProfileAsset).buildAgentProfile(agentId);
     const mcpServers = readJsonFile<McpServersFile>(join(assetsRoot, CodexAssetLayout.mcpServers));
     const shellTools = readJsonFile<{ tools: ShellToolContract[] }>(
       join(assetsRoot, CodexAssetLayout.shellTools),
@@ -70,7 +84,7 @@ export class MountContextBuilder {
     );
     const skillPaths = listScoutSkillPaths(assetsRoot);
     const fullSkillCatalog = buildScoutSkillCatalog({ assetsRoot, skillPaths });
-    const skillCatalog = resolveScoutSkillsForPhase(fullSkillCatalog, agentProfile.phase);
+    const skillCatalog = resolveScoutSkillsForPhases(fullSkillCatalog, agentProfile.phases);
     const profiledSkillPaths = filterSkills(
       skillPaths,
       skillCatalog.map((skill) => skill.name),
@@ -85,6 +99,7 @@ export class MountContextBuilder {
       customAgentPaths: profiledCustomAgentPaths,
       skillPaths: profiledSkillPaths,
       pluginPaths: profiledPluginPaths,
+      workflowProfileAsset,
     });
     const assetCommitHash = sha256Text([
       `agent:${agentId}`,
@@ -133,6 +148,7 @@ export class MountContextBuilder {
       profiledSkillPaths,
       profiledPluginPaths,
       skillCatalog,
+      workflowProfileAsset,
       resourceHash: computedResourceHash,
       assetCommitId,
       parentAssetCommitId,
@@ -335,11 +351,16 @@ export function computeResourceHash(input: {
   customAgentPaths: string[];
   skillPaths: string[];
   pluginPaths: string[];
+  workflowProfileAsset: WorkflowProfileAsset;
 }): string {
+  const isSynthesisRole = input.agentProfile.phases.includes(SynthesisPhase);
   const parts = [
     `agent:${input.agentId}`,
     `agentProfile:${profileResourceHash(input.agentProfile)}`,
     `agents:${sha256File(join(input.assetsRoot, CodexAssetLayout.agentsMd))}`,
+    ...(isSynthesisRole
+      ? []
+      : [`workerAgents:${sha256File(join(input.assetsRoot, CodexAssetLayout.workerAgentsMd))}`]),
     `config:${input.agentProfile.config}:${sha256File(join(input.assetsRoot, input.agentProfile.config))}`,
     `mcpServers:${sha256File(join(input.assetsRoot, CodexAssetLayout.mcpServers))}`,
     ...computeMcpServerResourceHashParts(input.assetsRoot, input.mcpServers),
@@ -350,6 +371,9 @@ export function computeResourceHash(input: {
       `skill:${skill}:${hashDirectory(dirname(join(input.assetsRoot, skill)))}`
     ),
     ...input.pluginPaths.map((plugin) => `plugin:${plugin}:${hashDirectory(join(input.assetsRoot, plugin))}`),
+    ...(isSynthesisRole
+      ? [`workflowProfile:${input.workflowProfileAsset.name}:${input.workflowProfileAsset.hash}`]
+      : []),
   ];
   return sha256Text(parts.sort().join("\n"));
 }

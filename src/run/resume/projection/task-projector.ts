@@ -18,6 +18,11 @@ export function applyTaskJournalEvent(
   archivedTasks: Map<string, ProjectedArchivedTask>,
   event: RunJournalEvent,
 ): boolean {
+  const requireTaskPhase = (task: AgentTaskState): void => {
+    if (typeof task.phase !== "string" || task.phase.length === 0) {
+      throw new Error(`Task ${task.taskId} is missing its Workflow Phase.`);
+    }
+  };
   if (
     AgentEvents.task.assigned.is(event)
     || AgentEvents.task.stepStarted.is(event)
@@ -27,19 +32,23 @@ export function applyTaskJournalEvent(
     || AgentEvents.task.failed.is(event)
     || AgentEvents.task.stopped.is(event)
   ) {
+    requireTaskPhase(event.payload);
     tasks.set(event.payload.taskId, structuredClone(event.payload));
     return true;
   }
   if (AgentEvents.task.outcomeSubmitted.is(event)) {
+    requireTaskPhase(event.payload.task);
     tasks.set(event.payload.task.taskId, structuredClone(event.payload.task));
     return true;
   }
   if (AgentEvents.task.dispositionRecorded.is(event)) {
     const task = event.payload.task;
+    requireTaskPhase(task);
     tasks.set(task.taskId, structuredClone(task));
     return true;
   }
   if (AgentEvents.task.archived.is(event)) {
+    requireTaskPhase(event.payload);
     tasks.delete(event.payload.taskId);
     archivedTasks.set(event.payload.taskId, {
       task: structuredClone(event.payload),

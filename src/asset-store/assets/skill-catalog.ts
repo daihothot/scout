@@ -14,10 +14,7 @@ import {
   sep,
   win32,
 } from "node:path";
-import {
-  ScoutAgentPhases,
-  type ScoutAgentPhase,
-} from "../../agent/thread/types.js";
+import type { ScoutAgentPhase } from "../../agent/thread/types.js";
 import {
   ScoutSkillResourceRequirements,
   type ScoutSkillCatalogEntry,
@@ -33,7 +30,6 @@ interface FrontmatterField {
 }
 
 const SKILL_TOKEN_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const SCOUT_AGENT_PHASES = new Set<ScoutAgentPhase>(Object.values(ScoutAgentPhases));
 const SCOUT_SKILL_RESOURCE_REQUIREMENTS = new Set<ScoutSkillResourceRequirement>(
   Object.values(ScoutSkillResourceRequirements),
 );
@@ -96,12 +92,10 @@ export function parseScoutSkillMetadata(input: {
   if (!findField(fields, ["phase"])) {
     throw new Error(`Scout Skill ${label} must define phase.`);
   }
-  const phase = optionalTokenList(fields, ["phase"], label).map((value) => {
-    if (!SCOUT_AGENT_PHASES.has(value as ScoutAgentPhase)) {
-      throw new Error(`Scout Skill ${label} has unsupported phase: ${value}`);
-    }
-    return value as ScoutAgentPhase;
-  });
+  const phaseField = findField(fields, ["phase"]);
+  const phase = phaseField
+    ? parseInlineList(phaseField, label, /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/)
+    : [];
   const family = requireTokenList(fields, ["family"], label);
   const tags = requireTokenList(fields, ["tags"], label);
   const requiredSkills = optionalTokenList(
@@ -190,14 +184,17 @@ export function resolveSkillDependencyLoadOrder(
   return result;
 }
 
-/** Returns all Skills visible in one phase plus their required dependency closure. */
-export function resolveScoutSkillsForPhase(
+/** Returns all Skills visible in the supplied Phases plus their required dependency closure. */
+export function resolveScoutSkillsForPhases(
   catalog: ScoutSkillCatalogEntry[],
-  phase: ScoutAgentPhase,
+  phases: readonly ScoutAgentPhase[],
 ): ScoutSkillCatalogEntry[] {
+  const selectedPhases = new Set(phases);
   return resolveSkillDependencyLoadOrder(
     catalog,
-    catalog.filter((skill) => skill.phase.includes(phase)).map((skill) => skill.name),
+    catalog
+      .filter((skill) => skill.phase.some((phase) => selectedPhases.has(phase)))
+      .map((skill) => skill.name),
   );
 }
 
@@ -404,20 +401,28 @@ function requireTokenList(fields: FrontmatterField[], path: string[], label: str
 function optionalTokenList(fields: FrontmatterField[], path: string[], label: string): string[] {
   const field = findField(fields, path);
   if (!field) return [];
+  return parseInlineList(field, label, SKILL_TOKEN_PATTERN);
+}
+
+function parseInlineList(
+  field: FrontmatterField,
+  label: string,
+  tokenPattern: RegExp,
+): string[] {
   const text = field.value.trim();
   if (!text.startsWith("[") || !text.endsWith("]")) {
-    throw new Error(`Scout Skill ${label} ${path.join(".")} must be an inline list.`);
+    throw new Error(`Scout Skill ${label} ${field.path.join(".")} must be an inline list.`);
   }
   const body = text.slice(1, -1).trim();
   if (body.length === 0) return [];
   const values = body.split(",").map((value) => unquote(value.trim()));
   const seen = new Set<string>();
   for (const value of values) {
-    if (!SKILL_TOKEN_PATTERN.test(value)) {
-      throw new Error(`Scout Skill ${label} ${path.join(".")} has invalid token: ${value}`);
+    if (!tokenPattern.test(value)) {
+      throw new Error(`Scout Skill ${label} ${field.path.join(".")} has invalid token: ${value}`);
     }
     if (seen.has(value)) {
-      throw new Error(`Scout Skill ${label} ${path.join(".")} contains duplicate token: ${value}`);
+      throw new Error(`Scout Skill ${label} ${field.path.join(".")} contains duplicate token: ${value}`);
     }
     seen.add(value);
   }

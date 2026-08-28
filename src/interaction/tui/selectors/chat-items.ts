@@ -42,7 +42,7 @@ export function selectChatItems(state: TuiState): TuiChatItem[] {
         createdAt: entry.createdAt,
       };
     }
-    if (entry.kind === "agent" && entry.agentId === "coordinator") {
+    if (entry.kind === "agent") {
       return {
         id: entry.id,
         kind: "coordinator",

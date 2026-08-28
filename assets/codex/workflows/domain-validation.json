@@ -1,0 +1,216 @@
+{
+  "defaults": {
+    "config": "config/base.config.toml",
+    "model": {
+      "id": "gpt-5.5",
+      "provider": "custom",
+      "reasoningEffort": "high",
+      "reasoningSummary": "concise"
+    },
+    "maxThreads": 6,
+    "maxDepth": 1
+  },
+  "phases": {
+    "synthesis": {
+      "shellTools": [
+        "scoutAssets",
+        "scoutMemory",
+        "cat",
+        "sed",
+        "pwd"
+      ],
+      "mcpServers": [],
+      "plugins": [],
+      "readableRoots": [],
+      "writableRoots": []
+    },
+    "workers": {
+      "research": {
+        "shellTools": [
+          "scoutAssets",
+          "scoutMemory",
+          "scoutJsonWrite",
+          "scoutResearchArtifactCheck",
+          "scoutArtifactDigest",
+          "jarvis",
+          "codegraph",
+          "rg",
+          "git",
+          "sed",
+          "find",
+          "grep",
+          "cat",
+          "ls",
+          "pwd"
+        ],
+        "mcpServers": [],
+        "plugins": [],
+        "readableRoots": [
+          "${SCOUT_ROOT}",
+          "~/.guru/knowledge",
+          "~/.codegraph"
+        ],
+        "writableRoots": [
+          "~/.guru/codebase",
+          "~/.codegraph"
+        ],
+        "edges": {
+          "completed": "research-reviewer",
+          "error": null
+        }
+      },
+      "research-reviewer": {
+        "shellTools": [
+          "scoutAssets",
+          "scoutMemory",
+          "scoutJsonWrite",
+          "scoutArtifactDigest",
+          "jarvis",
+          "codegraph",
+          "rg",
+          "git",
+          "cat",
+          "sed",
+          "find",
+          "grep",
+          "ls",
+          "pwd",
+          "wc",
+          "head",
+          "tail",
+          "sort",
+          "uniq"
+        ],
+        "mcpServers": [],
+        "plugins": [],
+        "readableRoots": [
+          "~/.guru/knowledge",
+          "~/.guru/codebase",
+          "~/.codegraph"
+        ],
+        "writableRoots": [
+          "~/.guru/codebase",
+          "~/.codegraph"
+        ],
+        "edges": {
+          "completed": "verify",
+          "error": "research"
+        }
+      },
+      "verify": {
+        "shellTools": [
+          "scoutAssets",
+          "scoutMemory",
+          "scoutJsonWrite",
+          "unity",
+          "jarvis",
+          "codegraph",
+          "rg",
+          "git",
+          "cat",
+          "sed",
+          "find",
+          "grep",
+          "ls",
+          "pwd",
+          "wc",
+          "head",
+          "tail",
+          "sort",
+          "uniq"
+        ],
+        "mcpServers": [
+          "scout_local_capability"
+        ],
+        "plugins": [
+          "scout-local-capability-plugin"
+        ],
+        "readableRoots": [
+          "${SCOUT_ROOT}",
+          "~/.guru/knowledge",
+          "~/.codegraph"
+        ],
+        "writableRoots": [
+          "~/.guru/codebase",
+          "~/.codegraph"
+        ],
+        "edges": {
+          "completed": "verify-reviewer",
+          "error": null
+        }
+      },
+      "verify-reviewer": {
+        "shellTools": [
+          "scoutAssets",
+          "scoutMemory",
+          "scoutJsonWrite",
+          "scoutArtifactDigest",
+          "jarvis",
+          "codegraph",
+          "rg",
+          "git",
+          "cat",
+          "sed",
+          "find",
+          "grep",
+          "ls",
+          "pwd",
+          "wc",
+          "head",
+          "tail",
+          "sort",
+          "uniq"
+        ],
+        "mcpServers": [],
+        "plugins": [],
+        "readableRoots": [
+          "~/.guru/knowledge",
+          "~/.guru/codebase",
+          "~/.codegraph"
+        ],
+        "writableRoots": [
+          "~/.guru/codebase",
+          "~/.codegraph"
+        ],
+        "edges": {
+          "completed": null,
+          "error": "verify"
+        }
+      }
+    }
+  },
+  "roles": {
+    "coordinator": {
+      "multiAgent": false,
+      "customAgents": []
+    },
+    "researcher": {
+      "phases": [
+        "research"
+      ],
+      "multiAgent": true,
+      "customAgents": [
+        "scout-helper"
+      ]
+    },
+    "validator": {
+      "phases": [
+        "research-reviewer",
+        "verify-reviewer"
+      ],
+      "multiAgent": true,
+      "customAgents": [
+        "scout-helper"
+      ]
+    },
+    "verifier": {
+      "phases": [
+        "verify"
+      ],
+      "multiAgent": true,
+      "customAgents": [
+        "scout-helper"
+      ]
+    }
+  }
+}

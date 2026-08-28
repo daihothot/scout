@@ -23,8 +23,7 @@ import {
 } from "../../src/run/run-scope.js";
 import { createTestRunPersistence } from "../helpers/run-persistence.js";
 import {
-  ScoutAgentPermissionProfiles,
-  ScoutAgentRoles,
+  scoutAgentPermissionProfile,
   type ScoutAgentPermissionProfile,
 } from "../../src/agent/thread/types.js";
 import { AssetStore } from "../../src/asset-store/index.js";
@@ -91,7 +90,7 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   const researcherPermissions = stage.rootPlan.permissionProfiles.researcher;
   assert.ok(stage.rootPlan.mountRoots.includes(coordinatorMount));
   assert.ok(stage.rootPlan.writableRoots.includes(resolve(homedir(), ".guru", "codebase")));
-  assert.equal(researcherPermissions?.id, ScoutAgentPermissionProfiles.Researcher);
+  assert.equal(researcherPermissions?.id, scoutAgentPermissionProfile("researcher"));
   assert.ok(researcherPermissions?.readableRoots.includes(researcherMount));
   assert.ok(researcherPermissions?.readableRoots.includes(coordinatorArtifact));
   assert.ok(researcherPermissions?.writableRoots.includes(researcherArtifact));
@@ -133,7 +132,7 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   assert.match(configToml, /^remote_plugin = false$/m);
   assert.match(
     configToml,
-    new RegExp(escapeRegExp(`[permissions.${ScoutAgentPermissionProfiles.Researcher}.filesystem]`)),
+    new RegExp(escapeRegExp(`[permissions.${scoutAgentPermissionProfile("researcher")}.filesystem]`)),
   );
   assert.match(configToml, new RegExp(escapeRegExp(`"${runsRoot}" = "deny"`)));
   assert.match(configToml, new RegExp(escapeRegExp(`"${researcherMount}" = "read"`)));
@@ -158,12 +157,12 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   const researcher = assetStore.materializeMount({
     scoutRoot: fixtureRoot,
     runId,
-    agentId: ScoutAgentRoles.Researcher,
+    agentId: "researcher",
   });
   const coordinator = assetStore.materializeMount({
     scoutRoot: fixtureRoot,
     runId,
-    agentId: ScoutAgentRoles.Coordinator,
+    agentId: "coordinator",
   });
   const ownArtifactFile = join(researcher.artifactRoot, "own.txt");
   const sharedArtifactFile = join(coordinator.artifactRoot, "shared.txt");
@@ -177,7 +176,7 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   const exec = async (
     command: string[],
     cwd = researcher.mountRoot,
-    permissionProfile: ScoutAgentPermissionProfile = ScoutAgentPermissionProfiles.Researcher,
+    permissionProfile: ScoutAgentPermissionProfile = scoutAgentPermissionProfile("researcher"),
   ) => stage.appServerClient.client.request(
     "command/exec",
     {
@@ -226,10 +225,15 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
     (await exec(["/usr/bin/touch", join(researcher.mountRoot, "forbidden.txt")])).exitCode,
     0,
   );
+  assert.equal(
+    (await exec(["/bin/cat", join(researcher.mountRoot, "agents", "worker.AGENTS.md")])).exitCode,
+    0,
+  );
+  assert.equal(existsSync(join(coordinator.mountRoot, "agents", "worker.AGENTS.md")), false);
   const coordinatorTool = await exec(
     [join(coordinator.mountRoot, "bin", "scout-assets"), "--smoke"],
     coordinator.mountRoot,
-    ScoutAgentPermissionProfiles.Coordinator,
+    scoutAgentPermissionProfile("coordinator"),
   );
   assert.equal(coordinatorTool.exitCode, 0, coordinatorTool.stderr);
   assert.match(coordinatorTool.stdout, /SCOUT_ASSETS_OK/);

@@ -1,7 +1,6 @@
 import type { AgentDynamicToolSpec, AgentJsonValue } from "./types.js";
-import type { ScoutAgentRole } from "../thread/types.js";
-import { ScoutAgentRoles } from "../thread/types.js";
 import type { AgentMessageDeliveryMode } from "../message/types.js";
+import type { WorkflowPhaseOutcome } from "../../core/workflow/index.js";
 
 /**
  * Declares the typed dynamic-tool protocol exposed to Scout agents. This
@@ -21,6 +20,8 @@ export const AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE = "scout_agent_respondhuma
 export const AGENT_SUBMIT_TASK_TOOL_NAMESPACE = "scout_agent_submittask";
 /** Namespace for coordinator task archival. */
 export const AGENT_ARCHIVE_TASK_TOOL_NAMESPACE = "scout_agent_archivetask";
+/** Namespace for Coordinator-owned Workflow Phase outcomes. */
+export const AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE = "scout_agent_submitphaseoutcome";
 
 /** Maps protocol tool names to their required app-server namespace. */
 export const AGENT_TOOL_NAMESPACE_BY_NAME: Readonly<Record<string, string>> = {
@@ -30,6 +31,7 @@ export const AGENT_TOOL_NAMESPACE_BY_NAME: Readonly<Record<string, string>> = {
   RespondHumanInput: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
   SubmitTask: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
   ArchiveTask: AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
+  SubmitPhaseOutcome: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
 };
 
 /** Set used to reject non-Scout namespaces at the app-server boundary. */
@@ -49,9 +51,7 @@ export function assertAgentToolNamespace(namespace: string, tool: string): void 
 /** Input contract for coordinator-to-worker task assignment. */
 export interface AssignTaskToolCall {
   tool: "AssignTask";
-  agent_id?: string;
   description: string;
-  subagent_type: Exclude<ScoutAgentRole, typeof ScoutAgentRoles.Coordinator>;
   prompt: string;
 }
 
@@ -88,6 +88,12 @@ export interface ArchiveTaskToolCall {
   task_id: string;
 }
 
+/** Input contract for Coordinator synthesis of the current Workflow Phase. */
+export interface SubmitPhaseOutcomeToolCall {
+  tool: "SubmitPhaseOutcome";
+  outcome: WorkflowPhaseOutcome;
+}
+
 /** Discriminated union accepted by the dynamic-tool dispatcher. */
 export type AgentDynamicToolCall =
   | AssignTaskToolCall
@@ -95,7 +101,8 @@ export type AgentDynamicToolCall =
   | RequestHumanInputToolCall
   | RespondHumanInputToolCall
   | SubmitTaskToolCall
-  | ArchiveTaskToolCall;
+  | ArchiveTaskToolCall
+  | SubmitPhaseOutcomeToolCall;
 
 /** Builds the schema for assigning work to an existing worker agent. */
 export function buildAssignTaskDynamicTool(): AgentDynamicToolSpec {
@@ -103,26 +110,17 @@ export function buildAssignTaskDynamicTool(): AgentDynamicToolSpec {
     guidanceSkill: "tool-scout-assign-task",
     namespace: AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
     name: "AssignTask",
-    description: "向当前 Run 中已有的 Scout researcher、verifier 或 validator worker agent 分配一个新任务。",
+    description: "向当前 Workflow Phase 中第一个空闲 Worker 分配一个新任务。",
     inputSchema: objectSchema({
-      agent_id: {
-        type: "string",
-        description: "可选。目标 agent id；为空时按 subagent_type 定位当前 Run 中已有的 agent。",
-      },
       description: {
         type: "string",
         description: "任务通知中显示的简短任务说明。",
-      },
-      subagent_type: {
-        type: "string",
-        enum: [ScoutAgentRoles.Researcher, ScoutAgentRoles.Verifier, ScoutAgentRoles.Validator],
-        description: "目标 Scout worker agent 的角色。",
       },
       prompt: {
         type: "string",
         description: "传给目标 agent 的完整中文指令。",
       },
-    }, ["description", "subagent_type", "prompt"]),
+    }, ["description", "prompt"]),
   };
 }
 
@@ -219,6 +217,23 @@ export function buildArchiveTaskDynamicTool(): AgentDynamicToolSpec {
   };
 }
 
+/** Builds the schema for submitting the current Workflow Phase outcome. */
+export function buildSubmitPhaseOutcomeDynamicTool(): AgentDynamicToolSpec {
+  return {
+    guidanceSkill: "tool-scout-submit-phase-outcome",
+    namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
+    name: "SubmitPhaseOutcome",
+    description: "Coordinator 提交当前 Workflow Phase 的结果。",
+    inputSchema: objectSchema({
+      outcome: {
+        type: "string",
+        enum: ["completed", "error"],
+        description: "当前 Workflow Phase 的结果。",
+      },
+    }, ["outcome"]),
+  };
+}
+
 /** Validates and narrows untrusted app-server arguments into a tool call. */
 export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDynamicToolCall {
   if (typeof args !== "object" || args === null || Array.isArray(args)) {
@@ -228,21 +243,9 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
 
   switch (tool) {
     case "AssignTask": {
-      const agentId = input.agent_id;
-      if (agentId !== undefined && (typeof agentId !== "string" || agentId.trim().length === 0)) {
-        throw new Error("AssignTask agent_id must be a non-empty string when provided.");
-      }
       const description = input.description;
       if (typeof description !== "string" || description.trim().length === 0) {
         throw new Error("AssignTask description must be a non-empty string.");
-      }
-      const subagentType = input.subagent_type;
-      if (
-        subagentType !== ScoutAgentRoles.Researcher
-        && subagentType !== ScoutAgentRoles.Verifier
-        && subagentType !== ScoutAgentRoles.Validator
-      ) {
-        throw new Error("AssignTask subagent_type must be researcher, verifier, or validator.");
       }
       const prompt = input.prompt;
       if (typeof prompt !== "string" || prompt.trim().length === 0) {
@@ -250,9 +253,7 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
       }
       return {
         tool: "AssignTask",
-        ...(agentId === undefined ? {} : { agent_id: agentId.trim() }),
         description: description.trim(),
-        subagent_type: subagentType,
         prompt: prompt.trim(),
       };
     }
@@ -319,6 +320,16 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
       return {
         tool: "ArchiveTask",
         task_id: taskId.trim(),
+      };
+    }
+    case "SubmitPhaseOutcome": {
+      const outcome = input.outcome;
+      if (outcome !== "completed" && outcome !== "error") {
+        throw new Error("SubmitPhaseOutcome outcome must be completed or error.");
+      }
+      return {
+        tool: "SubmitPhaseOutcome",
+        outcome,
       };
     }
     default:

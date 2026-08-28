@@ -2,7 +2,7 @@ import { createCodexAppServerMountPreflight } from "../../../agent-server/codex/
 import type { AgentServerPreflightReport } from "../../../agent-server/types.js";
 import { join, resolve } from "node:path";
 import { AssetStore, type CodexMount, type MaterializeOptions } from "../../../asset-store/index.js";
-import { ScoutAgentRoles, type ScoutAgentRole } from "../../../agent/thread/types.js";
+import type { ScoutAgentRole } from "../../../agent/thread/types.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import {
@@ -63,7 +63,7 @@ export class RestoreEnvironmentStage implements RunStage {
     const scope = currentRunScope();
     const scoutRoot = resolve(scope.scoutRoot);
     const runRoot = resolve(scope.runRoot);
-    const roles = Object.values(ScoutAgentRoles);
+    const roles = scope.scheduler.snapshot().roles.map((role) => role.name);
     const assetStore = this.options.assetStore ?? new AssetStore();
     const progress = createMountPreparationProgress(roles);
     const publishProgress = createMountPreparationProgressPublisher(scope.interactionPort);
@@ -71,11 +71,13 @@ export class RestoreEnvironmentStage implements RunStage {
 
     let snapshot: EnvironmentSnapshot;
     try {
+      const manifest = scope.manifestStore.read();
+      const persistedRoles = roles.filter((role) => manifest.agents?.[role] !== undefined);
       snapshot = new EnvironmentSnapshotLoader({
         scoutRoot,
         runRoot,
-        manifest: scope.manifestStore.read(),
-        roles,
+        manifest,
+        roles: persistedRoles,
       }).load();
     } catch (error) {
       const role = error instanceof EnvironmentSnapshotLoadError
@@ -85,44 +87,53 @@ export class RestoreEnvironmentStage implements RunStage {
       throw error;
     }
 
+    const persistedByRole = new Map(snapshot.agents.map((agent) => [agent.role, agent] as const));
     const plansByRole = new Map<ScoutAgentRole, EnvironmentRolePlan>();
-    const inputs: EnvironmentRolePreparationInput[] = snapshot.agents.map((persisted) => {
-      const agentRoot = join(runRoot, "agents", persisted.role);
+    const inputs: EnvironmentRolePreparationInput[] = roles.map((role) => {
+      const persisted = persistedByRole.get(role);
+      const agentRoot = join(runRoot, "agents", role);
+      const artifactRoot = join(agentRoot, "artifacts");
       const options: MaterializeOptions = {
         scoutRoot,
         runId: scope.runId,
-        agentId: persisted.role,
-        persistedManifest: persisted.mountManifest,
+        agentId: role,
+        workflowProfileName: scope.scoutConfig.workflow.profile,
+        ...(persisted === undefined ? {} : {
+          persistedManifest: persisted.mountManifest,
+          persistedIdentity: {
+            assetCommitId: persisted.assetCommit.assetCommitId,
+            parentAssetCommitId: persisted.assetCommit.parentAssetCommitId,
+            mountId: persisted.assetCommit.mountId,
+            resourceHash: persisted.assetCommit.resourceHash,
+          },
+        }),
         cleanRunRoot: false,
-        persistedIdentity: {
-          assetCommitId: persisted.assetCommit.assetCommitId,
-          parentAssetCommitId: persisted.assetCommit.parentAssetCommitId,
-          mountId: persisted.assetCommit.mountId,
-          resourceHash: persisted.assetCommit.resourceHash,
-        },
         allowAssetResourceDrift: scope.scoutConfig.restore.allowAssetResourceDrift,
         onPreparationDecision: (decision, reason) => {
-          const planned = plansByRole.get(persisted.role)?.inspection.decision;
+          const planned = plansByRole.get(role)?.inspection.decision;
           if (planned && planned !== decision) {
             throw new Error(
-              `Mount preparation changed after verification for ${persisted.role}`
+              `Mount preparation changed after verification for ${role}`
               + `: planned=${planned} actual=${decision}`,
             );
           }
-          applyMountPreparationDecision(progress, persisted.role, decision, reason, true);
+          applyMountPreparationDecision(progress, role, decision, reason, true);
           void publishProgress(progress).catch(() => undefined);
         },
         onMaterializationStep: (step) => {
-          applyMountMaterializationStep(progress, persisted.role, step);
+          applyMountMaterializationStep(progress, role, step);
           void publishProgress(progress).catch(() => undefined);
         },
       };
       return {
-        role: persisted.role,
+        role,
         options,
-        expectedMountManifestPath: persisted.mountManifestPath,
-        assetCommitPath: persisted.assetCommitPath,
-        preflightPath: persisted.preflightPath,
+        expectedMountManifestPath: persisted?.mountManifestPath
+          ?? join(agentRoot, "mount", "mount-manifest.json"),
+        assetCommitPath: persisted?.assetCommitPath
+          ?? join(artifactRoot, "asset-commit.json"),
+        preflightPath: persisted?.preflightPath
+          ?? join(artifactRoot, "app-server-preflight.json"),
       };
     });
 
@@ -185,10 +196,12 @@ export class RestoreEnvironmentStage implements RunStage {
       const environment = new RunEnvironmentBuilder(assetStore).build({
         runId: scope.runId,
         agents,
+        graphState: scope.scheduler.snapshot(),
       });
       const transaction = new EnvironmentMetadataTransaction({
         rollback,
         manifestStore: scope.manifestStore,
+        runRoot,
       });
       metadataTransactionStarted = true;
       transaction.commit(result);

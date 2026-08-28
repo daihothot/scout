@@ -1,42 +1,76 @@
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import { CoordinatorAgent } from "../roles/coordinator-agent.js";
-import { ResearcherAgent } from "../roles/researcher-agent.js";
-import { ValidatorAgent } from "../roles/validator-agent.js";
-import { VerifierAgent } from "../roles/verifier-agent.js";
+import { WorkerAgent } from "../roles/worker-agent.js";
+import { readWorkerAgentInstructions } from "../roles/instructions.js";
 import type {
   ScoutAgent,
   ScoutAgentOptions,
 } from "../core/scout-agent.js";
 import { buildAgentDynamicTools } from "../tools/tool-profiles.js";
 import type { DynamicToolSpec } from "../../agent-server/codex/app-server-client.js";
-import type { ScoutAgentRole } from "../thread/types.js";
-import { ScoutAgentRoles } from "../thread/types.js";
+import {
+  scoutAgentPermissionProfile,
+  type ScoutAgentRole,
+} from "../thread/types.js";
+import {
+  resolveSynthesisRole,
+} from "../../core/workflow/index.js";
 
-/** Builds the run's fixed role agents from prepared mounts and domain tools. */
+/** Builds Workflow-declared agents from prepared mounts and domain tools. */
 export class AgentBuilder {
   private readonly scope: RunScope = currentRunScope();
 
   buildCoordinator(): CoordinatorAgent {
+    const role = resolveSynthesisRole(this.scope.scheduler.snapshot()).name;
     const agent = new CoordinatorAgent({
-      ...this.agentOptionsForRole(ScoutAgentRoles.Coordinator),
-      dynamicTools: this.dynamicToolsForRole(ScoutAgentRoles.Coordinator),
+      ...this.agentOptionsForRole(role),
+      dynamicTools: this.dynamicToolsForRole(role),
     });
     return this.registerAgent(agent) as CoordinatorAgent;
   }
 
-  buildWorker(role: Exclude<ScoutAgentRole, typeof ScoutAgentRoles.Coordinator>): ScoutAgent {
-    const common = {
+  buildWorker(role: ScoutAgentRole): ScoutAgent {
+    const graphState = this.scope.scheduler.snapshot();
+    if (role === resolveSynthesisRole(graphState).name) {
+      throw new Error("Coordinator must be built through buildCoordinator().");
+    }
+    const options = {
       ...this.agentOptionsForRole(role),
       dynamicTools: this.dynamicToolsForRole(role),
     };
-    const agent = this.createWorker(role, common);
+    const profile = options.agentMount.agentProfile;
+    const agent = new WorkerAgent({
+      ...options,
+      spec: {
+        role,
+        phases: [...profile.phases],
+        cwd: options.agentMount.mountRoot,
+        approvalPolicy: "never",
+        permissionProfile: scoutAgentPermissionProfile(role),
+        contextBundleId: this.scope.contextBundle.contextBundleId,
+        model: { ...profile.model },
+        config: {
+          features: {
+            multi_agent: profile.multiAgent,
+          },
+          agents: {
+            max_threads: profile.maxThreads,
+            max_depth: profile.maxDepth,
+          },
+        },
+        developerInstructions: readWorkerAgentInstructions(options),
+        dynamicTools: options.dynamicTools,
+      },
+    });
     return this.registerAgent(agent);
   }
 
   dynamicToolsForRole(role: ScoutAgentRole): DynamicToolSpec[] {
+    const graphState = this.scope.scheduler.snapshot();
+    const synthesisRole = resolveSynthesisRole(graphState).name;
     const definitions = [
       ...buildAgentDynamicTools({
-        orchestrationTools: role === ScoutAgentRoles.Coordinator,
+        orchestrationTools: role === synthesisRole,
       }),
       ...this.scope.domain.dynamicToolsForRole(role),
     ];
@@ -63,15 +97,6 @@ export class AgentBuilder {
       agentMount: preparedAgent.mount,
       assetCommit: preparedAgent.assetCommit,
     };
-  }
-
-  private createWorker(
-    role: Exclude<ScoutAgentRole, typeof ScoutAgentRoles.Coordinator>,
-    options: ScoutAgentOptions,
-  ): ScoutAgent {
-    if (role === ScoutAgentRoles.Researcher) return new ResearcherAgent(options);
-    if (role === ScoutAgentRoles.Validator) return new ValidatorAgent(options);
-    return new VerifierAgent(options);
   }
 
   private registerAgent(agent: ScoutAgent): ScoutAgent {

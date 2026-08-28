@@ -14,8 +14,6 @@ import test from "node:test";
 import { agent } from "../../src/agent/context/agent-attachments.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import {
-  ScoutAgentPhases,
-  ScoutAgentRoles,
   type AgentThreadSnapshot,
 } from "../../src/agent/thread/types.js";
 import {
@@ -31,11 +29,14 @@ import {
   RunEvents,
   type RunJournalWriteFailedEvent,
 } from "../../src/run/events/index.js";
-import { projectRun } from "../../src/run/resume/projection/index.js";
+import { projectRun as projectRunEvents } from "../../src/run/resume/projection/index.js";
 import {
   createTestRunPersistence,
   installTestRunScope,
 } from "../helpers/run-persistence.js";
+
+const projectRun = (events: Parameters<typeof projectRunEvents>[0]) =>
+  projectRunEvents(events, "coordinator");
 
 test("RunJournalWriter persists monotonic EventBus events and holds one runtime lock", async (t) => {
   const eventBus = new InMemoryEventBus();
@@ -54,9 +55,9 @@ test("RunJournalWriter persists monotonic EventBus events and holds one runtime 
     occurredAt: "2026-07-22T00:00:01.000Z",
   });
 
-  assert.equal(journal.readAll()[1]?.key.routeKey, RunEvents.runtime.attached.routeKey);
-  assert.equal(journal.readAll()[2]?.key.routeKey, RunEvents.runtime.ready.routeKey);
-  assert.deepEqual(journal.readAll().map((event) => event.seq), [1, 2, 3]);
+  assert.equal(journal.readAll()[2]?.key.routeKey, RunEvents.runtime.attached.routeKey);
+  assert.equal(journal.readAll()[3]?.key.routeKey, RunEvents.runtime.ready.routeKey);
+  assert.deepEqual(journal.readAll().map((event) => event.seq), [1, 2, 3, 4]);
   assert.throws(
     () => RunJournal.open({ runId: journal.runId, runRoot: journal.runRoot }),
     /already attached/,
@@ -127,11 +128,11 @@ test("RunJournal repairs an incomplete tail before the next EventBus append", as
     occurredAt: "2026-07-22T00:00:00.000Z",
   });
   journal.close();
-  appendFileSync(journal.path, '{"version":1,"seq":3', "utf8");
+  appendFileSync(journal.path, '{"version":1,"seq":4', "utf8");
 
   const reopened = RunJournal.open({ runId: journal.runId, runRoot: journal.runRoot });
   t.after(() => reopened.close());
-  assert.equal(reopened.lastSeq, 2);
+  assert.equal(reopened.lastSeq, 3);
   const reopenedBus = new InMemoryEventBus();
   installTestRunScope(t, {
     runId: reopened.runId,
@@ -149,8 +150,8 @@ test("RunJournal repairs an incomplete tail before the next EventBus append", as
     occurredAt: "2026-07-22T00:00:01.000Z",
   });
 
-  assert.equal(reopened.lastSeq, 3);
-  assert.deepEqual(readJournalEvents(journal.path).map((event) => event.seq), [1, 2, 3]);
+  assert.equal(reopened.lastSeq, 4);
+  assert.deepEqual(readJournalEvents(journal.path).map((event) => event.seq), [1, 2, 3, 4]);
 });
 
 test("RunJournalWriter persists Human Input semantics and message delivery as separate events", async (t) => {
@@ -190,7 +191,7 @@ test("RunJournalWriter persists Human Input semantics and message delivery as se
   await eventBus.publishAndWait(AgentEvents.message.queued, responseMessage);
 
   assert.deepEqual(
-    journal.readAll().slice(1).map((event) => event.key.routeKey),
+    journal.readAll().slice(2).map((event) => event.key.routeKey),
     [
       AgentEvents.humanInput.requested.routeKey,
       AgentEvents.message.queued.routeKey,
@@ -204,9 +205,9 @@ test("RunJournalWriter persists thread start, restart, resume and close lifecycl
   const eventBus = new InMemoryEventBus();
   const { journal } = createTestRunPersistence(t, "journal-thread", "/repo", eventBus);
   const started = {
-    agentId: ScoutAgentRoles.Researcher,
-    role: ScoutAgentRoles.Researcher,
-    phases: [ScoutAgentPhases.Research],
+    agentId: "researcher",
+    role: "researcher",
+    phases: ["research"],
     contextBundleId: "context-1",
     threadId: "thread-researcher",
     createdAt: "2026-07-23T00:00:00.000Z",
@@ -253,7 +254,7 @@ test("RunJournalWriter persists thread start, restart, resume and close lifecycl
   });
 
   assert.deepEqual(
-    journal.readAll().slice(1).map((event) => event.key.routeKey),
+    journal.readAll().slice(2).map((event) => event.key.routeKey),
     [
       AgentEvents.thread.started.routeKey,
       AgentEvents.thread.restarted.routeKey,
@@ -282,9 +283,9 @@ test("Run projection replaces a thread only when restart names the current snaps
     eventBus,
   );
   const started = {
-    agentId: ScoutAgentRoles.Validator,
-    role: ScoutAgentRoles.Validator,
-    phases: [ScoutAgentPhases.Validate],
+    agentId: "validator",
+    role: "validator",
+    phases: ["research-reviewer"],
     contextBundleId: "context-validator-old",
     threadId: "thread-validator-old",
     createdAt: "2026-07-23T00:00:00.000Z",
@@ -325,9 +326,9 @@ test("Run projection rejects a restart whose previous thread is not current", as
     eventBus,
   );
   const started = {
-    agentId: ScoutAgentRoles.Verifier,
-    role: ScoutAgentRoles.Verifier,
-    phases: [ScoutAgentPhases.Verify],
+    agentId: "verifier",
+    role: "verifier",
+    phases: ["verify"],
     contextBundleId: "context-verifier",
     threadId: "thread-verifier-current",
     createdAt: "2026-07-23T00:00:00.000Z",

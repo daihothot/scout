@@ -103,6 +103,7 @@ export class TaskRunner {
       taskSequence: this.taskSequence,
       agentId: this.host.agentId,
       role: this.host.role,
+      phase: input.phase,
       description: input.description,
       initialPrompt: input.prompt,
       status: AgentTaskStatuses.Queued,

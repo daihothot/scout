@@ -15,15 +15,12 @@ import {
   type CodexAppServerClientBundle,
 } from "../../../agent-server/codex/app-server-factory.js";
 import {
-  resolveDefaultAgentModel,
-  readAgentProfilesForScoutRoot,
-  resolveAgentProfile,
-} from "../../../asset-store/assets/agent-profiles.js";
-import {
   buildScoutSkillCatalog,
   listScoutSkillPaths,
-  resolveScoutSkillsForPhase,
+  resolveScoutSkillsForPhases,
 } from "../../../asset-store/assets/skill-catalog.js";
+import { readWorkflowProfile } from "../../../asset-store/assets/workflow-profiles.js";
+import { WorkflowBuilder } from "../../../asset-store/builders/workflow-builder.js";
 import { CodexAssetLayout } from "../../../asset-store/assets/asset-layout.js";
 import {
   resolveAssetArg,
@@ -42,8 +39,7 @@ import type {
   ShellToolsFile,
 } from "../../../asset-store/contracts/resources.js";
 import {
-  ScoutAgentPermissionProfiles,
-  ScoutAgentRoles,
+  scoutAgentPermissionProfile,
   type ScoutAgentRole,
 } from "../../../agent/thread/types.js";
 import type { CodexModelConfig } from "../../../agent-server/codex/model-config.js";
@@ -51,6 +47,10 @@ import type { RunEnvironment } from "../../types.js";
 import { readJsonFile } from "../../../core/fs.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
+import {
+  resolveSynthesisRole,
+  SynthesisPhase,
+} from "../../../core/workflow/index.js";
 
 /** Per-role local-command filesystem policy rendered into Codex config. */
 export interface RunAgentPermissionPlan {
@@ -102,16 +102,20 @@ export class RunAppServerStage implements RunStage {
 
   async start(): Promise<void> {
     const scope = currentRunScope();
+    const synthesisRole = resolveSynthesisRole(scope.scheduler.snapshot()).name;
     const rootPlan = scope.hasEnvironment
       ? buildPreparedClientRootPlan(scope.environment, scope.scoutRoot)
       : buildClientRootPlan({
         scoutRoot: scope.scoutRoot,
         runRoot: scope.runRoot,
-        agentRoles: this.options.agentRoles,
+        workflowProfileName: scope.scoutConfig.workflow.profile,
+        agentRoles: this.options.agentRoles
+          ?? scope.scheduler.snapshot().roles.map((role) => role.name),
       });
     const defaultModel = scope.hasEnvironment
-      ? scope.environment.agents[ScoutAgentRoles.Coordinator].mount.agentProfile.model
-      : resolveDefaultAgentModel(readAgentProfilesForScoutRoot(scope.scoutRoot));
+      ? scope.environment.agents[synthesisRole].mount.agentProfile.model
+      : readWorkflowProfile(scope.scoutRoot, scope.scoutConfig.workflow.profile)
+          .profile.defaults.model;
     const runRoot = resolve(scope.runRoot);
     const logsRoot = join(runRoot, "logs");
     const isolatedHome = join(runRoot, "codex-home");
@@ -167,15 +171,19 @@ export class RunAppServerStage implements RunStage {
 function buildClientRootPlan(options: {
   scoutRoot: string;
   runRoot: string;
+  workflowProfileName: string;
   agentRoles?: readonly ScoutAgentRole[];
 }): RunAppServerRootPlan {
   const scoutRoot = resolve(options.scoutRoot);
   const runRoot = resolve(options.runRoot);
   const assetsRoot = join(scoutRoot, "assets", "codex");
-  const profiles = readAgentProfilesForScoutRoot(scoutRoot);
+  const workflow = readWorkflowProfile(scoutRoot, options.workflowProfileName);
+  const workflowBuilder = new WorkflowBuilder(workflow);
+  const graphState = workflowBuilder.build();
   const mcpServers = readJsonFile<McpServersFile>(join(assetsRoot, CodexAssetLayout.mcpServers));
   const shellTools = readJsonFile<ShellToolsFile>(join(assetsRoot, CodexAssetLayout.shellTools));
-  const agentRoles = options.agentRoles ?? Object.values(ScoutAgentRoles);
+  const agentRoles = options.agentRoles
+    ?? graphState.roles.map((role) => role.name);
   const mountRoots: string[] = [];
   const readableRoots: string[] = [];
   const writableRoots: string[] = [];
@@ -189,7 +197,7 @@ function buildClientRootPlan(options: {
   }> = [];
 
   for (const role of agentRoles) {
-    const profile = resolveAgentProfile(profiles, role);
+    const profile = workflowBuilder.buildAgentProfile(role);
     const agentRoot = join(runRoot, "agents", role);
     const mountRoot = join(agentRoot, "mount");
     const artifactRoot = join(agentRoot, "artifacts");
@@ -340,8 +348,7 @@ function buildClientConfig(input: {
     "",
     ...providerLines,
   ];
-  for (const role of Object.values(ScoutAgentRoles)) {
-    const profile = input.permissionProfiles[role];
+  for (const profile of Object.values(input.permissionProfiles)) {
     if (!profile) continue;
     lines.push(
       `[permissions.${profile.id}.filesystem]`,
@@ -427,11 +434,14 @@ function resolveRoleRuntimeReadableRoots(input: {
   const roots = [
     ...readablePathVariants(join(input.assetsRoot, CodexAssetLayout.agentsMd)),
   ];
+  if (!input.profile.phases.includes(SynthesisPhase)) {
+    roots.push(...readablePathVariants(join(input.assetsRoot, CodexAssetLayout.workerAgentsMd)));
+  }
   const skillCatalog = buildScoutSkillCatalog({
     assetsRoot: input.assetsRoot,
     skillPaths: listScoutSkillPaths(input.assetsRoot),
   });
-  for (const skill of resolveScoutSkillsForPhase(skillCatalog, input.profile.phase)) {
+  for (const skill of resolveScoutSkillsForPhases(skillCatalog, input.profile.phases)) {
     roots.push(...readablePathVariants(
       join(input.assetsRoot, CodexAssetLayout.skillsRoot, skill.name),
     ));
@@ -510,16 +520,7 @@ function listPluginSourcePaths(root: string): string[] {
 }
 
 function permissionProfileId(role: ScoutAgentRole): string {
-  switch (role) {
-    case ScoutAgentRoles.Coordinator:
-      return ScoutAgentPermissionProfiles.Coordinator;
-    case ScoutAgentRoles.Researcher:
-      return ScoutAgentPermissionProfiles.Researcher;
-    case ScoutAgentRoles.Verifier:
-      return ScoutAgentPermissionProfiles.Verifier;
-    case ScoutAgentRoles.Validator:
-      return ScoutAgentPermissionProfiles.Validator;
-  }
+  return scoutAgentPermissionProfile(role);
 }
 
 function resolveProfileRoots(input: {

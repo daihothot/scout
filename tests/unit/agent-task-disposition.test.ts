@@ -25,10 +25,12 @@ import {
   type AgentTaskDisposition,
   type AgentTaskState,
 } from "../../src/agent/task/types.js";
-import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
-import { projectRun } from "../../src/run/resume/projection/run-projector.js";
+import { projectRun as projectRunEvents } from "../../src/run/resume/projection/run-projector.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
+
+const projectRun = (events: Parameters<typeof projectRunEvents>[0]) =>
+  projectRunEvents(events, "coordinator");
 
 test("AgentTaskStore records each disposition kind and rejects a conflicting disposition", () => {
   const dispositions: AgentTaskDisposition[] = [
@@ -121,7 +123,7 @@ test("Task disposition persists in Task state and stays out of Step telemetry", 
     eventBus,
   });
   scope.agentRegistry.registerAgent({
-    agentId: ScoutAgentRoles.Researcher,
+    agentId: "researcher",
     get mount() {
       return { logsRoot };
     },
@@ -210,8 +212,9 @@ function taskState(taskId: string, stepIds: string[] = []): AgentTaskState {
     type: "local_agent",
     taskId,
     taskSequence: 1,
-    agentId: ScoutAgentRoles.Researcher,
-    role: ScoutAgentRoles.Researcher,
+    agentId: "researcher",
+    role: "researcher",
+    phase: "research",
     description: "Record a Worker disposition",
     initialPrompt: "Record a Worker disposition",
     status: AgentTaskStatuses.Running,
@@ -227,7 +230,7 @@ function taskState(taskId: string, stepIds: string[] = []): AgentTaskState {
 function stepState(taskId: string, stepId: string, turnId: string): AgentStepState {
   return {
     stepId,
-    agentId: ScoutAgentRoles.Researcher,
+    agentId: "researcher",
     taskId,
     turnId,
     status: AgentStepStatuses.Running,

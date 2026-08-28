@@ -4,7 +4,7 @@ name: tool-scout-request-human-input
 description: Worker 当前任务必须等待人工确认才能继续时使用 RequestHumanInput。
 id: tool-scout-request-human-input
 version: 1.0.0
-phase: [research, verify, validate]
+phase: [research, verify, research-reviewer, verify-reviewer]
 family: [tool, scout, dynamic]
 tags: [scout, dynamic-tool, human-input, task]
 devices: [any]
@@ -31,4 +31,3 @@ summary: 规定 Worker 人工输入请求的触发条件、正文和等待语义
 - `status: queued` 表示请求已送往 Coordinator；保存返回的 `requestId`。
 - 此调用是当前 step 的 `waiting_for_human` disposition，不能在同一 step 再调用 SubmitTask。
 - 普通消息、final response 或 blocked handoff 不能替代本工具。
-

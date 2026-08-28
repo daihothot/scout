@@ -4,7 +4,7 @@ name: domain-validation-validator
 description: Scout Validator 对 Research Pack 或 Verification Report 执行独立 contract、证据语义、provenance 与引用闭环检查，并生成对应 Gate 报告时使用。
 id: domain-validation-validator
 version: 0.6.3
-phase: [validate]
+phase: [research-reviewer, verify-reviewer]
 family: [validation, workflow]
 tags: [scout, validation, research, verification, gate, evidence, audit, workflow]
 devices: [any]

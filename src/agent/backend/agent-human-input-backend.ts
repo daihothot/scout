@@ -7,7 +7,7 @@ import type { RunScope } from "../../run/run-scope.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { agent } from "../context/agent-attachments.js";
 import { attachments } from "../context/attachments.js";
-import { ScoutAgentRoles } from "../thread/types.js";
+import { CoordinatorAgent } from "../roles/coordinator-agent.js";
 
 export interface AgentHumanInputRequestResult {
   status: "accepted" | "queued";
@@ -124,7 +124,7 @@ export class AgentHumanInputBackend {
 
   resolveCoordinator(workerAgentId: string): ScoutAgent {
     const coordinator = this.registry.listAgents().find((candidate) =>
-      candidate.role === ScoutAgentRoles.Coordinator
+      candidate instanceof CoordinatorAgent
     );
     if (!coordinator) {
       throw new Error(`Worker agent ${workerAgentId} cannot find the Coordinator agent.`);

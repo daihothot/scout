@@ -17,6 +17,7 @@ import type { MountContext } from "../contracts/mount-context.js";
 import type { ShellToolContract } from "../contracts/resources.js";
 import type { MaterializedSkill, ScoutSkillCatalogEntry } from "../contracts/skill.js";
 import { CodexAssetLayout } from "../assets/asset-layout.js";
+import { SynthesisPhase } from "../../core/workflow/index.js";
 import { McpServerBuilder } from "../builders/mcp-server-builder.js";
 import { MountGeneratedFilesBuilder } from "../builders/mount-generated-files-builder.js";
 import { MountManifestBuilder } from "../builders/mount-manifest-builder.js";
@@ -96,6 +97,7 @@ export class MountMaterializer {
       profiledSkillPaths,
       profiledPluginPaths,
       skillCatalog,
+      workflowProfileAsset,
       resourceHash: computedResourceHash,
       assetCommitId,
       parentAssetCommitId,
@@ -154,6 +156,12 @@ export class MountMaterializer {
     }
     const materializedMcpServers = builtMcpServers.map(({ server }) => server);
     safeSymlink(join(assetsRoot, CodexAssetLayout.agentsMd), join(mountRoot, "AGENTS.md"));
+    if (!agentProfile.phases.includes(SynthesisPhase)) {
+      safeSymlink(
+        join(assetsRoot, CodexAssetLayout.workerAgentsMd),
+        join(mountRoot, "agents", "worker.AGENTS.md"),
+      );
+    }
     options.onMaterializationStep?.("layout");
 
     const generatedFiles = new MountGeneratedFilesBuilder(
@@ -207,6 +215,7 @@ export class MountMaterializer {
       skillPaths: profiledSkillPaths,
       pluginPaths: profiledPluginPaths,
       shellToolsRegistryHash,
+      workflowProfileAsset,
     });
     const mountManifest = manifestBuilder.build({
       assetCommitId,

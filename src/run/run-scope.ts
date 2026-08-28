@@ -6,6 +6,7 @@ import { AgentStepStore } from "../agent/step/agent-step-store.js";
 import { AgentToolCallStore } from "../agent/tool-call/agent-tool-call-store.js";
 import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
+import type { Scheduler } from "../core/workflow/index.js";
 import type { ScoutDomain } from "../domain/index.js";
 import type { RuntimeInteractionPort } from "../interaction/protocol/port.js";
 import {
@@ -26,6 +27,7 @@ export interface RunScopeOptions {
   runRoot: string;
   logger: Logger;
   eventBus: EventBus;
+  scheduler: Scheduler;
   interactionPort: RuntimeInteractionPort;
   domain: ScoutDomain;
   scoutConfig?: ScoutConfig;
@@ -45,6 +47,7 @@ export class RunScope {
   readonly runRoot: string;
   readonly logger: Logger;
   readonly eventBus: EventBus;
+  readonly scheduler: Scheduler;
   readonly interactionPort: RuntimeInteractionPort;
   readonly agentRegistry = new AgentRegistry();
   readonly taskStore = new AgentTaskStore();
@@ -65,6 +68,7 @@ export class RunScope {
     this.runRoot = options.runRoot;
     this.logger = options.logger;
     this.eventBus = options.eventBus;
+    this.scheduler = options.scheduler;
     this.interactionPort = options.interactionPort;
     this.humanInputStore = new AgentHumanInputStore();
     this.stepStore = new AgentStepStore();

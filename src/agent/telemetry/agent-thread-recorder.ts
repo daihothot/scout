@@ -10,9 +10,8 @@ import { AgentEvents } from "../events/index.js";
 import { agentInstructionAssetPaths } from "../roles/instructions.js";
 import type {
   AgentThreadSnapshot,
-  ScoutAgentRole,
 } from "../thread/types.js";
-import { ScoutAgentRoles } from "../thread/types.js";
+import { SynthesisPhase } from "../../core/workflow/index.js";
 
 /** Persists redacted thread lifecycle facts without embedding instruction bodies. */
 export class AgentThreadRecorder {
@@ -103,7 +102,7 @@ function summarizeThreadSnapshot(thread: AgentThreadSnapshot): object {
     ...thread,
     startInput: summarizeThreadStartInput(
       thread.agentId,
-      thread.role,
+      !thread.phases.includes(SynthesisPhase),
       thread.startInput,
     ),
     startResponse: summarizeThreadResponse(thread.agentId, thread.startResponse),
@@ -112,7 +111,7 @@ function summarizeThreadSnapshot(thread: AgentThreadSnapshot): object {
 
 function summarizeThreadStartInput(
   agentId: string,
-  role: ScoutAgentRole,
+  isWorker: boolean,
   input: AgentThreadSnapshot["startInput"],
 ): object {
   const {
@@ -124,7 +123,7 @@ function summarizeThreadStartInput(
   return {
     ...summarizeThreadRequestMetadata(agentId, metadata),
     ...(baseInstructions === undefined ? {} : { hasBaseInstructions: true }),
-    ...summarizeDeveloperInstructions(role, developerInstructions),
+    ...summarizeDeveloperInstructions(isWorker, developerInstructions),
     ...(dynamicTools === undefined
       ? {}
       : {
@@ -285,13 +284,13 @@ function summarizePortablePath(agentId: string, value: string): string {
 }
 
 function summarizeDeveloperInstructions(
-  role: ScoutAgentRole,
+  isWorker: boolean,
   developerInstructions: string | undefined,
 ): object {
   if (developerInstructions === undefined) return {};
   return {
-    developerInstructions: agentInstructionAssetPaths(),
-    ...(role === ScoutAgentRoles.Coordinator
+    developerInstructions: agentInstructionAssetPaths(isWorker),
+    ...(!isWorker
       ? { hasInlineDeveloperInstructions: true }
       : {}),
   };

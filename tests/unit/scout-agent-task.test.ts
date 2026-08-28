@@ -11,10 +11,6 @@ import {
   TaskRunner,
   type TaskStepPreparation,
 } from "../../src/agent/runner/task/task-runner.js";
-import {
-  ScoutAgentRoles,
-  ScoutAgentPhases,
-} from "../../src/agent/thread/types.js";
 import type {
   AgentTaskDisposition,
   AgentTaskState,
@@ -66,7 +62,7 @@ test("TaskRunner runs one bounded correction turn and fails visibly when both tu
     taskInput: {
       taskId: "task-1",
       description: "Verify behavior",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Verify BDD"),
     },
     runTurn: async () => {
@@ -110,7 +106,7 @@ test("TaskRunner accepts SubmitTask from its single correction turn", async (t) 
     taskInput: {
       taskId: "task-1",
       description: "Repair a missed disposition",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Verify BDD"),
     },
     runTurn: async (turn, runtime) => {
@@ -142,7 +138,7 @@ test("TaskRunner starts another turn only after a message is queued", async (t) 
     taskInput: {
       taskId: "task-1",
       description: "Observe task",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Initial task prompt"),
     },
     runTurn: async (turn, runtime) => {
@@ -191,7 +187,7 @@ test("TaskRunner steers a default message into an active turn", async (t) => {
     taskInput: {
       taskId: "task-steer",
       description: "Steer active task",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Initial task prompt"),
     },
     runTurn: async () => {
@@ -226,7 +222,7 @@ test("TaskRunner accepts a fixed message delivery only once and rejects conflict
     taskInput: {
       taskId: "task-1",
       description: "Observe fixed message delivery",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Initial task prompt"),
     },
     runTurn: async (_turn, runtime) => {
@@ -281,7 +277,7 @@ test("TaskRunner records RequestHumanInput without changing task status", async 
     taskInput: {
       taskId: "task-1",
       description: "Inspect explicit lifecycle commands",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Inspect lifecycle"),
     },
     runTurn: async (_turn, runtime) => {
@@ -321,7 +317,7 @@ test("TaskRunner enters done from SubmitTask and resumes the same task from a me
     taskInput: {
       taskId: "task-1",
       description: "Verify behavior",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Verify BDD"),
     },
     runTurn: async (turn, runtime) => {
@@ -369,7 +365,7 @@ test("TaskRunner archive waits for the active turn before deleting task state", 
     taskInput: {
       taskId: "task-1",
       description: "Verify behavior",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Verify BDD"),
     },
     runTurn: async () => {
@@ -401,7 +397,7 @@ test("TaskRunner explicitly initializes and registers its single task", async (t
   const harness = await createHarness(t, {
     taskInput: {
       description: "First task",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Do first task"),
     },
   });
@@ -418,7 +414,7 @@ test("TaskRunner rejects an untagged message without starting another step", asy
     taskInput: {
       taskId: "task-1",
       description: "Choose option",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Need human input"),
     },
     runTurn: async (_turn, runtime) => {
@@ -456,7 +452,7 @@ test("TaskRunner serves an ordinary message after a request step yields", async 
     taskInput: {
       taskId: "task-1",
       description: "Choose option",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Need human input"),
     },
     runTurn: async (turn, runtime) => {
@@ -505,7 +501,7 @@ test("TaskRunner records a human-input request on its completed step", async (t)
     taskInput: {
       taskId: "task-1",
       description: "Choose option",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Need human input"),
     },
     runTurn: async (_turn, runtime) => {
@@ -547,7 +543,7 @@ test("TaskRunner records a delayed human response on the step that consumes it",
     taskInput: {
       taskId: "task-1",
       description: "Choose option",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Need human input"),
     },
     runTurn: async (turn, runtime) => {
@@ -622,7 +618,7 @@ test("TaskRunner rejects a second SubmitTask in the same step", async (t) => {
     taskInput: {
       taskId: "task-1",
       description: "Submit once",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Submit one outcome"),
     },
     runTurn: async (_turn, runtime) => {
@@ -646,7 +642,7 @@ test("TaskRunner treats the same SubmitTask call retry as idempotent", async (t)
     taskInput: {
       taskId: "task-1",
       description: "Retry one submission",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Submit one outcome"),
     },
     runTurn: async (_turn, runtime) => {
@@ -671,7 +667,7 @@ test("TaskRunner rejects a lifecycle disposition from another completed turn", a
     taskInput: {
       taskId: "task-1",
       description: "Reject a stale submission",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Submit one outcome"),
     },
     runTurn: async (_turn, runtime) => {
@@ -695,7 +691,7 @@ test("TaskRunner rejects RequestHumanInput after SubmitTask in the same step", a
     taskInput: {
       taskId: "task-1",
       description: "Choose one lifecycle action",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Choose one action"),
     },
     runTurn: async (_turn, runtime) => {
@@ -717,7 +713,7 @@ test("TaskRunner rejects SubmitTask after RequestHumanInput in the same step", a
     taskInput: {
       taskId: "task-1",
       description: "Choose one lifecycle action",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Choose one action"),
     },
     runTurn: async (_turn, runtime) => {
@@ -741,7 +737,7 @@ test("TaskRunner records an interrupted app-server turn as an interrupted step",
     taskInput: {
       taskId: "task-1",
       description: "Interrupt work",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Interrupt this turn"),
     },
     runTurn: async () => interruptedTurn("turn-1"),
@@ -764,7 +760,7 @@ test("TaskRunner discards a submitted outcome when the turn fails", async (t) =>
     taskInput: {
       taskId: "task-1",
       description: "Fail after submit",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Submit then fail"),
     },
     runTurn: async (_turn, runtime) => {
@@ -785,7 +781,7 @@ test("TaskRunner keeps done after task outcome delivery fails", async (t) => {
     taskInput: {
       taskId: "task-1",
       description: "Deliver outcome",
-      subagentType: ScoutAgentRoles.Verifier,
+      phase: "verify",
       prompt: agent.turn.message("Submit an outcome"),
     },
     runTurn: async (_turn, runtime) => {
@@ -912,7 +908,7 @@ class TestTaskRuntime {
       taskSequence: 1,
       host: {
         agentId: "verifier",
-        role: ScoutAgentRoles.Verifier,
+        role: "verifier",
         deliverTaskOutcome: input.deliverTaskOutcome,
         deliverTaskProtocolFailure: input.deliverTaskProtocolFailure,
       },
@@ -1144,8 +1140,8 @@ async function createHarness(t: TestContext, input: {
 function createScoutAgentStub(agentId: string): WorkerAgent {
   return {
     agentId,
-    role: ScoutAgentRoles.Verifier,
-    phases: [ScoutAgentPhases.Verify],
+    role: "verifier",
+    phases: ["verify"],
   } as unknown as WorkerAgent;
 }
 
@@ -1159,7 +1155,8 @@ function taskState(input: {
     taskId: input.taskId,
     taskSequence: 1,
     agentId: input.agentId,
-    role: ScoutAgentRoles.Verifier,
+    role: "verifier",
+    phase: "verify",
     description: "Verify plan updates",
     initialPrompt: "Verify plan updates",
     status: AgentTaskStatuses.Running,
@@ -1382,7 +1379,7 @@ function completedTurn(
     turn: {
       invocationId: "invocation-1",
       agentId: "verifier",
-      role: ScoutAgentRoles.Verifier,
+      role: "verifier",
       threadId: "thread-1",
       turnId,
       startedAt: new Date().toISOString(),
@@ -1398,7 +1395,7 @@ function failedTurn(error: string): ScoutAgentTurnOutcome {
     turn: {
       invocationId: "invocation-1",
       agentId: "verifier",
-      role: ScoutAgentRoles.Verifier,
+      role: "verifier",
       threadId: "thread-1",
       turnId: "turn-1",
       startedAt: new Date().toISOString(),
@@ -1414,7 +1411,7 @@ function interruptedTurn(turnId: string): ScoutAgentTurnOutcome {
     turn: {
       invocationId: "invocation-interrupted",
       agentId: "verifier",
-      role: ScoutAgentRoles.Verifier,
+      role: "verifier",
       threadId: "thread-1",
       turnId,
       startedAt: new Date().toISOString(),

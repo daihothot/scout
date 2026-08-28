@@ -7,7 +7,8 @@ import type { AgentTaskNotAssignedEventPayload } from "../task/task-events.js";
 import { Result } from "../../core/result.js";
 import { AgentEvents } from "../events/index.js";
 import { ScoutAgent, type ScoutAgentOptions } from "../core/scout-agent.js";
-import { ScoutAgentRoles, type AgentThreadSpec } from "../thread/types.js";
+import type { AgentThreadSpec } from "../thread/types.js";
+import { CoordinatorAgent } from "./coordinator-agent.js";
 import {
   WorkerRunner,
 } from "../runner/worker/worker-runner.js";
@@ -23,7 +24,7 @@ import { AgenticLoop } from "../core/agentic-loop.js";
  * Base implementation for role-specific workers. It owns one reusable Step
  * runner and zero or one unarchived TaskRunner.
  */
-export abstract class WorkerAgent extends ScoutAgent {
+export class WorkerAgent extends ScoutAgent {
   readonly stepRunner: WorkerRunner;
   private readonly loop: AgenticLoop<TaskStepPreparation>;
   private currentTaskRunner?: TaskRunner;
@@ -230,7 +231,7 @@ export abstract class WorkerAgent extends ScoutAgent {
         },
         deliverTaskOutcome: async (outcome) => {
           const coordinator = worker.registry.listAgents().find((candidate) =>
-            candidate.role === ScoutAgentRoles.Coordinator
+            candidate instanceof CoordinatorAgent
           );
           if (!coordinator) {
             throw new Error(`Worker agent ${worker.agentId} cannot find the Coordinator agent.`);
@@ -242,7 +243,7 @@ export abstract class WorkerAgent extends ScoutAgent {
         },
         deliverTaskProtocolFailure: async (message) => {
           const coordinator = worker.registry.listAgents().find((candidate) =>
-            candidate.role === ScoutAgentRoles.Coordinator
+            candidate instanceof CoordinatorAgent
           );
           if (!coordinator) {
             throw new Error(`Worker agent ${worker.agentId} cannot find the Coordinator agent.`);

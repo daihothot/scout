@@ -7,6 +7,9 @@ import type {
   MountPreparationResult,
 } from "./contracts/materialization.js";
 import type { CodexMount } from "./contracts/mount.js";
+import type { GraphState } from "../core/workflow/index.js";
+import { readWorkflowProfile } from "./assets/workflow-profiles.js";
+import { WorkflowBuilder } from "./builders/workflow-builder.js";
 import { materializeCodexMount } from "./materialize.js";
 import { MountPreparation } from "./preparation.js";
 import {
@@ -53,5 +56,10 @@ export class AssetStore {
   /** Returns the writable roots declared by the mount and its MCP servers. */
   writableRootsForMount(mount: CodexMount): string[] {
     return collectMountWritableRoots(mount);
+  }
+
+  /** Reads the selected Workflow Profile and builds its initial graph state. */
+  buildWorkflow(scoutRoot: string, profileName: string): GraphState {
+    return new WorkflowBuilder(readWorkflowProfile(scoutRoot, profileName)).build();
   }
 }

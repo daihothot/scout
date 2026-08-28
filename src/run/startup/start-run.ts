@@ -1,10 +1,13 @@
 import { join, resolve } from "node:path";
-import {
-  ScoutAgentRoles,
-  type ScoutAgentRole,
-} from "../../agent/thread/types.js";
+import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import { InMemoryEventBus } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
+import {
+  resolveSynthesisRole,
+  Scheduler,
+  type GraphState,
+} from "../../core/workflow/index.js";
+import { AssetStore } from "../../asset-store/index.js";
 import { ValidationDomain } from "../../domain/index.js";
 import {
   NoopRuntimeInteractionPort,
@@ -38,13 +41,17 @@ export async function startRun(
   const runId = buildRunId();
   const scoutRoot = resolve(options.cwd);
   const scoutConfig = loadScoutConfig(scoutRoot);
+  const eventBus = new InMemoryEventBus();
+  const scheduler = new Scheduler(
+    new AssetStore().buildWorkflow(scoutRoot, scoutConfig.workflow.profile),
+    eventBus,
+  );
   const runRoot = join(scoutRoot, "run", runId);
   const runtimeLogger = new Logger({
     runId,
     logsRoot: join(runRoot, "logs"),
   });
   const runStartedAt = Date.now();
-  const eventBus = new InMemoryEventBus();
   const domain = new ValidationDomain();
   const journal = RunJournal.create({ runId, runRoot });
   const manifestStore = new RunManifestStore(runRoot);
@@ -66,6 +73,7 @@ export async function startRun(
     runRoot,
     logger: runtimeLogger,
     eventBus,
+    scheduler,
     interactionPort,
     domain,
     scoutConfig,
@@ -110,7 +118,11 @@ export async function startRun(
       });
     }
     if (runScopeStage.scopeCreated && runScopeStage.scope.hasEnvironment) {
-      return toRunSummary(runScopeStage.scope.environment, "failed");
+      return toRunSummary(
+        runScopeStage.scope.environment,
+        runScopeStage.scope.scheduler.snapshot(),
+        "failed",
+      );
     }
     throw error;
   }
@@ -160,14 +172,15 @@ export async function startRun(
     },
   });
 
-  return toRunSummary(scope.environment, "passed");
+  return toRunSummary(scope.environment, scope.scheduler.snapshot(), "passed");
 }
 
 function toRunSummary(
   environment: RunEnvironment,
+  graphState: GraphState,
   status: ScoutRunSummary["status"],
 ): ScoutRunSummary {
-  const coordinator = environment.agents[ScoutAgentRoles.Coordinator];
+  const coordinator = environment.agents[resolveSynthesisRole(graphState).name];
   return {
     status,
     runId: environment.contextBundle.runId,

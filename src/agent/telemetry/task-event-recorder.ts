@@ -57,6 +57,7 @@ export class TaskEventRecorder {
       this.write(event, task.agentId, task.taskId, {
         taskSequence: task.taskSequence,
         role: task.role,
+        phase: task.phase,
         description: task.description,
         initialPrompt: task.initialPrompt,
         status: task.status,

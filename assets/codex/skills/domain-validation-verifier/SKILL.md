@@ -4,7 +4,7 @@ name: domain-validation-verifier
 description: Scout Verifier 在 accepted Research Pack Gate 后消费 verification manual、采集代码或运行信号，并逐项形成 BDD Verification Report 时使用。
 id: domain-validation-verifier
 version: 0.2.3
-phase: [verify, validate]
+phase: [verify, research-reviewer, verify-reviewer]
 family: [validation, workflow]
 tags: [scout, validation, bdd, verification, evidence, workflow]
 devices: [any]

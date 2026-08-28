@@ -3,7 +3,6 @@ import test from "node:test";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 import { AgentTaskStatuses } from "../../src/agent/task/types.js";
-import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
@@ -23,8 +22,8 @@ test("AgentOrchestrator owns its lifecycle and consumes task events", async (t) 
     type: "local_agent",
     taskId: "researcher-task-0001",
     taskSequence: 1,
-    agentId: ScoutAgentRoles.Researcher,
-    role: ScoutAgentRoles.Researcher,
+    agentId: "researcher",
+    role: "researcher",
     description: "Research BDD",
     initialPrompt: "Research BDD",
     status: AgentTaskStatuses.Queued,

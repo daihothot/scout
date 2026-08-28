@@ -12,8 +12,6 @@ import { AgentBackend } from "../../src/agent/backend/agent-backend.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import { AgentTaskStore } from "../../src/agent/task/agent-task-store.js";
 import { CoordinatorAgent } from "../../src/agent/roles/coordinator-agent.js";
-import { ResearcherAgent } from "../../src/agent/roles/researcher-agent.js";
-import { ValidatorAgent } from "../../src/agent/roles/validator-agent.js";
 import type { ScoutAgentOptions } from "../../src/agent/core/scout-agent.js";
 import {
   AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
@@ -22,17 +20,17 @@ import {
   AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
   AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+  AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
 } from "../../src/agent/tools/agent-tools.js";
 import {
-  ScoutAgentPermissionProfiles,
-  ScoutAgentRoles,
-  ScoutAgentPhases,
+  scoutAgentPermissionProfile,
   type AgentThreadSnapshot,
   type ScoutAgentRole,
 } from "../../src/agent/thread/types.js";
 import type { AgentTurnCompletedEvent } from "../../src/agent/thread/turn-events.js";
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
+import { createGraphState, Scheduler } from "../../src/core/workflow/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type {
   DynamicToolCallHandler,
@@ -79,8 +77,9 @@ import { CoordinatorContextTags } from "../../src/agent/runner/coordinator/coord
 import type { AgentTaskNotAssignedEventPayload } from "../../src/agent/task/task-events.js";
 import type { ScoutEvent } from "../../src/core/events/index.js";
 import type { LogEvent, Logger } from "../../src/core/logging/index.js";
-import type { WorkerAgent } from "../../src/agent/roles/worker-agent.js";
+import { WorkerAgent } from "../../src/agent/roles/worker-agent.js";
 import type { RunLifecycleSnapshot } from "../../src/run/lifecycle/index.js";
+import { createTestScheduler } from "../helpers/run-persistence.js";
 import {
   AgentTaskDispositionKinds,
   AgentTaskStatuses,
@@ -136,6 +135,10 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SEND_MESSAGE_TOOL_NAMESPACE && tool.name === "SendMessage"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RespondHumanInput"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_ARCHIVE_TASK_TOOL_NAMESPACE && tool.name === "ArchiveTask"));
+  assert.ok(tools.some((tool) =>
+    tool.namespace === AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE
+    && tool.name === "SubmitPhaseOutcome"
+  ));
   assert.equal(tools.some((tool) => tool.name === "SubmitTask"), false);
   assert.equal(tools.some((tool) => tool.name === "RequestHumanInput"), false);
   assert.ok(tools.some((tool) => tool.namespace === "domain-a" && tool.name === "DomainProbe"));
@@ -165,15 +168,15 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   const fixture = createAgentFixture("builder-worker", {
     domain: createStaticDomain("domain-worker", [buildDomainTool("domain-worker")]),
   });
-  const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  const researcherMount = createMount(fixture.root, "researcher");
   const researcherCommit = createAssetCommit(researcherMount);
-  prepareAgent(fixture, ScoutAgentRoles.Researcher, researcherMount, researcherCommit);
+  prepareAgent(fixture, "researcher", researcherMount, researcherCommit);
   const builder = new AgentBuilder();
 
-  const agent = builder.buildWorker(ScoutAgentRoles.Researcher);
+  const agent = builder.buildWorker("researcher");
   const tools = agent.spec.dynamicTools ?? [];
 
-  assert.ok(agent instanceof ResearcherAgent);
+  assert.ok(agent instanceof WorkerAgent);
   assert.equal(agent.taskRunner, undefined);
   assert.deepEqual(agent.spec.config, {
     features: {
@@ -184,7 +187,7 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
       max_depth: 1,
     },
   });
-  assert.equal(fixture.registry.resolveAgent(ScoutAgentRoles.Researcher), agent);
+  assert.equal(fixture.registry.resolveAgent("researcher"), agent);
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SEND_MESSAGE_TOOL_NAMESPACE && tool.name === "SendMessage"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RequestHumanInput"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SUBMIT_TASK_TOOL_NAMESPACE && tool.name === "SubmitTask"));
@@ -199,21 +202,55 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   assert.ok(tools.some((tool) => tool.namespace === "domain-worker" && tool.name === "DomainProbe"));
   const instructions = agent.spec.developerInstructions ?? "";
   assert.match(instructions, /common instructions/);
-  assert.doesNotMatch(instructions, /worker instructions/);
+  assert.match(instructions, /worker instructions/);
   assert.doesNotMatch(instructions, /researcher instructions/);
   assert.equal(instructions.match(/common instructions/g)?.length, 1);
+  assert.ok(instructions.indexOf("common instructions") < instructions.indexOf("worker instructions"));
 });
 
-test("Validator turns use the role permission profile", async () => {
+test("AgentBuilder creates an arbitrary Workflow role as a generic Worker", () => {
+  const scheduler = new Scheduler(createGraphState({
+    workflowProfile: "dynamic-role-test",
+    phases: [{
+      name: "audit",
+      edges: { completed: null, error: null },
+      roles: ["auditor"],
+    }],
+    roles: [
+      { name: "coordinator", phases: ["Synthesis"] },
+      { name: "auditor", phases: ["audit"] },
+    ],
+    currentPhase: "audit",
+  }), new InMemoryEventBus());
+  const fixture = createAgentFixture("builder-dynamic-worker", { scheduler });
+  const auditorMount = createMount(fixture.root, "auditor");
+  auditorMount.agentProfile.phases = ["audit"];
+  prepareAgent(fixture, "auditor", auditorMount, createAssetCommit(auditorMount));
+
+  const auditor = new AgentBuilder().buildWorker("auditor");
+  const coordinator = new AgentBuilder().buildCoordinator();
+  const assignTask = coordinator.spec.dynamicTools?.find((tool) => tool.name === "AssignTask");
+  const assignTaskSchema = assignTask?.inputSchema as {
+    properties?: Record<string, unknown>;
+  } | undefined;
+
+  assert.ok(auditor instanceof WorkerAgent);
+  assert.equal(auditor.role, "auditor");
+  assert.deepEqual(auditor.phases, ["audit"]);
+  assert.equal(auditor.spec.permissionProfile, "scout-auditor");
+  assert.deepEqual(Object.keys(assignTaskSchema?.properties ?? {}), ["description", "prompt"]);
+});
+
+test("Workflow Worker turns use the role permission profile", async () => {
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("builder-validator-write-roots", { appServer });
-  const validatorMount = createMount(fixture.root, ScoutAgentRoles.Validator);
+  const validatorMount = createMount(fixture.root, "validator");
   const validatorCommit = createAssetCommit(validatorMount);
-  prepareAgent(fixture, ScoutAgentRoles.Validator, validatorMount, validatorCommit);
-  const validator = new AgentBuilder().buildWorker(ScoutAgentRoles.Validator);
+  prepareAgent(fixture, "validator", validatorMount, validatorCommit);
+  const validator = new AgentBuilder().buildWorker("validator");
 
-  assert.ok(validator instanceof ValidatorAgent);
-  assert.equal(validator.spec.permissionProfile, ScoutAgentPermissionProfiles.Validator);
+  assert.ok(validator instanceof WorkerAgent);
+  assert.equal(validator.spec.permissionProfile, scoutAgentPermissionProfile("validator"));
   await validator.startThread();
   assert.deepEqual(validator.threadSnapshot?.startInput.config, {
     features: {
@@ -229,14 +266,14 @@ test("Validator turns use the role permission profile", async () => {
 
   assert.equal(
     appServer.turnInputs[0]?.permissions,
-    ScoutAgentPermissionProfiles.Validator,
+    scoutAgentPermissionProfile("validator"),
   );
 });
 
 test("Worker turns select one stable profile independently of write-root order", async () => {
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("builder-worker-write-root-order", { appServer });
-  const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  const researcherMount = createMount(fixture.root, "researcher");
   const codebaseRoot = join(fixture.root, "managed-codebase");
   researcherMount.writableRoots = [
     researcherMount.mountRoot,
@@ -245,18 +282,18 @@ test("Worker turns select one stable profile independently of write-root order",
   ];
   prepareAgent(
     fixture,
-    ScoutAgentRoles.Researcher,
+    "researcher",
     researcherMount,
     createAssetCommit(researcherMount),
   );
-  const researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher);
+  const researcher = new AgentBuilder().buildWorker("researcher");
 
   await researcher.startThread();
   await researcher.runTurn({ prompt: "Inspect the Research inputs." });
 
   assert.equal(
     appServer.turnInputs[0]?.permissions,
-    ScoutAgentPermissionProfiles.Researcher,
+    scoutAgentPermissionProfile("researcher"),
   );
 });
 
@@ -267,14 +304,14 @@ for (const status of ["failed", "interrupted"] as const) {
       turnError: `${status} by app-server`,
     });
     const fixture = createAgentFixture(`turn-status-${status}`, { appServer });
-    const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+    const researcherMount = createMount(fixture.root, "researcher");
     prepareAgent(
       fixture,
-      ScoutAgentRoles.Researcher,
+      "researcher",
       researcherMount,
       createAssetCommit(researcherMount),
     );
-    const researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher);
+    const researcher = new AgentBuilder().buildWorker("researcher");
 
     await researcher.startThread();
     const outcome = await researcher.runTurn({ prompt: `Return ${status}.` });
@@ -290,14 +327,14 @@ test("ScoutAgent omits a null app-server turn error", async () => {
     turnError: null,
   });
   const fixture = createAgentFixture("turn-null-error", { appServer });
-  const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
     fixture,
-    ScoutAgentRoles.Researcher,
+    "researcher",
     researcherMount,
     createAssetCommit(researcherMount),
   );
-  const researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher);
+  const researcher = new AgentBuilder().buildWorker("researcher");
 
   await researcher.startThread();
   const outcome = await researcher.runTurn({ prompt: "Return interrupted." });
@@ -310,26 +347,18 @@ test("WorkerAgent keeps its bound TaskRunner and reports a rejected task assignm
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-task-not-assigned", []);
   const fixture = createAgentFixture("worker-task-not-assigned", { appServer, domain });
-  const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  const researcherMount = createMount(fixture.root, "researcher");
   const researcherCommit = createAssetCommit(researcherMount);
-  prepareAgent(fixture, ScoutAgentRoles.Researcher, researcherMount, researcherCommit);
+  prepareAgent(fixture, "researcher", researcherMount, researcherCommit);
   const builder = new AgentBuilder();
   const coordinatorAgent = builder.buildCoordinator();
   await coordinatorAgent.startThread();
-  const worker = builder.buildWorker(ScoutAgentRoles.Researcher) as WorkerAgent;
+  const worker = builder.buildWorker("researcher") as WorkerAgent;
   new AgentBackend().start();
-  const notAssignedEvents: AgentTaskNotAssignedEventPayload[] = [];
-  fixture.eventBus.subscribe<AgentTaskNotAssignedEventPayload>(
-    AgentEvents.task.notAssigned,
-    (event) => {
-      notAssignedEvents.push(event.payload);
-    },
-  );
-
   const firstAssignment = await worker.assignTask({
     taskId: "researcher-task-0001",
     description: "Research the first BDD",
-    subagentType: ScoutAgentRoles.Researcher,
+    phase: "research",
     prompt: agent.turn.message("Research the first BDD."),
     isBackgrounded: true,
   });
@@ -348,42 +377,24 @@ test("WorkerAgent keeps its bound TaskRunner and reports a rejected task assignm
     tool: "AssignTask",
     arguments: {
       description: "Research another BDD",
-      subagent_type: ScoutAgentRoles.Researcher,
       prompt: "Research another BDD.",
     },
   });
   await worker.stopTask(firstAssignment.value.taskId, "test_cleanup");
   const secondAssignment = await secondAssignmentPromise;
-  const rejectionReason = "The worker agent already has a task that has not been archived.";
+  const rejectionReason = "Workflow Phase research has no available Worker.";
 
   assert.equal(secondAssignment.success, true);
   assert.deepEqual(JSON.parse(secondAssignment.contentItems[0]?.text ?? "{}"), {
     status: "not_assigned",
-    agentId: ScoutAgentRoles.Researcher,
-    role: ScoutAgentRoles.Researcher,
-    activeTaskId: "researcher-task-0001",
     reason: rejectionReason,
   });
   assert.equal(worker.taskRunner, boundRunner);
   assert.equal(fixture.taskStore.listTasks().length, 1);
-  assert.deepEqual(notAssignedEvents, [{
-    agentId: ScoutAgentRoles.Researcher,
-    role: ScoutAgentRoles.Researcher,
-    activeTaskId: "researcher-task-0001",
-    requestedDescription: "Research another BDD",
-    reason: rejectionReason,
-  }]);
-
-  await waitFor(() =>
-    readCoordinatorTaskNotAssignedObservations(appServer.turnInputs)
-      .some((observation) => observation.activeTaskId === "researcher-task-0001"
-        && observation.reason === rejectionReason)
-  );
-
   await worker.archiveTask(firstAssignment.value.taskId);
   const assignmentAfterArchive = await worker.assignTask({
     description: "Research another BDD after archive",
-    subagentType: ScoutAgentRoles.Researcher,
+    phase: "research",
     prompt: agent.turn.message("Research another BDD after archive."),
     isBackgrounded: true,
   });
@@ -396,16 +407,201 @@ test("WorkerAgent keeps its bound TaskRunner and reports a rejected task assignm
   await coordinatorAgent.stopAgent("test_cleanup");
 });
 
+test("AssignTask routes through the current Phase and skips a busy first role", async () => {
+  const appServer = createFakeAppServer();
+  const scheduler = new Scheduler(createGraphState({
+    workflowProfile: "phase-routing-test",
+    phases: [{
+      name: "audit",
+      edges: { completed: null, error: null },
+      roles: ["auditor-a", "auditor-b"],
+    }],
+    roles: [
+      { name: "coordinator", phases: ["Synthesis"] },
+      { name: "auditor-a", phases: ["audit"] },
+      { name: "auditor-b", phases: ["audit"] },
+    ],
+    currentPhase: "audit",
+  }), new InMemoryEventBus());
+  const fixture = createAgentFixture("assign-task-phase-routing", {
+    appServer,
+    scheduler,
+  });
+  const firstMount = createMount(fixture.root, "auditor-a");
+  const secondMount = createMount(fixture.root, "auditor-b");
+  firstMount.agentProfile.phases = ["audit"];
+  secondMount.agentProfile.phases = ["audit"];
+  prepareAgent(fixture, "auditor-a", firstMount, createAssetCommit(firstMount));
+  prepareAgent(fixture, "auditor-b", secondMount, createAssetCommit(secondMount));
+  const builder = new AgentBuilder();
+  const coordinatorAgent = builder.buildCoordinator();
+  const firstWorker = builder.buildWorker("auditor-a") as WorkerAgent;
+  const secondWorker = builder.buildWorker("auditor-b") as WorkerAgent;
+  const now = new Date().toISOString();
+  firstWorker.restoreTask({
+    task: {
+      type: "local_agent",
+      taskId: "auditor-a-task-0001",
+      taskSequence: 1,
+      agentId: "auditor-a",
+      role: "auditor-a",
+      phase: "audit",
+      description: "Existing audit",
+      initialPrompt: agent.turn.message("Continue the existing audit."),
+      status: AgentTaskStatuses.Queued,
+      isBackgrounded: true,
+      stepIds: [],
+      dispositions: [],
+      createdAt: now,
+      updatedAt: now,
+    },
+    maxTaskSequence: 1,
+  });
+  await coordinatorAgent.startThread();
+  const backend = new AgentBackend();
+  backend.start();
+
+  assert.ok(appServer.handler);
+  const result = await appServer.handler({
+    threadId: coordinatorAgent.threadId ?? "",
+    turnId: "turn-assign-audit",
+    callId: "call-assign-audit",
+    namespace: AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
+    tool: "AssignTask",
+    arguments: {
+      description: "Run the next audit",
+      prompt: "Inspect the declared audit evidence.",
+    },
+  });
+  const response = JSON.parse(result.contentItems[0]?.text ?? "{}") as {
+    status?: string;
+    taskId?: string;
+  };
+  const assignedTask = response.taskId
+    ? fixture.taskStore.getTask(response.taskId)
+    : undefined;
+
+  assert.equal(result.success, true);
+  assert.equal(response.status, "assigned");
+  assert.equal(assignedTask?.agentId, "auditor-b");
+  assert.equal(assignedTask?.phase, "audit");
+  assert.equal(firstWorker.taskRunner?.snapshot().activeTask?.taskId, "auditor-a-task-0001");
+
+  if (assignedTask) await secondWorker.archiveTask(assignedTask.taskId);
+  await firstWorker.archiveTask("auditor-a-task-0001");
+  await coordinatorAgent.stopAgent("test_cleanup");
+  backend.stop();
+});
+
+test("SubmitPhaseOutcome advances the cursor and schedules one fresh Coordinator Step", async () => {
+  const appServer = createFakeAppServer();
+  const fixture = createAgentFixture("submit-phase-outcome", { appServer });
+  const coordinatorAgent = new AgentBuilder().buildCoordinator();
+  await coordinatorAgent.startThread();
+  const backend = new AgentBackend();
+  backend.start();
+
+  assert.ok(appServer.handler);
+  const first = await appServer.handler({
+    threadId: coordinatorAgent.threadId ?? "",
+    turnId: "turn-submit-phase-research",
+    callId: "call-submit-phase-research",
+    namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
+    tool: "SubmitPhaseOutcome",
+    arguments: { outcome: "completed" },
+  });
+  await coordinatorAgent.runToIdle();
+  const second = await appServer.handler({
+    threadId: coordinatorAgent.threadId ?? "",
+    turnId: "turn-submit-phase-review",
+    callId: "call-submit-phase-review",
+    namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
+    tool: "SubmitPhaseOutcome",
+    arguments: { outcome: "completed" },
+  });
+  await coordinatorAgent.runToIdle();
+
+  assert.deepEqual(JSON.parse(first.contentItems[0]?.text ?? "{}"), {
+    status: "accepted",
+    currentPhase: "research-reviewer",
+    cycleCompleted: false,
+  });
+  assert.deepEqual(JSON.parse(second.contentItems[0]?.text ?? "{}"), {
+    status: "accepted",
+    currentPhase: "verify",
+    cycleCompleted: false,
+  });
+  assert.equal(appServer.turnInputs.length, 2);
+  assert.match(
+    appServer.turnInputs[0]?.prompt ?? "",
+    /<workflow_phase>\ncurrent_phase: research-reviewer\n<\/workflow_phase>/,
+  );
+  assert.match(
+    appServer.turnInputs[1]?.prompt ?? "",
+    /<workflow_phase>\ncurrent_phase: verify\n<\/workflow_phase>/,
+  );
+  for (const input of appServer.turnInputs) {
+    assert.equal(input.prompt?.match(/<workflow_phase>/g)?.length, 1);
+  }
+
+  await coordinatorAgent.stopAgent("test_cleanup");
+  backend.stop();
+});
+
+test("A terminal Phase outcome resets the cursor without scheduling a Coordinator Step", async () => {
+  const appServer = createFakeAppServer();
+  const scheduler = new Scheduler(createGraphState({
+    workflowProfile: "terminal-phase-test",
+    phases: [{
+      name: "audit",
+      edges: { completed: null, error: null },
+      roles: ["auditor"],
+    }],
+    roles: [
+      { name: "coordinator", phases: ["Synthesis"] },
+      { name: "auditor", phases: ["audit"] },
+    ],
+    currentPhase: "audit",
+  }), new InMemoryEventBus());
+  createAgentFixture("submit-terminal-phase-outcome", { appServer, scheduler });
+  const coordinatorAgent = new AgentBuilder().buildCoordinator();
+  await coordinatorAgent.startThread();
+  const backend = new AgentBackend();
+  backend.start();
+
+  assert.ok(appServer.handler);
+  const result = await appServer.handler({
+    threadId: coordinatorAgent.threadId ?? "",
+    turnId: "turn-submit-terminal-phase",
+    callId: "call-submit-terminal-phase",
+    namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
+    tool: "SubmitPhaseOutcome",
+    arguments: { outcome: "completed" },
+  });
+  await coordinatorAgent.runToIdle();
+
+  assert.deepEqual(JSON.parse(result.contentItems[0]?.text ?? "{}"), {
+    status: "accepted",
+    currentPhase: "audit",
+    cycleCompleted: true,
+  });
+  assert.equal(scheduler.snapshot().currentPhase, "audit");
+  assert.equal(appServer.turnInputs.length, 0);
+
+  await coordinatorAgent.stopAgent("test_cleanup");
+  backend.stop();
+});
+
 test("WorkerAgent keeps restored failed and stopped tasks bound until archive", async () => {
   const fixture = createAgentFixture("worker-restored-terminal-task");
-  const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
     fixture,
-    ScoutAgentRoles.Researcher,
+    "researcher",
     researcherMount,
     createAssetCommit(researcherMount),
   );
-  const worker = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher) as WorkerAgent;
+  const worker = new AgentBuilder().buildWorker("researcher") as WorkerAgent;
 
   for (const [index, status] of [
     AgentTaskStatuses.Failed,
@@ -418,7 +614,8 @@ test("WorkerAgent keeps restored failed and stopped tasks bound until archive", 
       taskId: `researcher-task-${String(taskSequence).padStart(4, "0")}`,
       taskSequence,
       agentId: worker.agentId,
-      role: ScoutAgentRoles.Researcher,
+      role: "researcher",
+      phase: "research",
       description: "恢复未归档终态任务",
       initialPrompt: agent.turn.message("恢复未归档终态任务。"),
       status,
@@ -434,7 +631,7 @@ test("WorkerAgent keeps restored failed and stopped tasks bound until archive", 
 
     const assignment = await worker.assignTask({
       description: "不应接受的新任务",
-      subagentType: ScoutAgentRoles.Researcher,
+      phase: "research",
       prompt: agent.turn.message("不应接受的新任务。"),
     });
 
@@ -475,8 +672,8 @@ test("ScoutAgent starts a thread, runs preflight, and binds it to registry", asy
   const thread = await agent.startThread();
 
   assert.equal(thread.threadId, "thread-test");
-  assert.equal(thread.agentId, ScoutAgentRoles.Coordinator);
-  assert.equal(thread.role, ScoutAgentRoles.Coordinator);
+  assert.equal(thread.agentId, "coordinator");
+  assert.equal(thread.role, "coordinator");
   assert.equal(thread.status, "active");
   assert.deepEqual(thread.startResponse, { thread: { id: "thread-test" } });
   assert.deepEqual({
@@ -895,8 +1092,9 @@ test("AgentBackend publishes native subagent audit facts and concise activity", 
     appServer,
     domain: createStaticDomain("domain-native-subagent-activity", []),
   });
-  const researcher = new ResearcherAgent(fixture.options);
-  fixture.registry.registerAgent(researcher);
+  const researcherMount = createMount(fixture.root, "researcher");
+  prepareAgent(fixture, "researcher", researcherMount, createAssetCommit(researcherMount));
+  const researcher = new AgentBuilder().buildWorker("researcher");
   fixture.registry.bindThread(researcher.agentId, entry.threadId);
   const activities: AgentActivity[] = [];
   const nativeSubagentActivities: AgentNativeSubagentActivity[] = [];
@@ -1076,14 +1274,14 @@ test("Worker child threads cannot inherit domain tool access from their register
     },
   };
   const fixture = createAgentFixture("worker-child-domain-tool", { appServer, domain });
-  const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
     fixture,
-    ScoutAgentRoles.Researcher,
+    "researcher",
     researcherMount,
     createAssetCommit(researcherMount),
   );
-  const researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher);
+  const researcher = new AgentBuilder().buildWorker("researcher");
   new AgentBackend().start();
   await researcher.startThread();
 
@@ -1111,14 +1309,14 @@ test("Child threads cannot call Scout agent lifecycle tools", async () => {
     },
   });
   const fixture = createAgentFixture("worker-child-lifecycle-tool", { appServer });
-  const researcherMount = createMount(fixture.root, ScoutAgentRoles.Researcher);
+  const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
     fixture,
-    ScoutAgentRoles.Researcher,
+    "researcher",
     researcherMount,
     createAssetCommit(researcherMount),
   );
-  const researcher = new AgentBuilder().buildWorker(ScoutAgentRoles.Researcher);
+  const researcher = new AgentBuilder().buildWorker("researcher");
   new AgentBackend().start();
   await researcher.startThread();
 
@@ -1159,14 +1357,14 @@ test("SendMessage reports an undelivered message when the target Worker has no T
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-send-message-no-worker-runner", []);
   const fixture = createAgentFixture("send-message-no-worker-runner", { appServer, domain });
-  const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
+  const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
   new AgentBackend().start();
-  prepareAgent(fixture, ScoutAgentRoles.Verifier, verifierMount, verifierCommit);
+  prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
   await coordinator.startThread();
-  const verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
+  const verifier = builder.buildWorker("verifier") as WorkerAgent;
   await verifier.startThread();
 
   assert.ok(appServer.handler);
@@ -1197,14 +1395,14 @@ test("Worker SendMessage reaches Coordinator and Coordinator output reaches the 
     domain,
     interactionPort,
   });
-  const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
+  const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
   new AgentBackend().start();
-  prepareAgent(fixture, ScoutAgentRoles.Verifier, verifierMount, verifierCommit);
+  prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
   await coordinator.startThread();
-  const verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
+  const verifier = builder.buildWorker("verifier") as WorkerAgent;
   await verifier.startThread();
   const interactionGateway = new InteractionGateway();
   interactionGateway.start();
@@ -1412,19 +1610,19 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   });
   const domain = createStaticDomain("domain-worker-lifecycle-tools", []);
   const fixture = createAgentFixture("worker-lifecycle-tools", { appServer, domain });
-  const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
+  const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
   new AgentBackend().start();
-  prepareAgent(fixture, ScoutAgentRoles.Verifier, verifierMount, verifierCommit);
+  prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
   await coordinator.startThread();
   fixture.registry.bindThread(coordinator.agentId, "thread-coordinator");
-  verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
+  verifier = builder.buildWorker("verifier") as WorkerAgent;
   await verifier.startThread();
   const assignment = await verifier.assignTask({
     description: "Exercise explicit lifecycle tools",
-    subagentType: ScoutAgentRoles.Verifier,
+    phase: "verify",
     prompt: agent.turn.message("Perform lifecycle handoff."),
     isBackgrounded: true,
   });
@@ -1639,21 +1837,21 @@ test("ArchiveTask releases one TaskRunner while preserving its thread and Step r
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-archive-task", []);
   const fixture = createAgentFixture("archive-task", { appServer, domain });
-  const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
+  const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
   new AgentBackend().start();
-  prepareAgent(fixture, ScoutAgentRoles.Verifier, verifierMount, verifierCommit);
+  prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
   await coordinator.startThread();
-  const verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
+  const verifier = builder.buildWorker("verifier") as WorkerAgent;
   await verifier.startThread();
   const stepRunner = verifier.stepRunner;
   fixture.registry.bindThread(coordinator.agentId, "thread-coordinator");
   const workerThreadId = verifier.threadId;
   const firstAssignment = await verifier.assignTask({
     description: "Verify the first BDD",
-    subagentType: ScoutAgentRoles.Verifier,
+    phase: "verify",
     prompt: agent.turn.message("Verify the first behavior."),
     isBackgrounded: true,
   });
@@ -1677,8 +1875,8 @@ test("ArchiveTask releases one TaskRunner while preserving its thread and Step r
   assert.deepEqual(JSON.parse(result.contentItems[0]?.text ?? "{}"), {
     status: "archived",
     taskId: "verifier-task-0001",
-    agentId: ScoutAgentRoles.Verifier,
-    role: ScoutAgentRoles.Verifier,
+    agentId: "verifier",
+    role: "verifier",
   });
   assert.equal(fixture.taskStore.getTask("verifier-task-0001"), undefined);
   assert.equal(verifier.taskRunner, undefined);
@@ -1687,7 +1885,7 @@ test("ArchiveTask releases one TaskRunner while preserving its thread and Step r
 
   const secondAssignment = await verifier.assignTask({
     description: "Verify the second BDD",
-    subagentType: ScoutAgentRoles.Verifier,
+    phase: "verify",
     prompt: agent.turn.message("Verify the second behavior."),
     isBackgrounded: true,
   });
@@ -1706,12 +1904,12 @@ test("ArchiveTask rejects non-Coordinator callers", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-archive-task-role", []);
   const fixture = createAgentFixture("archive-task-role", { appServer, domain });
-  const verifierMount = createMount(fixture.root, ScoutAgentRoles.Verifier);
+  const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
   new AgentBackend().start();
-  prepareAgent(fixture, ScoutAgentRoles.Verifier, verifierMount, verifierCommit);
+  prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
-  const verifier = builder.buildWorker(ScoutAgentRoles.Verifier) as WorkerAgent;
+  const verifier = builder.buildWorker("verifier") as WorkerAgent;
   await verifier.startThread();
 
   assert.ok(appServer.handler);
@@ -1762,7 +1960,8 @@ test("AgentTaskStore snapshots are immutable from callers", () => {
     taskId: "task-immutable",
     taskSequence: 1,
     agentId: "agent-1",
-    role: ScoutAgentRoles.Verifier,
+    role: "verifier",
+    phase: "verify",
     description: "Immutable task",
     initialPrompt: "Do work",
     status: AgentTaskStatuses.Queued,
@@ -1786,6 +1985,7 @@ function createAgentFixture(
     domain?: ScoutDomain;
     logger?: Logger;
     interactionPort?: RuntimeInteractionPort;
+    scheduler?: Scheduler;
   } = {},
 ): {
   root: string;
@@ -1801,7 +2001,7 @@ function createAgentFixture(
   journal: RunJournal;
 } {
   const root = mkdtempSync(join(tmpdir(), `scout-${name}-`));
-  const mount = createMount(root, ScoutAgentRoles.Coordinator);
+  const mount = createMount(root, "coordinator");
   const assetCommit = createAssetCommit(mount);
   const appServer = input.appServer ?? createFakeAppServer();
   const domain = input.domain ?? createStaticDomain(`domain-${name}`, []);
@@ -1819,8 +2019,8 @@ function createAgentFixture(
     throw new Error("Test run scope was not released before creating another fixture.");
   }
   const preparedAgents = {
-    [ScoutAgentRoles.Coordinator]: runAgentEnvironment(
-      ScoutAgentRoles.Coordinator,
+    ["coordinator"]: runAgentEnvironment(
+      "coordinator",
       mount,
       assetCommit,
     ),
@@ -1831,6 +2031,7 @@ function createAgentFixture(
     runRoot,
     logger,
     eventBus,
+    scheduler: input.scheduler ?? createTestScheduler(),
     interactionPort: input.interactionPort ?? new NoopRuntimeInteractionPort(),
     domain,
     journal,
@@ -1923,12 +2124,16 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
   mkdirSync(logsRoot, { recursive: true });
   mkdirSync(tempRoot, { recursive: true });
   writeFileSync(join(mountRoot, "AGENTS.md"), "common instructions", "utf8");
-  const guidanceSkills = role === ScoutAgentRoles.Coordinator
+  if (role !== "coordinator") {
+    writeFileSync(join(mountRoot, "agents", "worker.AGENTS.md"), "worker instructions", "utf8");
+  }
+  const guidanceSkills = role === "coordinator"
     ? [
       "tool-scout-assign-task",
       "tool-scout-send-message",
       "tool-scout-respond-human-input",
       "tool-scout-archive-task",
+      "tool-scout-submit-phase-outcome",
       "tool-domain-probe",
     ]
     : [
@@ -1942,24 +2147,27 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
     agentId: role,
     agentProfile: {
       config: "config/config.toml",
-      multiAgent: role !== ScoutAgentRoles.Coordinator,
+      multiAgent: role !== "coordinator",
       maxThreads: 6,
       maxDepth: 1,
-      customAgents: role === ScoutAgentRoles.Coordinator ? [] : ["scout-helper"],
+      customAgents: role === "coordinator" ? [] : ["scout-helper"],
       model: {
         id: "gpt-5.5",
         provider: "GuruOpenAI",
         reasoningEffort: "high",
         reasoningSummary: "concise",
       },
-      phase: {
-        [ScoutAgentRoles.Coordinator]: ScoutAgentPhases.Coordinate,
-        [ScoutAgentRoles.Researcher]: ScoutAgentPhases.Research,
-        [ScoutAgentRoles.Verifier]: ScoutAgentPhases.Verify,
-        [ScoutAgentRoles.Validator]: ScoutAgentPhases.Validate,
-      }[role],
+      phases: [{
+        ["coordinator"]: "Synthesis",
+        ["researcher"]: "research",
+        ["verifier"]: "verify",
+        ["validator"]: "research-reviewer",
+      }[role] ?? "verify"],
+      shellTools: [],
       mcpServers: [],
       plugins: [],
+      readableRoots: [],
+      writableRoots: [],
     },
     assetCommitId: `ac_${role}`,
     mountId: `mount-${role}`,
@@ -1974,7 +2182,7 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
     writableRoots: [artifactRoot],
     shellTools: [],
     mcpServers: [],
-    customAgents: role === ScoutAgentRoles.Coordinator ? [] : ["scout-helper"],
+    customAgents: role === "coordinator" ? [] : ["scout-helper"],
     skills: guidanceSkills.map((name) => ({
       name,
       description: `${name} description`,

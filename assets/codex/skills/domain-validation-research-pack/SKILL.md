@@ -4,7 +4,7 @@ name: domain-validation-research-pack
 description: Scout Researcher 在 Validation Domain 中编排知识与代码证据、构建唯一 Research Pack、Evidence Registry，并按 Signal contract 形成 Verification Manual 时使用。
 id: domain-validation-research-pack
 version: 0.2.4
-phase: [research, validate]
+phase: [research, research-reviewer, verify-reviewer]
 family: [validation, workflow]
 tags: [scout, validation, research, pack, evidence, manual]
 devices: [any]

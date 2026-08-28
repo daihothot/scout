@@ -19,6 +19,7 @@ export interface ResumePacketInput {
   projection: RunProjection;
   agentId: string;
   role: ScoutAgentRole;
+  synthesisRole: ScoutAgentRole;
   assetCommitId: string;
   resumeActions: ResumeAction[];
 }

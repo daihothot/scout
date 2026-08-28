@@ -11,10 +11,7 @@ import {
   resolve,
   sep,
 } from "node:path";
-import {
-  ScoutAgentRoles,
-  type ScoutAgentRole,
-} from "../../agent/thread/types.js";
+import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import type { AgentDynamicToolSpec } from "../../agent/tools/types.js";
 import type {
   ScoutDomain,
@@ -135,6 +132,14 @@ export class ValidationDomain implements ScoutDomain {
 
   private recordArtifacts(role: ScoutAgentRole, submittedTaskId?: string): void {
     const scope = currentRunScope();
+    const graphRole = scope.scheduler.snapshot().roles.find((candidate) =>
+      candidate.name === role
+    );
+    if (!graphRole) {
+      throw new Error(`Validation role is not declared by the current Workflow: ${role}`);
+    }
+    const producesResearchPack = graphRole.phases.includes("research");
+    const reviewsResearchPack = graphRole.phases.includes("research-reviewer");
     const agent = scope.environment.agents[role];
     const artifactRoot = resolve(agent.mount.artifactRoot);
     if (!existsSync(artifactRoot)) return;
@@ -143,9 +148,9 @@ export class ValidationDomain implements ScoutDomain {
       .sort((left, right) => left.name.localeCompare(right.name))
       .filter((entry) => {
         if (entry.name.startsWith(".")) return false;
-        const isResearchPackName = role === ScoutAgentRoles.Researcher
+        const isResearchPackName = producesResearchPack
           && entry.name.endsWith("-research-pack");
-        const isResearchGateName = role === ScoutAgentRoles.Validator
+        const isResearchGateName = reviewsResearchPack
           && /^research-pack-gate-[0-9]{4}\.md$/.test(entry.name);
         if (!isResearchPackName && !isResearchGateName) return false;
         if (
@@ -163,10 +168,10 @@ export class ValidationDomain implements ScoutDomain {
       throw new Error(`Validation artifact digest tool is unavailable for ${role}: ${digestTool}`);
     }
     for (const entry of entries) {
-      const isResearchPack = role === ScoutAgentRoles.Researcher
+      const isResearchPack = producesResearchPack
         && entry.isDirectory()
         && entry.name.endsWith("-research-pack");
-      const isResearchGate = role === ScoutAgentRoles.Validator
+      const isResearchGate = reviewsResearchPack
         && entry.isFile()
         && /^research-pack-gate-[0-9]{4}\.md$/.test(entry.name);
       const path = join(artifactRoot, entry.name);

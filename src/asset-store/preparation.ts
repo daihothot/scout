@@ -150,6 +150,7 @@ function materializeOptionsFingerprint(options: MaterializeOptions): string {
     scoutRoot: resolve(options.scoutRoot),
     runId: options.runId,
     agentId: options.agentId,
+    workflowProfileName: options.workflowProfileName,
     parentAssetCommitId: options.parentAssetCommitId,
     persistedIdentity: options.persistedIdentity,
     allowAssetResourceDrift: options.allowAssetResourceDrift,

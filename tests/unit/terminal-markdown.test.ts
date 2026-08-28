@@ -487,7 +487,7 @@ test("activity strip retains the latest Agent activity after it completes", () =
       activity.activity,
     ],
     [
-      "RES",
+      "RESEA",
       "researcher-task-0001",
       "reasoning",
       true,
@@ -647,7 +647,7 @@ test("activity strip shows process during Coordinator and Worker item gaps", () 
   );
   assert.deepEqual(
     worker && [worker.label, worker.type, worker.processing, worker.activity],
-    ["RES", "commandExecution", true, "处理中 · 已执行 · rg BDD-001"],
+    ["RESEA", "commandExecution", true, "处理中 · 已执行 · rg BDD-001"],
   );
 });
 

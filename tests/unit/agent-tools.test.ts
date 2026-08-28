@@ -9,16 +9,17 @@ import {
   AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
   AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+  AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
   buildArchiveTaskDynamicTool,
   buildAssignTaskDynamicTool,
   buildRequestHumanInputDynamicTool,
   buildRespondHumanInputDynamicTool,
   buildSendMessageDynamicTool,
   buildSubmitTaskDynamicTool,
+  buildSubmitPhaseOutcomeDynamicTool,
   assertAgentToolNamespace,
   parseAgentDynamicToolCall,
 } from "../../src/agent/tools/agent-tools.js";
-import { ScoutAgentRoles } from "../../src/agent/thread/types.js";
 
 const scoutRoot = process.cwd();
 
@@ -30,6 +31,7 @@ test("agent dynamic tool specs expose stable namespaces, guidance Skills, and re
     buildRespondHumanInputDynamicTool(),
     buildSubmitTaskDynamicTool(),
     buildArchiveTaskDynamicTool(),
+    buildSubmitPhaseOutcomeDynamicTool(),
   ];
   assert.deepEqual(tools.map((tool) => tool.namespace), [
     AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
@@ -38,6 +40,7 @@ test("agent dynamic tool specs expose stable namespaces, guidance Skills, and re
     AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
     AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
     AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
+    AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
   ]);
   assert.deepEqual(tools.map((tool) => tool.guidanceSkill), [
     "tool-scout-assign-task",
@@ -46,19 +49,16 @@ test("agent dynamic tool specs expose stable namespaces, guidance Skills, and re
     "tool-scout-respond-human-input",
     "tool-scout-submit-task",
     "tool-scout-archive-task",
+    "tool-scout-submit-phase-outcome",
   ]);
   assert.deepEqual(tools.map((tool) => readRequired(tool.inputSchema)), [
-    ["description", "subagent_type", "prompt"],
+    ["description", "prompt"],
     ["to", "message"],
     ["request"],
     ["task_id", "response"],
     ["outcome"],
     ["task_id"],
-  ]);
-  assert.deepEqual(readEnumProperty(tools[0]?.inputSchema, "subagent_type"), [
-    ScoutAgentRoles.Researcher,
-    ScoutAgentRoles.Verifier,
-    ScoutAgentRoles.Validator,
+    ["outcome"],
   ]);
   for (const tool of tools) {
     assert.doesNotMatch(tool.description, /selection|discovery|完整 contract|生命周期/);
@@ -67,15 +67,11 @@ test("agent dynamic tool specs expose stable namespaces, guidance Skills, and re
 
 test("agent tool parser validates and normalizes each supported payload", () => {
   assert.deepEqual(parseAgentDynamicToolCall("AssignTask", {
-    agent_id: " researcher ",
     description: " Research BDD ",
-    subagent_type: ScoutAgentRoles.Researcher,
     prompt: " Inspect current evidence ",
   }), {
     tool: "AssignTask",
-    agent_id: "researcher",
     description: "Research BDD",
-    subagent_type: ScoutAgentRoles.Researcher,
     prompt: "Inspect current evidence",
   });
   assert.deepEqual(parseAgentDynamicToolCall("SendMessage", {
@@ -105,6 +101,9 @@ test("agent tool parser validates and normalizes each supported payload", () => 
   assert.deepEqual(parseAgentDynamicToolCall("ArchiveTask", {
     task_id: " task-1 ",
   }), { tool: "ArchiveTask", task_id: "task-1" });
+  assert.deepEqual(parseAgentDynamicToolCall("SubmitPhaseOutcome", {
+    outcome: "completed",
+  }), { tool: "SubmitPhaseOutcome", outcome: "completed" });
 });
 
 test("agent tool parser rejects malformed and removed Skill tool payloads", () => {
@@ -118,10 +117,13 @@ test("agent tool parser rejects malformed and removed Skill tool payloads", () =
   assert.throws(() => parseAgentDynamicToolCall("SubmitTask", { outcome: " " }), /SubmitTask outcome/);
   assert.throws(() => parseAgentDynamicToolCall("AssignTask", {
     description: "Research BDD",
-    subagent_type: ScoutAgentRoles.Coordinator,
-    prompt: "Inspect evidence",
-  }), /subagent_type/);
+    prompt: " ",
+  }), /AssignTask prompt/);
   assert.throws(() => parseAgentDynamicToolCall("ArchiveTask", { task_id: " " }), /ArchiveTask task_id/);
+  assert.throws(
+    () => parseAgentDynamicToolCall("SubmitPhaseOutcome", { outcome: "blocked" }),
+    /SubmitPhaseOutcome outcome/,
+  );
   assert.throws(() => parseAgentDynamicToolCall("FindSkills", {}), /Unsupported agent tool/);
   assert.throws(() => parseAgentDynamicToolCall("ReadSkillResource", {}), /Unsupported agent tool/);
 });
@@ -140,17 +142,26 @@ test("agent tools are hard-bound to their registered namespaces", () => {
   );
 });
 
-test("global rules keep dynamic tool guidance in independent Tool Skills", () => {
+test("Worker rules bind dynamic tools to independent Tool Skills", () => {
   const agentRoot = join(scoutRoot, "assets", "codex", "agents");
   const skillRoot = join(scoutRoot, "assets", "codex", "skills");
   const commonRules = readFileSync(join(agentRoot, "AGENTS.md"), "utf8");
+  const workerRules = readFileSync(join(agentRoot, "worker.AGENTS.md"), "utf8");
 
   assert.doesNotMatch(commonRules, /FindSkills|ReadSkillResource|selectionId|loadOrder/);
   assert.doesNotMatch(commonRules, /tool-scout-/);
   assert.deepEqual(
     readdirSync(agentRoot).filter((name) => name.endsWith(".AGENTS.md")),
-    [],
+    ["worker.AGENTS.md"],
   );
+  for (const toolName of ["update_plan", "RequestHumanInput", "SubmitTask"]) {
+    assert.match(workerRules, new RegExp(`\\b${toolName}\\b`), toolName);
+  }
+  for (const skillName of [
+    "tool-scout-send-message",
+    "tool-scout-request-human-input",
+    "tool-scout-submit-task",
+  ]) assert.match(workerRules, new RegExp(skillName));
   for (const skillName of readdirSync(skillRoot).filter((name) => name.startsWith("tool-scout-"))) {
     assert.equal(readFileSync(join(skillRoot, skillName, "SKILL.md"), "utf8").length > 0, true);
   }

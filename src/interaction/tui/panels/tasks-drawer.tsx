@@ -215,13 +215,10 @@ export function buildCollapsedTaskSummary(
     .filter((task) => task.status !== "archived")
     .map((task) => {
       const sequence = task.taskId.match(/-task-(\d+)$/)?.[1];
-      const role = task.role === "researcher"
-        ? "RES"
-        : task.role === "verifier"
-          ? "VER"
-          : task.role === "validator"
-            ? "VAL"
-            : (task.role ?? "WORKER").toUpperCase();
+      const role = (task.role ?? "worker")
+        .replace(/[^A-Za-z0-9]/g, "")
+        .slice(0, 5)
+        .toUpperCase() || "ROLE";
       return `${role}:${sequence ? `t-${sequence}` : task.taskId} ${task.status ?? "unknown"}`;
     })
     .join(" · ");

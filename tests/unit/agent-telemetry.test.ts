@@ -572,7 +572,7 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
   assert.doesNotMatch(restartedBlock, /restartedAt/);
   assert.match(restartedBlock, /thread-researcher-restarted/);
   assert.match(text, /- "AGENTS\.md"/);
-  assert.doesNotMatch(text, /worker\.AGENTS\.md/);
+  assert.match(text, /- "agents\/worker\.AGENTS\.md"/);
   assert.doesNotMatch(text, /researcher\.AGENTS\.md/);
   assert.match(text, /namespace: "agent\.submit-task"/);
   assert.match(text, /name: "SubmitTask"/);
@@ -615,7 +615,7 @@ test("AgentThreadRecorder marks coordinator inline instructions separately from 
   const started: AgentThreadSnapshot = {
     agentId: "coordinator",
     role: "coordinator",
-    phases: ["coordinate"],
+    phases: ["Synthesis"],
     contextBundleId: "cb-coordinator-thread-recorder",
     threadId: "thread-coordinator",
     createdAt: "2026-07-17T00:00:00.000Z",
@@ -662,6 +662,7 @@ function taskState(): AgentTaskState {
     taskSequence: 1,
     agentId: "researcher",
     role: "researcher",
+    phase: "research",
     description: "Research current BDD evidence",
     initialPrompt: "Research current BDD evidence",
     status: "queued",
