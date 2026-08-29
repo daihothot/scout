@@ -22,7 +22,7 @@ afterEach(() => {
   for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-test("scout-assets summary presents current phase, roots, counts, and issues", () => {
+test("scout-assets summary presents current profile, roots, counts, and issues", () => {
   const fixture = createFixture();
   const result = runScoutAssets(fixture.mountRoot, "summary");
 
@@ -30,9 +30,11 @@ test("scout-assets summary presents current phase, roots, counts, and issues", (
   const output = JSON.parse(result.stdout);
   assert.deepEqual(output.identity, {
     agentId: "researcher",
-    phase: "research",
-    mountId: "m_test",
     mountRoot: ".",
+  });
+  assert.deepEqual(output.profile, {
+    phases: ["research", "verify"],
+    resourceParks: ["worker-core", "repository-access"],
   });
   assert.deepEqual(output.counts, {
     skills: 5,
@@ -57,7 +59,7 @@ test("scout-assets summary presents current phase, roots, counts, and issues", (
 test("scout-assets family returns flat names and progressively resolves unique families", () => {
   const fixture = createFixture();
   const families = parseSuccessful(fixture.mountRoot, "family");
-  assert.equal(families.phase, "research");
+  assert.deepEqual(families.phases, ["research", "verify"]);
   assert.deepEqual(families.families, [
     "audit",
     "dynamic",
@@ -74,7 +76,7 @@ test("scout-assets family returns flat names and progressively resolves unique f
 
   const workflow = parseSuccessful(fixture.mountRoot, "family", "workflow");
   assert.deepEqual(workflow, {
-    phase: "research",
+    phases: ["research", "verify"],
     family: "validation/workflow",
     skills: [{
       name: "domain-validation-researcher",
@@ -85,7 +87,7 @@ test("scout-assets family returns flat names and progressively resolves unique f
 
   const single = parseSuccessful(fixture.mountRoot, "family", "single");
   assert.deepEqual(single, {
-    phase: "research",
+    phases: ["research", "verify"],
     family: "validation/single",
     children: ["unity"],
   });
@@ -95,7 +97,7 @@ test("scout-assets asks for a parent path when a family name is ambiguous", () =
   const fixture = createFixture();
   const ambiguous = parseSuccessful(fixture.mountRoot, "family", "unity");
   assert.deepEqual(ambiguous, {
-    phase: "research",
+    phases: ["research", "verify"],
     family: "unity",
     ambiguous: true,
     candidates: ["audit/unity", "validation/single/unity"],
@@ -103,7 +105,7 @@ test("scout-assets asks for a parent path when a family name is ambiguous", () =
 
   const resolved = parseSuccessful(fixture.mountRoot, "family", "validation/single/unity");
   assert.deepEqual(resolved, {
-    phase: "research",
+    phases: ["research", "verify"],
     family: "validation/single/unity",
     skills: [{
       name: "validation-single",
@@ -113,7 +115,7 @@ test("scout-assets asks for a parent path when a family name is ambiguous", () =
   });
 });
 
-test("scout-assets skill returns metadata and all current phase tools", () => {
+test("scout-assets skill returns metadata and all current role tools", () => {
   const fixture = createFixture();
   const output = parseSuccessful(fixture.mountRoot, "skill", "domain-validation-researcher");
   assert.equal(output.skill.path, ".scout/skill/validation/workflow/domain-validation-researcher/SKILL.md");
@@ -152,7 +154,7 @@ test("scout-assets rejects unknown resources, removed commands, and missing mani
 
   const missingFamily = runScoutAssets(fixture.mountRoot, "family", "missing-family");
   assert.equal(missingFamily.status, 1);
-  assert.match(missingFamily.stderr, /Family is not supported for the current phase/);
+  assert.match(missingFamily.stderr, /Family is not supported for the current role/);
 
   const emptyRoot = createTemporaryRoot();
   const missingManifest = runScoutAssets(emptyRoot, "family");
@@ -187,7 +189,10 @@ function createFixture(): {
     agentId: "researcher",
     assetCommitId: "ac_test",
     mountId: "m_test",
-    agentProfile: { phase: "research" },
+    agentProfile: {
+      phases: ["research", "verify"],
+      resourceParks: ["worker-core", "repository-access"],
+    },
     mountRoot: ".",
     profileReadableRoots: ["~/.shared-source"],
     profileWritableRoots: ["~/.artifacts"],

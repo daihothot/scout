@@ -377,6 +377,36 @@ test("Coordinator resource hash does not depend on an unmounted custom agent", (
   assert.notEqual(researcherAfter.resourceHash, researcherBefore.resourceHash);
 });
 
+test("Resource Park changes affect only roles bound through its Phases", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-resource-park-hash-");
+  const store = new AssetStore();
+  const before = Object.fromEntries(["coordinator", "researcher", "validator"].map((agentId) => [
+    agentId,
+    store.materializeMount({
+      scoutRoot: fixtureRoot,
+      runId: `run-${agentId}-park-before-test`,
+      agentId,
+    }).resourceHash,
+  ]));
+  const path = join(fixtureRoot, "assets", "codex", "workflows", "domain-validation.json");
+  const workflow = JSON.parse(readFileSync(path, "utf8")) as Mutable<WorkflowProfile>;
+  workflow.resources["research-artifacts"]!.shellTools.push("head");
+  writeFileSync(path, JSON.stringify(workflow, null, 2) + "\n", "utf8");
+
+  const after = Object.fromEntries(["coordinator", "researcher", "validator"].map((agentId) => [
+    agentId,
+    store.materializeMount({
+      scoutRoot: fixtureRoot,
+      runId: `run-${agentId}-park-after-test`,
+      agentId,
+    }).resourceHash,
+  ]));
+
+  assert.equal(after.coordinator, before.coordinator);
+  assert.notEqual(after.researcher, before.researcher);
+  assert.equal(after.validator, before.validator);
+});
+
 function createCodexAssetFixture(prefix: string): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
@@ -401,9 +431,20 @@ function updateAgentProfile(
   if (patch.config !== undefined) workflow.defaults.config = patch.config;
   if (patch.maxThreads !== undefined) workflow.defaults.maxThreads = patch.maxThreads;
   if (patch.maxDepth !== undefined) workflow.defaults.maxDepth = patch.maxDepth;
-  const resources = agentId === "coordinator"
-    ? [workflow.phases.synthesis]
-    : (role.phases ?? []).map((phase) => workflow.phases.workers[phase]!);
+  const phases = agentId === "coordinator" ? ["Synthesis"] : [...(role.phases ?? [])];
+  const resourceEntries = Object.entries(workflow.resources);
+  const selectedResourceNames = new Set<string>();
+  const defaultResource = resourceEntries.find(([, resource]) => resource.default === true);
+  if (!defaultResource) throw new Error("Missing default Resource Park.");
+  for (const phase of phases) {
+    const matches = resourceEntries.filter(([, resource]) => resource.phases.includes(phase));
+    for (const [name] of matches.length > 0 ? matches : [defaultResource]) {
+      selectedResourceNames.add(name);
+    }
+  }
+  const resources = resourceEntries
+    .filter(([name]) => selectedResourceNames.has(name))
+    .map(([, resource]) => resource);
   for (const resource of resources) {
     if (Object.hasOwn(patch, "shellTools")) resource.shellTools = [...(patch.shellTools ?? [])];
     if (patch.mcpServers !== undefined) resource.mcpServers = [...patch.mcpServers];

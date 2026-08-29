@@ -15,6 +15,7 @@ import {
   win32,
 } from "node:path";
 import type { ScoutAgentPhase } from "../../agent/thread/types.js";
+import { StartupPhase } from "../../core/workflow/index.js";
 import {
   ScoutSkillResourceRequirements,
   type ScoutSkillCatalogEntry,
@@ -184,7 +185,7 @@ export function resolveSkillDependencyLoadOrder(
   return result;
 }
 
-/** Returns all Skills visible in the supplied Phases plus their required dependency closure. */
+/** Returns Startup Skills and Skills visible in the supplied Phases, dependency-first. */
 export function resolveScoutSkillsForPhases(
   catalog: ScoutSkillCatalogEntry[],
   phases: readonly ScoutAgentPhase[],
@@ -193,7 +194,8 @@ export function resolveScoutSkillsForPhases(
   return resolveSkillDependencyLoadOrder(
     catalog,
     catalog
-      .filter((skill) => skill.phase.some((phase) => selectedPhases.has(phase)))
+      .filter((skill) => skill.phase.includes(StartupPhase)
+        || skill.phase.some((phase) => selectedPhases.has(phase)))
       .map((skill) => skill.name),
   );
 }
@@ -215,9 +217,9 @@ export function validateScoutSkillCatalog(catalog: ScoutSkillCatalogEntry[]): vo
       if (!dependency) {
         throw new Error(`Unknown Scout Skill dependency: ${dependencyName}`);
       }
-      const unsupportedPhase = skill.phase.find((phase) =>
-        !dependency.phase.includes(phase)
-      );
+      const unsupportedPhase = dependency.phase.includes(StartupPhase)
+        ? undefined
+        : skill.phase.find((phase) => !dependency.phase.includes(phase));
       if (unsupportedPhase) {
         throw new Error(
           `Scout Skill ${skill.name} dependency ${dependencyName} does not support phase ${unsupportedPhase}.`,

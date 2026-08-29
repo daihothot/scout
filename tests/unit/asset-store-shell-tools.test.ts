@@ -186,7 +186,7 @@ test("AssetStore rejects shell and MCP names that are not single path segments",
       runId: "run-mcp-name-boundary",
       agentId: "coordinator",
     }),
-    /Invalid phases\.synthesis resource name/,
+    /Invalid resources\.common-inspection resource name/,
   );
 });
 
@@ -1123,7 +1123,7 @@ test("AssetStore allows explicit source-resource drift only with fresh mount ide
   assert.equal(reused.decision, "reused");
 });
 
-test("Coordinator mount inventories the selected Workflow Profile and detects its drift", () => {
+test("Coordinator mount records Workflow provenance without treating edge changes as resource drift", () => {
   const fixtureRoot = createCodexAssetFixture("scout-workflow-profile-drift-");
   const store = new AssetStore();
   const runId = "run-workflow-profile-drift";
@@ -1146,7 +1146,9 @@ test("Coordinator mount inventories the selected Workflow Profile and detects it
   );
 
   const workflowPath = resolve(fixtureRoot, workflowAsset.sourcePath);
-  writeFileSync(workflowPath, `${readFileSync(workflowPath, "utf8")}\n`, "utf8");
+  const workflow = JSON.parse(readFileSync(workflowPath, "utf8")) as Mutable<WorkflowProfile>;
+  workflow.phases.workers.research!.edges.completed = "verify";
+  writeFileSync(workflowPath, JSON.stringify(workflow, null, 2) + "\n", "utf8");
   const options = {
     scoutRoot: fixtureRoot,
     runId,
@@ -1156,13 +1158,10 @@ test("Coordinator mount inventories the selected Workflow Profile and detects it
     persistedManifest,
     persistedIdentity: mountIdentity(initial),
   };
-  assert.throws(() => store.inspectMount(options), /Persisted asset changed/);
-  const inspection = store.inspectMount({
-    ...options,
-    allowAssetResourceDrift: true,
+  assert.deepEqual(store.inspectMount(options), {
+    decision: "reused",
+    reason: undefined,
   });
-  assert.equal(inspection.decision, "rebuild");
-  assert.equal(inspection.resourceDrift, true);
 });
 
 test("AssetStore does not allow resource drift to change an agent profile", () => {
@@ -1210,8 +1209,9 @@ test("AssetStore rebuilds when only profile roots change and preserves resource 
   ) as MountManifest;
   const profilesPath = join(fixtureRoot, "assets", "codex", "workflows", "domain-validation.json");
   const profiles = JSON.parse(readFileSync(profilesPath, "utf8")) as Mutable<WorkflowProfile>;
-  profiles.phases.workers.research!.readableRoots = [
-    ...profiles.phases.workers.research!.readableRoots,
+  const repositoryAccess = profiles.resources["repository-access"]!;
+  repositoryAccess.readableRoots = [
+    ...repositoryAccess.readableRoots,
     "${SCOUT_ROOT}/migrated-source",
   ];
   writeFileSync(profilesPath, JSON.stringify(profiles, null, 2) + "\n", "utf8");
@@ -1244,7 +1244,7 @@ test("AssetStore rebuilds when only profile roots change and preserves resource 
   ) as MountManifest;
   assert.deepEqual(
     currentManifest.profileReadableRoots,
-    profiles.phases.workers.research!.readableRoots,
+    rebuilt.mount.agentProfile.readableRoots,
   );
 });
 
@@ -1964,13 +1964,19 @@ function writeExecutable(path: string, marker: string): void {
 function updateCoordinatorShellTools(assetsRoot: string, shellTools: string[]): void {
   const path = join(assetsRoot, "workflows", "domain-validation.json");
   const profiles = JSON.parse(readFileSync(path, "utf8")) as Mutable<WorkflowProfile>;
-  profiles.phases.synthesis.shellTools = shellTools;
+  const defaultResource = Object.values(profiles.resources)
+    .find((resource) => resource.default === true);
+  if (!defaultResource) throw new Error("Missing default Resource Park.");
+  defaultResource.shellTools = shellTools;
   writeFileSync(path, JSON.stringify(profiles, null, 2) + "\n", "utf8");
 }
 
 function updateCoordinatorMcpServers(assetsRoot: string, mcpServers: string[]): void {
   const path = join(assetsRoot, "workflows", "domain-validation.json");
   const profiles = JSON.parse(readFileSync(path, "utf8")) as Mutable<WorkflowProfile>;
-  profiles.phases.synthesis.mcpServers = mcpServers;
+  const defaultResource = Object.values(profiles.resources)
+    .find((resource) => resource.default === true);
+  if (!defaultResource) throw new Error("Missing default Resource Park.");
+  defaultResource.mcpServers = mcpServers;
   writeFileSync(path, JSON.stringify(profiles, null, 2) + "\n", "utf8");
 }

@@ -42,9 +42,12 @@ export class MountSourceInventoryInspector {
           if (actualAsset.sourcePath !== expectedAsset.sourcePath) {
             return `asset source changed: ${expectedAsset.id}`;
           }
-          // shell-tools.json is a device-owned registry and deliberately has no
-          // portable hash contract; executable/resource entries remain hashed.
-          if (expectedAsset.id !== "codex.shell_tools" && actualAsset.hash !== expectedAsset.hash) {
+          // Device-owned tool registries and the graph source are provenance,
+          // not effective mount resources. Their selected projections are
+          // validated through the concrete tool and Agent Profile entries.
+          if (expectedAsset.id !== "codex.shell_tools"
+            && expectedAsset.type !== "workflow_profile"
+            && actualAsset.hash !== expectedAsset.hash) {
             return `asset hash changed: ${expectedAsset.id}`;
           }
         }

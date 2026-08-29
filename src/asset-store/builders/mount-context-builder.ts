@@ -99,7 +99,6 @@ export class MountContextBuilder {
       customAgentPaths: profiledCustomAgentPaths,
       skillPaths: profiledSkillPaths,
       pluginPaths: profiledPluginPaths,
-      workflowProfileAsset,
     });
     const assetCommitHash = sha256Text([
       `agent:${agentId}`,
@@ -351,7 +350,6 @@ export function computeResourceHash(input: {
   customAgentPaths: string[];
   skillPaths: string[];
   pluginPaths: string[];
-  workflowProfileAsset: WorkflowProfileAsset;
 }): string {
   const isSynthesisRole = input.agentProfile.phases.includes(SynthesisPhase);
   const parts = [
@@ -371,9 +369,6 @@ export function computeResourceHash(input: {
       `skill:${skill}:${hashDirectory(dirname(join(input.assetsRoot, skill)))}`
     ),
     ...input.pluginPaths.map((plugin) => `plugin:${plugin}:${hashDirectory(join(input.assetsRoot, plugin))}`),
-    ...(isSynthesisRole
-      ? [`workflowProfile:${input.workflowProfileAsset.name}:${input.workflowProfileAsset.hash}`]
-      : []),
   ];
   return sha256Text(parts.sort().join("\n"));
 }

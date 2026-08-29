@@ -14,6 +14,7 @@ export interface AgentProfile {
   customAgents: string[];
   model: CodexModelConfig;
   phases: ScoutAgentPhase[];
+  resourceParks: string[];
   shellTools: string[];
   mcpServers: string[];
   plugins: string[];

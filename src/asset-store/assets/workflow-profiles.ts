@@ -5,11 +5,14 @@ import type {
   CodexReasoningSummary,
 } from "../../agent-server/codex/model-config.js";
 import { readJsonFile, sha256File } from "../../core/fs.js";
-import type { WorkflowPhaseEdges } from "../../core/workflow/index.js";
+import {
+  SynthesisPhase,
+  type WorkflowPhaseEdges,
+} from "../../core/workflow/index.js";
 import type {
-  WorkflowPhaseResources,
   WorkflowProfile,
   WorkflowProfileAsset,
+  WorkflowResourcePark,
   WorkflowRoleDefinition,
   WorkflowWorkerPhaseDefinition,
 } from "../contracts/workflow-profile.js";
@@ -62,11 +65,11 @@ export function readWorkflowProfile(
 
 function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
   const profile = requireRecord(value, path, "Workflow Profile");
-  assertKeys(profile, ["defaults", "phases", "roles"], path, "top-level");
+  assertKeys(profile, ["defaults", "phases", "resources", "roles"], path, "top-level");
   const defaults = requireRecord(profile.defaults, path, "defaults");
   assertKeys(defaults, ["config", "model", "maxThreads", "maxDepth"], path, "defaults");
   const phases = requireRecord(profile.phases, path, "phases");
-  assertKeys(phases, ["synthesis", "workers"], path, "phases");
+  assertKeys(phases, ["workers"], path, "phases");
   const workersValue = requireRecord(phases.workers, path, "phases.workers");
   const workerEntries = Object.entries(workersValue);
   if (workerEntries.length === 0) {
@@ -76,6 +79,24 @@ function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
     assertMountPathSegment(name, "Worker Phase name");
     return [name, parseWorkerPhase(definition, path, name)] as const;
   }));
+  const resourcesValue = requireRecord(profile.resources, path, "resources");
+  const resourceEntries = Object.entries(resourcesValue);
+  if (resourceEntries.length === 0) {
+    throw new Error(`Invalid Workflow Profile at ${path}: resources must not be empty.`);
+  }
+  const resources = Object.fromEntries(resourceEntries.map(([name, definition]) => {
+    assertMountPathSegment(name, "Resource Park name");
+    return [name, parseResourcePark(definition, path, name, workers)] as const;
+  }));
+  const defaultResourceParks = Object.entries(resources)
+    .filter(([, resource]) => resource.default === true)
+    .map(([name]) => name);
+  if (defaultResourceParks.length !== 1) {
+    throw new Error(
+      `Invalid Workflow Profile at ${path}: resources must declare exactly one`
+      + ` global default Resource Park; found ${defaultResourceParks.length}.`,
+    );
+  }
   const rolesValue = requireRecord(profile.roles, path, "roles");
   if (!Object.hasOwn(rolesValue, "coordinator")) {
     throw new Error(`Invalid Workflow Profile at ${path}: roles.coordinator is required.`);
@@ -98,9 +119,9 @@ function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
       maxDepth: requireInteger(defaults.maxDepth, path, "defaults.maxDepth", 0),
     },
     phases: {
-      synthesis: parsePhaseResources(phases.synthesis, path, "phases.synthesis"),
       workers,
     },
+    resources,
     roles,
   };
 }
@@ -112,14 +133,7 @@ function parseWorkerPhase(
 ): WorkflowWorkerPhaseDefinition {
   const label = `phases.workers.${name}`;
   const phase = requireRecord(value, path, label);
-  assertKeys(phase, [
-    "shellTools",
-    "mcpServers",
-    "plugins",
-    "readableRoots",
-    "writableRoots",
-    "edges",
-  ], path, label);
+  assertKeys(phase, ["edges"], path, label);
   const edgesValue = requireRecord(phase.edges, path, `${label}.edges`);
   assertKeys(edgesValue, ["completed", "error"], path, `${label}.edges`);
   const edges: WorkflowPhaseEdges = {
@@ -127,38 +141,58 @@ function parseWorkerPhase(
     error: requireNullableString(edgesValue.error, path, `${label}.edges.error`),
   };
   return {
-    ...parsePhaseResources(phase, path, label),
     edges,
   };
 }
 
-function parsePhaseResources(
+function parseResourcePark(
   value: unknown,
   path: string,
-  label: string,
-): WorkflowPhaseResources {
-  const phase = requireRecord(value, path, label);
-  if (label === "phases.synthesis") {
-    assertKeys(phase, [
-      "shellTools",
-      "mcpServers",
-      "plugins",
-      "readableRoots",
-      "writableRoots",
-    ], path, label);
+  name: string,
+  workers: Readonly<Record<string, WorkflowWorkerPhaseDefinition>>,
+): WorkflowResourcePark {
+  const label = `resources.${name}`;
+  const resource = requireRecord(value, path, label);
+  assertKeys(resource, [
+    "default",
+    "phases",
+    "shellTools",
+    "mcpServers",
+    "plugins",
+    "readableRoots",
+    "writableRoots",
+  ], path, label);
+  if (resource.default !== undefined && resource.default !== true) {
+    throw new Error(
+      `Invalid Workflow Profile at ${path}: ${label}.default must be true when declared.`,
+    );
   }
-  const shellTools = requireStringArray(phase.shellTools, path, `${label}.shellTools`);
-  const mcpServers = requireStringArray(phase.mcpServers, path, `${label}.mcpServers`);
-  const plugins = requireStringArray(phase.plugins, path, `${label}.plugins`);
-  for (const name of [...shellTools, ...mcpServers, ...plugins]) {
-    assertMountPathSegment(name, `${label} resource name`);
+  const phases = requireStringArray(resource.phases, path, `${label}.phases`);
+  if (phases.length === 0) {
+    throw new Error(`Invalid Workflow Profile at ${path}: ${label}.phases must not be empty.`);
+  }
+  for (const phase of phases) {
+    if (phase !== SynthesisPhase && !Object.hasOwn(workers, phase)) {
+      throw new Error(
+        `Invalid Workflow Profile at ${path}: ${label}`
+        + ` references unknown Phase ${phase}.`,
+      );
+    }
+  }
+  const shellTools = requireStringArray(resource.shellTools, path, `${label}.shellTools`);
+  const mcpServers = requireStringArray(resource.mcpServers, path, `${label}.mcpServers`);
+  const plugins = requireStringArray(resource.plugins, path, `${label}.plugins`);
+  for (const resourceName of [...shellTools, ...mcpServers, ...plugins]) {
+    assertMountPathSegment(resourceName, `${label} resource name`);
   }
   return {
+    ...(resource.default === true ? { default: true as const } : {}),
+    phases,
     shellTools,
     mcpServers,
     plugins,
-    readableRoots: requireStringArray(phase.readableRoots, path, `${label}.readableRoots`),
-    writableRoots: requireStringArray(phase.writableRoots, path, `${label}.writableRoots`),
+    readableRoots: requireStringArray(resource.readableRoots, path, `${label}.readableRoots`),
+    writableRoots: requireStringArray(resource.writableRoots, path, `${label}.writableRoots`),
   };
 }
 

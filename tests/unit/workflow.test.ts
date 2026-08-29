@@ -13,6 +13,7 @@ import {
   AssetStore,
   readWorkflowProfile,
 } from "../../src/asset-store/index.js";
+import { WorkflowBuilder } from "../../src/asset-store/builders/workflow-builder.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import {
   Phase,
@@ -42,6 +43,26 @@ test("WorkflowBuilder preserves Worker Phase and role declaration order", () => 
     "verify",
     "verify-reviewer",
   ]);
+  assert.deepEqual(Object.keys(asset.profile.resources), [
+    "common-inspection",
+    "worker-core",
+    "repository-access",
+    "research-artifacts",
+    "artifact-review",
+    "runtime-verification",
+  ]);
+  assert.deepEqual(
+    new WorkflowBuilder(asset).buildAgentProfile("coordinator").resourceParks,
+    ["common-inspection"],
+  );
+  assert.deepEqual(
+    new WorkflowBuilder(asset).buildAgentProfile("researcher").resourceParks,
+    ["worker-core", "repository-access", "research-artifacts"],
+  );
+  assert.deepEqual(
+    new WorkflowBuilder(asset).buildAgentProfile("validator").resourceParks,
+    ["worker-core", "artifact-review"],
+  );
   assert.deepEqual(graph.phases.map((phase) => phase.name), [
     "research",
     "research-reviewer",
@@ -184,6 +205,71 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
       () => readWorkflowProfile(fixtureRoot, "invalid"),
       /roles\.coordinator cannot declare phases/,
     );
+
+    const withoutDefaultResource = structuredClone(original) as {
+      resources: Record<string, { default?: true }>;
+    };
+    delete withoutDefaultResource.resources["common-inspection"]!.default;
+    writeFileSync(targetPath, JSON.stringify(withoutDefaultResource), "utf8");
+    assert.throws(
+      () => readWorkflowProfile(fixtureRoot, "invalid"),
+      /exactly one global default Resource Park; found 0/,
+    );
+
+    const withTwoDefaultResources = structuredClone(original) as {
+      resources: Record<string, { default?: true }>;
+    };
+    withTwoDefaultResources.resources["worker-core"]!.default = true;
+    writeFileSync(targetPath, JSON.stringify(withTwoDefaultResources), "utf8");
+    assert.throws(
+      () => readWorkflowProfile(fixtureRoot, "invalid"),
+      /exactly one global default Resource Park; found 2/,
+    );
+
+    const withUnknownResourcePhase = structuredClone(original) as {
+      resources: Record<string, { phases: string[] }>;
+    };
+    withUnknownResourcePhase.resources["worker-core"]!.phases.push("missing");
+    writeFileSync(targetPath, JSON.stringify(withUnknownResourcePhase), "utf8");
+    assert.throws(
+      () => readWorkflowProfile(fixtureRoot, "invalid"),
+      /resources\.worker-core references unknown Phase missing/,
+    );
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("WorkflowBuilder uses the global default Resource Park for an unbound Phase", () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-workflow-default-resource-"));
+  const workflowRoot = join(fixtureRoot, "assets", "codex", "workflows");
+  const targetPath = join(workflowRoot, "fallback.json");
+  mkdirSync(workflowRoot, { recursive: true });
+  const profile = JSON.parse(readFileSync(profilePath, "utf8")) as {
+    phases: { workers: Record<string, unknown> };
+    roles: Record<string, unknown>;
+  };
+  profile.phases.workers.fallback = {
+    edges: { completed: null, error: null },
+  };
+  profile.roles["fallback-worker"] = {
+    phases: ["fallback"],
+    multiAgent: false,
+    customAgents: [],
+  };
+  writeFileSync(targetPath, JSON.stringify(profile), "utf8");
+
+  try {
+    const asset = readWorkflowProfile(fixtureRoot, "fallback");
+    const agentProfile = new WorkflowBuilder(asset).buildAgentProfile("fallback-worker");
+    assert.deepEqual(agentProfile.resourceParks, ["common-inspection"]);
+    assert.deepEqual(agentProfile.shellTools, [
+      "scoutAssets",
+      "scoutMemory",
+      "cat",
+      "sed",
+      "pwd",
+    ]);
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }

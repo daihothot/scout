@@ -11,7 +11,39 @@
     "maxDepth": 1
   },
   "phases": {
-    "synthesis": {
+    "workers": {
+      "research": {
+        "edges": {
+          "completed": "research-reviewer",
+          "error": null
+        }
+      },
+      "research-reviewer": {
+        "edges": {
+          "completed": "verify",
+          "error": "research"
+        }
+      },
+      "verify": {
+        "edges": {
+          "completed": "verify-reviewer",
+          "error": null
+        }
+      },
+      "verify-reviewer": {
+        "edges": {
+          "completed": null,
+          "error": "verify"
+        }
+      }
+    }
+  },
+  "resources": {
+    "common-inspection": {
+      "default": true,
+      "phases": [
+        "Synthesis"
+      ],
       "shellTools": [
         "scoutAssets",
         "scoutMemory",
@@ -24,159 +56,105 @@
       "readableRoots": [],
       "writableRoots": []
     },
-    "workers": {
-      "research": {
-        "shellTools": [
-          "scoutAssets",
-          "scoutMemory",
-          "scoutJsonWrite",
-          "scoutResearchArtifactCheck",
-          "scoutArtifactDigest",
-          "jarvis",
-          "codegraph",
-          "rg",
-          "git",
-          "sed",
-          "find",
-          "grep",
-          "cat",
-          "ls",
-          "pwd"
-        ],
-        "mcpServers": [],
-        "plugins": [],
-        "readableRoots": [
-          "${SCOUT_ROOT}",
-          "~/.guru/knowledge",
-          "~/.codegraph"
-        ],
-        "writableRoots": [
-          "~/.guru/codebase",
-          "~/.codegraph"
-        ],
-        "edges": {
-          "completed": "research-reviewer",
-          "error": null
-        }
-      },
-      "research-reviewer": {
-        "shellTools": [
-          "scoutAssets",
-          "scoutMemory",
-          "scoutJsonWrite",
-          "scoutArtifactDigest",
-          "jarvis",
-          "codegraph",
-          "rg",
-          "git",
-          "cat",
-          "sed",
-          "find",
-          "grep",
-          "ls",
-          "pwd",
-          "wc",
-          "head",
-          "tail",
-          "sort",
-          "uniq"
-        ],
-        "mcpServers": [],
-        "plugins": [],
-        "readableRoots": [
-          "~/.guru/knowledge",
-          "~/.guru/codebase",
-          "~/.codegraph"
-        ],
-        "writableRoots": [
-          "~/.guru/codebase",
-          "~/.codegraph"
-        ],
-        "edges": {
-          "completed": "verify",
-          "error": "research"
-        }
-      },
-      "verify": {
-        "shellTools": [
-          "scoutAssets",
-          "scoutMemory",
-          "scoutJsonWrite",
-          "unity",
-          "jarvis",
-          "codegraph",
-          "rg",
-          "git",
-          "cat",
-          "sed",
-          "find",
-          "grep",
-          "ls",
-          "pwd",
-          "wc",
-          "head",
-          "tail",
-          "sort",
-          "uniq"
-        ],
-        "mcpServers": [
-          "scout_local_capability"
-        ],
-        "plugins": [
-          "scout-local-capability-plugin"
-        ],
-        "readableRoots": [
-          "${SCOUT_ROOT}",
-          "~/.guru/knowledge",
-          "~/.codegraph"
-        ],
-        "writableRoots": [
-          "~/.guru/codebase",
-          "~/.codegraph"
-        ],
-        "edges": {
-          "completed": "verify-reviewer",
-          "error": null
-        }
-      },
-      "verify-reviewer": {
-        "shellTools": [
-          "scoutAssets",
-          "scoutMemory",
-          "scoutJsonWrite",
-          "scoutArtifactDigest",
-          "jarvis",
-          "codegraph",
-          "rg",
-          "git",
-          "cat",
-          "sed",
-          "find",
-          "grep",
-          "ls",
-          "pwd",
-          "wc",
-          "head",
-          "tail",
-          "sort",
-          "uniq"
-        ],
-        "mcpServers": [],
-        "plugins": [],
-        "readableRoots": [
-          "~/.guru/knowledge",
-          "~/.guru/codebase",
-          "~/.codegraph"
-        ],
-        "writableRoots": [
-          "~/.guru/codebase",
-          "~/.codegraph"
-        ],
-        "edges": {
-          "completed": null,
-          "error": "verify"
-        }
-      }
+    "worker-core": {
+      "phases": [
+        "research",
+        "research-reviewer",
+        "verify",
+        "verify-reviewer"
+      ],
+      "shellTools": [
+        "scoutAssets",
+        "scoutMemory",
+        "scoutJsonWrite",
+        "jarvis",
+        "codegraph",
+        "rg",
+        "git",
+        "cat",
+        "sed",
+        "find",
+        "grep",
+        "ls",
+        "pwd"
+      ],
+      "mcpServers": [],
+      "plugins": [],
+      "readableRoots": [
+        "~/.guru/knowledge",
+        "~/.codegraph"
+      ],
+      "writableRoots": [
+        "~/.guru/codebase",
+        "~/.codegraph"
+      ]
+    },
+    "repository-access": {
+      "phases": [
+        "research",
+        "verify"
+      ],
+      "shellTools": [],
+      "mcpServers": [],
+      "plugins": [],
+      "readableRoots": [
+        "${SCOUT_ROOT}"
+      ],
+      "writableRoots": []
+    },
+    "research-artifacts": {
+      "phases": [
+        "research"
+      ],
+      "shellTools": [
+        "scoutResearchArtifactCheck",
+        "scoutArtifactDigest"
+      ],
+      "mcpServers": [],
+      "plugins": [],
+      "readableRoots": [],
+      "writableRoots": []
+    },
+    "artifact-review": {
+      "phases": [
+        "research-reviewer",
+        "verify-reviewer"
+      ],
+      "shellTools": [
+        "scoutArtifactDigest",
+        "wc",
+        "head",
+        "tail",
+        "sort",
+        "uniq"
+      ],
+      "mcpServers": [],
+      "plugins": [],
+      "readableRoots": [
+        "~/.guru/codebase"
+      ],
+      "writableRoots": []
+    },
+    "runtime-verification": {
+      "phases": [
+        "verify"
+      ],
+      "shellTools": [
+        "unity",
+        "wc",
+        "head",
+        "tail",
+        "sort",
+        "uniq"
+      ],
+      "mcpServers": [
+        "scout_local_capability"
+      ],
+      "plugins": [
+        "scout-local-capability-plugin"
+      ],
+      "readableRoots": [],
+      "writableRoots": []
     }
   },
   "roles": {
