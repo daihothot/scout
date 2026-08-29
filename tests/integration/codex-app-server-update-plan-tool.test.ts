@@ -11,6 +11,7 @@ import { AppServerTimelineStreams } from "../../src/agent-server/codex/app-serve
 
 const enabled = process.env.SCOUT_RUN_CODEX_APP_SERVER_INTEGRATION === "1"
   && process.env.SCOUT_RUN_CODEX_UPDATE_PLAN_TOOL_EXPERIMENT === "1";
+const codexPath = join(process.cwd(), "node_modules", ".bin", "codex");
 
 test("real Codex app-server emits turn plan updates from update_plan tool", {
   skip: enabled
@@ -26,6 +27,7 @@ test("real Codex app-server emits turn plan updates from update_plan tool", {
   }
 
   const client = new CodexAppServerClient({
+    codexPath,
     home: userHome,
     codexHome,
     logPrefix: "scout update-plan-tool experiment app-server",
@@ -150,6 +152,7 @@ test("real Codex app-server preserves update_plan state across turns", {
   }
 
   const client = new CodexAppServerClient({
+    codexPath,
     home: userHome,
     codexHome,
     logPrefix: "scout update-plan multi-turn experiment app-server",

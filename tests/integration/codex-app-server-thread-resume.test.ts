@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 
 const enabled = process.env.SCOUT_RUN_CODEX_APP_SERVER_INTEGRATION === "1";
+const codexPath = join(process.cwd(), "node_modules", ".bin", "codex");
 
 test("real Codex app-server restores thread memory across processes", {
   skip: enabled ? undefined : "set SCOUT_RUN_CODEX_APP_SERVER_INTEGRATION=1",
@@ -25,6 +26,7 @@ test("real Codex app-server restores thread memory across processes", {
   const providerName = "GuruOpenAI";
   writeIsolatedConfig(codexHome, providerName);
   const clientOptions = {
+    codexPath,
     home,
     codexHome,
     providerName,
