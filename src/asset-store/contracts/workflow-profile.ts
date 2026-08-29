@@ -1,8 +1,10 @@
 import type { CodexModelConfig } from "../../agent-server/codex/model-config.js";
 import type { WorkflowPhaseEdges } from "../../core/workflow/index.js";
 
-/** Resources and permission roots projected by one Workflow Phase. */
-export interface WorkflowPhaseResources {
+/** One named resource collection projected into every bound Phase. */
+export interface WorkflowResourcePark {
+  readonly default?: true;
+  readonly phases: readonly string[];
   readonly shellTools: readonly string[];
   readonly mcpServers: readonly string[];
   readonly plugins: readonly string[];
@@ -11,7 +13,7 @@ export interface WorkflowPhaseResources {
 }
 
 /** One ordered Worker Phase and its outgoing graph edges. */
-export interface WorkflowWorkerPhaseDefinition extends WorkflowPhaseResources {
+export interface WorkflowWorkerPhaseDefinition {
   readonly edges: WorkflowPhaseEdges;
 }
 
@@ -32,9 +34,9 @@ export interface WorkflowProfile {
     readonly maxDepth: number;
   };
   readonly phases: {
-    readonly synthesis: WorkflowPhaseResources;
     readonly workers: Readonly<Record<string, WorkflowWorkerPhaseDefinition>>;
   };
+  readonly resources: Readonly<Record<string, WorkflowResourcePark>>;
   readonly roles: Readonly<Record<string, WorkflowRoleDefinition>>;
 }
 

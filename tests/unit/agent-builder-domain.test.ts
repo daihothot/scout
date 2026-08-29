@@ -2163,6 +2163,7 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
         ["verifier"]: "verify",
         ["validator"]: "research-reviewer",
       }[role] ?? "verify"],
+      resourceParks: [],
       shellTools: [],
       mcpServers: [],
       plugins: [],

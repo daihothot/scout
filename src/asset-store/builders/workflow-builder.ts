@@ -38,16 +38,25 @@ export class WorkflowBuilder {
       throw new Error(`Workflow Profile ${this.asset.name} does not declare role ${roleName}.`);
     }
     const phases = roleName === "coordinator" ? [SynthesisPhase] : [...(role.phases ?? [])];
-    const resources = phases.map((phaseName) => {
-      if (phaseName === SynthesisPhase) return workflow.phases.synthesis;
-      const phase = workflow.phases.workers[phaseName];
-      if (!phase) {
-        throw new Error(
-          `Workflow Profile ${this.asset.name} role ${roleName} references unknown Phase ${phaseName}.`,
-        );
+    const resourceEntries = Object.entries(workflow.resources);
+    const defaultResourcePark = resourceEntries
+      .find(([, resource]) => resource.default === true)?.[0];
+    if (!defaultResourcePark) {
+      throw new Error(`Workflow Profile ${this.asset.name} has no default Resource Park.`);
+    }
+    const selectedResourceParks = new Set<string>();
+    for (const phase of phases) {
+      const matchingParks = resourceEntries
+        .filter(([, resource]) => resource.phases.includes(phase))
+        .map(([name]) => name);
+      for (const name of matchingParks.length > 0
+        ? matchingParks
+        : [defaultResourcePark]) {
+        selectedResourceParks.add(name);
       }
-      return phase;
-    });
+    }
+    const resources = resourceEntries
+      .filter(([name]) => selectedResourceParks.has(name));
     const merge = (values: readonly (readonly string[])[]): string[] => [
       ...new Set(values.flatMap((value) => value)),
     ];
@@ -59,11 +68,12 @@ export class WorkflowBuilder {
       customAgents: [...role.customAgents],
       model: { ...(role.model ?? workflow.defaults.model) },
       phases,
-      shellTools: merge(resources.map((resource) => resource.shellTools)),
-      mcpServers: merge(resources.map((resource) => resource.mcpServers)),
-      plugins: merge(resources.map((resource) => resource.plugins)),
-      readableRoots: merge(resources.map((resource) => resource.readableRoots)),
-      writableRoots: merge(resources.map((resource) => resource.writableRoots)),
+      resourceParks: resources.map(([name]) => name),
+      shellTools: merge(resources.map(([, resource]) => resource.shellTools)),
+      mcpServers: merge(resources.map(([, resource]) => resource.mcpServers)),
+      plugins: merge(resources.map(([, resource]) => resource.plugins)),
+      readableRoots: merge(resources.map(([, resource]) => resource.readableRoots)),
+      writableRoots: merge(resources.map(([, resource]) => resource.writableRoots)),
     };
   }
 }

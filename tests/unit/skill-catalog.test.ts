@@ -21,6 +21,7 @@ import {
   validateScoutSkillCatalog,
   type ScoutSkillCatalogEntry,
 } from "../../src/asset-store/index.js";
+import { StartupPhase } from "../../src/core/workflow/index.js";
 
 const scoutRoot = process.cwd();
 const assetsRoot = join(scoutRoot, "assets", "codex");
@@ -45,6 +46,8 @@ test("every Scout Skill has a phase, filesystem family, and canonical mount path
   }
 
   const byName = new Map(catalog.map((skill) => [skill.name, skill] as const));
+  assert.deepEqual(byName.get("internal-runtime-inspector")?.phase, [StartupPhase]);
+  assert.deepEqual(byName.get("internal-skill-consumption")?.phase, [StartupPhase]);
   assert.deepEqual(byName.get("domain-validation-researcher")?.family, [
     "validation", "workflow",
   ]);
@@ -120,6 +123,8 @@ test("each Workflow role projects every visible Skill and its dependency closure
     ],
   };
 
+  assert.ok(graph.roles.every((role) => !role.phases.includes(StartupPhase)));
+
   for (const role of graph.roles) {
     const projected = resolveScoutSkillsForPhases(catalog, role.phases);
     assert.deepEqual(
@@ -127,10 +132,17 @@ test("each Workflow role projects every visible Skill and its dependency closure
       expectedInventories[role.name]?.sort(),
     );
     assert.ok(projected.every((skill) =>
-      skill.phase.some((phase) => role.phases.includes(phase))
+      skill.phase.includes(StartupPhase)
+      || skill.phase.some((phase) => role.phases.includes(phase))
     ));
     assert.equal(projected.some((skill) => skill.name === "internal-skill-creator"), false);
   }
+
+  const startupOnly = resolveScoutSkillsForPhases(catalog, ["future-worker-phase"]);
+  assert.deepEqual(startupOnly.map((skill) => skill.name).sort(), [
+    "internal-runtime-inspector",
+    "internal-skill-consumption",
+  ].sort());
 });
 
 test("Scout Skill resources retain resource-level required and optional metadata", () => {
@@ -293,6 +305,23 @@ test("Scout Skill dependency order is dependency-first, de-duplicated, and phase
       parseMetadata("workflow", { phase: "[research, validate]", requiredSkills: "[producer]" }),
     ]),
     /dependency producer does not support phase validate/,
+  );
+  assert.doesNotThrow(() => validateScoutSkillCatalog([
+    parseMetadata("startup-foundation", { phase: "[Startup]" }),
+    parseMetadata("workflow", {
+      phase: "[research, validate]",
+      requiredSkills: "[startup-foundation]",
+    }),
+  ]));
+  assert.throws(
+    () => validateScoutSkillCatalog([
+      parseMetadata("producer", { phase: "[research]" }),
+      parseMetadata("startup-workflow", {
+        phase: "[Startup]",
+        requiredSkills: "[producer]",
+      }),
+    ]),
+    /dependency producer does not support phase Startup/,
   );
 });
 

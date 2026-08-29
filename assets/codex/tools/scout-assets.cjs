@@ -42,9 +42,11 @@ function printSummary(manifest) {
   printJson({
     identity: {
       agentId: manifest.agentId,
-      phase: manifest.agentProfile?.phase,
       mountRoot: manifest.mountRoot,
-      mountId: manifest.mountId,
+    },
+    profile: {
+      phases: manifest.agentProfile?.phases ?? [],
+      resourceParks: manifest.agentProfile?.resourceParks ?? [],
     },
     roots: {
       runtimeRoots: manifest.runtimeRoots ?? [],
@@ -65,7 +67,7 @@ function printFamily(manifest, args) {
   const nodes = buildFamilyNodes(manifest);
   if (args.length === 0) {
     return printJson({
-      phase: manifest.agentProfile?.phase,
+      phases: manifest.agentProfile?.phases ?? [],
       families: [...new Set(nodes.map((node) => node.name))].sort(),
     });
   }
@@ -75,11 +77,11 @@ function printFamily(manifest, args) {
     ? nodes.filter((node) => node.path === requested)
     : nodes.filter((node) => node.name === requested);
   if (matches.length === 0) {
-    fail(`Family is not supported for the current phase: ${requested}`);
+    fail(`Family is not supported for the current role: ${requested}`);
   }
   if (matches.length > 1) {
     return printJson({
-      phase: manifest.agentProfile?.phase,
+      phases: manifest.agentProfile?.phases ?? [],
       family: requested,
       ambiguous: true,
       candidates: matches.map((node) => node.path).sort(),
@@ -88,7 +90,7 @@ function printFamily(manifest, args) {
 
   const node = matches[0];
   const output = {
-    phase: manifest.agentProfile?.phase,
+    phases: manifest.agentProfile?.phases ?? [],
     family: node.path,
   };
   if (node.children.size > 0) output.children = [...node.children].sort();

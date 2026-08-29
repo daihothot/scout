@@ -580,6 +580,7 @@ function testMount(input: {
         reasoningSummary: "concise",
       },
       phases: ["Synthesis"],
+      resourceParks: [],
       shellTools: [],
       mcpServers: [],
       plugins: input.plugins ?? [],
