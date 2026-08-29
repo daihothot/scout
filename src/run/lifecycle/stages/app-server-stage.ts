@@ -147,6 +147,16 @@ export class RunAppServerStage implements RunStage {
     try {
       await clientBundle.client.startSession();
       scope.setAppServer(clientBundle.client);
+      scope.logger.info({
+        module: "run.lifecycle",
+        event: "codex_app_server_started",
+        message: `Started Scout-owned Codex app-server ${clientBundle.codexVersion}.`,
+        data: {
+          codexPath: clientBundle.codexPath,
+          expectedVersion: clientBundle.codexVersion,
+          actualVersion: clientBundle.client.codexVersion,
+        },
+      });
     } catch (error) {
       clientBundle.client.close();
       throw error;

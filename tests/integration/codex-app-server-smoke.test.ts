@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 
 const enabled = process.env.SCOUT_RUN_CODEX_APP_SERVER_INTEGRATION === "1";
+const codexPath = join(process.cwd(), "node_modules", ".bin", "codex");
 
 test("real Codex app-server produces timeline and completed turn", { skip: enabled ? undefined : "set SCOUT_RUN_CODEX_APP_SERVER_INTEGRATION=1" }, async () => {
   const root = mkdtempSync(join(tmpdir(), "scout-real-app-server-"));
@@ -15,6 +16,7 @@ test("real Codex app-server produces timeline and completed turn", { skip: enabl
     throw new Error(`Codex home does not exist: ${codexHome}`);
   }
   const client = new CodexAppServerClient({
+    codexPath,
     home: userHome,
     codexHome,
     logPrefix: "scout integration app-server",

@@ -88,7 +88,8 @@ export interface TurnSteerResponse {
 
 /** Process, environment, and diagnostic paths used to launch one app-server. */
 export interface CodexAppServerOptions {
-  codexPath?: string;
+  codexPath: string;
+  expectedCodexVersion?: string;
   home: string;
   codexHome: string;
   providerName?: string;
@@ -275,6 +276,8 @@ export class CodexAppServerClient {
   private readonly stderrLogPath?: string;
   private readonly transportLogPath?: string;
   private readonly writeDiagnosticsToStderr: boolean;
+  private readonly expectedCodexVersion?: string;
+  private actualCodexVersion?: string;
   private onDynamicToolCall?: DynamicToolCallHandler;
   private nextRequestId = 1;
   private closing = false;
@@ -297,6 +300,7 @@ export class CodexAppServerClient {
 
     this.logPrefix = options.logPrefix ?? "scout app-server";
     this.codexHome = resolve(options.codexHome);
+    this.expectedCodexVersion = options.expectedCodexVersion;
     this.stderrLogPath = options.stderrLogPath;
     this.transportLogPath = options.transportLogPath;
     // Ink owns an interactive stdout terminal. Raw child stderr would bypass
@@ -306,7 +310,7 @@ export class CodexAppServerClient {
     if (this.stderrLogPath) mkdirSync(dirname(this.stderrLogPath), { recursive: true });
     if (this.transportLogPath) mkdirSync(dirname(this.transportLogPath), { recursive: true });
     this.onDynamicToolCall = options.onDynamicToolCall;
-    this.child = spawn(options.codexPath ?? provider.codexCliPath ?? "codex", ["app-server"], {
+    this.child = spawn(options.codexPath, ["app-server"], {
       env,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -334,7 +338,7 @@ export class CodexAppServerClient {
 
   /** Performs the protocol handshake before thread operations are allowed. */
   async startSession(): Promise<void> {
-    await this.request("initialize", {
+    const initialized = await this.request("initialize", {
       clientInfo: {
         name: "scout-runtime",
         title: "Scout Runtime",
@@ -342,7 +346,27 @@ export class CodexAppServerClient {
       },
       capabilities: { experimentalApi: true },
     });
+    if (this.expectedCodexVersion) {
+      const userAgent = readString(readObject(initialized), "userAgent");
+      const actualCodexVersion = userAgent.match(
+        /^[^/\s]+\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\s|$)/,
+      )?.[1];
+      if (!actualCodexVersion) {
+        throw new Error(`Codex app-server returned an invalid userAgent: ${userAgent}`);
+      }
+      if (actualCodexVersion !== this.expectedCodexVersion) {
+        throw new Error(
+          `Scout requires Codex ${this.expectedCodexVersion}, but app-server reported ${actualCodexVersion}.`,
+        );
+      }
+      this.actualCodexVersion = actualCodexVersion;
+    }
     this.notify("initialized");
+  }
+
+  /** Returns the version confirmed by the app-server initialize handshake. */
+  get codexVersion(): string | undefined {
+    return this.actualCodexVersion;
   }
 
   /** Starts a new Codex thread and returns the normalized request for recording. */
@@ -1197,14 +1221,13 @@ function cleanUndefined<T extends Record<string, unknown>>(value: T): T {
   ) as T;
 }
 
-function readProviderConfig(providerName: string): { baseUrl?: string; envKey?: string; codexCliPath?: string } {
+function readProviderConfig(providerName: string): { baseUrl?: string; envKey?: string } {
   try {
     const text = readFileSync(join(homedir(), ".codex", "config.toml"), "utf8");
     const providerBlock = matchTomlBlock(text, `model_providers.${providerName}`);
     return {
       baseUrl: readTomlString(providerBlock, "base_url"),
       envKey: readTomlString(providerBlock, "env_key"),
-      codexCliPath: readTomlString(text, "CODEX_CLI_PATH"),
     };
   } catch {
     return {};

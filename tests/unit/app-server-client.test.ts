@@ -12,6 +12,72 @@ import { join } from "node:path";
 import { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import { AppServerTimelineStreams } from "../../src/agent-server/codex/app-server-event-store.js";
 
+test("CodexAppServerClient accepts the pinned version from supported app-server user agents", async () => {
+  for (const userAgent of [
+    "scout-runtime/0.150.1 (Mac OS 26.6.2; arm64) vscode/1.135.0 (scout-runtime; 0.1.0)",
+    "codex_vscode/0.150.1 (Mac OS 26.6.2; arm64) dumb (probe; 0)",
+  ]) {
+    const fakeServer = writeFakeAppServer(`
+      const readline = require("node:readline");
+      const rl = readline.createInterface({ input: process.stdin });
+      function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+      rl.on("line", (line) => {
+        const message = JSON.parse(line);
+        if (message.method === "initialize") {
+          send({ id: message.id, result: { userAgent: ${JSON.stringify(userAgent)} } });
+        }
+      });
+    `);
+    const client = new CodexAppServerClient({
+      codexPath: fakeServer,
+      expectedCodexVersion: "0.150.1",
+      home: tmpdir(),
+      codexHome: tmpdir(),
+      providerName: "missing-provider",
+    });
+
+    try {
+      await client.startSession();
+      assert.equal(client.codexVersion, "0.150.1");
+    } finally {
+      client.close();
+    }
+  }
+});
+
+test("CodexAppServerClient rejects an app-server version outside Scout's pinned runtime", async () => {
+  const fakeServer = writeFakeAppServer(`
+    const readline = require("node:readline");
+    const rl = readline.createInterface({ input: process.stdin });
+    function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+    rl.on("line", (line) => {
+      const message = JSON.parse(line);
+      if (message.method === "initialize") {
+        send({
+          id: message.id,
+          result: { userAgent: "codex_vscode/0.149.0 (test; arm64)" },
+        });
+      }
+    });
+  `);
+  const client = new CodexAppServerClient({
+    codexPath: fakeServer,
+    expectedCodexVersion: "0.150.1",
+    home: tmpdir(),
+    codexHome: tmpdir(),
+    providerName: "missing-provider",
+  });
+
+  try {
+    await assert.rejects(
+      client.startSession(),
+      /Scout requires Codex 0\.150\.1, but app-server reported 0\.149\.0/,
+    );
+  } finally {
+    client.close();
+  }
+});
+
 test("CodexAppServerClient sends explicit model and reasoning configuration", async () => {
   const fakeServer = writeFakeAppServer(`
     const readline = require("node:readline");

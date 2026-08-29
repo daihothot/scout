@@ -11,6 +11,7 @@ import { AppServerTimelineStreams } from "../../src/agent-server/codex/app-serve
 
 const enabled = process.env.SCOUT_RUN_CODEX_APP_SERVER_INTEGRATION === "1"
   && process.env.SCOUT_RUN_CODEX_GOAL_EXPERIMENT === "1";
+const codexPath = join(process.cwd(), "node_modules", ".bin", "codex");
 const GOAL_OBJECTIVE = "SCOUT_GOAL_OBJECTIVE_VERIFY_MULTI_TURN_TRACKING";
 const GOAL_TOKEN_BUDGET = 1_000_000;
 
@@ -28,6 +29,7 @@ test("real Codex app-server exposes thread goal update and get across turns", {
   }
 
   const client = new CodexAppServerClient({
+    codexPath,
     home: userHome,
     codexHome,
     logPrefix: "scout goal experiment app-server",
