@@ -988,7 +988,11 @@ test("AssetStore persists only each materialized Skill identity and filesystem p
   assert.deepEqual(entrySkill.requiredSkills, [
     "domain-validation-research-pack",
     "internal-skill-consumption",
+    "tool-scout-request-human-input",
+    "tool-scout-send-message",
+    "tool-scout-submit-task",
   ]);
+  assert.deepEqual(entrySkill.optionalSkills, []);
   assert.equal(
     entrySkill.path,
     ".scout/skill/validation/workflow/domain-validation-researcher/SKILL.md",
@@ -1306,9 +1310,9 @@ test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-unity-signals-");
   const store = new AssetStore();
   const signalSkills = [
-    "signal-unity-runtime-log",
-    "signal-unity-callback-event-by-runtime-log",
-    "signal-unity-local-storage",
+    "signal-runtime-log",
+    "signal-callback-event-by-runtime-log",
+    "signal-local-storage",
   ];
 
   for (const agentId of ["researcher", "verifier", "validator"]) {
@@ -1325,7 +1329,7 @@ test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
       const materialized = mount.skills.find((skill) => skill.name === signalSkill);
       assert.ok(materialized);
       assert.equal(existsSync(join(mount.mountRoot, materialized.path)), true);
-      assert.match(materialized.path, /^\.scout\/skill\/validation\/single\/unity\/local\/general\//);
+      assert.match(materialized.path, /^\.scout\/skill\/signal\/local\/unity\/general\//);
     }
   }
 
@@ -1343,7 +1347,7 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-runtime-log-acquisition-");
   const store = new AssetStore();
   const toolSkill = "tool-unity-pipeline-cli";
-  const acquisitionSkill = "signal-unity-runtime-log-via-unity-pipeline-cli";
+  const acquisitionSkill = "signal-runtime-log-via-unity-pipeline-cli";
 
   const verifierMount = store.materializeMount({
     scoutRoot: fixtureRoot,

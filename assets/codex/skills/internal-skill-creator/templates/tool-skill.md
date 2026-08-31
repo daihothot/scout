@@ -15,6 +15,24 @@ scout:
 
 本模板只规定 Tool Skill 必须表达的内容和责任边界，不规定目标 `SKILL.md` 的章节名称、顺序或格式；正文结构由选定的 layout template 决定。
 
+## Identity And Resource Metadata
+
+Tool Skill 的 name 使用以下形式：
+
+```text
+tool-<provider>-<tool-capability>
+```
+
+- `<provider>` 是提供该操作能力的实际来源。
+- `<tool-capability>` 是该 Tool Skill 拥有的稳定操作能力。
+- Tool Skill 不得在 frontmatter 中定义 `phase`；它通过使用方 Skill 的 required 或 optional dependency 进入资源投影。
+- Tool Skill 的 `family` 必须以 `tool` 和 `<provider>` 开始；存在稳定子分类时追加 `<tool-category>`：
+
+```text
+[tool, <provider>]
+[tool, <provider>, <tool-category>]
+```
+
 ## Required Content
 
 Tool Skill 必须表达：
@@ -40,7 +58,7 @@ Tool Skill 必须表达：
 
 - Tool Skill 拥有操作能力、调用条件、权限、副作用、结果和失败边界。
 - Domain Skill 拥有调用该 Tool 的业务目的和业务结果解释。
-- Single Skill 拥有领域 contract，不由 Tool Skill 根据工具输出替代。
+- Signal Skill 拥有领域 contract，不由 Tool Skill 根据工具输出替代。
 - Internal Skill 拥有 Scout 内部治理，不由 Tool Skill 扩展。
 
 ## Prohibited Content
@@ -48,7 +66,7 @@ Tool Skill 必须表达：
 - 禁止绕过权限、结构、版本、目标或 evidence 边界来制造成功。
 - 禁止将失败、空输出、未经解析的内容或部分结果声明为完整结果。
 - 禁止为了重试而改变输入、目标、版本或证据语义。
-- 禁止写入 Domain Skill 的业务判断、Single Skill 的领域 contract 或 Internal Skill 的治理规则。
+- 禁止写入 Domain Skill 的业务判断、Signal Skill 的领域 contract 或 Internal Skill 的治理规则。
 
 ## Checklist
 
@@ -60,5 +78,5 @@ Tool Skill 必须表达：
 - 失败、空输出和解析限制不会被当作成功。
 - 重试不会改变输入、目标、版本或证据语义来制造成功。
 - 工具输出与正式 artifact、evidence 和业务 claim 的边界明确。
-- 没有拥有 Domain Skill 的业务判断、Single Skill 的领域 contract 或 Internal Skill 的治理责任。
+- 没有拥有 Domain Skill 的业务判断、Signal Skill 的领域 contract 或 Internal Skill 的治理责任。
 - 所有 required content 已映射到选定 layout，没有从本模板复制目标章节格式。

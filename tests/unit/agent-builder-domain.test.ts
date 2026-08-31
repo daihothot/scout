@@ -2186,11 +2186,12 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
     customAgents: role === "coordinator" ? [] : ["scout-helper"],
     skills: guidanceSkills.map((name) => ({
       name,
+      type: "tool" as const,
       description: `${name} description`,
       summary: `${name} summary`,
-      phase: [],
       family: ["tool", "test"],
       requiredSkills: [],
+      optionalSkills: [],
       path: `.scout/skill/tool/test/${name}/SKILL.md`,
     })),
     plugins: [],

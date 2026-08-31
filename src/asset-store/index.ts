@@ -12,6 +12,7 @@ export type * from "./contracts/mount.js";
 export type * from "./contracts/mount-context.js";
 export type * from "./contracts/profile.js";
 export type * from "./contracts/resources.js";
+export { ScoutSkillTypes } from "./contracts/skill.js";
 export type * from "./contracts/skill.js";
 export type * from "./contracts/workflow-profile.js";
 export { resolveAssetLocalPath } from "./files/asset-paths.js";

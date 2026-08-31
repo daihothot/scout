@@ -123,9 +123,9 @@ agents/worker.AGENTS.md    【已注入 worker】
 | --- | --- |
 | `Domain Skill` | 驱动当前 `<role>` 的领域工作，定义领域输入、工作流程、输出和交接。 |
 | `Tool Skill` | 定义特定操作能力的调用方法、输入、结果和失败边界。 |
-| `Single Skill` | 围绕单一领域能力、信号或规则提供可组合的专项 contract。 |
+| `Signal Skill` | 围绕单一领域能力、信号或规则提供可组合的专项 contract。 |
 
-`Domain Skill` 组织当前领域工作，`Single Skill` 提供领域判断所需的专项 contract，`Tool Skill` 提供执行操作所需的调用 contract。
+`Domain Skill` 组织当前领域工作，`Signal Skill` 提供领域判断所需的专项 contract，`Tool Skill` 提供执行操作所需的调用 contract。
 
 Skill 之间的依赖、组合/继承以及接口与实现读取遵循 `internal-skill-consumption`。
 
@@ -162,8 +162,8 @@ Scout 以 `<domain>` 组织业务工作。
 - 各 `<role>` 按当前适用的 `Domain Skill` 所规定的职责通过 `task` 协作。
 - `worker` 同时遵循 `worker.AGENTS.md` 中的通用执行和交接规则。
 - `Domain Skill` 将 `<domain>` 的规则应用于 `task`，驱动当前 `<role>` 的判断和工作过程。
-- 当前适用的 `Single Skill` 为 `task` 提供领域判断所需的专项 contract。
-- 当前 `<role>` 根据 `Domain Skill` 及当前适用的 `Single Skill` 确定 `Tool` 的调用目的和业务结果解释。
+- 当前适用的 `Signal Skill` 为 `task` 提供领域判断所需的专项 contract。
+- 当前 `<role>` 根据 `Domain Skill` 及当前适用的 `Signal Skill` 确定 `Tool` 的调用目的和业务结果解释。
 - 当前 `<role>` 按 `Tool Skill` 的 contract 调用对应 `Tool`。
 - Scout 采用响应式交互机制：Scout Runtime 根据 `task` 状态、`Tool` 结果和角色通信更新工作上下文，并在状态变化时触发相关 `<role>`。
 - 当前 `<role>` 完成本次可执行工作后，必须立即结束当前 `response` 并将控制权交还 Scout Runtime；后续状态变化由 Scout Runtime 触发新的 `response`。

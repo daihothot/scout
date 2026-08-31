@@ -4,7 +4,7 @@ name: tool-scout-assign-task
 description: Coordinator 使用 AssignTask 向当前 Workflow Phase 中的空闲 Worker 分配新任务时使用。
 id: tool-scout-assign-task
 version: 1.0.0
-phase: [Synthesis]
+type: tool
 family: [tool, scout, dynamic]
 tags: [scout, dynamic-tool, task, assignment]
 devices: [any]
@@ -16,7 +16,7 @@ summary: 规定 AssignTask 的 Phase 路由、输入完整性和返回状态语�
 ## Skill Type
 
 - type: tool
-- structure_level: compact
+- layout: compact
 - note: 本技能拥有 AssignTask 的调用契约，不拥有领域路由决策或 Worker 工作内容。
 
 ## Tool Contract

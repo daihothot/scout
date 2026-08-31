@@ -4,7 +4,7 @@ name: tool-jarvis-codebase
 description: Scout 使用 Jarvis codebase 管理 Guru 托管代码库路径、版本与 CodeGraph 索引，并用独立 codegraph CLI 收集源码语义证据。
 id: tool-jarvis-codebase
 version: 0.5.2
-phase: [research, verify, research-reviewer, verify-reviewer]
+type: tool
 family: [tool, jarvis]
 tags: [jarvis, codebase, codegraph, source, evidence]
 devices: [any]
@@ -23,7 +23,7 @@ summary: 先用 jarvis codebase 解析托管代码库，再用 codegraph 和源�
 ## Skill Type
 
 - type: tool
-- structure_level: full
+- layout: workflow
 - note: 本技能拥有 managed codebase、CodeGraph 与源码证据的操作 contract，不拥有上游业务 implementation claim。
 
 ## Core Use
@@ -89,7 +89,7 @@ jarvis codebase supported
 
 只读查询命令：
 
-- `scout-assets tools`：读取当前 mount 暴露的 shell tools。
+- `scout-assets skill tool-jarvis-codebase`：读取本 Skill metadata 和当前 mount 暴露的 tools。
 - `jarvis codebase --help`：读取 Jarvis codebase 帮助。
 - `jarvis codebase supported`：读取当前 Jarvis 支持的 managed codebase 名称。
 - `codegraph status "<codebase-path>"`：读取 CodeGraph 索引状态。
@@ -182,7 +182,7 @@ codegraph files -p "<codebase-path>"
 
 注意事项：
 
-- 使用 `scout-assets tools` 确认能力可见性。
+- 使用 `scout-assets skill tool-jarvis-codebase` 返回的 `phaseTools` 确认能力可见性。
 - 缺少 required shell tool 时停止执行，并作为阻塞项向上游报告。
 
 ### I-002: Target Repository
@@ -289,13 +289,13 @@ templates/source-code-evidence.md
 使用命令：
 
 ```bash
-scout-assets tools
+scout-assets skill tool-jarvis-codebase
 jarvis codebase supported
 ```
 
 注意事项：
 
-- `scout-assets tools` 用于确认当前 mount 暴露的 shell tool，而不是证明业务状态。
+- `scout-assets skill tool-jarvis-codebase` 返回的 `phaseTools` 用于确认当前 mount 暴露的 tool，而不是证明业务状态。
 - `jarvis codebase supported` 的输出是当前 repo 名称判断依据。
 - 不在 supported 输出中的 repo 不能继续按 managed codebase 处理，必须记录为阻塞项。
 
@@ -526,7 +526,7 @@ Partial：
 
 ## Failure Rules (Enforcement)
 
-- FR-001：`scout-assets tools`、`jarvis codebase supported`、`jarvis codebase <repo> path` 或 `codegraph status` 失败、空输出、权限失败或解析失败时，必须记录 failed_commands、输出摘要和影响阶段。
+- FR-001：`scout-assets skill tool-jarvis-codebase`、`jarvis codebase supported`、`jarvis codebase <repo> path` 或 `codegraph status` 失败、空输出、权限失败或解析失败时，必须记录 failed_commands、输出摘要和影响阶段。
 - FR-002：CodeGraph 无命中、多命中、索引不可读或 node/range 不可定位时，不得生成 source-verified claim；只能记录查询失败、limitation 或阻塞项。
 - FR-003：源码文件不可读、行号不稳定、signature 无法确认或 key lines 无法解释时，不得生成 `E-CODE-*`。
 - FR-004：evidence artifact 写入失败或模板字段无法填充时，不得宣称本技能完成；必须向上游报告 artifact target 和失败原因。
@@ -576,7 +576,7 @@ supports: VP-001 from verification-manual.md
 
 流程：
 
-1. 执行 `scout-assets tools`，确认 `jarvis` 和 `codegraph` 可见。
+1. 执行 `scout-assets skill tool-jarvis-codebase`，从 `phaseTools` 确认 `jarvis` 和 `codegraph` 可见。
 2. 执行 `jarvis codebase supported`，确认 `gurusdk-unity` 当前受支持。
 3. 执行 `jarvis codebase gurusdk-unity path`，取得 codebase path。
 4. 执行 `codegraph status "<codebase-path>"`，确认索引状态。

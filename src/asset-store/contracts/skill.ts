@@ -1,8 +1,15 @@
-/**
- * Validated Skill metadata shared by catalog parsing, mount persistence, and
- * agent routing. Parsing and dependency resolution remain asset capabilities.
- */
+/** Runtime Skill metadata shared by catalog parsing, mount persistence, and routing. */
 import type { ScoutAgentPhase } from "../../agent/thread/types.js";
+
+/** Skill responsibility categories understood by the Scout asset catalog. */
+export const ScoutSkillTypes = {
+  Domain: "domain",
+  Internal: "internal",
+  Tool: "tool",
+  Signal: "signal",
+} as const;
+
+export type ScoutSkillType = typeof ScoutSkillTypes[keyof typeof ScoutSkillTypes];
 
 /** Closed requirement vocabulary declared by each supplementary Skill resource. */
 export const ScoutSkillResourceRequirements = {
@@ -20,15 +27,17 @@ export interface ScoutSkillResourceCatalogEntry {
   description: string;
 }
 
-/** Validated frontmatter projection used for Skill routing and dependency loading. */
+/** Parsed frontmatter projection used for Skill routing and dependency loading. */
 export interface ScoutSkillCatalogEntry {
   name: string;
+  type: ScoutSkillType;
   description: string;
   summary: string;
-  phase: ScoutAgentPhase[];
+  phase?: ScoutAgentPhase[];
   family: string[];
   tags: string[];
   requiredSkills: string[];
+  optionalSkills: string[];
   path: string;
   resources: ScoutSkillResourceCatalogEntry[];
 }
@@ -36,10 +45,12 @@ export interface ScoutSkillCatalogEntry {
 /** One phase-projected Skill linked into a role mount. */
 export interface MaterializedSkill {
   name: string;
+  type: ScoutSkillType;
   description: string;
   summary: string;
-  phase: ScoutAgentPhase[];
+  phase?: ScoutAgentPhase[];
   family: string[];
   requiredSkills: string[];
+  optionalSkills: string[];
   path: string;
 }

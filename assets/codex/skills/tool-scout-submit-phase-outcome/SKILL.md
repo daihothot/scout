@@ -4,7 +4,7 @@ name: tool-scout-submit-phase-outcome
 description: Coordinator 判断当前 Workflow Phase 的结果并使用 SubmitPhaseOutcome 推进 Scheduler 时使用。
 id: tool-scout-submit-phase-outcome
 version: 1.0.0
-phase: [Synthesis]
+type: tool
 family: [tool, scout, dynamic]
 tags: [scout, dynamic-tool, workflow, phase]
 devices: [any]
@@ -16,7 +16,7 @@ summary: 规定当前 Workflow Phase 结果的提交语义。
 ## Skill Type
 
 - type: tool
-- structure_level: compact
+- layout: compact
 - note: 本技能拥有 SubmitPhaseOutcome 的调用契约，不拥有领域结果判断或 Task 生命周期。
 
 ## Tool Contract

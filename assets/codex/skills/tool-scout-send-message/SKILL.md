@@ -4,7 +4,7 @@ name: tool-scout-send-message
 description: Scout Agent 使用 SendMessage 向已有 Agent 或其当前任务发送消息时使用。
 id: tool-scout-send-message
 version: 1.0.0
-phase: [Synthesis, research, verify, research-reviewer, verify-reviewer]
+type: tool
 family: [tool, scout, dynamic]
 tags: [scout, dynamic-tool, message]
 devices: [any]
@@ -16,7 +16,7 @@ summary: 规定 SendMessage 的目标绑定与 steer/queued 投递语义。
 ## Skill Type
 
 - type: tool
-- structure_level: compact
+- layout: compact
 - note: 本技能拥有普通 Agent 消息投递契约，不拥有 task disposition 或人工确认生命周期。
 
 ## Tool Contract

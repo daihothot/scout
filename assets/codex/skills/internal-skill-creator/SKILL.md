@@ -4,7 +4,7 @@ name: internal-skill-creator
 description: 创建或修改 Scout Skill 时规范 identity、type、layout、phase、family、依赖、resources 和职责归属。
 id: internal-skill-creator
 version: 1.0.0
-phase: []
+type: internal
 family: [internal, skill-creator]
 tags: [scout, skill, asset, template, governance]
 devices: [any]
@@ -46,7 +46,7 @@ summary: 规范 Scout Skill 的作者分类、正文布局、文件系统投影�
 使用本技能处理：
 
 - 创建、修改、评审或规范化 Scout Skill 及其 supplementary resources。
-- 判断内容应属于 AGENTS、Domain Skill、Tool Skill、Single Skill、Internal Skill、template 还是 reference。
+- 判断内容应属于 AGENTS、Domain Skill、Tool Skill、Signal Skill、Internal Skill、template 还是 reference。
 - 为一个 Skill 独立选择 type 与 layout，并按当前资产和 Runtime 事实验证结果。
 
 ## Skill Authoring Model
@@ -61,7 +61,7 @@ summary: 规范 Scout Skill 的作者分类、正文布局、文件系统投影�
 | `internal` | Scout 自有资产、运行边界和治理规则。 |
 | `domain` | 当前 domain 中当前 role 的业务输入、判断、工作、输出和交接。 |
 | `tool` | 一种操作能力的调用方式、输入、结果、副作用和失败边界。 |
-| `single` | 一个稳定、可组合的领域 contract。 |
+| `signal` | 一个稳定、可组合的领域 contract。 |
 
 每个 Skill 必须选择一个 layout：
 
@@ -80,7 +80,7 @@ Skill 源目录固定为：
 assets/codex/skills/<skill-name>/SKILL.md
 ```
 
-Scout Runtime 根据当前 `phase` 选择 Skill，并将 Skill 目录物化为：
+Scout Runtime 将 Skill 源目录投影到 role 的 mount，并将 Skill 目录物化为：
 
 ```text
 <family-path>/<skill-name>/SKILL.md
@@ -88,9 +88,9 @@ Scout Runtime 根据当前 `phase` 选择 Skill，并将 Skill 目录物化为�
 
 规则：
 
-- `phase` 是 Scout Runtime 的最小资源投影单位；Skill frontmatter 中的 `phase` 声明该 Skill 进入哪些资源投影。
+- `phase` 是作者声明 Skill 进入哪些资源投影的元数据；当前 type 是否使用该字段由对应 type template 定义。
+- 不声明 `phase` 的 Skill 只能按照对应 type template 规定的依赖关系进入资源投影。
 - `family` 是必填的稳定分类路径，直接决定 `mount` 中的文件夹，不是交互式发现入口、执行顺序或授权状态。
-- 当前 `phase` 声明的 Skill 会被物化；它们的 `dependencies.skills.required` 递归加入同一投影，并按依赖关系验证。
 - 当前 `role` 使用普通文件系统定位和读取 Skill；Skill 的完整读取、依赖展开、composition 和开始执行条件由 `internal-skill-consumption` 定义。
 - Skill 不放入 `.agents/skills`，避免与 Codex 原生全局 Skill 混合；Scout Skill 只从 `.scout/skill` 使用。
 - 物化路径可以是软链接；逻辑路径与 canonical target 必须同时符合当前权限。
@@ -100,8 +100,7 @@ Scout Runtime 根据当前 `phase` 选择 Skill，并将 Skill 目录物化为�
 ## Responsibility Placement
 
 - 全部 `role`、全部 domain 都适用的稳定规则放在全局 `AGENTS.md`。
-- 一个 domain 中各 `role` 的业务约束放在对应 Domain Skill。
-- 每个 Dynamic Tool 必须拥有独立 Tool Skill；Domain Skill 根据当前工作需要提供对应 Tool Skill 的入口。
+- 各 Skill type 的内容责任和禁止越界范围由对应 type template 定义。
 - template 与 reference 只拥有自己服务的结构或资料，不复制所属 Skill 的完整方法论。
 
 ## Directory Structure
@@ -115,29 +114,20 @@ assets/codex/skills/<skill-name>/
   references/                # 可选
 ```
 
-`skill-name` 使用小写字母、数字和连字符，并表达稳定责任：
-
-- `responsibility` 表示 Domain Skill 拥有的实际稳定责任。
-- `provider` 表示提供 Tool 操作能力的实际来源。
-- `tool-capability` 表示 Tool Skill 拥有的实际稳定操作能力。
-- `internal-capability` 表示 Internal Skill 拥有的实际稳定治理能力。
+`type` 表示当前 Skill 选定的实际 type；`stable-name` 表示该 type template 定义的实际稳定名称。
 
 ```text
-domain-<domain>-<responsibility>
-tool-<provider>-<tool-capability>
-internal-<internal-capability>
+<type>-<stable-name>
 ```
 
-- 第一种命名形式用于 Domain Skill。
-- 第二种命名形式用于 Tool Skill。
-- 第三种命名形式用于 Internal Skill。
-- Single Skill 使用所属 Domain Skill 定义的稳定领域命名；存在 composition 时，identity 命名和依赖方向必须遵守 `internal-skill-consumption`。
+- Skill name 必须使用与 `type` 对应的固定前缀；完整名称结构由对应 type template 定义。
+- `skill-name` 使用小写字母、数字和连字符，并表达当前 type 拥有的稳定责任。
 
 不要使用空格、下划线、版本号、issue id、run id、一次性任务名或 `helper`、`tools` 一类宽泛名称。
 
 ## Frontmatter Contract
 
-所有 Skill 使用下列 frontmatter 骨架：
+所有 Skill 使用下列通用 frontmatter 骨架。type-specific 字段由对应 type template 定义。
 
 - `skill-description` 表示 Skill 的实际触发场景和主要职责。
 - `family-segment` 表示 `family` 中一个实际目录名。
@@ -149,9 +139,9 @@ internal-<internal-capability>
 assetKind: scout.skill
 name: <skill-name>
 description: <skill-description>
+type: <type>
 id: <skill-name>
 version: 0.1.0
-phase: [<phase>]
 family: [<family-segment>]
 tags: [<tag>]
 devices: [any]
@@ -165,35 +155,20 @@ summary: <skill-summary>
 - `name`、`id` 和目录名表达同一 canonical identity；重命名时同步修改全部显式引用，不保留 alias。
 - `description` 说明触发场景和主要职责，不能塞入完整 workflow。
 - `version` 使用语义版本；首次创建使用 `0.1.0`。
-- `phase` 是必填 inline list；每个值必须是当前 Scout Runtime 定义的实际 phase，不维护固定枚举。`phase: []` 表示该 Skill 不进入任何 Runtime mount。
+- `type` 只能是 `internal`、`domain`、`tool` 或 `signal`。
+- `phase` 是否存在及其固定值由选定的 type template 定义；作者不能根据当前任务自行扩大或缩小可见范围。
 - `family` 是必填非空 inline list；每个 token 使用小写 kebab-case。
 - `tags` 是必填非空 inline list，只表达稳定特征，不参与物化路径或筛选。
 - `devices` 没有明确限制时使用 `[any]`。
 - `summary` 是短职责摘要，不复制 description。
 
-正文必须声明当前 type、layout 和责任边界。type 只能是 `internal`、`domain`、`tool` 或 `single`；layout 只能是 `workflow` 或 `compact`。具体章节、位置和格式由选定的 layout template 定义。
+正文必须声明当前 type、layout 和责任边界。type 只能是 `internal`、`domain`、`tool` 或 `signal`；layout 只能是 `workflow` 或 `compact`。具体章节、位置和格式由选定的 layout template 定义。
 
 ## Family Classification
 
 family 表达文件系统分类和归属，不表达依赖、执行顺序或 layout：
 
-- `domain-category` 表示 Domain Skill 在所属 domain 中的实际稳定分类。
-- `domain-defined-segment` 表示所属 Domain Skill 为 Single Skill 定义的一个实际后续目录名。
-- `tool-category` 表示 provider 下一个稳定的 Tool 文件系统分类。
-- `internal-category` 表示一个稳定的 Scout 内部治理分类。
-
-```text
-[<domain>, <domain-category>]
-[<domain>, single]
-[tool, <provider>]
-[tool, <provider>, <tool-category>]
-[internal, <internal-category>]
-```
-
-- Domain Skill 的 family 必须以 `<domain>` 开始，并使用所属 domain 定义的稳定分类路径。
-- Single Skill 的 family 必须以 `[<domain>, single]` 开始；后续追加一个或多个 `<domain-defined-segment>`，其业务含义由所属 Domain Skill 定义。
-- Tool Skill 的 family 必须以 `tool/<provider>` 开始；存在稳定子分类时追加 `<tool-category>`。
-- Internal Skill 的 family 必须以 `internal` 开始。
+- 完整 family 结构由对应 type template 定义。
 - 同一 family 可以包含多个 Skill；它们物化为该目录下以 Skill identity 命名的兄弟目录。
 - family 中的目录名恰好与某个 layout 同名时，也不建立自动推导关系。
 
@@ -206,9 +181,34 @@ family 表达文件系统分类和归属，不表达依赖、执行顺序或 lay
 - `mcpServers` 使用 `assets/codex/mcp/servers.json` 中的 server id。
 - `plugins` 使用 plugin manifest 中的 name。
 - `required` 表示缺失时 contract 无法完整执行；`optional` 只表示条件能力或增强能力。
-- required Skill 的 phase 必须覆盖消费方的全部 phase，依赖图必须无环。
+- required Skill 缺失时当前 contract 不完整；optional Skill 是可供当前工作选择的候选能力，当前环境没有该候选时不阻塞基础 contract。存在的依赖必须无环。
 - 依赖只表达“使用当前 Skill 必须同时具备什么”，不能用来偷渡其它层的方法论。
-- derived、implementation 或其它 composition 的 identity、required dependency 和消费规则遵守 `internal-skill-consumption`；本技能不复制第二套 composition 协议。
+- composition 的作者声明遵守下列 Composition Authoring Rules；候选构造、完整读取和验证由 `internal-skill-consumption` 定义。
+
+### Composition Authoring Rules
+
+以下名称表示 composition authoring 中的实际值：
+
+- `derived-name` 表示 derived contract owner identity 中位于 `-by-<source>` 之前的实际名称。
+- `source` 表示 derived contract 所依据来源的实际名称。
+- `implemented-owner-id` 表示拥有待实现 contract 的实际 Skill identity。
+- `mechanism` 表示 implementation contract 使用的实际方法或能力名称。
+
+- interface contract 定义基础结果，不绑定具体 implementation mechanism。
+- derived contract 基于 interface contract 的基础结果定义更具体的结果；implementation contract 规定通过具体 mechanism 产生另一个 contract 定义的结果。
+
+owner identity 使用以下命名形式：
+
+```text
+<derived-name>-by-<source>
+<implemented-owner-id>-via-<mechanism>
+```
+
+- derived contract owner 必须 direct required 对应的 interface contract owner。
+- implementation contract owner 必须 direct required `<implemented-owner-id>`。
+- implementation 过程依赖其它 Skill 时，implementation contract owner 必须 direct required 这些实际依赖。
+- `<implemented-owner-id>` 不得反向 required 某个具体 implementation contract owner。
+- `by-<source>` 和 `via-<mechanism>` 不能替代 contract 角色及 required dependency 声明。
 
 ## Supplementary Resources
 
@@ -303,7 +303,7 @@ Partial：
 
 1. 完整读取 `templates/template-index.md`、匹配的 type template 和 layout template。
 2. 创建或更新 identity、frontmatter、依赖与正文。
-3. 同时应用上级 Skill、type template 和 layout template，只写当前对象拥有的职责。
+3. 同时应用本技能、type template 和 layout template，只写当前对象拥有的职责。
 
 Exit：
 
@@ -352,7 +352,7 @@ sed -n '1,40p' assets/codex/skills/<skill-name>/SKILL.md
 只有当前工作目录是 Runtime 为当前 `role` 生成的 `mount`，并且其中存在 `mount-manifest.json` 时，才检查当前物化结果：
 
 ```sh
-scout-assets skills
+scout-assets summary
 ```
 
 Exit：
@@ -391,17 +391,16 @@ Partial：
 - PR-001：禁止用名称、family、phase、旧文档或模型记忆猜测责任、依赖或 composition。
 - PR-002：禁止在本技能或 type/layout template 中复制 `internal-skill-consumption` 的读取和 composition 算法。
 - PR-003：禁止把 type template 和 layout template 拼成两套并列正文结构。
+- PR-004：禁止 `<implemented-owner-id>` 反向 required 某个具体 implementation contract owner。
 
 ## Checklist
 
 - `name`、`id`、目录名唯一且一致，所有引用均指向当前 identity。
 - `type` 是四种合法值之一，`layout` 是两种合法值之一，且二者来自独立判断。
-- `phase` 使用当前 Scout Runtime 的实际值并覆盖真实资源投影，不依赖固定枚举。
+- `phase` 是否存在及其值符合选定 type template，并覆盖真实资源投影。
 - `family` 必填、分类正确，生成路径符合 `<family-path>/<skill-name>/SKILL.md`。
-- required Skill 存在、覆盖 phase 且依赖无环。
+- required/optional Skill 存在且依赖无环。
 - required / optional resource metadata 完整，正文适用条件与 metadata 一致。
-- AGENTS、Domain Skill、Tool Skill、Single Skill、Internal Skill、template 和 reference 的责任没有交叉复制。
-- Dynamic Tool 拥有独立 Tool Skill，Tool Skill 在该工具所有可用 phase 中可见。
-- Domain Skill 拥有所属 domain 和 role 的 Single Skill 集合与消费规则；Single Skill 不拥有集合选择。
+- AGENTS、Domain Skill、Tool Skill、Signal Skill、Internal Skill、template 和 reference 的责任没有交叉复制。
 - Skill 的读取与 composition 规则引用 `internal-skill-consumption`，不复制其通用算法。
 - 当前 phase 的真实 mount 只包含应见 Skill，并且逻辑路径和 canonical target 权限都正确。

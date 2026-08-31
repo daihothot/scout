@@ -19,6 +19,7 @@ import {
   resolveScoutSkillsForPhases,
   resolveSkillDependencyLoadOrder,
   validateScoutSkillCatalog,
+  ScoutSkillTypes,
   type ScoutSkillCatalogEntry,
 } from "../../src/asset-store/index.js";
 import { StartupPhase } from "../../src/core/workflow/index.js";
@@ -26,7 +27,7 @@ import { StartupPhase } from "../../src/core/workflow/index.js";
 const scoutRoot = process.cwd();
 const assetsRoot = join(scoutRoot, "assets", "codex");
 
-test("every Scout Skill has a phase, filesystem family, and canonical mount path", () => {
+test("every Scout Skill projects the runtime metadata needed by its mount", () => {
   const catalog = buildScoutSkillCatalog({
     assetsRoot,
     skillPaths: listScoutSkillPaths(assetsRoot),
@@ -34,7 +35,8 @@ test("every Scout Skill has a phase, filesystem family, and canonical mount path
   assert.ok(catalog.length >= 20);
   assert.equal(new Set(catalog.map((skill) => skill.name)).size, catalog.length);
   for (const skill of catalog) {
-    assert.ok(Array.isArray(skill.phase));
+    assert.ok(Object.values(ScoutSkillTypes).includes(skill.type));
+    assert.ok(skill.phase === undefined || Array.isArray(skill.phase));
     assert.ok(skill.family.length > 0);
     assert.ok(skill.tags.length > 0);
     assert.ok(skill.description.length > 0);
@@ -47,12 +49,13 @@ test("every Scout Skill has a phase, filesystem family, and canonical mount path
 
   const byName = new Map(catalog.map((skill) => [skill.name, skill] as const));
   assert.deepEqual(byName.get("internal-runtime-inspector")?.phase, [StartupPhase]);
+  assert.equal(byName.get("internal-skill-creator")?.phase, undefined);
   assert.deepEqual(byName.get("internal-skill-consumption")?.phase, [StartupPhase]);
   assert.deepEqual(byName.get("domain-validation-researcher")?.family, [
     "validation", "workflow",
   ]);
-  assert.deepEqual(byName.get("signal-unity-runtime-log")?.family, [
-    "validation", "single", "unity", "local", "general",
+  assert.deepEqual(byName.get("signal-runtime-log")?.family, [
+    "signal", "local", "unity", "general",
   ]);
   assert.deepEqual(byName.get("tool-scout-submit-task")?.family, [
     "tool", "scout", "dynamic",
@@ -81,9 +84,9 @@ test("each Workflow role projects every visible Skill and its dependency closure
       "domain-validation-researcher",
       "internal-runtime-inspector",
       "internal-skill-consumption",
-      "signal-unity-callback-event-by-runtime-log",
-      "signal-unity-local-storage",
-      "signal-unity-runtime-log",
+      "signal-callback-event-by-runtime-log",
+      "signal-local-storage",
+      "signal-runtime-log",
       "tool-guru-knowledge",
       "tool-jarvis-codebase",
       "tool-scout-request-human-input",
@@ -94,10 +97,10 @@ test("each Workflow role projects every visible Skill and its dependency closure
       "domain-validation-verifier",
       "internal-runtime-inspector",
       "internal-skill-consumption",
-      "signal-unity-callback-event-by-runtime-log",
-      "signal-unity-local-storage",
-      "signal-unity-runtime-log",
-      "signal-unity-runtime-log-via-unity-pipeline-cli",
+      "signal-callback-event-by-runtime-log",
+      "signal-local-storage",
+      "signal-runtime-log",
+      "signal-runtime-log-via-unity-pipeline-cli",
       "tool-jarvis-codebase",
       "tool-scout-request-human-input",
       "tool-scout-send-message",
@@ -110,10 +113,10 @@ test("each Workflow role projects every visible Skill and its dependency closure
       "domain-validation-verifier",
       "internal-runtime-inspector",
       "internal-skill-consumption",
-      "signal-unity-callback-event-by-runtime-log",
-      "signal-unity-local-storage",
-      "signal-unity-runtime-log",
-      "signal-unity-runtime-log-via-unity-pipeline-cli",
+      "signal-callback-event-by-runtime-log",
+      "signal-local-storage",
+      "signal-runtime-log",
+      "signal-runtime-log-via-unity-pipeline-cli",
       "tool-guru-knowledge",
       "tool-jarvis-codebase",
       "tool-scout-request-human-input",
@@ -132,7 +135,8 @@ test("each Workflow role projects every visible Skill and its dependency closure
       expectedInventories[role.name]?.sort(),
     );
     assert.ok(projected.every((skill) =>
-      skill.phase.includes(StartupPhase)
+      skill.phase === undefined
+      || skill.phase.includes(StartupPhase)
       || skill.phase.some((phase) => role.phases.includes(phase))
     ));
     assert.equal(projected.some((skill) => skill.name === "internal-skill-creator"), false);
@@ -257,8 +261,8 @@ test("Scout Skill catalog recursively discovers resources and rejects resource s
   }
 });
 
-test("Scout Skill metadata accepts Workflow Phase names and validates other token fields", () => {
-  assert.throws(() => parseMetadata("missing-phase", { phase: null }), /must define phase/);
+test("Scout Skill metadata parsing does not enforce type and Phase authoring policy", () => {
+  assert.equal(parseMetadata("missing-phase", { phase: null }).phase, undefined);
   assert.deepEqual(parseMetadata("off-runtime", { phase: "[]" }).phase, []);
   assert.throws(() => parseMetadata("missing-family", { family: null }), /must define non-empty family/);
   assert.throws(() => parseMetadata("missing-tags", { tags: null }), /must define non-empty tags/);
@@ -273,9 +277,18 @@ test("Scout Skill metadata accepts Workflow Phase names and validates other toke
     () => parseMetadata("invalid-dependency", { requiredSkills: "[other_skill]" }),
     /dependencies\.skills\.required has invalid token/,
   );
+  assert.equal(parseMetadata("signal-entry", {
+    type: "signal",
+    phase: null,
+  }).type, "signal");
+  assert.deepEqual(parseMetadata("signal-with-phase", { type: "signal" }).phase, ["research"]);
+  assert.deepEqual(parseMetadata("internal-synthesis", {
+    type: "internal",
+    phase: "[Synthesis]",
+  }).phase, ["Synthesis"]);
 });
 
-test("Scout Skill dependency order is dependency-first, de-duplicated, and phase-safe", () => {
+test("Scout Skill catalog checks cycles while selected dependency loading stays strict", () => {
   const catalog = [
     parseMetadata("foundation"),
     parseMetadata("producer", { requiredSkills: "[foundation]" }),
@@ -299,13 +312,24 @@ test("Scout Skill dependency order is dependency-first, de-duplicated, and phase
     ], ["alpha"]),
     /dependency cycle/,
   );
+  assert.doesNotThrow(() => validateScoutSkillCatalog([
+    parseMetadata("source-authoring-only", {
+      type: "internal",
+      phase: null,
+      requiredSkills: "[unavailable-authoring-dependency]",
+    }),
+  ]));
   assert.throws(
     () => validateScoutSkillCatalog([
-      parseMetadata("producer", { phase: "[research]" }),
-      parseMetadata("workflow", { phase: "[research, validate]", requiredSkills: "[producer]" }),
+      parseMetadata("alpha", { optionalSkills: "[beta]" }),
+      parseMetadata("beta", { requiredSkills: "[alpha]" }),
     ]),
-    /dependency producer does not support phase validate/,
+    /dependency cycle/,
   );
+  assert.doesNotThrow(() => validateScoutSkillCatalog([
+    parseMetadata("producer", { phase: "[research]" }),
+    parseMetadata("workflow", { phase: "[research, validate]", requiredSkills: "[producer]" }),
+  ]));
   assert.doesNotThrow(() => validateScoutSkillCatalog([
     parseMetadata("startup-foundation", { phase: "[Startup]" }),
     parseMetadata("workflow", {
@@ -313,16 +337,21 @@ test("Scout Skill dependency order is dependency-first, de-duplicated, and phase
       requiredSkills: "[startup-foundation]",
     }),
   ]));
-  assert.throws(
-    () => validateScoutSkillCatalog([
-      parseMetadata("producer", { phase: "[research]" }),
-      parseMetadata("startup-workflow", {
-        phase: "[Startup]",
-        requiredSkills: "[producer]",
-      }),
-    ]),
-    /dependency producer does not support phase Startup/,
-  );
+  assert.doesNotThrow(() => validateScoutSkillCatalog([
+    parseMetadata("producer", { phase: "[research]" }),
+    parseMetadata("startup-workflow", {
+      phase: "[Startup]",
+      requiredSkills: "[producer]",
+    }),
+  ]));
+  assert.deepEqual(resolveSkillDependencyLoadOrder([
+    parseMetadata("foundation"),
+    parseMetadata("optional", { type: "signal", phase: null }),
+    parseMetadata("workflow", { requiredSkills: "[foundation]", optionalSkills: "[optional]" }),
+  ], ["workflow"]).map((skill) => skill.name), ["foundation", "optional", "workflow"]);
+  assert.doesNotThrow(() => validateScoutSkillCatalog([
+    parseMetadata("workflow", { optionalSkills: "[unavailable-signal]" }),
+  ]));
 });
 
 test("filesystem families may contain siblings and prefix directories", () => {
@@ -336,23 +365,31 @@ test("filesystem families may contain siblings and prefix directories", () => {
 function parseMetadata(
   name: string,
   options: {
+    type?: string;
     phase?: string | null;
     family?: string | null;
     tags?: string | null;
     requiredSkills?: string;
+    optionalSkills?: string;
   } = {},
 ): ScoutSkillCatalogEntry {
   const lines = [
     "assetKind: scout.skill",
     `name: ${name}`,
     "description: Test Scout Skill metadata.",
+    `type: ${options.type ?? "domain"}`,
     `id: ${name}`,
     "version: 1.0.0",
     ...(options.phase === null ? [] : [`phase: ${options.phase ?? "[research]"}`]),
     ...(options.family === null ? [] : [`family: ${options.family ?? `[test, ${name}]`}`]),
     ...(options.tags === null ? [] : [`tags: ${options.tags ?? "[test]"}`]),
-    ...(options.requiredSkills
-      ? ["dependencies:", "  skills:", `    required: ${options.requiredSkills}`]
+    ...(options.requiredSkills || options.optionalSkills
+      ? [
+          "dependencies:",
+          "  skills:",
+          ...(options.requiredSkills ? [`    required: ${options.requiredSkills}`] : []),
+          ...(options.optionalSkills ? [`    optional: ${options.optionalSkills}`] : []),
+        ]
       : []),
     "summary: Test metadata.",
   ];
@@ -369,6 +406,7 @@ function scoutSkillText(name: string): string {
     "assetKind: scout.skill",
     `name: ${name}`,
     "description: Test Scout Skill metadata.",
+    "type: domain",
     `id: ${name}`,
     "version: 1.0.0",
     "phase: [research]",

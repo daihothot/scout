@@ -4,13 +4,14 @@ name: domain-validation-research-pack
 description: Scout Researcher 在 Validation Domain 中编排知识与代码证据、构建唯一 Research Pack、Evidence Registry，并按 Signal contract 形成 Verification Manual 时使用。
 id: domain-validation-research-pack
 version: 0.2.4
+type: domain
 phase: [research, research-reviewer, verify-reviewer]
 family: [validation, workflow]
 tags: [scout, validation, research, pack, evidence, manual]
 devices: [any]
 dependencies:
   skills:
-    required: [tool-guru-knowledge, tool-jarvis-codebase]
+    required: [internal-runtime-inspector, tool-guru-knowledge, tool-jarvis-codebase, signal-runtime-log, signal-callback-event-by-runtime-log, signal-local-storage]
   shellTools:
     required: [scoutAssets, scoutResearchArtifactCheck, scoutArtifactDigest]
 summary: 编排知识和代码 producer contracts，形成唯一 Research Pack、证据索引和验证手册。
@@ -25,8 +26,8 @@ summary: 编排知识和代码 producer contracts，形成唯一 Research Pack�
 
 ## Skill Type
 
-- type: workflow
-- structure_level: full
+- type: domain
+- layout: workflow
 - note: 本技能是多阶段 research workflow，必须使用完整 Inputs、Workflow、Output Layout、Artifact Relationship Rules、Phase 和规则分层。
 
 ## Core Use
@@ -137,13 +138,13 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 
 描述：
 
-- 当前 mount 可见本技能、`tool-guru-knowledge`、`tool-jarvis-codebase`、角色 Domain Skill 已按 Single 完整读取规则准备的 contract、`scout-assets`、`scout-research-artifact-check` 和 `scout-artifact-digest`。
+- 当前 mount 可见本技能、`internal-runtime-inspector`、`tool-guru-knowledge`、`tool-jarvis-codebase`、角色 Domain Skill 已按 Signal 完整读取规则准备的 contract、`scout-research-artifact-check` 和 `scout-artifact-digest`。
 
 注意事项：
 
-- 使用 `scout-assets` 查询当前可见能力。
+- 当前 mount、Skill 和 Tool 的定位与可见性确认遵守 `internal-runtime-inspector`。
 - 两个 producer Skill 各自负责检查自己的 required capabilities。
-- Single 的完整读取由角色 Domain Skill 与 `internal-skill-consumption` 负责；本技能只在 Manual 中选择并消费适用 contract，不把完整读取等同于全部适用。
+- Signal 的完整读取由角色 Domain Skill 与 `internal-skill-consumption` 负责；本技能只在 Manual 中选择并消费适用 contract，不把完整读取等同于全部适用。
 - 缺少 Domain Skill 直接依赖或任一 producer contract 时，记录为阻塞项并向上游报告。
 
 ### I-003: Producer Scope
@@ -301,21 +302,11 @@ tool-jarvis-codebase/templates/source-code-evidence.md
 
 本阶段确认上游输入、当前 mount、两个 producer contracts 和唯一 Research Pack 目标。
 
-使用命令：
-
-```bash
-scout-assets skills
-scout-assets tools
-scout-assets list
-```
-
 注意事项：
 
 - 从上游输入中提取 product、domain、capability、platform、app version / SDK version / branch / commit、BDD scenario、user persona clue、source refs 和 issue / PR 线索。
-- `scout-assets` 输出只能证明当前 mount 能力可见，不能证明业务状态。
 - 读取本技能、`tool-guru-knowledge` 和 `tool-jarvis-codebase` 的 contract 与模板索引；缺失时不得自行复制或缩减 producer 规则。
-- 进入 Phase 6 时，只从角色 Domain Skill 已完成读取的 Single 集合中选择适用 contract；若新确认了 capability，先按角色 Domain Skill 完整读取该 capability 集合。
-- 只有当前任务需要确认 MCP server、plugin 或 raw manifest 时，再执行 `scout-assets mcp`、`scout-assets plugins` 或 `scout-assets raw`。
+- 进入 Phase 6 时，只从角色 Domain Skill 已完成读取的 Signal 集合中选择适用 contract；若新确认了 capability，先按角色 Domain Skill 完整读取该 capability 集合。
 - 缺少 required Domain capability 或 producer contract 时记录为阻塞项；producer 内部能力由对应 Skill 检查。
 - 初始输入明确确认了模板中的必填事实时，可以将该事实登记为 `E-HUMAN-*`；用户画像线索必须进一步整理进独立 `E-PERSONA-*`，不得直接写入人工确认证据结构。
 
@@ -325,7 +316,7 @@ Exit：
 
 Blocked：
 
-- 缺少 `tool-guru-knowledge`、`tool-jarvis-codebase`、`scoutAssets`、`scoutResearchArtifactCheck`、`scoutArtifactDigest` 或 artifact target 不可写时停止。
+- 缺少 `internal-runtime-inspector`、`tool-guru-knowledge`、`tool-jarvis-codebase`、`scoutAssets`、`scoutResearchArtifactCheck`、`scoutArtifactDigest` 或 artifact target 不可写时停止。
 
 Partial：
 
@@ -491,7 +482,7 @@ Exit：
 Blocked：
 
 - 缺少唯一 BDD fact、缺少当前版本 `E-CODE-*` 或 evidence registry 不闭环时，不生成完成状态的 verification manual。
-- Manual 选择的 Signal contract 不在已完整读取的 Single 集合中时停止受影响 verification point，不得自行补写信号语义。
+- Manual 选择的 Signal contract 不在已完整读取的 Signal 集合中时停止受影响 verification point，不得自行补写信号语义。
 
 Partial：
 
@@ -541,7 +532,7 @@ Partial：
 
 ## Blocking Rules (Enforcement)
 
-- BR-001：缺少 `tool-guru-knowledge`、`tool-jarvis-codebase`、`scoutAssets`、`scoutResearchArtifactCheck` 或 `scoutArtifactDigest` 时必须停止。
+- BR-001：缺少 `internal-runtime-inspector`、`tool-guru-knowledge`、`tool-jarvis-codebase`、`scoutAssets`、`scoutResearchArtifactCheck` 或 `scoutArtifactDigest` 时必须停止。
 - BR-002：无法唯一定位 BDD fact 时必须停止在 Phase 2，不得进入 Phase 3-6。
 - BR-003：任一 producer 无法确认自己的产品或 repository boundary 时，父 Researcher 必须保留其阻塞事实，不得绕过。
 - BR-004：产品版本、branch 或 commit 缺失且当前任务需要 current version code evidence 时必须记录需人工确认项，不得主动选择 `latest`。
@@ -552,7 +543,7 @@ Partial：
 ## Retry Rules (Enforcement)
 
 - RR-001：producer 内部查询和副作用重试分别遵守 `tool-guru-knowledge` 与 `tool-jarvis-codebase`。
-- RR-002：`scout-assets`、checker 或 digest 的瞬时失败最多重试一次，并记录 retry log。
+- RR-002：checker 或 digest 的瞬时失败最多重试一次，并记录 retry log。
 - RR-003：重试不得扩大 product、domain、BDD、repo、version 或 platform 范围来规避唯一性问题。
 - RR-004：重试后仍无法唯一定位或 evidence 仍不闭环时，必须固定为需人工确认项、阻塞项或 limitation。
 

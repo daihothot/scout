@@ -4,7 +4,7 @@ name: tool-scout-respond-human-input
 description: Coordinator 将用户对正式人工请求的明确回复送回原 Worker task 时使用 RespondHumanInput。
 id: tool-scout-respond-human-input
 version: 1.0.0
-phase: [Synthesis]
+type: tool
 family: [tool, scout, dynamic]
 tags: [scout, dynamic-tool, human-input, task]
 devices: [any]
@@ -16,7 +16,7 @@ summary: 规定人工回复与原请求、原任务的精确匹配和投递语�
 ## Skill Type
 
 - type: tool
-- structure_level: compact
+- layout: compact
 - note: 本技能拥有人工回复投递契约，不拥有 Worker 的领域判断。
 
 ## Tool Contract

@@ -1,30 +1,31 @@
 ---
 assetKind: scout.skill
-name: signal-unity-runtime-log-via-unity-pipeline-cli
-description: 通过 Unity Pipeline CLI 从 Unity Editor 导出并原样复制符合 signal-unity-runtime-log 格式的原始日志文件时使用。
-id: signal-unity-runtime-log-via-unity-pipeline-cli
+name: signal-runtime-log-via-unity-pipeline-cli
+description: 通过 Unity Pipeline CLI 从 Unity Editor 导出并原样复制符合 runtime-log 格式的原始日志文件时使用。
+id: signal-runtime-log-via-unity-pipeline-cli
 version: 0.2.2
-phase: [verify, research-reviewer, verify-reviewer]
-family: [validation, single, unity, local, general]
+type: signal
+family: [signal, local, unity, general]
 tags: [signal, unity, verification, runtime, log, pipeline, cli, shell-tool, source]
 devices: [any]
 dependencies:
   skills:
-    required: [signal-unity-runtime-log, tool-unity-pipeline-cli]
+    required: [signal-runtime-log, tool-unity-pipeline-cli]
 summary: 使用 Unity Pipeline CLI 原样导出 Unity runtime log，并记录文件来源、完整性和操作限制。
 ---
 
 # Unity Runtime Log via Unity Pipeline CLI
 
-当需要从已连接的 Unity Editor 获取 `signal-unity-runtime-log` 原始日志文件，并把不可变副本交给 Verifier 解释时使用本技能。
+当需要从已连接的 Unity Editor 获取 `runtime-log` 原始日志文件，并把不可变副本交给 Verifier 解释时使用本技能。
 
-本技能只拥有 `export_runtime_log` 的日志导出方法、原始文件复制、操作 provenance、失败和重试规则。Unity Pipeline CLI 的通用调用契约由 `tool-unity-pipeline-cli` 定义；日志格式、记录边界、字段语义、行号和匹配规则由 `signal-unity-runtime-log` 定义。
+本技能只拥有 `export_runtime_log` 的日志导出方法、原始文件复制、操作 provenance、失败和重试规则。Unity Pipeline CLI 的通用调用契约由 `tool-unity-pipeline-cli` 定义；日志格式、记录边界、字段语义、行号和匹配规则由 `runtime-log` 定义。
 
 ## Skill Type
 
-- type: tool
-- structure_level: full
-- note: 本技能是 Unity Editor 原始日志导出工具 Skill，不拥有 Signal 匹配条件、observation result 或验证结论。
+- type: signal
+- layout: workflow
+- contract role: implementation
+- note: 本技能是 runtime-log Signal 的一种具体实现，不拥有 Signal 匹配条件、observation result 或验证结论。
 
 ## Core Use
 
@@ -97,7 +98,7 @@ acquired_at
 - `output_path` 必须等于调用方指定的 artifact 目标，并且文件真实存在。
 - `sha256` 使用 `sha256:<hex>`，标识复制后文件的原始字节。
 - `source_path` 只记录来源，不作为 Verifier 可持续读取源文件的假设。
-- 对复制文件应用 `signal-unity-runtime-log` 的格式和行号规则；匹配结果不得写回原始副本。
+- 对复制文件应用 `signal-runtime-log` 的格式和行号规则；匹配结果不得写回原始副本。
 - 命令输出、日志副本、后续解析记录和 observation result 是不同事实。
 
 禁止使用以下内容代替导出命令：
@@ -114,8 +115,8 @@ acquired_at
 一次成功操作产生一份不可变原始日志副本，并记录：
 
 ```text
-acquisition_ref: signal-unity-runtime-log-via-unity-pipeline-cli
-signal_ref: signal-unity-runtime-log
+acquisition_ref: signal-runtime-log-via-unity-pipeline-cli
+signal_ref: signal-runtime-log
 project_path: <当前已确认 Unity project>
 source_path: <命令返回的源日志位置>
 copied_log_ref: <Verifier artifact 中的原始副本>
@@ -166,5 +167,5 @@ limitations: <none 或本次操作限制>
 - 原始日志副本存在于 Verifier artifact root，且没有覆盖旧文件。
 - source path、copied ref、bytes、digest、命令参数和采集时间均已记录。
 - 原始副本没有经过筛选、摘要、脱敏、重排或重新序列化。
-- 记录匹配使用 `signal-unity-runtime-log`，具体位置使用复制文件的物理行号。
+- 记录匹配使用 `signal-runtime-log`，具体位置使用复制文件的物理行号。
 - 失败、重试和覆盖限制没有被隐藏或解释为业务结果。

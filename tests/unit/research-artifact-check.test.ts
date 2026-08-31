@@ -556,7 +556,7 @@ test("Verification Manual defines one generic Signal requirement", () => {
   assert.match(text, /signal_ref: <填写当前 Signal Skill identity>/);
   assert.doesNotMatch(
     text,
-    /signal-unity-runtime-log|signal-unity-callback-event-by-runtime-log|signal-unity-local-storage|callback_or_event|runtime_log:|local_storage:/,
+    /signal-runtime-log|signal-callback-event-by-runtime-log|signal-local-storage|callback_or_event|runtime_log:|local_storage:/,
   );
   for (const field of [
     "match",
@@ -570,7 +570,7 @@ test("Verification Manual defines one generic Signal requirement", () => {
   }
 });
 
-test("Validation domain Skills do not branch on concrete Unity Signals", () => {
+test("Validation domain Skills declare concrete Signal dependencies without embedding their rules", () => {
   for (const skill of [
     "domain-validation-researcher",
     "domain-validation-research-pack",
@@ -578,10 +578,11 @@ test("Validation domain Skills do not branch on concrete Unity Signals", () => {
     "domain-validation-validator",
   ]) {
     const text = readFileSync(join(scoutRoot, "assets/codex/skills", skill, "SKILL.md"), "utf8");
+    const body = text.replace(/^---[\s\S]*?---\s*/m, "");
     assert.doesNotMatch(
-      text,
-      /signal-unity-runtime-log|signal-unity-runtime-log-via-unity-pipeline-cli|signal-unity-callback-event-by-runtime-log|signal-unity-local-storage|tool-unity-pipeline-cli/,
-      `${skill} must keep concrete Signal and Acquisition selection outside the domain contract`,
+      body,
+      /signal-runtime-log|signal-runtime-log-via-unity-pipeline-cli|signal-callback-event-by-runtime-log|signal-local-storage|tool-unity-pipeline-cli/,
+      `${skill} must keep concrete Signal and Acquisition rules outside the domain contract`,
     );
   }
 });
@@ -589,10 +590,11 @@ test("Validation domain Skills do not branch on concrete Unity Signals", () => {
 test("runtime-log Signal owns format and line positions but no Acquisition file facts", () => {
   const text = readFileSync(join(
     scoutRoot,
-    "assets/codex/skills/signal-unity-runtime-log/SKILL.md",
+    "assets/codex/skills/signal-runtime-log/SKILL.md",
   ), "utf8");
 
-  assert.match(text, /^name: signal-unity-runtime-log$/m);
+  assert.match(text, /^name: signal-runtime-log$/m);
+  assert.match(text, /^- contract role: interface$/m);
   assert.match(text, /^  line_start$/m);
   assert.match(text, /^  line_end$/m);
   assert.doesNotMatch(text, /^\s+(?:log_ref|capture_ref|acquisition_ref|digest)$/m);
@@ -617,13 +619,14 @@ test("runtime-log Signal owns format and line positions but no Acquisition file 
 test("callback-event Signal declares one runtime-log Source Signal", () => {
   const text = readFileSync(join(
     scoutRoot,
-    "assets/codex/skills/signal-unity-callback-event-by-runtime-log/SKILL.md",
+    "assets/codex/skills/signal-callback-event-by-runtime-log/SKILL.md",
   ), "utf8");
 
-  assert.match(text, /^name: signal-unity-callback-event-by-runtime-log$/m);
-  assert.match(text, /^id: signal-unity-callback-event-by-runtime-log$/m);
-  assert.match(text, /^\s+required: \[signal-unity-runtime-log\]$/m);
-  assert.match(text, /^- source_signal: signal-unity-runtime-log$/m);
+  assert.match(text, /^name: signal-callback-event-by-runtime-log$/m);
+  assert.match(text, /^id: signal-callback-event-by-runtime-log$/m);
+  assert.match(text, /^- contract role: derived$/m);
+  assert.match(text, /^\s+required: \[signal-runtime-log\]$/m);
+  assert.match(text, /^- source_signal: signal-runtime-log$/m);
   assert.equal(text.match(/^- source_signal:/gm)?.length, 1);
   assert.doesNotMatch(text, /\bsource_signals\b/);
   assert.doesNotMatch(text, /\bsource_(?:output_ref|digest|record_locator)\b/);
@@ -641,14 +644,15 @@ test("callback-event Signal declares one runtime-log Source Signal", () => {
 test("Unity Pipeline runtime-log Acquisition owns raw file export without Console fallback", () => {
   const text = readFileSync(join(
     scoutRoot,
-    "assets/codex/skills/signal-unity-runtime-log-via-unity-pipeline-cli/SKILL.md",
+    "assets/codex/skills/signal-runtime-log-via-unity-pipeline-cli/SKILL.md",
   ), "utf8");
 
-  assert.match(text, /^name: signal-unity-runtime-log-via-unity-pipeline-cli$/m);
-  assert.match(text, /^id: signal-unity-runtime-log-via-unity-pipeline-cli$/m);
+  assert.match(text, /^name: signal-runtime-log-via-unity-pipeline-cli$/m);
+  assert.match(text, /^id: signal-runtime-log-via-unity-pipeline-cli$/m);
+  assert.match(text, /^- contract role: implementation$/m);
   assert.match(
     text,
-    /^\s+required: \[signal-unity-runtime-log, tool-unity-pipeline-cli\]$/m,
+    /^\s+required: \[signal-runtime-log, tool-unity-pipeline-cli\]$/m,
   );
   assert.doesNotMatch(text, /^\s+required: \[unity\]$/m);
   assert.match(text, /export_runtime_log/);
@@ -699,7 +703,7 @@ test("Unity Pipeline CLI Tool owns generic invocation without Signal semantics",
   assert.match(text, /不使用本技能处理：[\s\S]*digest/);
   assert.doesNotMatch(
     text,
-    /signal-unity-runtime-log|export_runtime_log|copied_log_ref|source_path|line_start|line_end/,
+    /runtime-log|export_runtime_log|copied_log_ref|source_path|line_start|line_end/,
   );
 });
 
@@ -744,11 +748,12 @@ test("Unity Pipeline CLI Tool conditionally owns a guarded macOS prefix patch re
 test("local-storage Signal defines a direct snapshot Source Signal", () => {
   const text = readFileSync(join(
     scoutRoot,
-    "assets/codex/skills/signal-unity-local-storage/SKILL.md",
+    "assets/codex/skills/signal-local-storage/SKILL.md",
   ), "utf8");
 
-  assert.match(text, /^name: signal-unity-local-storage$/m);
-  assert.match(text, /^id: signal-unity-local-storage$/m);
+  assert.match(text, /^name: signal-local-storage$/m);
+  assert.match(text, /^id: signal-local-storage$/m);
+  assert.match(text, /^- contract role: interface$/m);
   assert.doesNotMatch(text, /^dependencies:/m);
   assert.doesNotMatch(text, /^## Source Signal$/m);
   assert.doesNotMatch(text, /\bsource_signal:/);
@@ -949,7 +954,7 @@ ${registrySection("Source Code Evidence", "E-CODE-001", "source-commit:Runtime/T
 - E-CODE-001
 #### Signals To Collect
 ##### SR-001: Signal Requirement
-- signal_ref: signal-unity-runtime-log
+- signal_ref: signal-runtime-log
 - match: event_name equals documented_outcome
 - non_match: records from a different session
 - required_fields: event_name and session_id
