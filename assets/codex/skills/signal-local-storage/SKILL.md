@@ -1,11 +1,11 @@
 ---
 assetKind: scout.skill
-name: signal-unity-local-storage
+name: signal-local-storage
 description: 定义或解释 Unity local storage 快照、SQLite store、记录定位、匹配语义及输出契约时使用。
-id: signal-unity-local-storage
+id: signal-local-storage
 version: 0.1.2
-phase: [research, verify, research-reviewer, verify-reviewer]
-family: [validation, single, unity, local, general]
+type: signal
+family: [signal, local, unity, general]
 tags: [signal, unity, local-storage, sqlite]
 devices: [any]
 summary: 定义 Unity local storage 的多 store 快照结构、记录语义、Signal 匹配契约、输出契约和解释限制。
@@ -20,7 +20,8 @@ summary: 定义 Unity local storage 的多 store 快照结构、记录语义、S
 ## Skill Type
 
 - type: signal
-- structure_level: compact
+- layout: compact
+- contract role: interface
 - note: 本技能只拥有 Unity local storage 的稳定知识与中立 Signal contract。
 
 ## Core Use
@@ -185,7 +186,7 @@ signal_requirement
 
 字段所有权：
 
-- `signal_ref` 固定为 `signal-unity-local-storage`。
+- `signal_ref` 固定为 `signal-local-storage`。
 - `match` 描述目标 store、table、record identity、字段谓词或 before/after 状态关系。
 - `non_match` 排除错误 store、错误 table、错误 identity、旧快照、默认值、无关记录或不完整 coverage。
 - `required_fields` 只列出解释本次观察所需的原始字段、schema 字段和 locator。
@@ -221,7 +222,7 @@ local_storage
 
 字段语义：
 
-- `signal_ref` 固定为 `signal-unity-local-storage`。
+- `signal_ref` 固定为 `signal-local-storage`。
 - `snapshot_ref` 唯一标识本次 local storage Signal output。
 - `captured_at` 使用带时区的时间值，并保留输出来源提供的精度。
 - `consistency_scope` 表达跨 store 一致性能力，不允许省略。

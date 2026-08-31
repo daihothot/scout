@@ -4,7 +4,7 @@ name: tool-scout-archive-task
 description: Coordinator 确认 Worker task 不再需要继续后使用 ArchiveTask 归档该 task。
 id: tool-scout-archive-task
 version: 1.0.0
-phase: [Synthesis]
+type: tool
 family: [tool, scout, dynamic]
 tags: [scout, dynamic-tool, task, archive]
 devices: [any]
@@ -16,7 +16,7 @@ summary: 规定 ArchiveTask 的调用时机和归档边界。
 ## Skill Type
 
 - type: tool
-- structure_level: compact
+- layout: compact
 - note: 本技能拥有 task runner 的归档操作契约，不判断领域结果是否正确或全局目标是否完成。
 
 ## Tool Contract

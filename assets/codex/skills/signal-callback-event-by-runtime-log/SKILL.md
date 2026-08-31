@@ -1,16 +1,16 @@
 ---
 assetKind: scout.skill
-name: signal-unity-callback-event-by-runtime-log
+name: signal-callback-event-by-runtime-log
 description: 定义或解释从 Unity runtime log 单一 Source Signal 派生 callback/event observation 的记录结构、匹配语义和输出契约时使用。
-id: signal-unity-callback-event-by-runtime-log
+id: signal-callback-event-by-runtime-log
 version: 0.3.2
-phase: [research, verify, research-reviewer, verify-reviewer]
-family: [validation, single, unity, local, general]
+type: signal
+family: [signal, local, unity, general]
 tags: [signal, unity, callback, event, runtime, log]
 devices: [any]
 dependencies:
   skills:
-    required: [signal-unity-runtime-log]
+    required: [signal-runtime-log]
 summary: 定义由 Unity runtime log 派生 callback/event observation 的统一 Signal contract。
 ---
 
@@ -23,7 +23,8 @@ summary: 定义由 Unity runtime log 派生 callback/event observation 的统一
 ## Skill Type
 
 - type: signal
-- structure_level: compact
+- layout: compact
+- contract role: derived
 - note: 本技能定义从唯一 Source Signal record 派生 callback/event observation 的稳定 contract。
 
 ## Core Use
@@ -44,9 +45,9 @@ summary: 定义由 Unity runtime log 派生 callback/event observation 的统一
 
 ## Source Signal
 
-- source_signal: signal-unity-runtime-log
+- source_signal: signal-runtime-log
 
-本技能只允许上述一个直接 Source Signal。Source Signal 的原始输出、记录边界、顺序和 locator 语义均由 `signal-unity-runtime-log` 定义，本技能不得覆盖。
+本技能只允许上述一个直接 Source Signal。Source Signal 的原始输出、记录边界、顺序和 locator 语义均由 `signal-runtime-log` 定义，本技能不得覆盖。
 
 ## Signal Model
 
@@ -89,7 +90,7 @@ callback_event
 
 派生规则：
 
-- Source Signal record 必须先按 `signal-unity-runtime-log` 的 Record Semantics 解析。
+- Source Signal record 必须先按 `signal-runtime-log` 的 Record Semantics 解析。
 - Requirement 必须同时指定 `kind`、`name`、`observation_point` 和能够定位 Source Signal record 的消息或字段条件。
 - `observation_point` 必须由日志 producer 的明确格式语义或可定位实现位置支持；只凭自然语言相似性不能确定观察点。
 - 一条 Source Signal record 最多派生一条 callback/event observation；同一 record 无法唯一映射时不得派生。
@@ -113,7 +114,7 @@ signal_requirement
 
 字段所有权：
 
-- `signal_ref` 固定为 `signal-unity-callback-event-by-runtime-log`。
+- `signal_ref` 固定为 `signal-callback-event-by-runtime-log`。
 - `match` 必须包含目标 `kind`、`name`、`observation_point`，以及 Source Signal record 需要满足的消息或字段条件。
 - `non_match` 必须排除名称相似但观察点不同、来源不同、旧 session、转发记录或无法唯一映射的 record。
 - `required_fields` 必须包含解释派生结果所需的 Source Signal 原始字段、source locator 和 callback/event 字段。
@@ -146,8 +147,8 @@ callback_event
 
 字段语义：
 
-- `signal_ref` 固定为 `signal-unity-callback-event-by-runtime-log`。
-- `source_signal_ref` 固定为 `signal-unity-runtime-log`。
+- `signal_ref` 固定为 `signal-callback-event-by-runtime-log`。
+- `source_signal_ref` 固定为 `signal-runtime-log`。
 - `source_record.line_start` 和 `source_record.line_end` 必须等于 Source Signal record 的原始物理行范围。
 - 其余字段必须来自当前 requirement 与被引用 source record 的可定位映射。
 

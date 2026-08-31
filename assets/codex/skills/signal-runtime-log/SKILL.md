@@ -1,11 +1,11 @@
 ---
 assetKind: scout.skill
-name: signal-unity-runtime-log
+name: signal-runtime-log
 description: 定义或解释 Unity runtime log 信号、日志记录结构、匹配语义及输出契约时使用。
-id: signal-unity-runtime-log
+id: signal-runtime-log
 version: 0.3.2
-phase: [research, verify, research-reviewer, verify-reviewer]
-family: [validation, single, unity, local, general]
+type: signal
+family: [signal, local, unity, general]
 tags: [signal, unity, runtime, log]
 devices: [any]
 summary: 定义 Unity runtime log 的统一文件格式、记录结构、匹配契约和解释限制。
@@ -20,7 +20,8 @@ summary: 定义 Unity runtime log 的统一文件格式、记录结构、匹配�
 ## Skill Type
 
 - type: signal
-- structure_level: compact
+- layout: compact
+- contract role: interface
 - note: 本技能只拥有 Unity runtime log 的稳定知识与中立 Signal contract。
 
 ## Core Use
@@ -108,7 +109,7 @@ runtime_log
 
 字段所有权：
 
-- `signal_ref` 固定为 `signal-unity-runtime-log`。
+- `signal_ref` 固定为 `signal-runtime-log`。
 - `match`、`non_match` 和其它约束表达当前 matching requirement，内容必须来自已确认事实。
 - matching requirement 只定义要观察什么以及如何识别。
 - 只有 runtime log 对当前消费要求有辨识价值时才创建 requirement；未选择本 Signal 时不保留空 requirement。
@@ -133,7 +134,7 @@ runtime_log_record
 
 字段语义：
 
-- `signal_ref` 固定为 `signal-unity-runtime-log`。
+- `signal_ref` 固定为 `signal-runtime-log`。
 - 其余字段必须直接按本技能的 Record Semantics 从同一条原始记录解析。
 - `line_start` 和 `line_end` 是该记录在当前单份日志中的物理行范围。
 - `message` 必须保留首行正文、全部续行、换行和原始顺序。
@@ -178,7 +179,7 @@ runtime_log_record
 条件：
 
 ```text
-消费方选择 `signal-unity-runtime-log`，并提供完整 matching requirement 和一条待解释的 Unity runtime log 记录。
+消费方选择 `signal-runtime-log`，并提供完整 matching requirement 和一条待解释的 Unity runtime log 记录。
 ```
 
 解释：

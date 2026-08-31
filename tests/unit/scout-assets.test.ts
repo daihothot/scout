@@ -64,9 +64,10 @@ test("scout-assets family returns flat names and progressively resolves unique f
     "audit",
     "dynamic",
     "internal",
+    "local",
     "runtime-inspector",
     "scout",
-    "single",
+    "signal",
     "tool",
     "unity",
     "validation",
@@ -85,11 +86,11 @@ test("scout-assets family returns flat names and progressively resolves unique f
     }],
   });
 
-  const single = parseSuccessful(fixture.mountRoot, "family", "single");
-  assert.deepEqual(single, {
+  const signal = parseSuccessful(fixture.mountRoot, "family", "signal");
+  assert.deepEqual(signal, {
     phases: ["research", "verify"],
-    family: "validation/single",
-    children: ["unity"],
+    family: "signal",
+    children: ["local"],
   });
 });
 
@@ -100,17 +101,17 @@ test("scout-assets asks for a parent path when a family name is ambiguous", () =
     phases: ["research", "verify"],
     family: "unity",
     ambiguous: true,
-    candidates: ["audit/unity", "validation/single/unity"],
+    candidates: ["audit/unity", "signal/local/unity"],
   });
 
-  const resolved = parseSuccessful(fixture.mountRoot, "family", "validation/single/unity");
+  const resolved = parseSuccessful(fixture.mountRoot, "family", "signal/local/unity");
   assert.deepEqual(resolved, {
     phases: ["research", "verify"],
-    family: "validation/single/unity",
+    family: "signal/local/unity",
     skills: [{
-      name: "validation-single",
-      family: ["validation", "single", "unity"],
-      path: ".scout/skill/validation/single/unity/validation-single/SKILL.md",
+      name: "validation-signal",
+      family: ["signal", "local", "unity"],
+      path: ".scout/skill/signal/local/unity/validation-signal/SKILL.md",
     }],
   });
 });
@@ -118,8 +119,14 @@ test("scout-assets asks for a parent path when a family name is ambiguous", () =
 test("scout-assets skill returns metadata and all current role tools", () => {
   const fixture = createFixture();
   const output = parseSuccessful(fixture.mountRoot, "skill", "domain-validation-researcher");
+  assert.equal(output.skill.type, "domain");
   assert.equal(output.skill.path, ".scout/skill/validation/workflow/domain-validation-researcher/SKILL.md");
   assert.equal(output.skill.summary, "Validation researcher");
+  assert.deepEqual(output.skill.phase, ["research"]);
+  assert.deepEqual(output.skill.optionalSkills, []);
+  const signal = parseSuccessful(fixture.mountRoot, "skill", "validation-signal");
+  assert.equal(signal.skill.type, "signal");
+  assert.equal("phase" in signal.skill, false);
   assert.deepEqual(output.phaseTools.skills, [{
     name: "tool-scout-send-message",
     family: ["tool", "scout", "dynamic"],
@@ -241,43 +248,50 @@ function createFixture(): {
     customAgents: [],
     skills: [{
       name: "internal-runtime-inspector",
+      type: "internal",
       description: "Inspect Runtime resources",
       summary: "Inspect Runtime resources",
       phase: ["research"],
       family: ["internal", "runtime-inspector"],
       requiredSkills: [],
+      optionalSkills: [],
       path: `${skillLogicalRoot}/SKILL.md`,
     }, {
-      name: "validation-single",
-      description: "Validation single",
-      summary: "Validation single",
-      phase: ["research"],
-      family: ["validation", "single", "unity"],
+      name: "validation-signal",
+      type: "signal",
+      description: "Validation signal",
+      summary: "Validation signal",
+      family: ["signal", "local", "unity"],
       requiredSkills: [],
-      path: ".scout/skill/validation/single/unity/validation-single/SKILL.md",
+      optionalSkills: [],
+      path: ".scout/skill/signal/local/unity/validation-signal/SKILL.md",
     }, {
       name: "domain-validation-researcher",
+      type: "domain",
       description: "Validation researcher",
       summary: "Validation researcher",
       phase: ["research"],
       family: ["validation", "workflow"],
       requiredSkills: [],
+      optionalSkills: [],
       path: ".scout/skill/validation/workflow/domain-validation-researcher/SKILL.md",
     }, {
       name: "tool-scout-send-message",
+      type: "tool",
       description: "Send Message tool",
       summary: "Send Message tool",
-      phase: ["research"],
       family: ["tool", "scout", "dynamic"],
       requiredSkills: [],
+      optionalSkills: [],
       path: ".scout/skill/tool/scout/dynamic/tool-scout-send-message/SKILL.md",
     }, {
       name: "audit-unity",
+      type: "signal",
       description: "Audit Unity",
       summary: "Audit Unity",
-      phase: ["research"],
       family: ["audit", "unity"],
       requiredSkills: [],
+      optionalSkills: [],
       path: ".scout/skill/audit/unity/audit-unity/SKILL.md",
     }],
     plugins: ["plugin-a"],

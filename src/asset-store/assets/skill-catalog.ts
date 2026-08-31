@@ -18,9 +18,11 @@ import type { ScoutAgentPhase } from "../../agent/thread/types.js";
 import { StartupPhase } from "../../core/workflow/index.js";
 import {
   ScoutSkillResourceRequirements,
+  ScoutSkillTypes,
   type ScoutSkillCatalogEntry,
   type ScoutSkillResourceCatalogEntry,
   type ScoutSkillResourceRequirement,
+  type ScoutSkillType,
 } from "../contracts/skill.js";
 
 interface FrontmatterField {
@@ -68,7 +70,7 @@ export function buildScoutSkillCatalog(input: {
   return catalog;
 }
 
-/** Parses one Skill frontmatter block and validates current metadata. */
+/** Parses the runtime metadata needed to project and load one Skill. */
 export function parseScoutSkillMetadata(input: {
   text: string;
   expectedName: string;
@@ -80,6 +82,7 @@ export function parseScoutSkillMetadata(input: {
   const fields = parseFrontmatterFields(frontmatter, label);
   const assetKind = requireScalar(fields, ["assetKind"], label);
   const name = requireScalar(fields, ["name"], label);
+  const type = requireScalar(fields, ["type"], label);
   const id = requireScalar(fields, ["id"], label);
   const description = requireScalar(fields, ["description"], label);
   const summary = requireScalar(fields, ["summary"], label);
@@ -89,14 +92,13 @@ export function parseScoutSkillMetadata(input: {
   if (name !== input.expectedName || id !== input.expectedName) {
     throw new Error(`Scout Skill ${label} name and id must match ${input.expectedName}.`);
   }
-
-  if (!findField(fields, ["phase"])) {
-    throw new Error(`Scout Skill ${label} must define phase.`);
+  if (!Object.values(ScoutSkillTypes).includes(type as ScoutSkillType)) {
+    throw new Error(`Scout Skill ${label} has unsupported type: ${type}`);
   }
   const phaseField = findField(fields, ["phase"]);
   const phase = phaseField
     ? parseInlineList(phaseField, label, /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/)
-    : [];
+    : undefined;
   const family = requireTokenList(fields, ["family"], label);
   const tags = requireTokenList(fields, ["tags"], label);
   const requiredSkills = optionalTokenList(
@@ -104,15 +106,22 @@ export function parseScoutSkillMetadata(input: {
     ["dependencies", "skills", "required"],
     label,
   );
+  const optionalSkills = optionalTokenList(
+    fields,
+    ["dependencies", "skills", "optional"],
+    label,
+  );
 
   return {
     name,
+    type: type as ScoutSkillType,
     description,
     summary,
     phase,
     family,
     tags,
     requiredSkills,
+    optionalSkills,
     path: posix.join(".scout", "skill", ...family, name, "SKILL.md"),
     resources: input.resources,
   };
@@ -176,6 +185,9 @@ export function resolveSkillDependencyLoadOrder(
     if (!skill) throw new Error(`Unknown Scout Skill dependency: ${name}`);
     visiting.add(name);
     for (const dependency of skill.requiredSkills) visit(dependency);
+    for (const dependency of skill.optionalSkills) {
+      if (byName.has(dependency)) visit(dependency);
+    }
     visiting.delete(name);
     visited.add(name);
     result.push(skill);
@@ -194,40 +206,34 @@ export function resolveScoutSkillsForPhases(
   return resolveSkillDependencyLoadOrder(
     catalog,
     catalog
-      .filter((skill) => skill.phase.includes(StartupPhase)
-        || skill.phase.some((phase) => selectedPhases.has(phase)))
+      .filter((skill) => (skill.type === ScoutSkillTypes.Domain || skill.type === ScoutSkillTypes.Internal)
+        && (skill.phase?.includes(StartupPhase)
+          || skill.phase?.some((phase) => selectedPhases.has(phase))))
       .map((skill) => skill.name),
   );
 }
 
-/** Validates names, resources, phase compatibility, and dependency closure. */
+/** Rejects dependency cycles without enforcing authoring relationships. */
 export function validateScoutSkillCatalog(catalog: ScoutSkillCatalogEntry[]): void {
-  const names = new Set<string>();
-  for (const skill of catalog) {
-    if (names.has(skill.name)) {
-      throw new Error(`Duplicate Scout Skill catalog entry: ${skill.name}`);
-    }
-    names.add(skill.name);
-    validateSkillResources(skill);
-  }
   const byName = new Map(catalog.map((skill) => [skill.name, skill] as const));
-  for (const skill of catalog) {
-    for (const dependencyName of skill.requiredSkills) {
-      const dependency = byName.get(dependencyName);
-      if (!dependency) {
-        throw new Error(`Unknown Scout Skill dependency: ${dependencyName}`);
-      }
-      const unsupportedPhase = dependency.phase.includes(StartupPhase)
-        ? undefined
-        : skill.phase.find((phase) => !dependency.phase.includes(phase));
-      if (unsupportedPhase) {
-        throw new Error(
-          `Scout Skill ${skill.name} dependency ${dependencyName} does not support phase ${unsupportedPhase}.`,
-        );
-      }
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+
+  const visit = (skill: ScoutSkillCatalogEntry): void => {
+    if (visited.has(skill.name)) return;
+    if (visiting.has(skill.name)) {
+      throw new Error(`Scout Skill dependency cycle contains ${skill.name}.`);
     }
-  }
-  resolveSkillDependencyLoadOrder(catalog, catalog.map((skill) => skill.name));
+    visiting.add(skill.name);
+    for (const dependencyName of [...skill.requiredSkills, ...skill.optionalSkills]) {
+      const dependency = byName.get(dependencyName);
+      if (dependency) visit(dependency);
+    }
+    visiting.delete(skill.name);
+    visited.add(skill.name);
+  };
+
+  for (const skill of catalog) visit(skill);
 }
 
 function buildScoutSkillResourceCatalog(skillRoot: string): ScoutSkillResourceCatalogEntry[] {
@@ -279,34 +285,6 @@ function buildScoutSkillResourceCatalog(skillRoot: string): ScoutSkillResourceCa
   return resources.sort((left, right) =>
     left.path < right.path ? -1 : left.path > right.path ? 1 : 0
   );
-}
-
-function validateSkillResources(skill: ScoutSkillCatalogEntry): void {
-  if (!Array.isArray(skill.resources)) {
-    throw new Error(`Scout Skill ${skill.name} must define resources.`);
-  }
-  const paths = new Set<string>();
-  for (const resource of skill.resources) {
-    if (!resource || typeof resource !== "object") {
-      throw new Error(`Scout Skill ${skill.name} contains an invalid resource entry.`);
-    }
-    const path = validateSkillResourcePath(
-      resource.path,
-      `${skill.name} resource catalog entry`,
-    );
-    if (paths.has(path)) {
-      throw new Error(`Scout Skill ${skill.name} contains duplicate resource path: ${path}`);
-    }
-    paths.add(path);
-    if (!SCOUT_SKILL_RESOURCE_REQUIREMENTS.has(resource.requirement)) {
-      throw new Error(
-        `Scout Skill ${skill.name} resource ${path} has unsupported requirement: ${String(resource.requirement)}`,
-      );
-    }
-    if (typeof resource.description !== "string" || resource.description.trim().length === 0) {
-      throw new Error(`Scout Skill ${skill.name} resource ${path} must define description.`);
-    }
-  }
 }
 
 function validateSkillResourcePath(value: unknown, label: string): string {

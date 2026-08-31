@@ -4,7 +4,7 @@ name: tool-scout-request-human-input
 description: Worker 当前任务必须等待人工确认才能继续时使用 RequestHumanInput。
 id: tool-scout-request-human-input
 version: 1.0.0
-phase: [research, verify, research-reviewer, verify-reviewer]
+type: tool
 family: [tool, scout, dynamic]
 tags: [scout, dynamic-tool, human-input, task]
 devices: [any]
@@ -16,7 +16,7 @@ summary: 规定 Worker 人工输入请求的触发条件、正文和等待语义
 ## Skill Type
 
 - type: tool
-- structure_level: compact
+- layout: compact
 - note: 本技能拥有 Worker 人工输入请求的生命周期契约，不判断领域事实是否必须人工确认。
 
 ## Tool Contract

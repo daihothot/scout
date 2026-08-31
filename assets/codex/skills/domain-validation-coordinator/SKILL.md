@@ -4,10 +4,14 @@ name: domain-validation-coordinator
 description: Scout Coordinator 在 Validation Domain 中接收 BDD 目标，组织 Research、Verification 与两类 Validator Gate 往返，并综合当前验证状态时使用。
 id: domain-validation-coordinator
 version: 0.3.2
+type: domain
 phase: [Synthesis]
 family: [validation, workflow]
 tags: [scout, validation, bdd, coordination, workflow]
 devices: [any]
+dependencies:
+  skills:
+    required: [tool-scout-archive-task, tool-scout-assign-task, tool-scout-respond-human-input, tool-scout-send-message, tool-scout-submit-phase-outcome]
 summary: 规范 Research Pack Gate、Verification 和 Verification Report Gate 的完整调度循环。
 ---
 
@@ -20,7 +24,7 @@ summary: 规范 Research Pack Gate、Verification 和 Verification Report Gate �
 ## Skill Type
 
 - type: domain
-- structure_level: full
+- layout: workflow
 - note: 本技能是 Coordinator 的 Validation 领域工作流，不承担 Worker 业务执行。
 
 ## Core Use

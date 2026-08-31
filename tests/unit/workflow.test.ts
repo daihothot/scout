@@ -196,6 +196,20 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
       /references unknown Worker Phase missing/,
     );
 
+    for (const reservedPhase of ["Startup", "Synthesis"]) {
+      const withReservedWorkerPhase = structuredClone(original) as {
+        phases: { workers: Record<string, unknown> };
+      };
+      withReservedWorkerPhase.phases.workers[reservedPhase] = {
+        edges: { completed: null, error: null },
+      };
+      writeFileSync(targetPath, JSON.stringify(withReservedWorkerPhase), "utf8");
+      assert.throws(
+        () => readWorkflowProfile(fixtureRoot, "invalid"),
+        new RegExp(`cannot declare reserved Phase ${reservedPhase}`),
+      );
+    }
+
     const coordinatorWithPhase = structuredClone(original) as {
       roles: { coordinator: { phases?: string[] } };
     };

@@ -285,11 +285,13 @@ function materializeSkills(
     safeSymlink(resolve(source, ".."), join(mountRoot, dirname(skill.path)));
     return {
       name: skill.name,
+      type: skill.type,
       description: skill.description,
       summary: skill.summary,
-      phase: [...skill.phase],
+      ...(skill.phase ? { phase: [...skill.phase] } : {}),
       family: [...skill.family],
       requiredSkills: [...skill.requiredSkills],
+      optionalSkills: [...skill.optionalSkills],
       path: skill.path,
     };
   });

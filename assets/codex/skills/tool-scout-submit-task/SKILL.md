@@ -4,7 +4,7 @@ name: tool-scout-submit-task
 description: Worker 使用 SubmitTask 将当前任务的正式 handoff 提交给 Coordinator 时使用。
 id: tool-scout-submit-task
 version: 1.0.0
-phase: [research, verify, research-reviewer, verify-reviewer]
+type: tool
 family: [tool, scout, dynamic]
 tags: [scout, dynamic-tool, task, handoff]
 devices: [any]
@@ -16,7 +16,7 @@ summary: 规定 SubmitTask 的正式输出、当前 turn 所有权和 dispositio
 ## Skill Type
 
 - type: tool
-- structure_level: compact
+- layout: compact
 - note: 本技能拥有 Worker 正式 task handoff 的提交契约，不定义领域 artifact 或 handoff 字段。
 
 ## Tool Contract

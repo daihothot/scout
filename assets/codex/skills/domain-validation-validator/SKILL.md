@@ -4,13 +4,14 @@ name: domain-validation-validator
 description: Scout Validator 对 Research Pack 或 Verification Report 执行独立 contract、证据语义、provenance 与引用闭环检查，并生成对应 Gate 报告时使用。
 id: domain-validation-validator
 version: 0.6.3
+type: domain
 phase: [research-reviewer, verify-reviewer]
 family: [validation, workflow]
 tags: [scout, validation, research, verification, gate, evidence, audit, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [domain-validation-research-pack, tool-guru-knowledge, tool-jarvis-codebase, internal-skill-consumption]
+    required: [domain-validation-research-pack, tool-guru-knowledge, tool-jarvis-codebase, internal-skill-consumption, tool-scout-request-human-input, tool-scout-send-message, tool-scout-submit-task]
   shellTools:
     required: [scoutAssets, scoutArtifactDigest, find, sort]
     optional: [rg, sed, cat]
@@ -53,43 +54,42 @@ summary: 独立形成 Research Pack Gate 或 Verification Report Gate。
 - 把上游 Worker 的自检结果直接当作独立 Gate。
 - 使用同一个 Validator task 先后执行 Research Pack Gate 和 Verification Report Gate。
 
-## Single Consumption
+## Signal Consumption
 
-`Single set` 是当前 Validation role 必须作为一个整体消费的 Single Skill 集合。`general Single set` 是每个 Validation Gate task 都必须消费的通用集合；`capability Single set` 是候选 artifact 已明确涉及某个 Capability 后必须消费的专项集合。`<capability>` 表示该 Capability 的实际目录名。
+`Signal set` 是当前 Validation role 必须作为一个整体消费的 Signal Skill 集合。`general Signal set` 是每个 Validation Gate task 都必须消费的通用集合；`capability Signal set` 是候选 artifact 已明确涉及某个 Capability 后必须消费的专项集合。`<capability>` 表示该 Capability 的实际目录名。
 
-本领域当前 Single 根目录为：
+本领域当前 Signal 根目录为：
 
 ```text
-.scout/skill/validation/single/unity/local/
+.scout/skill/signal/local/unity/general/
 ```
 
-### Freeze General Single Set
+### Freeze General Signal Set
 
 在开始语义检查前，执行一次以下命令：
 
 ```bash
-find -L .scout/skill/validation/single/unity/local/general -mindepth 2 -maxdepth 2 -type f -name 'SKILL.md' -print | sort
+find -L .scout/skill/signal/local/unity/general -mindepth 2 -maxdepth 2 -type f -name 'SKILL.md' -print | sort
 ```
 
-将排序后的完整输出冻结为当前 task 的 `general Single list`。validate phase 物化到该目录的 interface、derived 与 implementation contracts 都属于这个固定列表。目录不可读、命令失败或列表为空时，不得开始依赖该集合的检查。
+将排序后的完整输出冻结为当前 task 的 `general Signal list`。validate phase 物化到该目录的 interface、derived 与 implementation contracts 都属于这个固定列表。目录不可读、命令失败或列表为空时，不得开始依赖该集合的检查。
 
-### Freeze Capability Single Set
+### Freeze Capability Signal Set
 
 - 只根据候选 artifact 明确引用的 Capability 选择 `<capability>`。
 - 每选择一个 `<capability>`，在检查相关内容前执行一次以下命令：
 
   ```bash
-  find -L .scout/skill/validation/single/unity/local/<capability> -mindepth 2 -maxdepth 2 -type f -name 'SKILL.md' -print | sort
+  find -L .scout/skill/signal/local/unity/general/<capability> -mindepth 2 -maxdepth 2 -type f -name 'SKILL.md' -print | sort
   ```
 
-- 将排序后的完整输出冻结为该 `<capability>` 的 `capability Single list`。目录不可读、命令失败或列表为空时，不得开始依赖该集合的检查。
+- 将排序后的完整输出冻结为该 `<capability>` 的 `capability Signal list`。目录不可读、命令失败或列表为空时，不得开始依赖该集合的检查。
 
 ### Consume Frozen Sets
 
-1. 按 `general Single list` 的固定顺序，将每个入口分别作为 `<target-skill-path>`，完整执行 `internal-skill-consumption`。
-2. 按每个 `capability Single list` 的固定顺序执行同样处理。
-3. 检查成员之间的 derived 或 implementation composition 时，将 `general Single list` 与全部已选择 `capability Single list` 中的其它成员作为 `internal-skill-consumption` 的 related Skills；不得扫描这些列表外的候选。
-4. 只有集合内每个成员都通过自己的 readiness gate，才能开始依赖该集合的检查；不得因名称、摘要或预判不适用而跳过成员。
+1. 按 `general Signal list` 的固定顺序，将每个入口分别作为 `<target-skill-path>`，完整执行 `internal-skill-consumption`。
+2. 按每个 `capability Signal list` 的固定顺序执行同样处理。
+3. 只有集合内每个成员都通过 `internal-skill-consumption` 的 readiness gate，才能开始依赖该集合的检查；不得因名称、摘要或预判不适用而跳过成员。
 
 Validator 使用完整集合检查候选 artifact 实际涉及的 requirement、Signal、Acquisition 及其 derived 或 implementation composition，不执行 acquisition、不重新采集信号、不重做 Research，也不因已读而扩大 Gate 范围。任一集合未完整消费时，按受影响检查范围形成真实 Gate 缺口；不生成 coverage 或 applicability 记录。
 

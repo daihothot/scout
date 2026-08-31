@@ -4,6 +4,7 @@ name: internal-runtime-inspector
 description: 当前 role 需要使用 pwd、scout-assets 和已物化 Shell Tool 定位 Runtime 资源、解析访问路径或诊断资源缺失时使用。
 id: internal-runtime-inspector
 version: 1.0.0
+type: internal
 phase: [Startup]
 family: [internal, runtime-inspector]
 tags: [scout, runtime, resource, mount, manifest, path]
@@ -192,7 +193,7 @@ scout-assets family <family-path>
 scout-assets skill <skill-name>
 ```
 
-以下示例中的 `<skill-summary>` 表示 Skill 的实际摘要，`<tool-skill-name>`、`<shell-tool-id>` 和 `<mcp-server-name>` 分别表示当前 `role` 已物化的一项 Tool Skill、Shell Tool 和 MCP Server。
+以下示例中的 `<skill-type>` 和 `<skill-summary>` 分别表示 Skill 的实际 type 和摘要，`<tool-skill-name>`、`<shell-tool-id>` 和 `<mcp-server-name>` 分别表示当前 `role` 已物化的一项 Tool Skill、Shell Tool 和 MCP Server。
 
 示例输出（关键字段）：
 
@@ -200,10 +201,11 @@ scout-assets skill <skill-name>
 {
   "skill": {
     "name": "<skill-name>",
+    "type": "<skill-type>",
     "summary": "<skill-summary>",
-    "phase": ["<phase>"],
     "path": ".scout/skill/<family-path>/<skill-name>/SKILL.md",
-    "requiredSkills": []
+    "requiredSkills": [],
+    "optionalSkills": []
   },
   "phaseTools": {
     "skills": [
@@ -224,7 +226,7 @@ scout-assets skill <skill-name>
 }
 ```
 
-`skill` 返回的 `skill.path` 是当前 mount 的 Skill 入口。`phaseTools` 汇总当前 `role` 的 manifest 中已经物化的 tool family Skill、Shell Tool 和 MCP Server；Tool 的参数、绝对路径要求及使用时机仍由对应 Tool Skill 规定。
+`skill` 返回的 `skill.path` 是当前 mount 的 Skill 入口。只有该 Skill 的实际 metadata 声明了 `phase` 时，返回结果才包含 `skill.phase`；Tool Skill 和 Signal Skill 不包含该字段。`phaseTools` 汇总当前 `role` 的 manifest 中已经物化的 tool family Skill、Shell Tool 和 MCP Server；Tool 的参数、绝对路径要求及使用时机仍由对应 Tool Skill 规定。
 
 ### Inspect Plugin Metadata
 

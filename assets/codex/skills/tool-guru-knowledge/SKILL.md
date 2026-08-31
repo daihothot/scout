@@ -4,7 +4,7 @@ name: tool-guru-knowledge
 description: Scout Agent 从 Guru Knowledge 定位 Behavior、Domain、Module、Capability、Availability、API 和 Platform 文档，记录可重放来源并形成知识证据时使用。
 id: tool-guru-knowledge
 version: 0.11.2
-phase: [research, research-reviewer, verify-reviewer]
+type: tool
 family: [tool, guru]
 tags: [guru, knowledge, bdd, capability, evidence, source]
 devices: [any]
@@ -24,7 +24,7 @@ summary: 只读检索 Guru Knowledge，并形成可追溯的 Capability、Availa
 ## Skill Type
 
 - type: tool
-- structure_level: full
+- layout: workflow
 - note: 本技能是 Guru Knowledge 只读采集工具 Skill，不是 Validation Domain 工作流。
 
 ## Core Use
@@ -100,7 +100,7 @@ Capability Specifications 使用以下 11 个固定维度：
 读取前先确认当前 mount 能力：
 
 ```bash
-scout-assets tools
+scout-assets skill tool-guru-knowledge
 ```
 
 常用只读操作：
@@ -134,7 +134,7 @@ git -C "<knowledge-repository>" status --short
 
 注意事项：
 
-- 使用 `scout-assets tools` 确认能力可见性。
+- 使用 `scout-assets skill tool-guru-knowledge` 返回的 `phaseTools` 确认能力可见性。
 - 缺少 required capability 时停止，不得用未挂载入口绕过 profile。
 
 ### I-002: Knowledge Boundary

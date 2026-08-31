@@ -6,6 +6,7 @@ import type {
 } from "../../agent-server/codex/model-config.js";
 import { readJsonFile, sha256File } from "../../core/fs.js";
 import {
+  StartupPhase,
   SynthesisPhase,
   type WorkflowPhaseEdges,
 } from "../../core/workflow/index.js";
@@ -77,6 +78,11 @@ function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
   }
   const workers = Object.fromEntries(workerEntries.map(([name, definition]) => {
     assertMountPathSegment(name, "Worker Phase name");
+    if (name === StartupPhase || name === SynthesisPhase) {
+      throw new Error(
+        `Invalid Workflow Profile at ${path}: phases.workers cannot declare reserved Phase ${name}.`,
+      );
+    }
     return [name, parseWorkerPhase(definition, path, name)] as const;
   }));
   const resourcesValue = requireRecord(profile.resources, path, "resources");

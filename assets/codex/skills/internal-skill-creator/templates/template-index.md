@@ -23,7 +23,7 @@ status: ready
 | --- | --- | --- |
 | `domain` | 拥有一个 domain 中当前 role 的业务输入、判断、工作、输出和交接。 | `templates/domain-skill.md` |
 | `tool` | 拥有一种操作能力的调用方式、输入、结果、副作用和失败边界。 | `templates/tool-skill.md` |
-| `single` | 拥有一个稳定、可组合的领域 contract。 | `templates/single-skill.md` |
+| `signal` | 拥有一个稳定、可组合的领域 contract。 | `templates/signal-skill.md` |
 | `internal` | 拥有 Scout 自有资产、运行边界或治理规则。 | `templates/internal-skill.md` |
 
 ## Layout Templates
@@ -42,7 +42,7 @@ status: ready
 | `templates/template-index.md` | 模板目录导航、选择和读取顺序。 | `required`。 |
 | `templates/domain-skill.md` | Domain Skill 的内容责任和边界。 | `type: domain` 时读取。 |
 | `templates/tool-skill.md` | Tool Skill 的内容责任和边界。 | `type: tool` 时读取。 |
-| `templates/single-skill.md` | Single Skill 的内容责任和边界。 | `type: single` 时读取。 |
+| `templates/signal-skill.md` | Signal Skill 的内容责任和边界。 | `type: signal` 时读取。 |
 | `templates/internal-skill.md` | Internal Skill 的内容责任和边界。 | `type: internal` 时读取。 |
 | `templates/workflow-layout.md` | 有序阶段、状态和完成门禁的正文结构。 | `layout: workflow` 时读取。 |
 | `templates/compact-layout.md` | 模型、规则和边界直接递进的正文结构。 | `layout: compact` 时读取。 |
@@ -53,7 +53,7 @@ status: ready
 - 再根据 contract 是否需要确定性阶段选择 layout；正文较长或操作较多不自动等于 `workflow`。
 - 两个责任拥有不同生命周期、输出或失败语义时，拆成两个 Skill，不使用宽泛 type 包装。
 - 一个 Skill 同时使用两个 type templates 或两个 layout templates 时，说明责任或结构尚未收敛，必须停止并重新划分。
-- type template 不规定目标 Skill 的章节、顺序或格式；layout template 不拥有任何 domain、tool、single 或 internal 语义。
+- type template 不规定目标 Skill 的章节、顺序或格式；layout template 不拥有任何 domain、tool、signal 或 internal 语义。
 - `Skill Type` 的章节格式属于 layout template；type template 只决定其中的 type 值和应表达的责任内容。
 - 不得把 type template 与 layout template 当作两套章节骨架合并。
 - 模板不得重复上级 `SKILL.md` 的通用 frontmatter、family、依赖、资源或 mount 规则。
