@@ -6,7 +6,7 @@ id: internal-skill-consumption
 version: 1.0.0
 type: internal
 phase: [Startup]
-family: [internal, skill-consumption]
+family: [internal, general]
 tags: [scout, skill, dependency, composition, contract]
 devices: [any]
 dependencies:
@@ -54,31 +54,64 @@ Phase 说明：
 - 当前 role 可消费的 Skill 范围是当前 `.scout/skill/` 中存在且可读的入口；不从这个范围之外推断或补充 Skill。
 - 读取 `<target-skill-path>` 时，确认它的 Skill identity 是 `<target-skill-name>`。
 - `family` 只决定 Skill 在 `.scout/skill/` 下的分类路径；相同 `family` 或 `type` 不表示依赖或 composition 关系。
+- `family-path` 是 Skill frontmatter 中声明 family 范围和 `scout-assets family` 查询使用的点分隔值。`family:<family-path>.*` 表示下一层 family，`family:<family-path>.**` 表示当前 family 及其后代 family。
+- family-path 只说明可见范围，不是需要全部读取的 Skill 列表；Scout Runtime 的 mount 负责把当前 role 可见的 Skill 放入 `.scout/skill/`。
 
 ### Direct Skill Dependencies
 
-- `direct required Skill` 是当前 Skill 在 `dependencies.skills.required` 中直接列出的 Skill。
-- `direct optional Skill` 是当前 Skill 在 `dependencies.skills.optional` 中直接列出的候选 Skill。
+- `direct required Skill` 是 `scout-assets skill <target-skill-name>` 返回的实际 required Skill identity。
+- `direct optional Skill` 是 `scout-assets skill <target-skill-name>` 返回的实际 optional Skill identity。
 - `required-skill-name` 表示其中一个 direct required Skill 的实际 Skill identity。
 - `required-skill-path` 表示该 direct required Skill 的实际 `SKILL.md` 路径。
 - `optional-skill-name` 表示其中一个 direct optional Skill 的实际 Skill identity。
 - `optional-skill-path` 表示被当前工作选中后，该 direct optional Skill 的实际 `SKILL.md` 路径。
 
-Skill 之间的 direct required 和 direct optional Skills 只由 `<target-skill-path>` frontmatter 中的以下结构表达：
+当前 role 的 Skill relationship 使用以下结构表达：
 
 ```yaml
 dependencies:
   skills:
-    required: [<required-skill-name>]
-    optional: [<optional-skill-name>]
+    required: [<required-skill-name>, family:<family-path>.**]
+    optional: [<optional-skill-name>, family:<family-path>.*]
 ```
 
+- 上述列表可以包含实际 Skill identity 或带 wildcard 的 family-path；声明解析和 mount 构建不属于本技能。
 - 每个 direct required Skill 可以继续拥有自己的 direct required Skills，因此不能只处理第一层。
 - `required Skill closure` 是从 `<target-skill-name>` 出发，沿每一层 direct required Skill 递归得到的全部依赖 Skill，不包含 `<target-skill-name>` 自身。
-- 已存在的 direct optional Skills 作为当前可见的候选能力；当前环境没有某个 optional 候选时不阻塞基础 contract。只有 consumer contract 或当前任务的正式输入明确需要某个候选时，才将它选入当前 contract，并完整读取它自己的 Skill closure；不能仅凭名称、family 或相似性选择。
+- 已存在的 direct optional Skills 不是当前任务的候选全集。当前环境没有某个 optional 候选时不阻塞基础 contract；只有 consumer contract 或当前任务的正式输入明确需要某个候选时，才将它选入当前 contract，并完整读取它自己的 Skill closure。
 - `<target-skill-path>` 没有 `dependencies.skills.required` 时，它没有 direct required Skill，它的 required Skill closure 在这一层结束。
 - `<target-skill-path>` 没有 `dependencies.skills.optional` 时，它没有 direct optional Skill。
 - `dependencies` 下的其它字段不建立 Skill 依赖关系。
+
+### Discover Skills From A Family
+
+当 contract 使用带 wildcard 的 family-path，Agent 不展开 wildcard，也不扫描整个 `.scout/skill/`。Agent 只在当前 mount 已提供的可见范围内，使用 `scout-assets family` 逐级发现候选。
+
+泛化示例：某个 contract 声明了以下范围：
+
+```yaml
+dependencies:
+  skills:
+    required: [family:signal.local.<platform>.<category>.**]
+```
+
+Agent 按以下顺序处理：
+
+1. 去掉末尾的 `.*` 或 `.**`，查询当前 family：
+
+   ```bash
+   scout-assets family signal.local.<platform>.<category>
+   ```
+
+2. 如果结果包含 `children`，required family-path 继续查询声明范围内的每个下级 family；optional family-path 根据当前任务选择需要的下级 family。每次都使用返回的完整点分隔 `family-path` 继续查询。
+3. 如果结果包含 `skills`，说明已经到达叶子 family。required family-path 返回的全部 Skill 都属于当前 contract 的 required Skills；optional family-path 返回的是候选，只选择当前任务需要的 Skill。返回的 `path` 是当前 `mount` 内可直接使用的文件系统路径。
+4. 对得到的实际 Skill identity 执行：
+
+   ```bash
+   scout-assets skill <skill-name>
+   ```
+
+   然后使用返回的 `skill.path` 完整读取 Skill。对于 required family-path，逐个读取全部匹配 Skill；对于 optional family-path，不要因为候选很多就全部读取。
 
 ### Required Skill Location
 
@@ -99,7 +132,7 @@ find -L .scout/skill -type f -path '*/<required-skill-name>/SKILL.md' -print
 注意事项：
 
 - 不能凭名称相似度从多个入口中选择文件。
-- direct required Skills 按 `<target-skill-path>` frontmatter 中的声明顺序处理。
+- direct required Skills 按 `scout-assets skill <target-skill-name>` 返回的 `skill.requiredSkills` 列表顺序处理，不自行排序。
 
 Exit：
 
@@ -142,7 +175,7 @@ sed -n '<start-line>,<end-line>p' <file-path>
 
 ### Target Entry And Skill Directory
 
-1. 完整读取 `<target-skill-path>`，取得它自己的 contract 和 direct required Skills。
+1. 完整读取 `<target-skill-path>`，取得它自己的 contract；再使用 `scout-assets skill <target-skill-name>` 获取 `skill.requiredSkills`。
 2. 将包含该 Skill 的 `SKILL.md` 以及该 Skill 自有文件的目录作为 `Skill directory`。
 3. `skill-directory` 表示 `<target-skill-path>` 所在目录的实际路径。
 
@@ -188,7 +221,7 @@ scout:
 
 完成 `<skill-directory>` 的 supplementary resources 后：
 
-1. 按 `<target-skill-path>` frontmatter 中的顺序处理每个 `<required-skill-name>`。
+1. 按 `scout-assets skill <target-skill-name>` 返回的 `skill.requiredSkills` 列表顺序处理每个 `<required-skill-name>`，不自行排序。
 2. 将 `<target-skill-name>` 和 `<target-skill-path>` 分别替换为 `<required-skill-name>` 和 `<required-skill-path>`。
 3. 将直接依赖当前 required Skill 的 Skill contract 作为当前 consumer contract，对该 required Skill 依次执行 Phase 1 至 Phase 5；不携带更外层的使用约束。
 4. 递归完成后，恢复上层的 `<target-skill-name>` 和 `<target-skill-path>`。
@@ -202,7 +235,7 @@ scout:
 
 ### Selected Optional Skills
 
-按 `<target-skill-path>` frontmatter 中的声明顺序处理 direct optional Skills：
+按 `scout-assets skill <target-skill-name>` 返回的 `skill.optionalSkills` 列表顺序处理已选中的 direct optional Skills：
 
 1. 根据 consumer contract 的使用约束和当前任务的正式输入判断 `<optional-skill-name>` 是否适用。
 2. 不适用时不读取，也不加入当前 complete contract。
@@ -430,7 +463,7 @@ Partial：
 ## Checklist
 
 - `<target-skill-name>` 与 `<target-skill-path>` identity 一致且唯一可读。
-- direct required Skills 与 required Skill closure 已按 frontmatter 顺序完整处理。
+- direct required Skills 与 required Skill closure 已按 `scout-assets skill` 返回的 `skill.requiredSkills` 列表顺序完整处理。
 - direct optional Skills 已按 consumer contract 和当前任务的正式输入完成选择；选中的候选已形成 complete contract。
 - required supplementary resources 和适用 optional supplementary resources 已完整读取。
 - 每个 complete contract 的 required composition 已完成，且不存在未解决冲突。

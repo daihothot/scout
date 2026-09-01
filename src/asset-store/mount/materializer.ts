@@ -15,7 +15,7 @@ import type { MountManifest } from "../contracts/manifest.js";
 import type { MaterializeOptions } from "../contracts/materialization.js";
 import type { MountContext } from "../contracts/mount-context.js";
 import type { ShellToolContract } from "../contracts/resources.js";
-import type { MaterializedSkill, ScoutSkillCatalogEntry } from "../contracts/skill.js";
+import type { MaterializedSkill, ResolvedScoutSkillCatalogEntry } from "../contracts/skill.js";
 import { CodexAssetLayout } from "../assets/asset-layout.js";
 import { SynthesisPhase } from "../../core/workflow/index.js";
 import { McpServerBuilder } from "../builders/mcp-server-builder.js";
@@ -273,7 +273,7 @@ function materializeSkills(
   assetsRoot: string,
   mountRoot: string,
   skillPaths: string[],
-  catalog: ScoutSkillCatalogEntry[],
+  catalog: ResolvedScoutSkillCatalogEntry[],
 ): MaterializedSkill[] {
   const pathsByName = new Map(
     skillPaths.map((skillPath) => [skillNameFromPath(skillPath), skillPath] as const),
@@ -290,8 +290,16 @@ function materializeSkills(
       summary: skill.summary,
       ...(skill.phase ? { phase: [...skill.phase] } : {}),
       family: [...skill.family],
-      requiredSkills: [...skill.requiredSkills],
-      optionalSkills: [...skill.optionalSkills],
+      requiredSkills: [...skill.resolvedRequiredSkills],
+      optionalSkills: [...skill.resolvedOptionalSkills],
+      requiredFamilyPaths: skill.requiredFamilyPaths.map((familyPath) => ({
+        family: [...familyPath.family],
+        wildcard: familyPath.wildcard,
+      })),
+      optionalFamilyPaths: skill.optionalFamilyPaths.map((familyPath) => ({
+        family: [...familyPath.family],
+        wildcard: familyPath.wildcard,
+      })),
       path: skill.path,
     };
   });

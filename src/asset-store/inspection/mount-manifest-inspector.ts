@@ -47,8 +47,16 @@ export class MountManifestInspector {
           summary: skill.summary,
           ...(skill.phase ? { phase: [...skill.phase] } : {}),
           family: [...skill.family],
-          requiredSkills: [...skill.requiredSkills],
-          optionalSkills: [...skill.optionalSkills],
+          requiredSkills: [...skill.resolvedRequiredSkills],
+          optionalSkills: [...skill.resolvedOptionalSkills],
+          requiredFamilyPaths: skill.requiredFamilyPaths.map((familyPath) => ({
+            family: [...familyPath.family],
+            wildcard: familyPath.wildcard,
+          })),
+          optionalFamilyPaths: skill.optionalFamilyPaths.map((familyPath) => ({
+            family: [...familyPath.family],
+            wildcard: familyPath.wildcard,
+          })),
           path: skill.path,
         })),
       )) {

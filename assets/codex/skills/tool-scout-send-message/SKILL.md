@@ -5,7 +5,7 @@ description: Scout Agent 使用 SendMessage 向已有 Agent 或其当前任务�
 id: tool-scout-send-message
 version: 1.0.0
 type: tool
-family: [tool, scout, dynamic]
+family: [tool, scout, dynamic, general]
 tags: [scout, dynamic-tool, message]
 devices: [any]
 summary: 规定 SendMessage 的目标绑定与 steer/queued 投递语义。

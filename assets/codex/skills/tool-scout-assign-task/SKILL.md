@@ -5,7 +5,7 @@ description: Coordinator 使用 AssignTask 向当前 Workflow Phase 中的空闲
 id: tool-scout-assign-task
 version: 1.0.0
 type: tool
-family: [tool, scout, dynamic]
+family: [tool, scout, dynamic, coordinator]
 tags: [scout, dynamic-tool, task, assignment]
 devices: [any]
 summary: 规定 AssignTask 的 Phase 路由、输入完整性和返回状态语义。

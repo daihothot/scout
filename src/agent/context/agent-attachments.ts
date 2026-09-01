@@ -1,6 +1,7 @@
 import {
   attachments,
 } from "./attachments.js";
+import { currentRunScope } from "../../run/run-scope.js";
 
 /** Runtime-owned tag names used to distinguish agent protocol attachments. */
 export const AgentContextTags = {
@@ -9,6 +10,7 @@ export const AgentContextTags = {
   TaskOutcome: "task-outcome",
   WaitForHumanRequest: "wait-for-human-request",
   HumanResponse: "human-response",
+  WorkflowPhase: "workflow_phase",
 } as const;
 
 /** Constructs validated, typed attachment blocks for agent turns. */
@@ -38,6 +40,13 @@ export const agent = {
     },
     human_response(response: string): string {
       return attachments.addTagBlock(AgentContextTags.HumanResponse, response);
+    },
+    workflow_phase(): string {
+      const scope = currentRunScope();
+      return attachments.addTagBlock(AgentContextTags.WorkflowPhase, [
+        `current_domain: ${scope.domain.domainId}`,
+        `current_phase: ${scope.scheduler.snapshot().currentPhase}`,
+      ].join("\n"));
     },
   },
 } as const;

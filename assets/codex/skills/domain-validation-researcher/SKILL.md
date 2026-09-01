@@ -11,7 +11,7 @@ tags: [scout, validation, bdd, research, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [domain-validation-research-pack, internal-skill-consumption, tool-scout-request-human-input, tool-scout-send-message, tool-scout-submit-task]
+    required: [domain-validation-research-pack, internal-skill-consumption, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**]
   shellTools:
     required: [find, sort]
 summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 handoff。

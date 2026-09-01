@@ -5,7 +5,7 @@ description: Coordinator 确认 Worker task 不再需要继续后使用 ArchiveT
 id: tool-scout-archive-task
 version: 1.0.0
 type: tool
-family: [tool, scout, dynamic]
+family: [tool, scout, dynamic, coordinator]
 tags: [scout, dynamic-tool, task, archive]
 devices: [any]
 summary: 规定 ArchiveTask 的调用时机和归档边界。

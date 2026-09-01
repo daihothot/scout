@@ -65,7 +65,7 @@ agents/worker.AGENTS.md    【已注入 worker】
 - `contract` 是 Skill 向消费方公开的可依赖规则边界，包括适用条件、输入、行为、输出、约束和失败边界。
 - `composition` 表示两个或多个 contract 按明确声明的关系共同生效。
 - `family` 是 `SKILL.md` 顶部 frontmatter 中的 Skill 分类字段，由一个或多个有序目录名组成。
-- `family-path` 是 `family` 在 `.scout/skill/` 下生成的目录路径。
+- `family-path` 是 `family` 的点分隔表示，用于 family 查询和 wildcard 依赖声明。
 
   ```yaml
   family: [<family-name-1>, <family-name-2>]
@@ -74,14 +74,14 @@ agents/worker.AGENTS.md    【已注入 worker】
   对应的 `<family-path>` 为：
 
   ```text
-  .scout/skill/<family-name-1>/<family-name-2>
+  <family-name-1>.<family-name-2>
   ```
 
 - `skill-name` 是具体 Skill 的目录名。
-- `skill-path` 是 Skill 入口文件的完整路径，由 `<family-path>`、`<skill-name>` 和 `SKILL.md` 组成。
+- `skill-path` 是 Scout Runtime 返回的当前 `mount` 内 Skill 入口文件的文件系统路径；该路径相对于当前 `mount`，可以直接使用，不要根据 `<family-path>` 自行拼接。
 
   ```text
-  <family-path>/<skill-name>/SKILL.md
+  .scout/skill/<family-name-1>/<family-name-2>/<skill-name>/SKILL.md
   ```
 
 - 首次启动时，查看当前可见的顶层分类目录：
@@ -97,22 +97,22 @@ agents/worker.AGENTS.md    【已注入 worker】
 
 | 分类 | `<family-path>` | 定义与入口 |
 | --- | --- | --- |
-| `internal` | `.scout/skill/internal/` | 所有 `role` 必须首先读取的 Scout 内部 Skill，具体入口见下方命令。 |
-| `scout tool` | `.scout/skill/tool/scout/dynamic/` | Dynamic Tool 的操作 Skill；当前适用的 Domain Skill 根据工作需要指定要消费的 Tool Skill。 |
-| `domain` | `.scout/skill/<domain>/` | 定义当前 `<domain>` 中各 `role` 的业务输入、工作流程、输出和交接。 |
+| `internal` | `internal.general` | 所有 `role` 必须首先读取的 Scout 内部 Skill，具体入口见下方命令。 |
+| `scout tool` | `tool.scout.dynamic.<subfamily>` | Dynamic Tool 的操作 Skill；下级 family 分为 `general`、`coordinator` 和 `worker`，当前适用的 Domain Skill 根据工作需要指定要消费的 Tool Skill。 |
+| `domain` | `<domain>.<subfamily>` | 定义当前 `<domain>` 中各 `role` 的业务输入、工作流程、输出和交接。 |
 
 所有 `role` 必须首先读取的 Internal Skill：
 
 - `internal-runtime-inspector`：使用 `pwd`、`scout-assets` 和当前可用 Shell Tool 定位当前 `role` 的 Runtime 资源并检查访问路径。
 
   ```bash
-  cat .scout/skill/internal/runtime-inspector/internal-runtime-inspector/SKILL.md
+  cat .scout/skill/internal/general/internal-runtime-inspector/SKILL.md
   ```
 
 - `internal-skill-consumption`：提供 Skill 依赖、组合/继承以及接口与实现的读取规则。
 
   ```bash
-  cat .scout/skill/internal/skill-consumption/internal-skill-consumption/SKILL.md
+  cat .scout/skill/internal/general/internal-skill-consumption/SKILL.md
   ```
 
 ### Domain-Driven Skill Types

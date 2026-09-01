@@ -5,7 +5,7 @@ description: Worker 使用 SubmitTask 将当前任务的正式 handoff 提交给
 id: tool-scout-submit-task
 version: 1.0.0
 type: tool
-family: [tool, scout, dynamic]
+family: [tool, scout, dynamic, worker]
 tags: [scout, dynamic-tool, task, handoff]
 devices: [any]
 summary: 规定 SubmitTask 的正式输出、当前 turn 所有权和 disposition 语义。

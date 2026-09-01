@@ -1,26 +1,26 @@
 ---
 assetKind: scout.skill
 name: internal-runtime-inspector
-description: 当前 role 需要使用 pwd、scout-assets 和已物化 Shell Tool 定位 Runtime 资源、解析访问路径或诊断资源缺失时使用。
+description: 当前 role 需要使用 pwd、scout-assets 和已物化 Shell Tool 定位 Scout Runtime 资源、解析访问路径或诊断资源缺失时使用。
 id: internal-runtime-inspector
 version: 1.0.0
 type: internal
 phase: [Startup]
-family: [internal, runtime-inspector]
+family: [internal, general]
 tags: [scout, runtime, resource, mount, manifest, path]
 devices: [any]
 dependencies:
   shellTools:
     required: [scoutAssets, pwd]
     optional: [ls, cat, sed, rg]
-summary: 使用当前 mount 的稳定查询入口定位 Runtime 资源并检查明确路径。
+summary: 使用当前 mount 的稳定查询入口定位 Scout Runtime 资源并检查明确路径。
 ---
 
 # Internal Runtime Inspector
 
 当前 `role` 需要定位已物化资源、取得准确入口、检查明确路径或解释资源访问失败时，使用本技能。
 
-本技能拥有 `pwd`、`scout-assets` 和当前可用 Shell Tool 的查询方法及结果解释。`AGENTS.md` 已定义 Scout Runtime 结构和访问规则；本技能使用这些规则，不复制或重新定义它们，也不修改 Runtime 配置、资源或权限。
+本技能拥有 `pwd`、`scout-assets` 和当前可用 Shell Tool 的查询方法及结果解释。`AGENTS.md` 已定义 Scout Runtime 结构和访问规则；本技能使用这些规则，不复制或重新定义它们，也不修改 Scout Runtime 配置、资源或权限。
 
 `Resource Park` 是 Workflow Profile 为一个或多个 Phase 声明的命名资源集合。
 
@@ -28,7 +28,7 @@ summary: 使用当前 mount 的稳定查询入口定位 Runtime 资源并检查�
 
 - type: internal
 - layout: compact
-- note: 查询当前 `role` 已物化的 Runtime 资源，并检查明确路径的文件系统事实。
+- note: 查询当前 `role` 已物化的 Scout Runtime 资源，并检查明确路径的文件系统事实。
 
 ## Core Use
 
@@ -48,8 +48,9 @@ summary: 使用当前 mount 的稳定查询入口定位 Runtime 资源并检查�
 | 名称 | 实际内容 |
 | --- | --- |
 | `<family-name>` | `scout-assets family` 返回或当前上下文明确提供的一个 family 名称。 |
-| `<family-path>` | family 查询返回的一个完整候选路径。 |
+| `<family-path>` | 用于 family 查询和 wildcard 依赖声明的点分隔值；例如 `signal.local.unity.general`。 |
 | `<skill-name>` | 需要定位的实际 Skill identity。 |
+| `<skill-path>` | `scout-assets skill` 返回的 Skill 入口文件系统路径。 |
 | `<plugin-name>` | 需要确认的 plugin name。 |
 | `<resource-path>` | 当前上下文、`scout-assets` 或正式 `ref` 已提供的一个明确路径。 |
 | `<start-line>` | 需要读取范围的起始行号。 |
@@ -141,13 +142,13 @@ scout-assets family
 }
 ```
 
-输入一个 family 名称时，工具会在当前 `role` 已物化的 Skill 中解析它：
+输入一个 family 名称或完整 `family-path` 时，工具会在当前 `role` 已物化的 Skill 中解析它：
 
 ```bash
-scout-assets family <family-name>
+scout-assets family <family-name-or-path>
 ```
 
-如果名称唯一，输出完整 family path 以及下一层 `children` 和/或该 family 下的 `skills`：
+如果名称唯一，输出完整 `family-path` 以及下一层 `children` 和/或该 family 下的 `skills`。`family-path` 使用 `.` 分隔 family segment；只有 `skills[*].path` 是文件系统路径：
 
 ```json
 {
@@ -156,13 +157,23 @@ scout-assets family <family-name>
   "skills": [
     {
       "name": "<skill-name>",
-      "path": ".scout/skill/<family-path>/<skill-name>/SKILL.md"
+      "path": "<skill-path>"
     }
   ]
 }
 ```
 
-如果名称在多个 family path 中出现，工具不会猜测，返回一个或多个完整候选路径。以下示例中的 `<family-path-a>` 和 `<family-path-b>` 分别表示一个实际候选路径：
+非叶子 family 只返回带上级的下级 `family-path`，不直接展开后代 Skill：
+
+```json
+{
+  "phases": ["<phase>"],
+  "family": "<family-path>",
+  "children": ["<family-path>.<child-family>"]
+}
+```
+
+如果名称在多个 family 中出现，工具不会猜测，返回一个或多个完整候选 `family-path`。以下示例中的 `<family-path-a>` 和 `<family-path-b>` 分别表示点分隔的 family 路径：
 
 ```bash
 scout-assets family <family-name>
@@ -177,7 +188,7 @@ scout-assets family <family-name>
 }
 ```
 
-此时使用候选中的完整 path 重新查询：
+此时使用候选中的完整 `family-path` 重新查询：
 
 ```bash
 scout-assets family <family-path>
@@ -203,7 +214,7 @@ scout-assets skill <skill-name>
     "name": "<skill-name>",
     "type": "<skill-type>",
     "summary": "<skill-summary>",
-    "path": ".scout/skill/<family-path>/<skill-name>/SKILL.md",
+    "path": "<skill-path>",
     "requiredSkills": [],
     "optionalSkills": []
   },
@@ -318,7 +329,7 @@ rg --line-number '<pattern>' <resource-path>
 - 实际执行的 optional Tool 及其成功或失败事实。
 - 当前能够继续的入口，或阻塞后续操作的具体原因。
 
-本技能不要求生成独立 artifact 或固定格式的 Runtime 报告。
+本技能不要求生成独立 artifact 或固定格式的 Scout Runtime 报告。
 
 ## Failure Rules (Enforcement)
 
@@ -331,7 +342,7 @@ rg --line-number '<pattern>' <resource-path>
 
 ## Retry Rules (Enforcement)
 
-- RR-001：只有查询目标、输入路径、Runtime 物化结果或实际权限发生变化后，才重试相同查询或访问。
+- RR-001：只有查询目标、输入路径、Scout Runtime 物化结果或实际权限发生变化后，才重试相同查询或访问。
 
 ## Prohibited Rules (Enforcement)
 
@@ -343,7 +354,7 @@ rg --line-number '<pattern>' <resource-path>
 
 - 当前目录不确定时，`pwd` 已确认当前 `mount`；`scout-assets` 已从当前 `mount` 成功读取 manifest。
 - 使用了与问题匹配的最小查询：`summary`、`family`、`skill` 或 `plugin`。
-- family 有歧义时使用完整候选 path，没有自行猜测 parent。
+- family 有歧义时使用完整候选 `family-path`，没有自行猜测 parent。
 - 每个被检查的 `<resource-path>` 都有明确来源，并记录了实际操作结果。
 - optional 文件工具已经物化，且只用于来源明确的路径和检查目的。
 - manifest 可见性、路径事实、文件操作结果和业务结论没有互相替代。

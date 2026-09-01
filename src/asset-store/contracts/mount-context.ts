@@ -4,7 +4,7 @@
  */
 import type { AgentProfile } from "./profile.js";
 import type { McpServersFile, ShellToolContract } from "./resources.js";
-import type { ScoutSkillCatalogEntry } from "./skill.js";
+import type { ResolvedScoutSkillCatalogEntry } from "./skill.js";
 import type { WorkflowProfileAsset } from "./workflow-profile.js";
 
 /** Complete mount construction context derived before the mount root is touched. */
@@ -26,7 +26,7 @@ export interface MountContext {
   profiledCustomAgentPaths: string[];
   profiledSkillPaths: string[];
   profiledPluginPaths: string[];
-  skillCatalog: ScoutSkillCatalogEntry[];
+  skillCatalog: ResolvedScoutSkillCatalogEntry[];
   workflowProfileAsset: WorkflowProfileAsset;
   resourceHash: string;
   assetCommitId: string;

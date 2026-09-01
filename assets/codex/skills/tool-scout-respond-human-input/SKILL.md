@@ -5,7 +5,7 @@ description: Coordinator 将用户对正式人工请求的明确回复送回原 
 id: tool-scout-respond-human-input
 version: 1.0.0
 type: tool
-family: [tool, scout, dynamic]
+family: [tool, scout, dynamic, coordinator]
 tags: [scout, dynamic-tool, human-input, task]
 devices: [any]
 summary: 规定人工回复与原请求、原任务的精确匹配和投递语义。

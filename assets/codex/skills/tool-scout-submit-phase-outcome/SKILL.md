@@ -5,7 +5,7 @@ description: Coordinator 判断当前 Workflow Phase 的结果并使用 SubmitPh
 id: tool-scout-submit-phase-outcome
 version: 1.0.0
 type: tool
-family: [tool, scout, dynamic]
+family: [tool, scout, dynamic, coordinator]
 tags: [scout, dynamic-tool, workflow, phase]
 devices: [any]
 summary: 规定当前 Workflow Phase 结果的提交语义。

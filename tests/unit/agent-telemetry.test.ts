@@ -14,6 +14,7 @@ import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import {
   AgentActivityRecorder,
+  AgentHumanInputRecorder,
   AgentToolCallRecorder,
   AgentThreadRecorder,
   StepEventRecorder,
@@ -80,6 +81,43 @@ test("TaskEventRecorder writes only task lifecycle facts", async (t) => {
   assert.equal(existsSync(join(logsRoot, "steps.log")), false);
   assert.equal(existsSync(join(root, "logs", "runtime.log")), false);
   assert.equal(existsSync(join(logsRoot, "activity.log")), false);
+});
+
+test("AgentHumanInputRecorder writes one Human Input body with message identity", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-human-input-recorder-"));
+  const logsRoot = join(root, "agents", "researcher", "logs");
+  const eventBus = new InMemoryEventBus();
+  const registry = installTestRunScope(t, {
+    runId: "run-human-input-recorder",
+    eventBus,
+  }).agentRegistry;
+  registerAgent(registry, "researcher", logsRoot);
+  const recorder = new AgentHumanInputRecorder();
+  recorder.start();
+
+  await eventBus.publishAndWait(AgentEvents.humanInput.requested, {
+    requestId: "request-1",
+    stepId: "step-1",
+    taskId: "task-1",
+    agentId: "researcher",
+    body: "请确认目标版本。",
+    requestedAt: "2026-07-23T00:00:00.000Z",
+    message: {
+      messageId: "request-1-message",
+      agentId: "coordinator",
+      body: "<wait-for-human-request>请确认目标版本。</wait-for-human-request>",
+      queuedAt: "2026-07-23T00:00:00.000Z",
+    },
+  });
+  recorder.stop();
+
+  const text = readFileSync(join(logsRoot, "human-input.log"), "utf8");
+  assert.match(text, /event=agent\.human_input\.requested/);
+  assert.match(text, /body: "请确认目标版本。"/);
+  assert.match(text, /messageId: "request-1-message"/);
+  assert.match(text, /queuedAt: "2026-07-23T00:00:00\.000Z"/);
+  assert.doesNotMatch(text, /\n  message:/);
+  assert.equal(text.match(/请确认目标版本。/g)?.length, 1);
 });
 
 test("StepEventRecorder writes Worker and Coordinator step facts only to step logs", async (t) => {

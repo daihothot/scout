@@ -11,7 +11,7 @@ tags: [scout, validation, research, pack, evidence, manual]
 devices: [any]
 dependencies:
   skills:
-    required: [internal-runtime-inspector, tool-guru-knowledge, tool-jarvis-codebase, signal-runtime-log, signal-callback-event-by-runtime-log, signal-local-storage]
+    required: [internal-runtime-inspector, tool-guru-knowledge, tool-jarvis-codebase, family:signal.local.unity.general.**]
   shellTools:
     required: [scoutAssets, scoutResearchArtifactCheck, scoutArtifactDigest]
 summary: 编排知识和代码 producer contracts，形成唯一 Research Pack、证据索引和验证手册。

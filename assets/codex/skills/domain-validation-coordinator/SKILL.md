@@ -11,7 +11,7 @@ tags: [scout, validation, bdd, coordination, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [tool-scout-archive-task, tool-scout-assign-task, tool-scout-respond-human-input, tool-scout-send-message, tool-scout-submit-phase-outcome]
+    required: [family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.coordinator.**]
 summary: 规范 Research Pack Gate、Verification 和 Verification Report Gate 的完整调度循环。
 ---
 
