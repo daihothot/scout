@@ -128,6 +128,62 @@ test("Tool Call backend owns provider facts and Step stores only their ids", asy
   assert.deepEqual(scope.stepStore.getStep(running.stepId)?.toolCallIds, ["item-tool-1"]);
 });
 
+test("Step lifecycle snapshots retain references that arrive before Step creation", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const scope = installTestRunScope(t, {
+    runId: "step-pending-references",
+    eventBus,
+  });
+  const stepId = "pending-step";
+  const request = {
+    requestId: "pending-request",
+    stepId,
+    taskId: "researcher-task-0001",
+    agentId: "researcher",
+    body: "Choose an account.",
+    requestedAt: "2026-08-20T00:00:01.000Z",
+    message: {
+      messageId: "pending-request-message",
+      agentId: "coordinator",
+      body: "Choose an account.",
+      queuedAt: "2026-08-20T00:00:01.000Z",
+    },
+  };
+  const call = {
+    toolCallId: "pending-call",
+    kind: "dynamic" as const,
+    agentId: "researcher",
+    taskId: "researcher-task-0001",
+    stepId,
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId: "pending-call",
+    namespace: "scout",
+    tool: "Inspect",
+    arguments: { path: "artifact" },
+    status: "completed",
+    success: true,
+    sourceSeq: 4,
+    observedAt: "2026-08-20T00:00:02.000Z",
+  };
+  await eventBus.publishAndWait(AgentEvents.humanInput.requested, request);
+  await eventBus.publishAndWait(AgentEvents.toolCall.observed, call);
+  const startedEvents: AgentStepState[] = [];
+  eventBus.subscribe(AgentEvents.step.started, (event) => {
+    if (AgentEvents.step.started.is(event)) startedEvents.push(event.payload);
+  });
+
+  const started = scope.stepStore.startStep(step({ stepId, turnId: "turn-1" }));
+  assert.deepEqual(started.toolCallIds, ["pending-call"]);
+  assert.deepEqual(started.humanInputReferences, [{
+    requestId: "pending-request",
+    kind: "request_produced",
+  }]);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.deepEqual(scope.stepStore.getStep(stepId), started);
+  assert.deepEqual(startedEvents, [started]);
+});
+
 test("AgentStepStore records one durable Step reference for every Human Input edge", async (t) => {
   const eventBus = new InMemoryEventBus();
   const scope = installTestRunScope(t, {
