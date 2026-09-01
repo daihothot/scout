@@ -58,7 +58,13 @@ test("every Scout Skill projects the runtime metadata needed by its mount", () =
     "signal", "local", "unity", "general",
   ]);
   assert.deepEqual(byName.get("tool-scout-submit-task")?.family, [
-    "tool", "scout", "dynamic",
+    "tool", "scout", "dynamic", "worker",
+  ]);
+  assert.deepEqual(byName.get("tool-scout-send-message")?.family, [
+    "tool", "scout", "dynamic", "general",
+  ]);
+  assert.deepEqual(byName.get("tool-scout-assign-task")?.family, [
+    "tool", "scout", "dynamic", "coordinator",
   ]);
 });
 
@@ -87,11 +93,13 @@ test("each Workflow role projects every visible Skill and its dependency closure
       "signal-callback-event-by-runtime-log",
       "signal-local-storage",
       "signal-runtime-log",
+      "signal-runtime-log-via-unity-pipeline-cli",
       "tool-guru-knowledge",
       "tool-jarvis-codebase",
       "tool-scout-request-human-input",
       "tool-scout-send-message",
       "tool-scout-submit-task",
+      "tool-unity-pipeline-cli",
     ],
     verifier: [
       "domain-validation-verifier",
@@ -352,6 +360,105 @@ test("Scout Skill catalog checks cycles while selected dependency loading stays 
   assert.doesNotThrow(() => validateScoutSkillCatalog([
     parseMetadata("workflow", { optionalSkills: "[unavailable-signal]" }),
   ]));
+});
+
+test("Scout Skill family paths expand deterministically before dependency traversal", () => {
+  const catalog = [
+    parseMetadata("signal-general", {
+      type: "signal",
+      phase: null,
+      family: "[signal, local, unity, general]",
+    }),
+    parseMetadata("signal-special", {
+      type: "signal",
+      phase: null,
+      family: "[signal, local, unity, general, special]",
+    }),
+    parseMetadata("signal-deep", {
+      type: "signal",
+      phase: null,
+      family: "[signal, local, unity, general, special, deep]",
+    }),
+    parseMetadata("tool-scout-root", {
+      type: "tool",
+      phase: null,
+      family: "[tool, scout]",
+    }),
+    parseMetadata("tool-scout-dynamic", {
+      type: "tool",
+      phase: null,
+      family: "[tool, scout, dynamic]",
+    }),
+    parseMetadata("tool-scout-nested", {
+      type: "tool",
+      phase: null,
+      family: "[tool, scout, dynamic, nested]",
+    }),
+    parseMetadata("workflow", {
+      requiredSkills: "[signal-general, family:signal.local.unity.general.**, family:tool.scout.*]",
+      optionalSkills: "[family:missing.optional.**]",
+    }),
+  ];
+
+  const workflow = catalog.at(-1)!;
+  assert.deepEqual(workflow.requiredSkills, ["signal-general"]);
+  assert.deepEqual(workflow.requiredFamilyPaths, [{
+    family: ["signal", "local", "unity", "general"],
+    wildcard: "**",
+  }, {
+    family: ["tool", "scout"],
+    wildcard: "*",
+  }]);
+  assert.deepEqual(workflow.optionalFamilyPaths, [{
+    family: ["missing", "optional"],
+    wildcard: "**",
+  }]);
+
+  const resolved = resolveSkillDependencyLoadOrder(catalog, ["workflow"]);
+  const resolvedWorkflow = resolved.at(-1)!;
+  assert.deepEqual(resolvedWorkflow.resolvedRequiredSkills, [
+    "signal-general",
+    "signal-special",
+    "signal-deep",
+    "tool-scout-dynamic",
+  ]);
+  assert.deepEqual(resolvedWorkflow.resolvedOptionalSkills, []);
+  assert.deepEqual(resolved.map((skill) => skill.name), [
+    "signal-general",
+    "signal-special",
+    "signal-deep",
+    "tool-scout-dynamic",
+    "workflow",
+  ]);
+});
+
+test("selected required family paths reject zero matches and participate in cycle checks", () => {
+  const missingFamilyPath = parseMetadata("workflow", {
+    requiredSkills: "[family:signal.local.missing.**]",
+  });
+  assert.doesNotThrow(() => validateScoutSkillCatalog([missingFamilyPath]));
+  assert.throws(
+    () => resolveSkillDependencyLoadOrder([missingFamilyPath], ["workflow"]),
+    /required family path has no matches: signal\.local\.missing\.\*\*/,
+  );
+
+  const cyclicCatalog = [
+    parseMetadata("alpha", {
+      family: "[cycle, alpha]",
+      requiredSkills: "[family:cycle.beta.**]",
+    }),
+    parseMetadata("beta", {
+      family: "[cycle, beta]",
+      requiredSkills: "[family:cycle.alpha.**]",
+    }),
+  ];
+  assert.throws(() => validateScoutSkillCatalog(cyclicCatalog), /dependency cycle/);
+  assert.throws(
+    () => parseMetadata("invalid-selector", {
+      requiredSkills: "[family:signal.**.invalid]",
+    }),
+    /dependencies\.skills\.required has invalid token/,
+  );
 });
 
 test("filesystem families may contain siblings and prefix directories", () => {

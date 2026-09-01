@@ -11,7 +11,7 @@ tags: [scout, validation, research, verification, gate, evidence, audit, workflo
 devices: [any]
 dependencies:
   skills:
-    required: [domain-validation-research-pack, tool-guru-knowledge, tool-jarvis-codebase, internal-skill-consumption, tool-scout-request-human-input, tool-scout-send-message, tool-scout-submit-task]
+    required: [domain-validation-research-pack, tool-guru-knowledge, tool-jarvis-codebase, internal-skill-consumption, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**, family:signal.local.unity.general.**]
   shellTools:
     required: [scoutAssets, scoutArtifactDigest, find, sort]
     optional: [rg, sed, cat]

@@ -14,11 +14,21 @@ export class AgentHumanInputRecorder {
     this.unsubscribers.push(
       eventBus.subscribe(AgentEvents.humanInput.requested, (event) => {
         if (!AgentEvents.humanInput.requested.is(event)) return;
-        this.write(event.payload.agentId, AgentEvents.humanInput.requested.routeKey, event.payload);
+        const { message, ...request } = event.payload;
+        this.write(event.payload.agentId, AgentEvents.humanInput.requested.routeKey, {
+          ...request,
+          messageId: message.messageId,
+          queuedAt: message.queuedAt,
+        });
       }),
       eventBus.subscribe(AgentEvents.humanInput.responded, (event) => {
         if (!AgentEvents.humanInput.responded.is(event)) return;
-        this.write(event.payload.agentId, AgentEvents.humanInput.responded.routeKey, event.payload);
+        const { message, ...response } = event.payload;
+        this.write(event.payload.agentId, AgentEvents.humanInput.responded.routeKey, {
+          ...response,
+          messageId: message.messageId,
+          queuedAt: message.queuedAt,
+        });
       }),
       eventBus.subscribe(AgentEvents.message.consumed, (event) => {
         if (!AgentEvents.message.consumed.is(event)) return;

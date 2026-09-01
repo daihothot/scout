@@ -19,6 +19,7 @@ import {
 } from "../tools/agent-tools.js";
 import type { AgentTaskBackend } from "./agent-task-backend.js";
 import { WorkerAgent } from "../roles/worker-agent.js";
+import { attachments } from "../context/attachments.js";
 import { agent } from "../context/agent-attachments.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 
@@ -140,7 +141,10 @@ export class AgentDynamicToolBackend {
     const assignment = await worker.assignTask({
       phase: phase.name,
       description: call.description,
-      prompt: agent.turn.message(call.prompt),
+      prompt: attachments.compose(
+        agent.turn.workflow_phase(),
+        agent.turn.message(call.prompt),
+      ),
       isBackgrounded: true,
     });
     if (!assignment.ok) {

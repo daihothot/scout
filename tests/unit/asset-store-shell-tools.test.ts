@@ -988,11 +988,19 @@ test("AssetStore persists only each materialized Skill identity and filesystem p
   assert.deepEqual(entrySkill.requiredSkills, [
     "domain-validation-research-pack",
     "internal-skill-consumption",
-    "tool-scout-request-human-input",
     "tool-scout-send-message",
+    "tool-scout-request-human-input",
     "tool-scout-submit-task",
   ]);
   assert.deepEqual(entrySkill.optionalSkills, []);
+  assert.deepEqual(entrySkill.requiredFamilyPaths, [{
+    family: ["tool", "scout", "dynamic", "general"],
+    wildcard: "**",
+  }, {
+    family: ["tool", "scout", "dynamic", "worker"],
+    wildcard: "**",
+  }]);
+  assert.deepEqual(entrySkill.optionalFamilyPaths, []);
   assert.equal(
     entrySkill.path,
     ".scout/skill/validation/workflow/domain-validation-researcher/SKILL.md",
@@ -1023,6 +1031,102 @@ test("AssetStore persists only each materialized Skill identity and filesystem p
   });
   assert.equal(reused.decision, "reused");
   assert.deepEqual(reused.mount.skills, mount.skills);
+});
+
+test("AssetStore persists family path declarations and their resolved Skill identities", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-skill-family-");
+  const store = new AssetStore();
+  const skillPath = join(
+    fixtureRoot,
+    "assets",
+    "codex",
+    "skills",
+    "domain-validation-researcher",
+    "SKILL.md",
+  );
+  const original = readFileSync(skillPath, "utf8");
+  const updated = original.replace(
+    "family:tool.scout.dynamic.worker.**]",
+    "family:tool.scout.dynamic.worker.**, family:signal.local.unity.general.**]",
+  );
+  assert.notEqual(updated, original);
+  writeFileSync(skillPath, updated, "utf8");
+
+  const mount = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-skill-family-path-test",
+    agentId: "researcher",
+  });
+  const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
+  const entrySkill = manifest.skills.find((skill) => skill.name === "domain-validation-researcher");
+  assert.ok(entrySkill);
+  assert.deepEqual(entrySkill.requiredFamilyPaths, [{
+    family: ["tool", "scout", "dynamic", "general"],
+    wildcard: "**",
+  }, {
+    family: ["tool", "scout", "dynamic", "worker"],
+    wildcard: "**",
+  }, {
+    family: ["signal", "local", "unity", "general"],
+    wildcard: "**",
+  }]);
+  assert.deepEqual(entrySkill.requiredSkills, [
+    "domain-validation-research-pack",
+    "internal-skill-consumption",
+    "tool-scout-send-message",
+    "tool-scout-request-human-input",
+    "tool-scout-submit-task",
+    "signal-callback-event-by-runtime-log",
+    "signal-local-storage",
+    "signal-runtime-log",
+    "signal-runtime-log-via-unity-pipeline-cli",
+  ]);
+  assert.ok(manifest.skills.some((skill) =>
+    skill.name === "signal-runtime-log-via-unity-pipeline-cli"
+  ));
+  assert.ok(manifest.skills.some((skill) => skill.name === "tool-unity-pipeline-cli"));
+
+  const addedSkillRoot = join(
+    fixtureRoot,
+    "assets",
+    "codex",
+    "skills",
+    "signal-selector-added",
+  );
+  mkdirSync(addedSkillRoot, { recursive: true });
+  writeFileSync(join(addedSkillRoot, "SKILL.md"), [
+    "---",
+    "assetKind: scout.skill",
+    "name: signal-selector-added",
+    "description: Test Signal selected through a family path.",
+    "id: signal-selector-added",
+    "version: 0.1.0",
+    "type: signal",
+    "family: [signal, local, unity, general]",
+    "tags: [signal, test]",
+    "devices: [any]",
+    "summary: Test selector resource drift.",
+    "---",
+    "",
+    "# Test Signal",
+    "",
+  ].join("\n"), "utf8");
+
+  const rebuilt = store.prepareMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-skill-family-path-test",
+    agentId: "researcher",
+    cleanRunRoot: false,
+    persistedManifest: manifest,
+    persistedIdentity: mountIdentity(mount),
+    allowAssetResourceDrift: true,
+  });
+  assert.equal(rebuilt.decision, "rebuild");
+  assert.notEqual(rebuilt.mount.resourceHash, mount.resourceHash);
+  assert.ok(rebuilt.mount.skills.some((skill) => skill.name === "signal-selector-added"));
+  assert.ok(rebuilt.mount.skills
+    .find((skill) => skill.name === "domain-validation-researcher")
+    ?.requiredSkills.includes("signal-selector-added"));
 });
 
 test("Skill resource hashes cover the complete profiled Skill directory", () => {
@@ -1374,16 +1478,23 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
   assert.ok(hasSkill(validatorMount.skills, acquisitionSkill));
   assert.equal(validatorMount.shellTools.some((tool) => tool.id === "unity"), false);
 
-  for (const agentId of ["coordinator", "researcher"]) {
-    const mount = store.materializeMount({
-      scoutRoot: fixtureRoot,
-      runId: `run-runtime-log-acquisition-${agentId}-test`,
-      agentId,
-    });
-    assert.equal(hasSkill(mount.skills, toolSkill), false);
-    assert.equal(hasSkill(mount.skills, acquisitionSkill), false);
-    assert.equal(mount.shellTools.some((tool) => tool.id === "unity"), false);
-  }
+  const coordinatorMount = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-runtime-log-acquisition-coordinator-test",
+    agentId: "coordinator",
+  });
+  assert.equal(hasSkill(coordinatorMount.skills, toolSkill), false);
+  assert.equal(hasSkill(coordinatorMount.skills, acquisitionSkill), false);
+  assert.equal(coordinatorMount.shellTools.some((tool) => tool.id === "unity"), false);
+
+  const researcherMount = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-runtime-log-acquisition-researcher-test",
+    agentId: "researcher",
+  });
+  assert.ok(hasSkill(researcherMount.skills, toolSkill));
+  assert.ok(hasSkill(researcherMount.skills, acquisitionSkill));
+  assert.equal(researcherMount.shellTools.some((tool) => tool.id === "unity"), false);
 });
 
 test("Every Skill name and id match its directory name", () => {

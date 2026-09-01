@@ -485,6 +485,11 @@ test("AssignTask routes through the current Phase and skips a busy first role", 
   assert.equal(response.status, "assigned");
   assert.equal(assignedTask?.agentId, "auditor-b");
   assert.equal(assignedTask?.phase, "audit");
+  assert.match(
+    assignedTask?.initialPrompt ?? "",
+    /<workflow_phase>\ncurrent_domain: domain-assign-task-phase-routing\ncurrent_phase: audit\n<\/workflow_phase>/,
+  );
+  assert.equal(assignedTask?.initialPrompt.match(/<workflow_phase>/g)?.length, 1);
   assert.equal(firstWorker.taskRunner?.snapshot().activeTask?.taskId, "auditor-a-task-0001");
 
   if (assignedTask) await secondWorker.archiveTask(assignedTask.taskId);
@@ -534,11 +539,11 @@ test("SubmitPhaseOutcome advances the cursor and schedules one fresh Coordinator
   assert.equal(appServer.turnInputs.length, 2);
   assert.match(
     appServer.turnInputs[0]?.prompt ?? "",
-    /<workflow_phase>\ncurrent_phase: research-reviewer\n<\/workflow_phase>/,
+    /<workflow_phase>\ncurrent_domain: domain-submit-phase-outcome\ncurrent_phase: research-reviewer\n<\/workflow_phase>/,
   );
   assert.match(
     appServer.turnInputs[1]?.prompt ?? "",
-    /<workflow_phase>\ncurrent_phase: verify\n<\/workflow_phase>/,
+    /<workflow_phase>\ncurrent_domain: domain-submit-phase-outcome\ncurrent_phase: verify\n<\/workflow_phase>/,
   );
   for (const input of appServer.turnInputs) {
     assert.equal(input.prompt?.match(/<workflow_phase>/g)?.length, 1);
@@ -2192,6 +2197,8 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
       family: ["tool", "test"],
       requiredSkills: [],
       optionalSkills: [],
+      requiredFamilyPaths: [],
+      optionalFamilyPaths: [],
       path: `.scout/skill/tool/test/${name}/SKILL.md`,
     })),
     plugins: [],

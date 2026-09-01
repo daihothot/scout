@@ -19,7 +19,9 @@ import { StartupPhase } from "../../core/workflow/index.js";
 import {
   ScoutSkillResourceRequirements,
   ScoutSkillTypes,
+  type ResolvedScoutSkillCatalogEntry,
   type ScoutSkillCatalogEntry,
+  type ScoutSkillFamilyPath,
   type ScoutSkillResourceCatalogEntry,
   type ScoutSkillResourceRequirement,
   type ScoutSkillType,
@@ -33,6 +35,13 @@ interface FrontmatterField {
 }
 
 const SKILL_TOKEN_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const SKILL_FAMILY_SEGMENT = "[a-z0-9]+(?:-[a-z0-9]+)*";
+const SKILL_FAMILY_SELECTOR_PATTERN = new RegExp(
+  `^family:${SKILL_FAMILY_SEGMENT}(?:\\.${SKILL_FAMILY_SEGMENT})*\\.(?:\\*|\\*\\*)$`,
+);
+const SKILL_DEPENDENCY_PATTERN = new RegExp(
+  `^(?:${SKILL_TOKEN_PATTERN.source.slice(1, -1)}|${SKILL_FAMILY_SELECTOR_PATTERN.source.slice(1, -1)})$`,
+);
 const SCOUT_SKILL_RESOURCE_REQUIREMENTS = new Set<ScoutSkillResourceRequirement>(
   Object.values(ScoutSkillResourceRequirements),
 );
@@ -101,12 +110,12 @@ export function parseScoutSkillMetadata(input: {
     : undefined;
   const family = requireTokenList(fields, ["family"], label);
   const tags = requireTokenList(fields, ["tags"], label);
-  const requiredSkills = optionalTokenList(
+  const requiredDependencies = optionalSkillDependencies(
     fields,
     ["dependencies", "skills", "required"],
     label,
   );
-  const optionalSkills = optionalTokenList(
+  const optionalDependencies = optionalSkillDependencies(
     fields,
     ["dependencies", "skills", "optional"],
     label,
@@ -120,8 +129,10 @@ export function parseScoutSkillMetadata(input: {
     phase,
     family,
     tags,
-    requiredSkills,
-    optionalSkills,
+    requiredSkills: requiredDependencies.skills,
+    optionalSkills: optionalDependencies.skills,
+    requiredFamilyPaths: requiredDependencies.familyPaths,
+    optionalFamilyPaths: optionalDependencies.familyPaths,
     path: posix.join(".scout", "skill", ...family, name, "SKILL.md"),
     resources: input.resources,
   };
@@ -170,11 +181,11 @@ function parseScoutSkillResourceDocument(input: {
 export function resolveSkillDependencyLoadOrder(
   catalog: ScoutSkillCatalogEntry[],
   selectedNames: string[],
-): ScoutSkillCatalogEntry[] {
+): ResolvedScoutSkillCatalogEntry[] {
   const byName = new Map(catalog.map((skill) => [skill.name, skill] as const));
   const visiting = new Set<string>();
   const visited = new Set<string>();
-  const result: ScoutSkillCatalogEntry[] = [];
+  const result: ResolvedScoutSkillCatalogEntry[] = [];
 
   const visit = (name: string): void => {
     if (visited.has(name)) return;
@@ -184,13 +195,27 @@ export function resolveSkillDependencyLoadOrder(
     const skill = byName.get(name);
     if (!skill) throw new Error(`Unknown Scout Skill dependency: ${name}`);
     visiting.add(name);
-    for (const dependency of skill.requiredSkills) visit(dependency);
-    for (const dependency of skill.optionalSkills) {
-      if (byName.has(dependency)) visit(dependency);
-    }
+    const resolvedRequiredSkills = resolveDirectSkillDependencies(
+      catalog,
+      skill,
+      "required",
+      true,
+    );
+    const resolvedOptionalSkills = resolveDirectSkillDependencies(
+      catalog,
+      skill,
+      "optional",
+      true,
+    );
+    for (const dependency of resolvedRequiredSkills) visit(dependency);
+    for (const dependency of resolvedOptionalSkills) visit(dependency);
     visiting.delete(name);
     visited.add(name);
-    result.push(skill);
+    result.push({
+      ...skill,
+      resolvedRequiredSkills,
+      resolvedOptionalSkills,
+    });
   };
 
   for (const name of selectedNames) visit(name);
@@ -201,7 +226,7 @@ export function resolveSkillDependencyLoadOrder(
 export function resolveScoutSkillsForPhases(
   catalog: ScoutSkillCatalogEntry[],
   phases: readonly ScoutAgentPhase[],
-): ScoutSkillCatalogEntry[] {
+): ResolvedScoutSkillCatalogEntry[] {
   const selectedPhases = new Set(phases);
   return resolveSkillDependencyLoadOrder(
     catalog,
@@ -225,7 +250,11 @@ export function validateScoutSkillCatalog(catalog: ScoutSkillCatalogEntry[]): vo
       throw new Error(`Scout Skill dependency cycle contains ${skill.name}.`);
     }
     visiting.add(skill.name);
-    for (const dependencyName of [...skill.requiredSkills, ...skill.optionalSkills]) {
+    const dependencies = [
+      ...resolveDirectSkillDependencies(catalog, skill, "required", false),
+      ...resolveDirectSkillDependencies(catalog, skill, "optional", false),
+    ];
+    for (const dependencyName of dependencies) {
       const dependency = byName.get(dependencyName);
       if (dependency) visit(dependency);
     }
@@ -382,6 +411,75 @@ function optionalTokenList(fields: FrontmatterField[], path: string[], label: st
   const field = findField(fields, path);
   if (!field) return [];
   return parseInlineList(field, label, SKILL_TOKEN_PATTERN);
+}
+
+function optionalSkillDependencies(
+  fields: FrontmatterField[],
+  path: string[],
+  label: string,
+): { skills: string[]; familyPaths: ScoutSkillFamilyPath[] } {
+  const field = findField(fields, path);
+  if (!field) return { skills: [], familyPaths: [] };
+  const declarations = parseInlineList(field, label, SKILL_DEPENDENCY_PATTERN);
+  const skills: string[] = [];
+  const familyPaths: ScoutSkillFamilyPath[] = [];
+  for (const declaration of declarations) {
+    if (!declaration.startsWith("family:")) {
+      skills.push(declaration);
+      continue;
+    }
+    const separator = declaration.lastIndexOf(".");
+    familyPaths.push({
+      family: declaration.slice("family:".length, separator).split("."),
+      wildcard: declaration.slice(separator + 1) as "*" | "**",
+    });
+  }
+  return { skills, familyPaths };
+}
+
+function resolveDirectSkillDependencies(
+  catalog: ScoutSkillCatalogEntry[],
+  skill: ScoutSkillCatalogEntry,
+  requirement: "required" | "optional",
+  rejectEmptyRequiredPath: boolean,
+): string[] {
+  const byName = new Set(catalog.map((candidate) => candidate.name));
+  const names = requirement === "required"
+    ? [...skill.requiredSkills]
+    : skill.optionalSkills.filter((name) => byName.has(name));
+  const familyPaths = requirement === "required"
+    ? skill.requiredFamilyPaths
+    : skill.optionalFamilyPaths;
+
+  for (const familyPath of familyPaths) {
+    const matches = catalog
+      .filter((candidate) => matchesFamilyPath(candidate.family, familyPath))
+      .sort((left, right) => {
+        const leftFamily = left.family.join(".");
+        const rightFamily = right.family.join(".");
+        if (leftFamily !== rightFamily) return leftFamily < rightFamily ? -1 : 1;
+        return left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+      });
+    if (requirement === "required" && rejectEmptyRequiredPath && matches.length === 0) {
+      const missingPath = [...familyPath.family, familyPath.wildcard].join(".");
+      throw new Error(
+        `Scout Skill ${skill.name} required family path has no matches: ${missingPath}`,
+      );
+    }
+    names.push(...matches.map((candidate) => candidate.name));
+  }
+
+  return [...new Set(names)];
+}
+
+function matchesFamilyPath(
+  family: readonly string[],
+  familyPath: ScoutSkillFamilyPath,
+): boolean {
+  if (!familyPath.family.every((segment, index) => family[index] === segment)) return false;
+  return familyPath.wildcard === "**"
+    ? family.length >= familyPath.family.length
+    : family.length === familyPath.family.length + 1;
 }
 
 function parseInlineList(

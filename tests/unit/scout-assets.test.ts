@@ -63,9 +63,9 @@ test("scout-assets family returns flat names and progressively resolves unique f
   assert.deepEqual(families.families, [
     "audit",
     "dynamic",
+    "general",
     "internal",
     "local",
-    "runtime-inspector",
     "scout",
     "signal",
     "tool",
@@ -78,7 +78,7 @@ test("scout-assets family returns flat names and progressively resolves unique f
   const workflow = parseSuccessful(fixture.mountRoot, "family", "workflow");
   assert.deepEqual(workflow, {
     phases: ["research", "verify"],
-    family: "validation/workflow",
+    family: "validation.workflow",
     skills: [{
       name: "domain-validation-researcher",
       family: ["validation", "workflow"],
@@ -90,7 +90,7 @@ test("scout-assets family returns flat names and progressively resolves unique f
   assert.deepEqual(signal, {
     phases: ["research", "verify"],
     family: "signal",
-    children: ["local"],
+    children: ["signal.local"],
   });
 });
 
@@ -101,19 +101,20 @@ test("scout-assets asks for a parent path when a family name is ambiguous", () =
     phases: ["research", "verify"],
     family: "unity",
     ambiguous: true,
-    candidates: ["audit/unity", "signal/local/unity"],
+    candidates: ["audit.unity", "signal.local.unity"],
   });
 
-  const resolved = parseSuccessful(fixture.mountRoot, "family", "signal/local/unity");
+  const resolved = parseSuccessful(fixture.mountRoot, "family", "signal.local.unity");
   assert.deepEqual(resolved, {
     phases: ["research", "verify"],
-    family: "signal/local/unity",
+    family: "signal.local.unity",
     skills: [{
       name: "validation-signal",
       family: ["signal", "local", "unity"],
       path: ".scout/skill/signal/local/unity/validation-signal/SKILL.md",
     }],
   });
+
 });
 
 test("scout-assets skill returns metadata and all current role tools", () => {
@@ -129,8 +130,8 @@ test("scout-assets skill returns metadata and all current role tools", () => {
   assert.equal("phase" in signal.skill, false);
   assert.deepEqual(output.phaseTools.skills, [{
     name: "tool-scout-send-message",
-    family: ["tool", "scout", "dynamic"],
-    path: ".scout/skill/tool/scout/dynamic/tool-scout-send-message/SKILL.md",
+    family: ["tool", "scout", "dynamic", "general"],
+    path: ".scout/skill/tool/scout/dynamic/general/tool-scout-send-message/SKILL.md",
   }]);
   assert.deepEqual(output.phaseTools.shellTools.map((tool: { commandPathKind: string }) => tool.commandPathKind), [
     "path-resolved",
@@ -176,7 +177,7 @@ function createFixture(): {
 } {
   const fixtureRoot = createTemporaryRoot();
   const mountRoot = join(fixtureRoot, "mount");
-  const skillLogicalRoot = ".scout/skill/internal/runtime-inspector/internal-runtime-inspector";
+  const skillLogicalRoot = ".scout/skill/internal/general/internal-runtime-inspector";
   const skillSourceRoot = join(fixtureRoot, "skill-source");
   mkdirSync(mountRoot);
   mkdirSync(skillSourceRoot);
@@ -252,7 +253,7 @@ function createFixture(): {
       description: "Inspect Runtime resources",
       summary: "Inspect Runtime resources",
       phase: ["research"],
-      family: ["internal", "runtime-inspector"],
+      family: ["internal", "general"],
       requiredSkills: [],
       optionalSkills: [],
       path: `${skillLogicalRoot}/SKILL.md`,
@@ -280,10 +281,10 @@ function createFixture(): {
       type: "tool",
       description: "Send Message tool",
       summary: "Send Message tool",
-      family: ["tool", "scout", "dynamic"],
+      family: ["tool", "scout", "dynamic", "general"],
       requiredSkills: [],
       optionalSkills: [],
-      path: ".scout/skill/tool/scout/dynamic/tool-scout-send-message/SKILL.md",
+      path: ".scout/skill/tool/scout/dynamic/general/tool-scout-send-message/SKILL.md",
     }, {
       name: "audit-unity",
       type: "signal",

@@ -18,6 +18,7 @@ import { SystemEvents } from "../../system/events/index.js";
 import { AgentEvents } from "../events/index.js";
 import type { UserMessageSubmittedPayload } from "../../interaction/gateway/interaction-events.js";
 import { attachments } from "../context/attachments.js";
+import { agent } from "../context/agent-attachments.js";
 import { coordinator } from "../runner/coordinator/coordinator-attachments.js";
 import { resolveSynthesisRole } from "../../core/workflow/index.js";
 
@@ -172,7 +173,7 @@ export class CoordinatorAgent extends ScoutAgent {
   private async runCoordinatorTick(tick: CoordinatorTick): Promise<void> {
     const { messages } = tick;
     const prompt = attachments.compose(
-      coordinator.workflowPhase(currentRunScope().scheduler.snapshot().currentPhase),
+      agent.turn.workflow_phase(),
       ...(this.resumeContext ? [this.resumeContext] : []),
       ...messages.map((message) => message.body),
     );

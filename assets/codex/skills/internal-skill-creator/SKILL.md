@@ -5,7 +5,7 @@ description: 创建或修改 Scout Skill 时规范 identity、type、layout、ph
 id: internal-skill-creator
 version: 1.0.0
 type: internal
-family: [internal, skill-creator]
+family: [internal, general]
 tags: [scout, skill, asset, template, governance]
 devices: [any]
 dependencies:
@@ -47,7 +47,7 @@ summary: 规范 Scout Skill 的作者分类、正文布局、文件系统投影�
 
 - 创建、修改、评审或规范化 Scout Skill 及其 supplementary resources。
 - 判断内容应属于 AGENTS、Domain Skill、Tool Skill、Signal Skill、Internal Skill、template 还是 reference。
-- 为一个 Skill 独立选择 type 与 layout，并按当前资产和 Runtime 事实验证结果。
+- 为一个 Skill 独立选择 type 与 layout，并按当前资产和 Scout Runtime 事实验证结果。
 
 ## Skill Authoring Model
 
@@ -80,10 +80,10 @@ Skill 源目录固定为：
 assets/codex/skills/<skill-name>/SKILL.md
 ```
 
-Scout Runtime 将 Skill 源目录投影到 role 的 mount，并将 Skill 目录物化为：
+Scout Runtime 将 Skill 源目录投影到 role 的 mount，并将 Skill 入口物化为：
 
 ```text
-<family-path>/<skill-name>/SKILL.md
+.scout/skill/<family-segment-1>/<family-segment-2>/<skill-name>/SKILL.md
 ```
 
 规则：
@@ -131,6 +131,8 @@ assets/codex/skills/<skill-name>/
 
 - `skill-description` 表示 Skill 的实际触发场景和主要职责。
 - `family-segment` 表示 `family` 中一个实际目录名。
+- `family-path` 表示由实际 `family-segment` 使用 `.` 连接形成的 family 查询值；末尾可以追加 `.*` 或 `.**`。
+- `skill-path` 表示 Scout Runtime 返回的当前 `mount` 内 Skill 入口文件系统路径；该路径相对于当前 `mount`，可直接使用。
 - `tag` 表示一个实际稳定特征。
 - `skill-summary` 表示实际短职责摘要。
 
@@ -176,7 +178,7 @@ family 表达文件系统分类和归属，不表达依赖、执行顺序或 lay
 
 只有真实依赖存在时才写 `dependencies`：
 
-- `skills` 使用真实 Skill identity。
+- `skills` 使用真实 Skill identity 或带 wildcard 的 family-path。
 - `shellTools` 使用 `assets/codex/tools/shell-tools.json` 中的 tool id。
 - `mcpServers` 使用 `assets/codex/mcp/servers.json` 中的 server id。
 - `plugins` 使用 plugin manifest 中的 name。
@@ -184,6 +186,33 @@ family 表达文件系统分类和归属，不表达依赖、执行顺序或 lay
 - required Skill 缺失时当前 contract 不完整；optional Skill 是可供当前工作选择的候选能力，当前环境没有该候选时不阻塞基础 contract。存在的依赖必须无环。
 - 依赖只表达“使用当前 Skill 必须同时具备什么”，不能用来偷渡其它层的方法论。
 - composition 的作者声明遵守下列 Composition Authoring Rules；候选构造、完整读取和验证由 `internal-skill-consumption` 定义。
+
+### Family Paths
+
+`family-path` 在 Skill dependency 中显式选择一个 family 范围时，只允许使用以下形式：
+
+```text
+family:<family-path>.*
+family:<family-path>.**
+```
+
+- `family:<family-path>.*` 选择比 `<family-path>` 多一层的全部 family 中的 Skills。
+- `family:<family-path>.**` 选择 `<family-path>` 本身及其全部后代 family 中的 Skills。
+- `<family-path>` 必须非空，每个 segment 使用小写 kebab-case；不支持脱离 family path 的全局 `*`。
+- family-path 与具体 Skill identity 一样，只能写在 `dependencies.skills.required` 或 `dependencies.skills.optional` 的 inline list 中。
+- required family-path 的全部匹配 Skills 都是 required dependencies；没有匹配项时，使用当前 Skill 所需的资源投影无法建立。
+- optional family-path 的全部匹配 Skills 都是 optional candidates；没有匹配项时，不阻塞基础 contract。
+- family-path 只批量声明依赖范围，不建立 execution order、derived 或 implementation composition。composition 所需的 contract owner 仍必须使用具体 Skill identity direct required。
+- Scout Runtime 在构建 mount 时展开 family-path；作者不得把当前匹配结果复制成另一份手工维护的列表。
+
+示例：
+
+```yaml
+dependencies:
+  skills:
+    required: [internal-skill-consumption, family:signal.local.unity.general.**]
+    optional: [family:tool.scout.dynamic.**]
+```
 
 ### Composition Authoring Rules
 
@@ -277,7 +306,7 @@ index 自身必须是 required supplementary resource，并使用以下最小结
 - Phase 1：确认目标对象的责任归属，选择 Skill type 和 layout。
 - Phase 2：读取对应模板并建立 Skill identity、frontmatter、依赖和正文结构。
 - Phase 3：检查 supplementary resources、引用和职责边界。
-- Phase 4：验证源码资产、Runtime 物化和必要的 role 行为。
+- Phase 4：验证源码资产、Scout Runtime 物化和必要的 role 行为。
 
 ## Phase 1: Classify Responsibility And Layout
 ---
@@ -349,7 +378,7 @@ find assets/codex/skills -maxdepth 2 -name SKILL.md -print
 sed -n '1,40p' assets/codex/skills/<skill-name>/SKILL.md
 ```
 
-只有当前工作目录是 Runtime 为当前 `role` 生成的 `mount`，并且其中存在 `mount-manifest.json` 时，才检查当前物化结果：
+只有当前工作目录是 Scout Runtime 为当前 `role` 生成的 `mount`，并且其中存在 `mount-manifest.json` 时，才检查当前物化结果：
 
 ```sh
 scout-assets summary
@@ -388,7 +417,7 @@ Partial：
 
 ## Prohibited Rules (Enforcement)
 
-- PR-001：禁止用名称、family、phase、旧文档或模型记忆猜测责任、依赖或 composition。
+- PR-001：禁止用名称、未声明的 family 关系、phase、旧文档或模型记忆猜测责任、依赖或 composition。
 - PR-002：禁止在本技能或 type/layout template 中复制 `internal-skill-consumption` 的读取和 composition 算法。
 - PR-003：禁止把 type template 和 layout template 拼成两套并列正文结构。
 - PR-004：禁止 `<implemented-owner-id>` 反向 required 某个具体 implementation contract owner。
@@ -398,8 +427,8 @@ Partial：
 - `name`、`id`、目录名唯一且一致，所有引用均指向当前 identity。
 - `type` 是四种合法值之一，`layout` 是两种合法值之一，且二者来自独立判断。
 - `phase` 是否存在及其值符合选定 type template，并覆盖真实资源投影。
-- `family` 必填、分类正确，生成路径符合 `<family-path>/<skill-name>/SKILL.md`。
-- required/optional Skill 存在且依赖无环。
+- `family` 必填、分类正确，生成的 Skill 入口符合 `.scout/skill/<family-segment>/<skill-name>/SKILL.md`。
+- required/optional Skill identity 和 family-path 符合声明规则，展开后的依赖无环；required family-path 至少匹配一个 Skill。
 - required / optional resource metadata 完整，正文适用条件与 metadata 一致。
 - AGENTS、Domain Skill、Tool Skill、Signal Skill、Internal Skill、template 和 reference 的责任没有交叉复制。
 - Skill 的读取与 composition 规则引用 `internal-skill-consumption`，不复制其通用算法。

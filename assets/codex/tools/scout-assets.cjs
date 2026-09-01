@@ -73,8 +73,8 @@ function printFamily(manifest, args) {
   }
 
   const requested = args[0];
-  const matches = requested.includes("/")
-    ? nodes.filter((node) => node.path === requested)
+  const matches = requested.includes(".")
+    ? nodes.filter((node) => node.familyPath === requested)
     : nodes.filter((node) => node.name === requested);
   if (matches.length === 0) {
     fail(`Family is not supported for the current role: ${requested}`);
@@ -84,14 +84,14 @@ function printFamily(manifest, args) {
       phases: manifest.agentProfile?.phases ?? [],
       family: requested,
       ambiguous: true,
-      candidates: matches.map((node) => node.path).sort(),
+      candidates: matches.map((node) => node.familyPath).sort(),
     });
   }
 
   const node = matches[0];
   const output = {
     phases: manifest.agentProfile?.phases ?? [],
-    family: node.path,
+    family: node.familyPath,
   };
   if (node.children.size > 0) output.children = [...node.children].sort();
   if (node.skills.length > 0) output.skills = node.skills;
@@ -147,6 +147,7 @@ function buildFamilyNodes(manifest) {
       const path = family.slice(0, index + 1).join("/");
       const node = nodes.get(path) ?? {
         path,
+        familyPath: family.slice(0, index + 1).join("."),
         name: family[index],
         children: new Set(),
         skills: [],
@@ -155,7 +156,7 @@ function buildFamilyNodes(manifest) {
       nodes.set(path, node);
       if (index > 0) {
         const parent = nodes.get(family.slice(0, index).join("/"));
-        parent?.children.add(family[index]);
+        parent?.children.add(family.slice(0, index + 1).join("."));
       }
     }
   }

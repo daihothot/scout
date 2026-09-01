@@ -27,6 +27,12 @@ export interface ScoutSkillResourceCatalogEntry {
   description: string;
 }
 
+/** Explicit family range declared by one Skill dependency. */
+export interface ScoutSkillFamilyPath {
+  family: string[];
+  wildcard: "*" | "**";
+}
+
 /** Parsed frontmatter projection used for Skill routing and dependency loading. */
 export interface ScoutSkillCatalogEntry {
   name: string;
@@ -38,8 +44,16 @@ export interface ScoutSkillCatalogEntry {
   tags: string[];
   requiredSkills: string[];
   optionalSkills: string[];
+  requiredFamilyPaths: ScoutSkillFamilyPath[];
+  optionalFamilyPaths: ScoutSkillFamilyPath[];
   path: string;
   resources: ScoutSkillResourceCatalogEntry[];
+}
+
+/** Catalog entry whose family paths have been expanded against the current Catalog. */
+export interface ResolvedScoutSkillCatalogEntry extends ScoutSkillCatalogEntry {
+  resolvedRequiredSkills: string[];
+  resolvedOptionalSkills: string[];
 }
 
 /** One phase-projected Skill linked into a role mount. */
@@ -52,5 +66,7 @@ export interface MaterializedSkill {
   family: string[];
   requiredSkills: string[];
   optionalSkills: string[];
+  requiredFamilyPaths: ScoutSkillFamilyPath[];
+  optionalFamilyPaths: ScoutSkillFamilyPath[];
   path: string;
 }

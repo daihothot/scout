@@ -5,7 +5,7 @@ description: Worker 当前任务必须等待人工确认才能继续时使用 Re
 id: tool-scout-request-human-input
 version: 1.0.0
 type: tool
-family: [tool, scout, dynamic]
+family: [tool, scout, dynamic, worker]
 tags: [scout, dynamic-tool, human-input, task]
 devices: [any]
 summary: 规定 Worker 人工输入请求的触发条件、正文和等待语义。

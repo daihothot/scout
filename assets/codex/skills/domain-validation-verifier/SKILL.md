@@ -11,7 +11,7 @@ tags: [scout, validation, bdd, verification, evidence, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [tool-jarvis-codebase, internal-skill-consumption, signal-runtime-log, signal-callback-event-by-runtime-log, signal-local-storage, signal-runtime-log-via-unity-pipeline-cli, tool-scout-request-human-input, tool-scout-send-message, tool-scout-submit-task, tool-unity-pipeline-cli]
+    required: [tool-jarvis-codebase, internal-skill-consumption, family:signal.local.unity.general.**, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**, tool-unity-pipeline-cli]
   shellTools:
     required: [scoutAssets, jarvis, codegraph, git, find, sort]
     optional: [rg, sed, cat]
