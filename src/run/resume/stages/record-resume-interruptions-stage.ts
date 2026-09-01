@@ -21,6 +21,7 @@ export class RecordResumeInterruptionsStage implements RunStage {
     const scope = currentRunScope();
     const synthesisRole = resolveSynthesisRole(scope.scheduler.snapshot()).name;
     let projection = projectRun(scope.journal.readAll(), synthesisRole);
+    scope.stepStore.restore(projection.steps);
     for (const turn of projection.turns.filter((candidate) => !candidate.completedAt)) {
       const interruptedAt = new Date().toISOString();
       scope.eventBus.publish(AgentEvents.turn.interrupted, {
@@ -41,22 +42,14 @@ export class RecordResumeInterruptionsStage implements RunStage {
     for (const step of projection.steps) {
       if (step.status !== AgentStepStatuses.Running) continue;
       const interruptedAt = new Date().toISOString();
-      const interruptedStep = {
-        ...step,
-        status: AgentStepStatuses.Interrupted,
+      scope.stepStore.interruptStep(step.stepId, {
         finishedAt: interruptedAt,
         durationMs: Math.max(
           0,
           new Date(interruptedAt).getTime() - new Date(step.startedAt).getTime(),
         ),
         error: interruptionReason,
-        updatedAt: interruptedAt,
-      };
-      scope.eventBus.publish(
-        AgentEvents.step.interrupted,
-        interruptedStep,
-        { occurredAt: interruptedAt },
-      );
+      });
       if (!step.taskId) continue;
       const task = projection.tasks.find((candidate) => candidate.taskId === step.taskId);
       if (!task) throw new Error(`Interrupted Agent step ${step.stepId} references unknown task ${step.taskId}.`);

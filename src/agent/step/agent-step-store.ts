@@ -25,22 +25,6 @@ export class AgentStepStore {
     this.humanInputStore = scope.humanInputStore;
     try {
       this.unsubscribers.push(
-        this.eventBus.subscribe(AgentEvents.step.started, (event) => {
-          if (!AgentEvents.step.started.is(event)) return;
-          this.applyStepSnapshot(event.payload);
-        }, { priority: EventSubscriptionPriorities.High }),
-        this.eventBus.subscribe(AgentEvents.step.completed, (event) => {
-          if (!AgentEvents.step.completed.is(event)) return;
-          this.applyStepSnapshot(event.payload);
-        }, { priority: EventSubscriptionPriorities.High }),
-        this.eventBus.subscribe(AgentEvents.step.interrupted, (event) => {
-          if (!AgentEvents.step.interrupted.is(event)) return;
-          this.applyStepSnapshot(event.payload);
-        }, { priority: EventSubscriptionPriorities.High }),
-        this.eventBus.subscribe(AgentEvents.step.failed, (event) => {
-          if (!AgentEvents.step.failed.is(event)) return;
-          this.applyStepSnapshot(event.payload);
-        }, { priority: EventSubscriptionPriorities.High }),
         this.eventBus.subscribe(AgentEvents.humanInput.requested, (event) => {
           if (!AgentEvents.humanInput.requested.is(event)) return;
           this.recordHumanInputReference(event.payload.stepId, {
@@ -88,7 +72,15 @@ export class AgentStepStore {
     const stored = cloneAgentStepState(step);
     this.steps.set(step.stepId, stored);
     this.flushPendingReferences(step.stepId);
-    return cloneAgentStepState(stored);
+    return this.getStep(step.stepId)!;
+  }
+
+  startStep(step: AgentStepState): AgentStepState {
+    const started = this.addStep(step);
+    this.requireEventBus().publish(AgentEvents.step.started, started, {
+      occurredAt: started.startedAt,
+    });
+    return started;
   }
 
   getStep(stepId: string): AgentStepState | undefined {
@@ -233,20 +225,21 @@ export class AgentStepStore {
     return step;
   }
 
+  completeStep(stepId: string, input: AgentStepTerminalInput): AgentStepState {
+    return this.finishStep(stepId, "completed", input);
+  }
+
+  interruptStep(stepId: string, input: AgentStepTerminalInput): AgentStepState {
+    return this.finishStep(stepId, "interrupted", input);
+  }
+
+  failStep(stepId: string, input: AgentStepTerminalInput): AgentStepState {
+    return this.finishStep(stepId, "failed", input);
+  }
+
   private requireEventBus(): RunScope["eventBus"] {
     if (!this.eventBus) throw new Error("AgentStepStore is not started.");
     return this.eventBus;
-  }
-
-  private applyStepSnapshot(step: AgentStepState): void {
-    const existing = this.steps.get(step.stepId);
-    if (existing && (
-      existing.agentId !== step.agentId || existing.taskId !== step.taskId
-    )) {
-      throw new Error(`Agent step ${step.stepId} conflicts with its existing owner.`);
-    }
-    this.steps.set(step.stepId, cloneAgentStepState(step));
-    this.flushPendingReferences(step.stepId);
   }
 
   private flushPendingReferences(stepId: string): void {
@@ -262,6 +255,53 @@ export class AgentStepStore {
       this.recordToolCallReference(call);
     }
   }
+
+  private finishStep(
+    stepId: string,
+    status: Exclude<AgentStepState["status"], "running">,
+    input: AgentStepTerminalInput,
+  ): AgentStepState {
+    const current = this.steps.get(stepId);
+    if (!current) throw new Error(`Unknown agent step: ${stepId}`);
+    if (current.status !== "running") {
+      throw new Error(`Agent step ${stepId} is already ${current.status}; cannot mark it ${status}.`);
+    }
+    if (input.turnId && current.turnId && current.turnId !== input.turnId) {
+      throw new Error(`Agent step ${stepId} belongs to turn ${current.turnId}, not ${input.turnId}.`);
+    }
+    const stored = this.updateStep(stepId, (step) => {
+      const next: AgentStepState = {
+        ...step,
+        status,
+        finishedAt: input.finishedAt,
+        durationMs: input.durationMs,
+        error: input.error,
+        updatedAt: input.finishedAt,
+      };
+      if (Object.hasOwn(input, "turnId")) next.turnId = input.turnId;
+      if (Object.hasOwn(input, "finalResponse")) next.finalResponse = input.finalResponse;
+      if (Object.hasOwn(input, "plan")) next.plan = input.plan;
+      if (Object.hasOwn(input, "toolCallIds")) next.toolCallIds = [...(input.toolCallIds ?? [])];
+      return next;
+    });
+    const event = status === "completed"
+      ? AgentEvents.step.completed
+      : status === "interrupted"
+        ? AgentEvents.step.interrupted
+        : AgentEvents.step.failed;
+    this.requireEventBus().publish(event, stored, { occurredAt: input.finishedAt });
+    return stored;
+  }
+}
+
+export interface AgentStepTerminalInput {
+  finishedAt: string;
+  durationMs: number;
+  error?: string;
+  turnId?: string;
+  finalResponse?: string;
+  plan?: AppServerPlanState;
+  toolCallIds?: string[];
 }
 
 export function cloneAgentStepState(step: AgentStepState): AgentStepState {
