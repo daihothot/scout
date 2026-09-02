@@ -15,7 +15,7 @@ import {
   win32,
 } from "node:path";
 import type { ScoutAgentPhase } from "../../agent/thread/types.js";
-import { StartupPhase } from "../../core/workflow/index.js";
+import { InternalPhase } from "../../core/workflow/index.js";
 import {
   ScoutSkillResourceRequirements,
   ScoutSkillTypes,
@@ -222,7 +222,7 @@ export function resolveSkillDependencyLoadOrder(
   return result;
 }
 
-/** Returns Startup Skills and Skills visible in the supplied Phases, dependency-first. */
+/** Returns Internal Skills and Skills visible in the supplied Phases, dependency-first. */
 export function resolveScoutSkillsForPhases(
   catalog: ScoutSkillCatalogEntry[],
   phases: readonly ScoutAgentPhase[],
@@ -232,7 +232,7 @@ export function resolveScoutSkillsForPhases(
     catalog,
     catalog
       .filter((skill) => (skill.type === ScoutSkillTypes.Domain || skill.type === ScoutSkillTypes.Internal)
-        && (skill.phase?.includes(StartupPhase)
+        && (skill.phase?.includes(InternalPhase)
           || skill.phase?.some((phase) => selectedPhases.has(phase))))
       .map((skill) => skill.name),
   );

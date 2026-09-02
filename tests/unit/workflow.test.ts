@@ -29,14 +29,14 @@ const profilePath = join(
   "assets",
   "codex",
   "workflows",
-  "domain-validation.json",
+  "validation.json",
 );
 
 test("WorkflowBuilder preserves Worker Phase and role declaration order", () => {
-  const asset = readWorkflowProfile(scoutRoot, "domain-validation");
-  const graph = new AssetStore().buildWorkflow(scoutRoot, "domain-validation");
+  const asset = readWorkflowProfile(scoutRoot, "validation");
+  const graph = new AssetStore().buildWorkflow(scoutRoot, "validation");
 
-  assert.equal(asset.name, "domain-validation");
+  assert.equal(asset.name, "validation");
   assert.deepEqual(Object.keys(asset.profile.phases.workers), [
     "research",
     "research-reviewer",
@@ -57,11 +57,15 @@ test("WorkflowBuilder preserves Worker Phase and role declaration order", () => 
   );
   assert.deepEqual(
     new WorkflowBuilder(asset).buildAgentProfile("researcher").resourceParks,
-    ["worker-core", "repository-access", "research-artifacts"],
+    ["common-inspection", "worker-core", "repository-access", "research-artifacts"],
   );
   assert.deepEqual(
     new WorkflowBuilder(asset).buildAgentProfile("validator").resourceParks,
-    ["worker-core", "artifact-review"],
+    ["common-inspection", "worker-core", "artifact-review"],
+  );
+  assert.deepEqual(
+    new WorkflowBuilder(asset).buildAgentProfile("verifier").resourceParks,
+    ["common-inspection", "worker-core", "repository-access", "runtime-verification"],
   );
   assert.deepEqual(graph.phases.map((phase) => phase.name), [
     "research",
@@ -88,7 +92,7 @@ test("WorkflowBuilder preserves Worker Phase and role declaration order", () => 
 
 test("Scheduler follows completed and error edges without selecting Phase roles", () => {
   const scheduler = new Scheduler(
-    new AssetStore().buildWorkflow(scoutRoot, "domain-validation"),
+    new AssetStore().buildWorkflow(scoutRoot, "validation"),
     new InMemoryEventBus(),
   );
 
@@ -196,7 +200,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
       /references unknown Worker Phase missing/,
     );
 
-    for (const reservedPhase of ["Startup", "Synthesis"]) {
+    for (const reservedPhase of ["Internal", "Synthesis"]) {
       const withReservedWorkerPhase = structuredClone(original) as {
         phases: { workers: Record<string, unknown> };
       };
@@ -221,14 +225,12 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     );
 
     const withoutDefaultResource = structuredClone(original) as {
-      resources: Record<string, { default?: true }>;
+      resources: Record<string, { default?: true; phases: string[] }>;
     };
     delete withoutDefaultResource.resources["common-inspection"]!.default;
+    withoutDefaultResource.resources["common-inspection"]!.phases = ["Synthesis"];
     writeFileSync(targetPath, JSON.stringify(withoutDefaultResource), "utf8");
-    assert.throws(
-      () => readWorkflowProfile(fixtureRoot, "invalid"),
-      /exactly one global default Resource Park; found 0/,
-    );
+    assert.doesNotThrow(() => readWorkflowProfile(fixtureRoot, "invalid"));
 
     const withTwoDefaultResources = structuredClone(original) as {
       resources: Record<string, { default?: true }>;
@@ -237,7 +239,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     writeFileSync(targetPath, JSON.stringify(withTwoDefaultResources), "utf8");
     assert.throws(
       () => readWorkflowProfile(fixtureRoot, "invalid"),
-      /exactly one global default Resource Park; found 2/,
+      /at most one global default Resource Park; found 2/,
     );
 
     const withUnknownResourcePhase = structuredClone(original) as {
@@ -254,7 +256,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
   }
 });
 
-test("WorkflowBuilder uses the global default Resource Park for an unbound Phase", () => {
+test("WorkflowBuilder inherits the default Resource Park when its Phase scope allows it", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-workflow-default-resource-"));
   const workflowRoot = join(fixtureRoot, "assets", "codex", "workflows");
   const targetPath = join(workflowRoot, "fallback.json");
@@ -262,7 +264,9 @@ test("WorkflowBuilder uses the global default Resource Park for an unbound Phase
   const profile = JSON.parse(readFileSync(profilePath, "utf8")) as {
     phases: { workers: Record<string, unknown> };
     roles: Record<string, unknown>;
+    resources: Record<string, { phases: string[] }>;
   };
+  profile.resources["common-inspection"]!.phases = [];
   profile.phases.workers.fallback = {
     edges: { completed: null, error: null },
   };
@@ -284,6 +288,39 @@ test("WorkflowBuilder uses the global default Resource Park for an unbound Phase
       "sed",
       "pwd",
     ]);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test("WorkflowBuilder rejects a role Phase with no projected Resource Park", () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-workflow-missing-resource-"));
+  const workflowRoot = join(fixtureRoot, "assets", "codex", "workflows");
+  const targetPath = join(workflowRoot, "missing-resource.json");
+  mkdirSync(workflowRoot, { recursive: true });
+  const profile = JSON.parse(readFileSync(profilePath, "utf8")) as {
+    phases: { workers: Record<string, unknown> };
+    roles: Record<string, unknown>;
+    resources: Record<string, { default?: true; phases: string[] }>;
+  };
+  delete profile.resources["common-inspection"]!.default;
+  profile.resources["common-inspection"]!.phases = ["Synthesis"];
+  profile.phases.workers.unbound = {
+    edges: { completed: null, error: null },
+  };
+  profile.roles["unbound-worker"] = {
+    phases: ["unbound"],
+    multiAgent: false,
+    customAgents: [],
+  };
+  writeFileSync(targetPath, JSON.stringify(profile), "utf8");
+
+  try {
+    const asset = readWorkflowProfile(fixtureRoot, "missing-resource");
+    assert.throws(
+      () => new WorkflowBuilder(asset).buildAgentProfile("unbound-worker"),
+      /role unbound-worker has no Resource Park for Phase unbound/,
+    );
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }

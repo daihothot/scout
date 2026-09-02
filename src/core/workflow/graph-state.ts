@@ -1,5 +1,5 @@
-/** Fixed initialization Phase whose Skills are visible to every runtime role. */
-export const StartupPhase = "Startup" as const;
+/** Fixed Internal Phase whose Skills are visible to every runtime role. */
+export const InternalPhase = "Internal" as const;
 
 /** Fixed Phase used by the Coordinator between Worker Phase results. */
 export const SynthesisPhase = "Synthesis" as const;

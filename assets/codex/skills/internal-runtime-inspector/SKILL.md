@@ -5,7 +5,7 @@ description: 当前 role 需要使用 pwd、scout-assets 和已物化 Shell Tool
 id: internal-runtime-inspector
 version: 1.0.0
 type: internal
-phase: [Startup]
+phase: [Internal]
 family: [internal, general]
 tags: [scout, runtime, resource, mount, manifest, path]
 devices: [any]

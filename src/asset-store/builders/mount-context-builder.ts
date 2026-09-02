@@ -36,6 +36,7 @@ import { readWorkflowProfile } from "../assets/workflow-profiles.js";
 import type { WorkflowProfileAsset } from "../contracts/workflow-profile.js";
 import { WorkflowBuilder } from "./workflow-builder.js";
 import { SynthesisPhase } from "../../core/workflow/index.js";
+import { loadScoutConfig, scoutConfigPath } from "../../system/config/index.js";
 
 /**
  * Derives the immutable per-role runtime description from the Scout checkout.
@@ -52,6 +53,9 @@ export class MountContextBuilder {
     const runRoot = join(scoutRoot, "run", runId);
     const agentId = sanitizeAgentId(options.agentId);
     const workflowProfileName = options.workflowProfileName ?? (() => {
+      if (existsSync(scoutConfigPath(scoutRoot))) {
+        return loadScoutConfig(scoutRoot).workflow.profile;
+      }
       const workflowRoot = join(assetsRoot, CodexAssetLayout.workflowsRoot);
       const names = readdirSync(workflowRoot, { withFileTypes: true })
         .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))

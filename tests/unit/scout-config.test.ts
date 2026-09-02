@@ -14,13 +14,13 @@ test("loadScoutConfig reads the Workflow Profile and restore policy", () => {
   const path = scoutConfigPath(scoutRoot);
   mkdirSync(join(scoutRoot, "assets", "scout", "config"), { recursive: true });
   writeFileSync(path, JSON.stringify({
-    workflow: { profile: "domain-validation" },
+    workflow: { profile: "validation" },
     restore: { allowAssetResourceDrift: true },
   }), "utf8");
 
   try {
     assert.deepEqual(loadScoutConfig(scoutRoot), {
-      workflow: { profile: "domain-validation" },
+      workflow: { profile: "validation" },
       restore: { allowAssetResourceDrift: true },
     });
   } finally {
@@ -34,13 +34,13 @@ test("loadScoutConfig rejects unknown or malformed fields", () => {
   mkdirSync(join(scoutRoot, "assets", "scout", "config"), { recursive: true });
   try {
     writeFileSync(path, JSON.stringify({
-      workflow: { profile: "domain-validation" },
+      workflow: { profile: "validation" },
       restore: { allowAssetResourceDrift: "yes" },
     }), "utf8");
     assert.throws(() => loadScoutConfig(scoutRoot), /must be a boolean/);
 
     writeFileSync(path, JSON.stringify({
-      workflow: { profile: "domain-validation" },
+      workflow: { profile: "validation" },
       restore: { allowAssetResourceDrift: false },
       runtime: {},
     }), "utf8");

@@ -14,7 +14,7 @@ export interface ScoutConfig {
 /** The fail-closed configuration used by isolated scope/unit-test construction. */
 export const defaultScoutConfig: ScoutConfig = Object.freeze({
   workflow: Object.freeze({
-    profile: "domain-validation",
+    profile: "validation",
   }),
   restore: Object.freeze({
     allowAssetResourceDrift: false,

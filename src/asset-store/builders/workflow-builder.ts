@@ -40,18 +40,27 @@ export class WorkflowBuilder {
     const phases = roleName === "coordinator" ? [SynthesisPhase] : [...(role.phases ?? [])];
     const resourceEntries = Object.entries(workflow.resources);
     const defaultResourcePark = resourceEntries
-      .find(([, resource]) => resource.default === true)?.[0];
-    if (!defaultResourcePark) {
-      throw new Error(`Workflow Profile ${this.asset.name} has no default Resource Park.`);
-    }
+      .find(([, resource]) => resource.default === true);
     const selectedResourceParks = new Set<string>();
     for (const phase of phases) {
-      const matchingParks = resourceEntries
-        .filter(([, resource]) => resource.phases.includes(phase))
-        .map(([name]) => name);
-      for (const name of matchingParks.length > 0
-        ? matchingParks
-        : [defaultResourcePark]) {
+      const matchingParks = resourceEntries.filter(([, resource]) =>
+        resource.default !== true && resource.phases.includes(phase)
+      );
+      const inheritedDefaultParks = defaultResourcePark
+        && (
+          defaultResourcePark[1].phases.length === 0
+          || defaultResourcePark[1].phases.includes(phase)
+        )
+        ? [defaultResourcePark]
+        : [];
+      const phaseResourceParks = [...inheritedDefaultParks, ...matchingParks];
+      if (phaseResourceParks.length === 0) {
+        throw new Error(
+          `Workflow Profile ${this.asset.name} role ${roleName}`
+          + ` has no Resource Park for Phase ${phase}.`,
+        );
+      }
+      for (const [name] of phaseResourceParks) {
         selectedResourceParks.add(name);
       }
     }
