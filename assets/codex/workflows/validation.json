@@ -62,19 +62,14 @@
         "verify-reviewer"
       ],
       "shellTools": [
-        "scoutAssets",
-        "scoutMemory",
         "scoutJsonWrite",
         "jarvis",
         "codegraph",
         "rg",
         "git",
-        "cat",
-        "sed",
         "find",
         "grep",
-        "ls",
-        "pwd"
+        "ls"
       ],
       "mcpServers": [],
       "plugins": [],
