@@ -33,6 +33,9 @@ test("AssetStore materializes read and write roots from agent profile", () => {
   cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
+  cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
+    recursive: true,
+  });
 
   const runId = "run-permission-test";
   const mount = new AssetStore().materializeMount({
@@ -144,6 +147,9 @@ test("AssetStore exposes effective permission roots", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-asset-store-permissions-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
   cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+    recursive: true,
+  });
+  cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
   const store = new AssetStore();
@@ -388,7 +394,7 @@ test("Resource Park changes affect only roles bound through its Phases", () => {
       agentId,
     }).resourceHash,
   ]));
-  const path = join(fixtureRoot, "assets", "codex", "workflows", "domain-validation.json");
+  const path = join(fixtureRoot, "assets", "codex", "workflows", "validation.json");
   const workflow = JSON.parse(readFileSync(path, "utf8")) as Mutable<WorkflowProfile>;
   workflow.resources["research-artifacts"]!.shellTools.push("head");
   writeFileSync(path, JSON.stringify(workflow, null, 2) + "\n", "utf8");
@@ -413,6 +419,9 @@ function createCodexAssetFixture(prefix: string): string {
   cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
+  cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
+    recursive: true,
+  });
   return fixtureRoot;
 }
 
@@ -421,7 +430,7 @@ function updateAgentProfile(
   agentId: string,
   patch: Partial<AgentProfile>,
 ): void {
-  const path = join(fixtureRoot, "assets", "codex", "workflows", "domain-validation.json");
+  const path = join(fixtureRoot, "assets", "codex", "workflows", "validation.json");
   const workflow = JSON.parse(readFileSync(path, "utf8")) as Mutable<WorkflowProfile>;
   const role = workflow.roles[agentId];
   if (!role) throw new Error(`Missing Workflow role ${agentId}.`);

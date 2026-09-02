@@ -22,7 +22,7 @@ import {
   ScoutSkillTypes,
   type ScoutSkillCatalogEntry,
 } from "../../src/asset-store/index.js";
-import { StartupPhase } from "../../src/core/workflow/index.js";
+import { InternalPhase } from "../../src/core/workflow/index.js";
 
 const scoutRoot = process.cwd();
 const assetsRoot = join(scoutRoot, "assets", "codex");
@@ -48,9 +48,9 @@ test("every Scout Skill projects the runtime metadata needed by its mount", () =
   }
 
   const byName = new Map(catalog.map((skill) => [skill.name, skill] as const));
-  assert.deepEqual(byName.get("internal-runtime-inspector")?.phase, [StartupPhase]);
+  assert.deepEqual(byName.get("internal-runtime-inspector")?.phase, [InternalPhase]);
   assert.equal(byName.get("internal-skill-creator")?.phase, undefined);
-  assert.deepEqual(byName.get("internal-skill-consumption")?.phase, [StartupPhase]);
+  assert.deepEqual(byName.get("internal-skill-consumption")?.phase, [InternalPhase]);
   assert.deepEqual(byName.get("domain-validation-researcher")?.family, [
     "validation", "workflow",
   ]);
@@ -69,7 +69,7 @@ test("every Scout Skill projects the runtime metadata needed by its mount", () =
 });
 
 test("each Workflow role projects every visible Skill and its dependency closure", () => {
-  const graph = new AssetStore().buildWorkflow(scoutRoot, "domain-validation");
+  const graph = new AssetStore().buildWorkflow(scoutRoot, "validation");
   const catalog = buildScoutSkillCatalog({
     assetsRoot,
     skillPaths: listScoutSkillPaths(assetsRoot),
@@ -134,7 +134,7 @@ test("each Workflow role projects every visible Skill and its dependency closure
     ],
   };
 
-  assert.ok(graph.roles.every((role) => !role.phases.includes(StartupPhase)));
+  assert.ok(graph.roles.every((role) => !role.phases.includes(InternalPhase)));
 
   for (const role of graph.roles) {
     const projected = resolveScoutSkillsForPhases(catalog, role.phases);
@@ -144,7 +144,7 @@ test("each Workflow role projects every visible Skill and its dependency closure
     );
     assert.ok(projected.every((skill) =>
       skill.phase === undefined
-      || skill.phase.includes(StartupPhase)
+      || skill.phase.includes(InternalPhase)
       || skill.phase.some((phase) => role.phases.includes(phase))
     ));
     assert.equal(projected.some((skill) => skill.name === "internal-skill-creator"), false);
@@ -339,7 +339,7 @@ test("Scout Skill catalog checks cycles while selected dependency loading stays 
     parseMetadata("workflow", { phase: "[research, validate]", requiredSkills: "[producer]" }),
   ]));
   assert.doesNotThrow(() => validateScoutSkillCatalog([
-    parseMetadata("startup-foundation", { phase: "[Startup]" }),
+    parseMetadata("internal-foundation", { phase: "[Internal]" }),
     parseMetadata("workflow", {
       phase: "[research, validate]",
       requiredSkills: "[startup-foundation]",
@@ -348,7 +348,7 @@ test("Scout Skill catalog checks cycles while selected dependency loading stays 
   assert.doesNotThrow(() => validateScoutSkillCatalog([
     parseMetadata("producer", { phase: "[research]" }),
     parseMetadata("startup-workflow", {
-      phase: "[Startup]",
+      phase: "[Internal]",
       requiredSkills: "[producer]",
     }),
   ]));

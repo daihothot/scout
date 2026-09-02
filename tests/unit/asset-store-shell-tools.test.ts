@@ -1239,18 +1239,18 @@ test("Coordinator mount records Workflow provenance without treating edge change
     scoutRoot: fixtureRoot,
     runId,
     agentId: "coordinator",
-    workflowProfileName: "domain-validation",
+    workflowProfileName: "validation",
   });
   const persistedManifest = JSON.parse(
     readFileSync(initial.manifestPath, "utf8"),
   ) as MountManifest;
   const workflowAsset = persistedManifest.assets.find(
-    (asset) => asset.id === "codex.workflow.domain-validation",
+    (asset) => asset.id === "codex.workflow.validation",
   );
   assert.ok(workflowAsset);
   assert.equal(
     workflowAsset.sourcePath,
-    "assets/codex/workflows/domain-validation.json",
+    "assets/codex/workflows/validation.json",
   );
 
   const workflowPath = resolve(fixtureRoot, workflowAsset.sourcePath);
@@ -1261,7 +1261,7 @@ test("Coordinator mount records Workflow provenance without treating edge change
     scoutRoot: fixtureRoot,
     runId,
     agentId: "coordinator",
-    workflowProfileName: "domain-validation",
+    workflowProfileName: "validation",
     cleanRunRoot: false,
     persistedManifest,
     persistedIdentity: mountIdentity(initial),
@@ -1284,7 +1284,7 @@ test("AssetStore does not allow resource drift to change an agent profile", () =
   const persistedManifest = JSON.parse(
     readFileSync(initial.manifestPath, "utf8"),
   ) as MountManifest;
-  const profilesPath = join(fixtureRoot, "assets", "codex", "workflows", "domain-validation.json");
+  const profilesPath = join(fixtureRoot, "assets", "codex", "workflows", "validation.json");
   const profiles = JSON.parse(readFileSync(profilesPath, "utf8")) as Mutable<WorkflowProfile>;
   profiles.defaults.maxThreads += 1;
   writeFileSync(profilesPath, JSON.stringify(profiles, null, 2) + "\n", "utf8");
@@ -1315,7 +1315,7 @@ test("AssetStore rebuilds when only profile roots change and preserves resource 
   const persistedManifest = JSON.parse(
     readFileSync(initial.manifestPath, "utf8"),
   ) as MountManifest;
-  const profilesPath = join(fixtureRoot, "assets", "codex", "workflows", "domain-validation.json");
+  const profilesPath = join(fixtureRoot, "assets", "codex", "workflows", "validation.json");
   const profiles = JSON.parse(readFileSync(profilesPath, "utf8")) as Mutable<WorkflowProfile>;
   const repositoryAccess = profiles.resources["repository-access"]!;
   repositoryAccess.readableRoots = [
@@ -1399,12 +1399,14 @@ test("Scout system config is outside Agent resource identity", () => {
     scoutRoot: fixtureRoot,
     runId: "run-system-config-resource-boundary",
     agentId: "coordinator",
+    workflowProfileName: "validation",
   });
   writeFileSync(configPath, "{\n  \"restore\": {\n    \"allowAssetResourceDrift\": true\n  }\n}\n", "utf8");
   const current = store.materializeMount({
     scoutRoot: fixtureRoot,
     runId: "run-system-config-resource-boundary-current",
     agentId: "coordinator",
+    workflowProfileName: "validation",
   });
 
   assert.equal(current.resourceHash, initial.resourceHash);
@@ -2060,6 +2062,9 @@ function createCodexAssetFixture(prefix: string): string {
   cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
+  cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
+    recursive: true,
+  });
   return fixtureRoot;
 }
 
@@ -2077,7 +2082,7 @@ function writeExecutable(path: string, marker: string): void {
 }
 
 function updateCoordinatorShellTools(assetsRoot: string, shellTools: string[]): void {
-  const path = join(assetsRoot, "workflows", "domain-validation.json");
+  const path = join(assetsRoot, "workflows", "validation.json");
   const profiles = JSON.parse(readFileSync(path, "utf8")) as Mutable<WorkflowProfile>;
   const defaultResource = Object.values(profiles.resources)
     .find((resource) => resource.default === true);
@@ -2087,7 +2092,7 @@ function updateCoordinatorShellTools(assetsRoot: string, shellTools: string[]): 
 }
 
 function updateCoordinatorMcpServers(assetsRoot: string, mcpServers: string[]): void {
-  const path = join(assetsRoot, "workflows", "domain-validation.json");
+  const path = join(assetsRoot, "workflows", "validation.json");
   const profiles = JSON.parse(readFileSync(path, "utf8")) as Mutable<WorkflowProfile>;
   const defaultResource = Object.values(profiles.resources)
     .find((resource) => resource.default === true);

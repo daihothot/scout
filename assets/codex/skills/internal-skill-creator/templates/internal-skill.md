@@ -27,7 +27,7 @@ internal-<internal-capability>
 ```
 
 - `<internal-capability>` 是当前 Internal Skill 拥有的稳定治理能力。
-- 需要进入 Runtime mount 的 Internal Skill 必须定义 `phase: [Startup]`。只服务 Scout 源码作者、不供 Runtime role 消费的 Internal Skill 不定义 `phase`。Internal Skill 不得绑定 `Synthesis` 或 Worker Phase。
+- 需要进入 Runtime mount 的 Internal Skill 必须定义 `phase: [Internal]`。只服务 Scout 源码作者、不供 Runtime role 消费的 Internal Skill 不定义 `phase`。Internal Skill 不得绑定 `Synthesis` 或 Worker Phase。
 - Internal Skill 的 `family` 必须以 `internal` 开始：
 
 ```text

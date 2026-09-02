@@ -41,9 +41,7 @@
   "resources": {
     "common-inspection": {
       "default": true,
-      "phases": [
-        "Synthesis"
-      ],
+      "phases": [],
       "shellTools": [
         "scoutAssets",
         "scoutMemory",

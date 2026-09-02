@@ -25,7 +25,7 @@ domain-<domain>-<responsibility>
 
 - `<domain>` 是当前 Domain Skill 所属的实际 domain。
 - `<responsibility>` 是当前 role 业务责任的稳定名称。
-- Domain Skill 必须在 frontmatter 中定义非空 `phase` inline list。Coordinator Domain Skill 固定使用 `[Synthesis]`；Worker Domain Skill 使用所属 domain 声明的实际 Worker Phase。Domain Skill 不得使用 `Startup`。
+- Domain Skill 必须在 frontmatter 中定义非空 `phase` inline list。Coordinator Domain Skill 固定使用 `[Synthesis]`；Worker Domain Skill 使用所属 domain 声明的实际 Worker Phase。Domain Skill 不得使用 `Internal`。
 - Domain Skill 的 `family` 必须以 `<domain>` 开始，并使用所属 domain 定义的稳定分类路径：
 
 ```text

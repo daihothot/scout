@@ -6,7 +6,7 @@ import type {
 } from "../../agent-server/codex/model-config.js";
 import { readJsonFile, sha256File } from "../../core/fs.js";
 import {
-  StartupPhase,
+  InternalPhase,
   SynthesisPhase,
   type WorkflowPhaseEdges,
 } from "../../core/workflow/index.js";
@@ -78,7 +78,7 @@ function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
   }
   const workers = Object.fromEntries(workerEntries.map(([name, definition]) => {
     assertMountPathSegment(name, "Worker Phase name");
-    if (name === StartupPhase || name === SynthesisPhase) {
+    if (name === InternalPhase || name === SynthesisPhase) {
       throw new Error(
         `Invalid Workflow Profile at ${path}: phases.workers cannot declare reserved Phase ${name}.`,
       );
@@ -97,9 +97,9 @@ function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
   const defaultResourceParks = Object.entries(resources)
     .filter(([, resource]) => resource.default === true)
     .map(([name]) => name);
-  if (defaultResourceParks.length !== 1) {
+  if (defaultResourceParks.length > 1) {
     throw new Error(
-      `Invalid Workflow Profile at ${path}: resources must declare exactly one`
+      `Invalid Workflow Profile at ${path}: resources must declare at most one`
       + ` global default Resource Park; found ${defaultResourceParks.length}.`,
     );
   }
@@ -174,7 +174,7 @@ function parseResourcePark(
     );
   }
   const phases = requireStringArray(resource.phases, path, `${label}.phases`);
-  if (phases.length === 0) {
+  if (resource.default !== true && phases.length === 0) {
     throw new Error(`Invalid Workflow Profile at ${path}: ${label}.phases must not be empty.`);
   }
   for (const phase of phases) {

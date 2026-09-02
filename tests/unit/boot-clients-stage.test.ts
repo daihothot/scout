@@ -37,6 +37,9 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
+  cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
+    recursive: true,
+  });
   const staleAuthPath = join(
     fixtureRoot,
     "run",
@@ -256,6 +259,9 @@ test("RunAppServerStage preserves its owned client when a second start cannot in
   cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
     recursive: true,
   });
+  cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
+    recursive: true,
+  });
   const runId = "boot-clients-failure";
   const scope = new RunScope({
     runId,
@@ -289,6 +295,9 @@ test("RunAppServerStage rejects a missing target model provider without falling 
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-boot-clients-provider-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
   cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+    recursive: true,
+  });
+  cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
   const runId = "boot-clients-provider-missing";
@@ -326,6 +335,9 @@ test("RunAppServerStage rebinds target Codex auth without retaining copied crede
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-boot-clients-auth-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
   cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+    recursive: true,
+  });
+  cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
   const runId = "boot-clients-auth-rebind";

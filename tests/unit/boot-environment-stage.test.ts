@@ -266,7 +266,7 @@ test("RestoreEnvironmentStage applies the explicit global resource-drift policy"
     manifestStore,
     new NoopRuntimeInteractionPort(),
     {
-      workflow: { profile: "domain-validation" },
+      workflow: { profile: "validation" },
       restore: { allowAssetResourceDrift: true },
     },
   );
@@ -302,7 +302,7 @@ test("RestoreEnvironmentStage applies the explicit global resource-drift policy"
     manifestStore,
     new NoopRuntimeInteractionPort(),
     {
-      workflow: { profile: "domain-validation" },
+      workflow: { profile: "validation" },
       restore: { allowAssetResourceDrift: true },
     },
   );
@@ -356,7 +356,7 @@ test("RestoreEnvironmentStage rolls back the run index when metadata commit fail
     failingManifestStore,
     new NoopRuntimeInteractionPort(),
     {
-      workflow: { profile: "domain-validation" },
+      workflow: { profile: "validation" },
       restore: { allowAssetResourceDrift: true },
     },
   );
@@ -695,7 +695,7 @@ test("RestoreEnvironmentStage follows current GraphState roles and retains remov
     "assets",
     "codex",
     "workflows",
-    "domain-validation.json",
+    "validation.json",
   );
   const workflow = JSON.parse(readFileSync(workflowPath, "utf8")) as {
     roles: Record<string, {
@@ -713,7 +713,7 @@ test("RestoreEnvironmentStage follows current GraphState roles and retains remov
   writeFileSync(workflowPath, JSON.stringify(workflow, null, 2) + "\n", "utf8");
 
   const scheduler = new Scheduler(
-    new AssetStore().buildWorkflow(fixtureRoot, "domain-validation"),
+    new AssetStore().buildWorkflow(fixtureRoot, "validation"),
     new InMemoryEventBus(),
   );
   const resumed = installExistingEnvironmentScope(
@@ -723,7 +723,7 @@ test("RestoreEnvironmentStage follows current GraphState roles and retains remov
     manifestStore,
     new NoopRuntimeInteractionPort(),
     {
-      workflow: { profile: "domain-validation" },
+      workflow: { profile: "validation" },
       restore: { allowAssetResourceDrift: true },
     },
     scheduler,

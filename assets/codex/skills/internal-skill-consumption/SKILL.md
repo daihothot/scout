@@ -5,7 +5,7 @@ description: 读取一个 Scout Skill 时，确定还必须读取的关联 Skill
 id: internal-skill-consumption
 version: 1.0.0
 type: internal
-phase: [Startup]
+phase: [Internal]
 family: [internal, general]
 tags: [scout, skill, dependency, composition, contract]
 devices: [any]
