@@ -5,6 +5,7 @@ description: Scout Verifier 在 accepted Research Pack Gate 后消费 verificati
 id: domain-validation-verifier
 version: 0.2.3
 type: domain
+domain: validation
 phase: [verify, research-reviewer, verify-reviewer]
 family: [validation, workflow]
 tags: [scout, validation, bdd, verification, evidence, workflow]

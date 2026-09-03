@@ -6,6 +6,7 @@ import {
   InteractionStage,
   OrchestratorStage,
   RunAppServerStage,
+  AppServerRootConfigStage,
   RunJournalWriterStage,
   RunRuntimeStage,
   RunScopeStage,
@@ -26,6 +27,7 @@ export class StartRunStageAssembly {
   }) {
     const executor = input.executor;
     const runScopeStage = new RunScopeStage(input.runScope);
+    const appServerRootConfigStage = new AppServerRootConfigStage();
 
     executor.registerSerial(
       runScopeStage,
@@ -33,7 +35,8 @@ export class StartRunStageAssembly {
       new InitializeRunStage(),
       new RunRuntimeStage("start"),
       new InteractionStage(),
-      new RunAppServerStage(),
+      appServerRootConfigStage,
+      new RunAppServerStage({ rootConfigStage: appServerRootConfigStage }),
       new PrepareEnvironmentStage(),
     );
     executor.registerParallel(new DomainStage(), new AgentTelemetryStage());

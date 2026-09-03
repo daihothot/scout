@@ -1,4 +1,5 @@
 {
+  "domain": "validation",
   "defaults": {
     "config": "config/base.config.toml",
     "model": {

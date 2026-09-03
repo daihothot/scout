@@ -28,6 +28,8 @@ export interface GraphRole {
 
 /** Current Workflow graph and cursor owned by one Scheduler. */
 export interface GraphState {
+  /** Stable domain identifier selected by the Workflow Profile. */
+  readonly domain: string;
   readonly workflowProfile: string;
   readonly phases: readonly GraphPhase[];
   readonly roles: readonly GraphRole[];
@@ -46,6 +48,7 @@ export function createGraphState(input: GraphState): GraphState {
     phases: Object.freeze([...role.phases]),
   }));
   return Object.freeze({
+    domain: input.domain,
     workflowProfile: input.workflowProfile,
     phases: Object.freeze(phases),
     roles: Object.freeze(roles),

@@ -33,6 +33,7 @@ test("scout-assets summary presents current profile, roots, counts, and issues",
     mountRoot: ".",
   });
   assert.deepEqual(output.profile, {
+    domain: "validation",
     phases: ["research", "verify"],
     resourceParks: ["worker-core", "repository-access"],
   });
@@ -56,41 +57,44 @@ test("scout-assets summary presents current profile, roots, counts, and issues",
   });
 });
 
-test("scout-assets family returns flat names and progressively resolves unique families", () => {
+test("scout-assets family groups current content by phase and resolves leaf families", () => {
   const fixture = createFixture();
   const families = parseSuccessful(fixture.mountRoot, "family");
-  assert.deepEqual(families.phases, ["research", "verify"]);
-  assert.deepEqual(families.families, [
-    "audit",
-    "dynamic",
-    "general",
-    "internal",
-    "local",
-    "scout",
-    "signal",
-    "tool",
-    "unity",
-    "validation",
-    "workflow",
-  ]);
   assert.equal("parent" in families, false);
-
+  assert.deepEqual(families["research+verify"], {
+    families: ["internal", "internal.general"],
+  });
+  assert.deepEqual(families.research.families, [
+    "audit",
+    "audit.unity",
+    "signal",
+    "signal.local",
+    "signal.local.unity",
+    "tool",
+    "tool.scout",
+    "tool.scout.dynamic",
+    "tool.scout.dynamic.general",
+    "validation",
+    "validation.workflow",
+  ]);
   const workflow = parseSuccessful(fixture.mountRoot, "family", "workflow");
   assert.deepEqual(workflow, {
-    phases: ["research", "verify"],
     family: "validation.workflow",
-    skills: [{
-      name: "domain-validation-researcher",
-      family: ["validation", "workflow"],
-      path: ".scout/skill/validation/workflow/domain-validation-researcher/SKILL.md",
-    }],
+    research: {
+      skills: [{
+        name: "domain-validation-researcher",
+        family: ["validation", "workflow"],
+        path: ".scout/skill/validation/workflow/domain-validation-researcher/SKILL.md",
+      }],
+    },
   });
 
   const signal = parseSuccessful(fixture.mountRoot, "family", "signal");
   assert.deepEqual(signal, {
-    phases: ["research", "verify"],
     family: "signal",
-    children: ["signal.local"],
+    research: {
+      children: ["signal.local"],
+    },
   });
 });
 
@@ -98,23 +102,49 @@ test("scout-assets asks for a parent path when a family name is ambiguous", () =
   const fixture = createFixture();
   const ambiguous = parseSuccessful(fixture.mountRoot, "family", "unity");
   assert.deepEqual(ambiguous, {
-    phases: ["research", "verify"],
     family: "unity",
     ambiguous: true,
-    candidates: ["audit.unity", "signal.local.unity"],
+    research: {
+      candidates: ["audit.unity", "signal.local.unity"],
+    },
   });
 
   const resolved = parseSuccessful(fixture.mountRoot, "family", "signal.local.unity");
   assert.deepEqual(resolved, {
-    phases: ["research", "verify"],
     family: "signal.local.unity",
+    research: {
+      skills: [{
+        name: "validation-signal",
+        family: ["signal", "local", "unity"],
+        path: ".scout/skill/signal/local/unity/validation-signal/SKILL.md",
+      }],
+    },
+  });
+
+});
+
+test("scout-assets family can restrict discovery to one phase", () => {
+  const fixture = createFixture();
+  const verify = parseSuccessful(fixture.mountRoot, "family", "--phase", "verify");
+  assert.deepEqual(verify, {
+    phase: "verify",
+    families: ["internal", "internal.general"],
+  });
+
+  const internal = parseSuccessful(fixture.mountRoot, "family", "internal.general", "--phase", "verify");
+  assert.deepEqual(internal, {
+    phase: "verify",
+    family: "internal.general",
     skills: [{
-      name: "validation-signal",
-      family: ["signal", "local", "unity"],
-      path: ".scout/skill/signal/local/unity/validation-signal/SKILL.md",
+      name: "internal-runtime-inspector",
+      family: ["internal", "general"],
+      path: ".scout/skill/internal/general/internal-runtime-inspector/SKILL.md",
     }],
   });
 
+  const missing = runScoutAssets(fixture.mountRoot, "family", "workflow", "--phase", "verify");
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /Family is not supported for the current role/);
 });
 
 test("scout-assets skill returns metadata and all current role tools", () => {
@@ -197,6 +227,7 @@ function createFixture(): {
     agentId: "researcher",
     assetCommitId: "ac_test",
     mountId: "m_test",
+    domain: "validation",
     agentProfile: {
       phases: ["research", "verify"],
       resourceParks: ["worker-core", "repository-access"],
@@ -263,17 +294,18 @@ function createFixture(): {
       description: "Validation signal",
       summary: "Validation signal",
       family: ["signal", "local", "unity"],
-      requiredSkills: [],
+      requiredSkills: ["audit-unity"],
       optionalSkills: [],
       path: ".scout/skill/signal/local/unity/validation-signal/SKILL.md",
     }, {
       name: "domain-validation-researcher",
       type: "domain",
+      domain: "validation",
       description: "Validation researcher",
       summary: "Validation researcher",
       phase: ["research"],
       family: ["validation", "workflow"],
-      requiredSkills: [],
+      requiredSkills: ["validation-signal", "tool-scout-send-message"],
       optionalSkills: [],
       path: ".scout/skill/validation/workflow/domain-validation-researcher/SKILL.md",
     }, {

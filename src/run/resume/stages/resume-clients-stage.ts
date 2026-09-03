@@ -10,6 +10,7 @@ import {
   sep,
 } from "node:path";
 import {
+  AppServerRootConfigStage,
   RunAppServerStage,
   type RunStage,
 } from "../../lifecycle/index.js";
@@ -25,19 +26,30 @@ import { isPathWithin } from "../../../core/path.js";
 export class ResumeClientsStage implements RunStage {
   readonly id = "restore_clients";
   private stage?: RunAppServerStage;
+  private rootConfigStage?: AppServerRootConfigStage;
 
   /** Validates copied Codex state, then starts the app-server client stage. */
   async start(): Promise<void> {
     assertRunCodexHomeIsContained();
-    const stage = new RunAppServerStage();
-    await stage.start();
-    this.stage = stage;
+    const rootConfigStage = new AppServerRootConfigStage();
+    try {
+      await rootConfigStage.start();
+      const stage = new RunAppServerStage({ rootConfigStage });
+      await stage.start();
+      this.rootConfigStage = rootConfigStage;
+      this.stage = stage;
+    } catch (error) {
+      await rootConfigStage.stop();
+      throw error;
+    }
   }
 
   /** Delegates client shutdown and releases the stage reference. */
   async stop(reason: string): Promise<void> {
     await this.stage?.stop();
     this.stage = undefined;
+    await this.rootConfigStage?.stop();
+    this.rootConfigStage = undefined;
   }
 }
 

@@ -22,6 +22,8 @@ import {
 } from "../../src/core/workflow/index.js";
 import { projectGraphState } from "../../src/run/resume/projection/index.js";
 import { createTestRunPersistence } from "../helpers/run-persistence.js";
+import { createDomainRuntime } from "../../src/domain/index.js";
+import { ValidationDomain } from "../../src/domain/validation/index.js";
 
 const scoutRoot = process.cwd();
 const profilePath = join(
@@ -32,11 +34,21 @@ const profilePath = join(
   "validation.json",
 );
 
+test("Domain Runtime is selected by the GraphState domain identifier", async () => {
+  assert.ok(await createDomainRuntime("validation") instanceof ValidationDomain);
+  await assert.rejects(
+    createDomainRuntime("missing-domain"),
+    /Cannot load Workflow domain: missing-domain/,
+  );
+});
+
 test("WorkflowBuilder preserves Worker Phase and role declaration order", () => {
   const asset = readWorkflowProfile(scoutRoot, "validation");
   const graph = new AssetStore().buildWorkflow(scoutRoot, "validation");
 
   assert.equal(asset.name, "validation");
+  assert.equal(asset.profile.domain, "validation");
+  assert.equal(graph.domain, "validation");
   assert.deepEqual(Object.keys(asset.profile.phases.workers), [
     "research",
     "research-reviewer",

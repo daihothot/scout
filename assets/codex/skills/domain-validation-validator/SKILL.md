@@ -5,6 +5,7 @@ description: Scout Validator 对 Research Pack 或 Verification Report 执行独
 id: domain-validation-validator
 version: 0.6.3
 type: domain
+domain: validation
 phase: [research-reviewer, verify-reviewer]
 family: [validation, workflow]
 tags: [scout, validation, research, verification, gate, evidence, audit, workflow]

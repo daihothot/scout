@@ -18,6 +18,8 @@ export interface MountRuntimeRoot {
 export interface MountManifest {
   resourceInventoryVersion: 1;
   agentId: string;
+  /** Workflow domain selected for this role mount. */
+  domain: string;
   assetCommitId: string;
   parentAssetCommitId?: string;
   mountId: string;

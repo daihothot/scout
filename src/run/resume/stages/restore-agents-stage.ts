@@ -42,7 +42,11 @@ export class RestoreAgentsStage implements RunStage {
     const scope = currentRunScope();
     const graphState = scope.scheduler.snapshot();
     const synthesisRole = resolveSynthesisRole(graphState).name;
-    const projection = projectRun(scope.journal.readAll(), synthesisRole);
+    const projection = projectRun(
+      scope.journal.readAll(),
+      synthesisRole,
+      scope.domain.journal,
+    );
     const roles = graphState.roles.map((role) => role.name);
     const activeRoleNames = new Set(roles);
     const persistedThreadIds = projection.threads

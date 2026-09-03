@@ -241,6 +241,7 @@ function buildMountManifestInternal(input: MountManifestInput): MountManifest {
   return {
     resourceInventoryVersion: 1,
     agentId: input.agentId,
+    domain: input.workflowProfileAsset.profile.domain,
     assetCommitId: input.assetCommitId,
     parentAssetCommitId: input.parentAssetCommitId,
     mountId: input.mountId,

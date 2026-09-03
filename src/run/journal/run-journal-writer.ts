@@ -5,7 +5,6 @@ import type {
 } from "../../core/events/index.js";
 import { EventSubscriptionPriorities } from "../../core/events/index.js";
 import { WorkflowEvents } from "../../core/workflow/index.js";
-import { ValidationEvents } from "../../domain/validation/validation-events.js";
 import { SystemEvents } from "../../system/events/index.js";
 import { RunEvents } from "../events/index.js";
 import { currentRunScope } from "../run-scope.js";
@@ -49,8 +48,6 @@ const persistedEventTypes: EventType[] = [
   AgentEvents.toolCall.observed,
   AgentEvents.humanInput.requested,
   AgentEvents.humanInput.responded,
-  ValidationEvents.artifact.published,
-  ValidationEvents.gate.recorded,
 ];
 
 /**
@@ -65,7 +62,9 @@ export class RunJournalWriter {
   start(): void {
     if (this.unsubscribers.length > 0) return;
     const scope = currentRunScope();
-    for (const type of persistedEventTypes) {
+    const eventTypes = [...persistedEventTypes, ...(scope.domain.journal?.eventTypes ?? [])];
+    const uniqueEventTypes = [...new Map(eventTypes.map((type) => [type.routeKey, type])).values()];
+    for (const type of uniqueEventTypes) {
       this.unsubscribers.push(
         scope.eventBus.subscribe(type, (event) => {
           let failure: unknown;

@@ -15,6 +15,7 @@ import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import type { AgentDynamicToolSpec } from "../../agent/tools/types.js";
 import type {
   ScoutDomain,
+  ScoutDomainJournalProjection,
   ScoutDomainDynamicToolCall,
 } from "../types.js";
 import { ValidationDomainAgentBackend } from "./agent/backend/validation-domain-agent-backend.js";
@@ -37,6 +38,7 @@ export class ValidationDomain implements ScoutDomain {
   readonly domainId = "validation";
   readonly name = "Scout Validation Domain";
   readonly backend = new ValidationDomainAgentBackend();
+  readonly journal: ScoutDomainJournalProjection = validationJournalProjection;
   private readonly recordedArtifacts = new Set<string>();
   private readonly recordedGates = new Map<string, string>();
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
@@ -223,6 +225,26 @@ export class ValidationDomain implements ScoutDomain {
     }
   }
 }
+
+/** Projects Validation events for shared Journal persistence and recovery. */
+export const validationJournalProjection: ScoutDomainJournalProjection = {
+  eventTypes: [ValidationEvents.artifact.published, ValidationEvents.gate.recorded],
+  project(event) {
+    if (ValidationEvents.artifact.published.is(event)) {
+      return {
+        kind: "artifact",
+        payload: event.payload,
+      };
+    }
+    if (ValidationEvents.gate.recorded.is(event)) {
+      return {
+        kind: "gate",
+        payload: event.payload,
+      };
+    }
+    return undefined;
+  },
+};
 
 function readArtifactDigest(tool: string, path: string): string {
   const output = execFileSync(tool, [path], {

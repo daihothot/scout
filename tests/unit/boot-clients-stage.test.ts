@@ -95,10 +95,10 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   const logicalSkillRoot = resolve(fixtureRoot, "assets", "codex", "skills");
   const researcherSkillRoot = join(logicalSkillRoot, "domain-validation-researcher");
   const coordinatorSkillRoot = join(logicalSkillRoot, "domain-validation-coordinator");
-  const coordinatorPermissions = stage.rootPlan.permissionProfiles.coordinator;
-  const researcherPermissions = stage.rootPlan.permissionProfiles.researcher;
-  assert.ok(stage.rootPlan.mountRoots.includes(coordinatorMount));
-  assert.ok(stage.rootPlan.writableRoots.includes(resolve(homedir(), ".guru", "codebase")));
+  const coordinatorPermissions = stage.rootConfig.permissionProfiles.coordinator;
+  const researcherPermissions = stage.rootConfig.permissionProfiles.researcher;
+  assert.ok(stage.rootConfig.mountRoots.includes(coordinatorMount));
+  assert.ok(stage.rootConfig.writableRoots.includes(resolve(homedir(), ".guru", "codebase")));
   assert.equal(researcherPermissions?.id, scoutAgentPermissionProfile("researcher"));
   assert.ok(researcherPermissions?.readableRoots.includes(researcherMount));
   assert.ok(researcherPermissions?.readableRoots.includes(coordinatorArtifact));

@@ -30,6 +30,9 @@ export class MountManifestInspector {
       return `mount contains materialization error: ${fatalIssue.code}`
         + ` (${fatalIssue.resourceId}): ${fatalIssue.message}`;
     }
+    if (manifest.domain !== context.workflowProfileAsset.profile.domain) {
+      return "workflow domain changed";
+    }
     if (!Array.isArray(manifest.customAgents)
       || !sameUnorderedStrings(
         manifest.customAgents,
@@ -43,6 +46,7 @@ export class MountManifestInspector {
         context.skillCatalog.map((skill) => ({
           name: skill.name,
           type: skill.type,
+          ...(skill.domain ? { domain: skill.domain } : {}),
           description: skill.description,
           summary: skill.summary,
           ...(skill.phase ? { phase: [...skill.phase] } : {}),

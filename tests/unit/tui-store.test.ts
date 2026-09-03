@@ -55,7 +55,7 @@ test("TuiStore projects Run lifecycle snapshots into runtime state", () => {
     completedStages: 1,
     stages: [
       { id: "interaction", status: "completed" },
-      { id: "clients", status: "running" },
+      { id: "app_server", status: "running" },
     ],
   });
 
@@ -688,7 +688,7 @@ function lifecycleSnapshot(
     totalStages: 2,
     stages: [
       { id: "interaction", status: "pending" },
-      { id: "clients", status: "pending" },
+      { id: "app_server", status: "pending" },
     ],
     ...input,
   };

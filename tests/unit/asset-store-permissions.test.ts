@@ -44,6 +44,7 @@ test("AssetStore materializes read and write roots from agent profile", () => {
     agentId: "verifier",
   });
   const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as {
+    domain: string;
     profileReadableRoots: string[];
     profileWritableRoots: string[];
     agentProfile: AgentProfile;
@@ -87,6 +88,7 @@ test("AssetStore materializes read and write roots from agent profile", () => {
   assert.equal(manifest.agentProfile.maxThreads, 6);
   assert.equal(manifest.agentProfile.maxDepth, 1);
   assert.deepEqual(manifest.agentProfile.customAgents, ["scout-helper"]);
+  assert.equal(manifest.domain, "validation");
 });
 
 test("AssetStore rejects a profile that references an unknown custom agent", () => {

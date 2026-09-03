@@ -5,6 +5,7 @@ description: Scout Researcher 在 Validation Domain 中编排知识与代码证�
 id: domain-validation-research-pack
 version: 0.2.4
 type: domain
+domain: validation
 phase: [research, research-reviewer, verify-reviewer]
 family: [validation, workflow]
 tags: [scout, validation, research, pack, evidence, manual]

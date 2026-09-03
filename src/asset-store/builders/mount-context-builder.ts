@@ -23,7 +23,7 @@ import {
   skillNameFromPath,
 } from "../files/asset-paths.js";
 import {
-  buildMountMacroValues,
+  createMountMacroValues,
   resolveMountMacros,
 } from "../mount/macros.js";
 import { profileResourceHash } from "../assets/agent-profile.js";
@@ -88,7 +88,10 @@ export class MountContextBuilder {
     );
     const skillPaths = listScoutSkillPaths(assetsRoot);
     const fullSkillCatalog = buildScoutSkillCatalog({ assetsRoot, skillPaths });
-    const skillCatalog = resolveScoutSkillsForPhases(fullSkillCatalog, agentProfile.phases);
+    const skillCatalog = resolveScoutSkillsForPhases(fullSkillCatalog, {
+      domain: workflowProfileAsset.profile.domain,
+      phases: agentProfile.phases,
+    });
     const profiledSkillPaths = filterSkills(
       skillPaths,
       skillCatalog.map((skill) => skill.name),
@@ -315,7 +318,7 @@ function resolveAgentProfileRoots(input: {
   artifactRoot: string;
   tempRoot: string;
 }): string[] {
-  const dynamicValues = buildMountMacroValues({
+  const dynamicValues = createMountMacroValues({
     scoutRoot: input.scoutRoot,
     runRoot: input.runRoot,
     mountRoot: input.mountRoot,

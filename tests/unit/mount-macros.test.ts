@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { dirname } from "node:path";
 import {
-  buildMountMacroValues,
+  createMountMacroValues,
   buildMountShellEnvironment,
   buildMountShellPath,
   resolveMountMacros,
@@ -11,7 +11,7 @@ import {
 import { generateCodexConfig } from "../../src/asset-store/builders/codex-config-builder.js";
 
 test("mount macros build a single canonical value map", () => {
-  const values = buildMountMacroValues({
+  const values = createMountMacroValues({
     scoutRoot: "/repo",
     runRoot: "/repo/run/run-1",
     mountRoot: "/repo/run/run-1/agents/verifier/mount",
@@ -29,7 +29,7 @@ test("mount macros build a single canonical value map", () => {
 });
 
 test("mount macros resolve placeholders and drop unknown placeholders to empty string", () => {
-  const values = buildMountMacroValues({
+  const values = createMountMacroValues({
     scoutRoot: "/repo",
     runRoot: "/repo/run/run-1",
     mountRoot: "/repo/run/run-1/agents/researcher/mount",

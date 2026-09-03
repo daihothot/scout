@@ -23,6 +23,7 @@ export class RestoreTasksStage implements RunStage {
     const projection = projectRun(
       scope.journal.readAll(),
       resolveSynthesisRole(graphState).name,
+      scope.domain.journal,
     );
     const allTasks = [
       ...projection.tasks,

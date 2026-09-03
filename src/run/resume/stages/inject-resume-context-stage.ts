@@ -31,7 +31,11 @@ export class InjectResumeContextStage implements RunStage {
     const scope = currentRunScope();
     const graphState = scope.scheduler.snapshot();
     const synthesisRole = resolveSynthesisRole(graphState).name;
-    const projection = projectRun(scope.journal.readAll(), synthesisRole);
+    const projection = projectRun(
+      scope.journal.readAll(),
+      synthesisRole,
+      scope.domain.journal,
+    );
     scope.toolCallStore.restore(projection.toolCalls);
     scope.stepStore.restore(projection.steps);
     scope.humanInputStore.restore(projection.humanInputRequests);
