@@ -156,7 +156,12 @@ export class MountMaterializer {
     }
     const materializedMcpServers = builtMcpServers.map(({ server }) => server);
     safeSymlink(join(assetsRoot, CodexAssetLayout.agentsMd), join(mountRoot, "AGENTS.md"));
-    if (!agentProfile.phases.includes(SynthesisPhase)) {
+    if (agentProfile.phases.includes(SynthesisPhase)) {
+      safeSymlink(
+        join(assetsRoot, CodexAssetLayout.coordinatorAgentsMd),
+        join(mountRoot, "agents", "coordinator.AGENTS.md"),
+      );
+    } else {
       safeSymlink(
         join(assetsRoot, CodexAssetLayout.workerAgentsMd),
         join(mountRoot, "agents", "worker.AGENTS.md"),

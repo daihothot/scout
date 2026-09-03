@@ -238,6 +238,10 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
     (await exec(["/bin/cat", join(researcher.mountRoot, "agents", "worker.AGENTS.md")])).exitCode,
     0,
   );
+  assert.equal(
+    (await exec(["/bin/cat", join(coordinator.mountRoot, "agents", "coordinator.AGENTS.md")])).exitCode,
+    0,
+  );
   assert.equal(existsSync(join(coordinator.mountRoot, "agents", "worker.AGENTS.md")), false);
   const coordinatorTool = await exec(
     [join(coordinator.mountRoot, "bin", "scout-assets"), "--smoke"],

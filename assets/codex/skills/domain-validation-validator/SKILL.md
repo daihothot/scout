@@ -129,16 +129,13 @@ blocked > insufficient_evidence > needs_fix > accepted
 
 ## Native Subagent Strategy
 
-- 本技能明确授权父 Validator 在预计能够提高当前检查效率时自主决定是否使用 Codex native subagent；是否派发、派发数量以及并行或串行方式由父 Validator 判断，不构成 Gate 检查的必需步骤。
+- native subagent 的通用委派、父 Worker 责任和结果消费规则遵守 `worker.AGENTS.md`。
 - 每个 task 的 Phase 1 必须由父 Validator 锁定唯一检查对象、当前 inspection contracts、初始 digest 和下一 Gate id；锁定前不得派发内容检查。
-- 只有检查范围边界稳定、能够独立推进，并且预期节省的时间高于启动、等待和聚合成本时才派发。Structure 与 Semantics 是可选的候选拆分：Structure child 可只检查文件结构、artifact 状态、模板字段和跨文件引用闭环；Semantics child 可只检查 BDD/knowledge 语义、implementation claim、代码 provenance、source locator、Signal requirement 和 verification point 支撑关系。父 Validator 可以委派其中一个、多个或均不委派，不得为了满足形式而派发。
+- Structure 与 Semantics 是可选的候选拆分：Structure child 可检查文件结构、artifact 状态、模板字段和跨文件引用闭环；Semantics child 可检查 BDD/knowledge 语义、implementation claim、代码 provenance、source locator、Signal requirement 和 verification point 支撑关系。
 - Verification Report Gate 的可选拆分只能围绕互不依赖的 verification point；逐项 observation/evidence 检查可委派，Gate 选择、跨点一致性和正式 artifact 仍由父 Validator 拥有。
-- 多个 child 必须收到相同检查对象 ref、初始 digest 和适用 contract；范围必须互斥，不得任意重叠拆分，也不得执行对方范围。
 - child 只按 `Checked Refs`、`Check Results`、`Issue Candidates`、`Commands`、`Failed Commands`、`Uninspected Scope` 六段返回不超过 4000 个中文字符的检查结果；不复制被检查 artifact 正文，不得写入上游检查对象、分配最终问题 id、选择 Gate 或创建 Gate artifact。
-- 父 Validator 不重复执行 child 已完成的完整检查，只负责锁定输入、消费已派发范围的结果、抽查冲突 locator、合并和去重问题、分配问题 id、复核 digest、选择 Gate、写入不可变 Gate artifact 并正式 handoff。
-- 所有已派发且会影响 Gate 的 child 结果返回并被消费前，不得复核最终 digest、写 Gate 或提交 handoff；空结果、超时和 `closeAgent` 清理都不能视为结果已返回。
+- 父 Validator 负责抽查冲突 locator、合并和去重问题、分配问题 id、复核 digest、选择 Gate、写入不可变 Gate artifact 并正式 handoff。
 - child 检查期间发现目标 digest 变化时，父 Validator 必须丢弃该批结果并按现有移动目标规则处理，不得把不同 digest 的检查结果合并。
-- 父 Validator 决定不派发时直接自行检查，不需要记录 fallback 原因；派发失败或结果不可用时，可以在停止或释放对应 child 后收回该范围，不得与仍在执行的 child 重复检查。
 
 ## Inputs
 

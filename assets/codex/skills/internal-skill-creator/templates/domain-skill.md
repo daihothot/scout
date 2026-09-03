@@ -48,20 +48,20 @@ Domain Skill 必须表达：
 
 ### Signal Collections
 
-- `general Signal list` 是当前 Domain Skill 要求无条件完整读取的 Signal Skill 入口列表。
+- Signal Skill 是 Domain Skill 的可选依赖。当前 domain 不使用 Signal 时，省略全部 Signal 集合内容。
+- `general Signal list` 是当前 Domain Skill 要求无条件完整读取的 Signal Skill 入口列表。只有存在无条件 Signal 依赖时才声明。
 - `capability` 是当前 domain 根据正式业务输入识别的一个条件工作范围。
-- `capability Signal list` 是选择某个 capability 后必须完整读取的 Signal Skill 入口列表。
+- `capability Signal list` 是选择某个 capability 后必须完整读取的 Signal Skill 入口列表。只有存在按 capability 选择的 Signal 依赖时才声明。
 
-Domain Skill 需要 Signal Skill 时，必须提供 `general Signal list`、每个可选 capability 的选择条件、对应的 `capability Signal list`，以及各列表中实际 Skill 入口的确定顺序。
+Domain Skill 使用 Signal Skill 时，只声明实际需要的列表，并提供各列表中实际 Skill 入口的确定顺序。声明 `capability Signal list` 时，还必须提供对应 capability 的选择条件。`general Signal list` 与 `capability Signal list` 可以单独存在，不要求同时声明。
 
 规则：
 
-- 开始依赖 Signal contract 的领域工作前，完整处理 `general Signal list` 的全部成员。
-- capability 只能根据当前 Domain Skill 明确声明的正式输入和选择条件确定。
-- 一个 capability 被选中后，完整处理对应 `capability Signal list` 的全部成员，不能挑选其中看起来重要的部分。
+- 声明了 `general Signal list` 时，开始依赖 Signal contract 的领域工作前完整处理其全部成员。
+- 声明了 `capability Signal list` 时，capability 只能根据当前 Domain Skill 明确声明的正式输入和选择条件确定。
+- 一个已声明的 capability 被选中后，完整处理对应 `capability Signal list` 的全部成员，不能挑选其中看起来重要的部分。
 - 每个成员分别作为 target Skill 执行 `internal-skill-consumption`；Domain Skill 不复制其中的依赖展开、composition 或 readiness 规则。
 - general/capability 集合属于当前 domain 和 role，不能写入 Signal Skill 或 `internal-skill-consumption`。
-- 不需要 Signal Skill 时，不写 Signal 集合内容。
 
 ### Tool Use
 
@@ -91,8 +91,8 @@ Domain Skill 使用 Tool 时，必须说明当前 domain 中的业务使用场�
 
 - 目标 Skill 的 type 是 `domain`，layout 已独立选择。
 - domain、role、正式输入、业务判断、输出和交接边界明确。
-- general Signal 和 capability Signal 的集合、顺序与选择条件由当前 Domain Skill 拥有。
-- 选中 capability 后要求完整处理其全部 Signal Skill。
+- 目标 Domain Skill 使用 Signal 时，只声明实际需要的 general Signal 或 capability Signal 集合，并明确相应顺序和选择条件。
+- 声明 capability Signal 时，选中 capability 后要求完整处理其全部 Signal Skill。
 - Tool 使用场景和 Tool Skill 入口明确，但没有复制工具操作方法。
 - 没有跨 domain、跨 role 或通用 Skill 消费职责越界。
 - 所有 required content 已映射到选定 layout，没有从本模板复制目标章节格式。

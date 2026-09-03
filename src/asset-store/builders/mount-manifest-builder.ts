@@ -130,7 +130,14 @@ function buildAssetInventoryInternal(input: AssetInventoryInput): MountManifest[
       hash: sha256File(resolveAssetRelativePath(CodexAssetLayout.agentsMd, input.assetsRoot)),
     },
     ...(isSynthesisRole
-      ? []
+      ? [{
+        id: "codex.agents.coordinator",
+        type: "coordinator_agents_md",
+        sourcePath: assetSourcePath(CodexAssetLayout.coordinatorAgentsMd),
+        hash: sha256File(
+          resolveAssetRelativePath(CodexAssetLayout.coordinatorAgentsMd, input.assetsRoot),
+        ),
+      }]
       : [{
         id: "codex.agents.worker",
         type: "worker_agents_md",
@@ -203,7 +210,11 @@ function buildMountManifestInternal(input: MountManifestInput): MountManifest {
       hash: sha256File(join(input.assetsRoot, CodexAssetLayout.agentsMd)),
     },
     ...(isSynthesisRole
-      ? []
+      ? [{
+        path: join("agents", "coordinator.AGENTS.md"),
+        sourcePath: assetSourcePath(CodexAssetLayout.coordinatorAgentsMd),
+        hash: sha256File(join(input.assetsRoot, CodexAssetLayout.coordinatorAgentsMd)),
+      }]
       : [{
         path: join("agents", "worker.AGENTS.md"),
         sourcePath: assetSourcePath(CodexAssetLayout.workerAgentsMd),

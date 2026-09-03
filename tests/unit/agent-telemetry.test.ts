@@ -640,7 +640,7 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
   assert.doesNotMatch(text, /threadPreflight/);
 });
 
-test("AgentThreadRecorder marks coordinator inline instructions separately from assets", async (t) => {
+test("AgentThreadRecorder records Coordinator instruction assets without their body", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-coordinator-thread-recorder-"));
   const logsRoot = join(root, "agents", "coordinator", "logs");
   const eventBus = new InMemoryEventBus();
@@ -674,8 +674,8 @@ test("AgentThreadRecorder marks coordinator inline instructions separately from 
 
   const text = readFileSync(join(logsRoot, "thread.log"), "utf8");
   assert.match(text, /- "AGENTS\.md"/);
-  assert.doesNotMatch(text, /coordinator\.AGENTS\.md/);
-  assert.match(text, /hasInlineDeveloperInstructions: true/);
+  assert.match(text, /- "agents\/coordinator\.AGENTS\.md"/);
+  assert.doesNotMatch(text, /hasInlineDeveloperInstructions/);
   assert.doesNotMatch(text, /worker\.AGENTS\.md/);
   assert.doesNotMatch(text, /COORDINATOR_INLINE_BODY_MUST_NOT_BE_RECORDED/);
 });

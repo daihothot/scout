@@ -104,16 +104,14 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 
 ## Native Subagent Orchestration
 
-父 Researcher 自主决定是否把独立的 Knowledge 或 Code producer 工作交给 native subagent。具体委派条件、只读边界、返回结构和失败处理分别遵守 `tool-guru-knowledge` 与 `tool-jarvis-codebase`。
+- native subagent 的通用委派、父 Worker 责任和结果消费规则遵守 `worker.AGENTS.md`。本技能只允许把独立的 Knowledge 或 Code producer 工作作为候选委派范围；具体输入、只读边界和返回结构分别遵守 `tool-guru-knowledge` 与 `tool-jarvis-codebase`。
 
 必须由父 Researcher 保留的责任：
 
 - 唯一 BDD 选择、Human Confirmation Gate 判断和人工请求。
 - 两个 producer 的共同 BDD、版本、平台和 artifact scope 对齐。
 - evidence id 分配、交叉引用消歧、聚合 artifact、registry、manual 和正式 Research Pack 写入。
-- checker、digest、Scout dynamic tool 调用和正式 Research handoff。
-
-只有 Knowledge 与 Code 输入边界都已锁定且彼此独立时才并行。父 Researcher 不得重复执行 child 已覆盖的完整检索，只能核验进入正式 claim 的关键 locator、解决冲突或补齐明确披露的缺口。
+- checker、digest、Scout Dynamic Tool 调用和正式 Research handoff。
 
 父 Researcher 按 artifact 的真实数据依赖写 canonical Research Pack；依赖 producer 结果的内容必须等待相应结果返回并被消费。全部 artifact 稳定并完成人工事实闭环后才能执行最终 checker 和 digest。
 

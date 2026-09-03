@@ -104,14 +104,10 @@ Researcher 使用已完成的集合理解 interface contract、derived contract 
 
 ## Native Subagent Strategy
 
-- 本技能明确授权父 Researcher 自主决定是否使用 Codex native subagent 加速当前 Research task；是否派发、派发数量以及并行或串行方式由父 Researcher 根据实际效率判断，不形成新的 Scout task，也不改变当前 task 的生命周期。
-- 只有子任务目标、输入和退出边界稳定，能够独立推进，并且预期节省的时间高于启动、等待和聚合成本时才派发。存在未解除的 `Human Confirmation Gate` 时不得派发依赖该事实的 child。
-- Knowledge 与 Code 是可选的 producer 拆分；具体边界、输入和返回结构分别遵守 `tool-guru-knowledge` 与 `tool-jarvis-codebase`。父 Researcher 可以委派其中一个、多个或均不委派，不得为了满足形式而派发。
+- native subagent 的通用委派、父 Worker 责任和结果消费规则遵守 `worker.AGENTS.md`。存在未解除的 `Human Confirmation Gate` 时，不得派发依赖该事实的 child。
+- Knowledge 与 Code 是可选的 producer 拆分；具体边界、输入、只读权限和返回结构分别遵守 `tool-guru-knowledge` 与 `tool-jarvis-codebase`。
 - 父 Researcher 独占 Human Confirmation Gate、Persona/Human evidence、evidence id 与 ref 分配、正式 artifact 写入、checker、digest 和 Research handoff。
-- child 独占已委派范围；父 Researcher 不得重新执行完整 knowledge scan 或 code scan，只能抽查 child 返回的关键 locator、解决冲突和验证会进入正式 claim 的最小片段。
-- Child 输出、只读边界和 artifact 权限由对应 Tool Skill 约束；任何 child 都不能形成最终 Research 状态。
-- 每个依赖 child 结果的写入批次必须等待对应结果返回并被父 Researcher 消费；空结果、超时或 `closeAgent` 清理都不能替代正式结果。
-- 父 Researcher 决定不派发时直接自行执行，不需要记录 fallback 原因；派发失败或结果不可用时，可以收回该范围并继续，但必须先停止或释放对应 child，且不得与仍在执行的 child 重复工作。
+- child 不能形成最终 Research 状态；父 Researcher 只抽查进入正式 claim 的关键 locator，并负责两个 producer 的共同 BDD、版本、平台和 artifact scope 对齐。
 
 ## Inputs
 

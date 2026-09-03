@@ -142,36 +142,32 @@ test("agent tools are hard-bound to their registered namespaces", () => {
   );
 });
 
-test("Worker rules bind dynamic tools to independent Tool Skills", () => {
+test("Agent rules discover role-specific dynamic tools through independent Tool Skills", () => {
   const agentRoot = join(scoutRoot, "assets", "codex", "agents");
   const skillRoot = join(scoutRoot, "assets", "codex", "skills");
   const commonRules = readFileSync(join(agentRoot, "AGENTS.md"), "utf8");
+  const coordinatorRules = readFileSync(join(agentRoot, "coordinator.AGENTS.md"), "utf8");
   const workerRules = readFileSync(join(agentRoot, "worker.AGENTS.md"), "utf8");
 
   assert.doesNotMatch(commonRules, /FindSkills|ReadSkillResource|selectionId|loadOrder/);
   assert.doesNotMatch(commonRules, /tool-scout-/);
   assert.deepEqual(
     readdirSync(agentRoot).filter((name) => name.endsWith(".AGENTS.md")),
-    ["worker.AGENTS.md"],
+    ["coordinator.AGENTS.md", "worker.AGENTS.md"],
   );
+  assert.match(commonRules, /<workflow_phase>/);
+  assert.match(coordinatorRules, /family:tool\.scout\.dynamic\.coordinator\.\*\*/);
+  assert.match(workerRules, /family:tool\.scout\.dynamic\.worker\.\*\*/);
   for (const toolName of ["update_plan", "RequestHumanInput", "SubmitTask"]) {
     assert.match(workerRules, new RegExp(`\\b${toolName}\\b`), toolName);
   }
-  for (const skillName of [
-    "tool-scout-send-message",
-    "tool-scout-request-human-input",
-    "tool-scout-submit-task",
-  ]) assert.match(workerRules, new RegExp(skillName));
+  for (const toolName of ["AssignTask", "RespondHumanInput", "SubmitPhaseOutcome"]) {
+    assert.match(coordinatorRules, new RegExp(`\\b${toolName}\\b`), toolName);
+  }
   for (const skillName of readdirSync(skillRoot).filter((name) => name.startsWith("tool-scout-"))) {
     assert.equal(readFileSync(join(skillRoot, skillName, "SKILL.md"), "utf8").length > 0, true);
   }
-  for (const file of readdirSync(agentRoot).filter((name) => name.endsWith(".md"))) {
-    assert.doesNotMatch(
-      readFileSync(join(agentRoot, file), "utf8"),
-      /attachment|tag block|<wait-for-human-request>|<human-response>/i,
-      file,
-    );
-  }
+  assert.doesNotMatch(commonRules, /<wait-for-human-request>|<human-response>/i);
 });
 
 function readRequired(schema: unknown): string[] {

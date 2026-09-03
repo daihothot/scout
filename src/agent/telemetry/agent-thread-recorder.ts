@@ -290,8 +290,5 @@ function summarizeDeveloperInstructions(
   if (developerInstructions === undefined) return {};
   return {
     developerInstructions: agentInstructionAssetPaths(isWorker),
-    ...(!isWorker
-      ? { hasInlineDeveloperInstructions: true }
-      : {}),
   };
 }

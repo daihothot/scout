@@ -1,6 +1,7 @@
 /** Stable repository-relative locations for Codex assets consumed by Scout. */
 export const CodexAssetLayout = {
   agentsMd: "agents/AGENTS.md",
+  coordinatorAgentsMd: "agents/coordinator.AGENTS.md",
   workerAgentsMd: "agents/worker.AGENTS.md",
   customAgentsRoot: "agents",
   baseConfig: "config/base.config.toml",
