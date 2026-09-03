@@ -9,7 +9,7 @@ import type {
 import type { MountPreparationInspection } from "../contracts/materialization.js";
 import type { PersistedMountIdentity } from "../contracts/identity.js";
 import type { MountContext } from "../contracts/mount-context.js";
-import { buildMountMacroValues } from "../mount/macros.js";
+import { createMountMacroValues } from "../mount/macros.js";
 import { MountGeneratedFilesInspector } from "./mount-generated-files-inspector.js";
 import { MountIdentityInspector } from "./mount-identity-inspector.js";
 import { MountManifestInspector } from "./mount-manifest-inspector.js";
@@ -135,7 +135,7 @@ export class MountInspector {
       mountRoot: this.context.mountRoot,
       assetsRoot: this.context.assetsRoot,
       tempRoot: this.context.tempRoot,
-      dynamicValues: buildMountMacroValues({
+      dynamicValues: createMountMacroValues({
         scoutRoot: this.context.scoutRoot,
         runRoot: this.context.runRoot,
         mountRoot: this.context.mountRoot,

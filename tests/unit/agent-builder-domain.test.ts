@@ -210,6 +210,7 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
 
 test("AgentBuilder creates an arbitrary Workflow role as a generic Worker", () => {
   const scheduler = new Scheduler(createGraphState({
+    domain: "test",
     workflowProfile: "dynamic-role-test",
     phases: [{
       name: "audit",
@@ -410,6 +411,7 @@ test("WorkerAgent keeps its bound TaskRunner and reports a rejected task assignm
 test("AssignTask routes through the current Phase and skips a busy first role", async () => {
   const appServer = createFakeAppServer();
   const scheduler = new Scheduler(createGraphState({
+    domain: "test",
     workflowProfile: "phase-routing-test",
     phases: [{
       name: "audit",
@@ -556,6 +558,7 @@ test("SubmitPhaseOutcome advances the cursor and schedules one fresh Coordinator
 test("A terminal Phase outcome resets the cursor without scheduling a Coordinator Step", async () => {
   const appServer = createFakeAppServer();
   const scheduler = new Scheduler(createGraphState({
+    domain: "test",
     workflowProfile: "terminal-phase-test",
     phases: [{
       name: "audit",

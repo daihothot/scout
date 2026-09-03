@@ -46,7 +46,8 @@ import type { Logger } from "../../src/core/logging/index.js";
 import {
   ValidationDomain,
   ValidationEvents,
-} from "../../src/domain/index.js";
+  validationJournalProjection,
+} from "../../src/domain/validation/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import {
   RunJournal,
@@ -70,7 +71,7 @@ import {
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 
 const projectRun = (events: Parameters<typeof projectRunEvents>[0]) =>
-  projectRunEvents(events, "coordinator");
+  projectRunEvents(events, "coordinator", validationJournalProjection);
 import {
   InitializeRunStage,
   PrepareEnvironmentStage,

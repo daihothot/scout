@@ -5,6 +5,7 @@ description: Scout Researcher 在 Validation Domain 中接收 BDD 定位输入�
 id: domain-validation-researcher
 version: 0.5.9
 type: domain
+domain: validation
 phase: [research]
 family: [validation, workflow]
 tags: [scout, validation, bdd, research, workflow]

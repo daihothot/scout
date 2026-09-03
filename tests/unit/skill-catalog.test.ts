@@ -41,6 +41,11 @@ test("every Scout Skill projects the runtime metadata needed by its mount", () =
     assert.ok(skill.tags.length > 0);
     assert.ok(skill.description.length > 0);
     assert.ok(skill.summary.length > 0);
+    if (skill.type === ScoutSkillTypes.Domain) {
+      assert.equal(skill.domain, "validation");
+    } else {
+      assert.equal(skill.domain, undefined);
+    }
     assert.equal(
       skill.path,
       posix.join(".scout", "skill", ...skill.family, skill.name, "SKILL.md"),
@@ -137,7 +142,10 @@ test("each Workflow role projects every visible Skill and its dependency closure
   assert.ok(graph.roles.every((role) => !role.phases.includes(InternalPhase)));
 
   for (const role of graph.roles) {
-    const projected = resolveScoutSkillsForPhases(catalog, role.phases);
+    const projected = resolveScoutSkillsForPhases(catalog, {
+      domain: "validation",
+      phases: role.phases,
+    });
     assert.deepEqual(
       projected.map((skill) => skill.name).sort(),
       expectedInventories[role.name]?.sort(),
@@ -150,7 +158,10 @@ test("each Workflow role projects every visible Skill and its dependency closure
     assert.equal(projected.some((skill) => skill.name === "internal-skill-creator"), false);
   }
 
-  const startupOnly = resolveScoutSkillsForPhases(catalog, ["future-worker-phase"]);
+  const startupOnly = resolveScoutSkillsForPhases(catalog, {
+    domain: "validation",
+    phases: ["future-worker-phase"],
+  });
   assert.deepEqual(startupOnly.map((skill) => skill.name).sort(), [
     "internal-runtime-inspector",
     "internal-skill-consumption",
@@ -294,6 +305,29 @@ test("Scout Skill metadata parsing does not enforce type and Phase authoring pol
     type: "internal",
     phase: "[Synthesis]",
   }).phase, ["Synthesis"]);
+});
+
+test("Domain Skill visibility requires an exact Workflow Profile domain", () => {
+  const catalog = [
+    parseMetadata("validation-entry", { domain: "validation" }),
+    parseMetadata("other-entry", { domain: "other-domain" }),
+    parseMetadata("internal-entry", { type: "internal", phase: "[Internal]" }),
+  ];
+
+  assert.deepEqual(
+    resolveScoutSkillsForPhases(catalog, {
+      domain: "validation",
+      phases: ["research"],
+    }).map((skill) => skill.name),
+    ["validation-entry", "internal-entry"],
+  );
+  assert.deepEqual(
+    resolveScoutSkillsForPhases(catalog, {
+      domain: "other-domain",
+      phases: ["research"],
+    }).map((skill) => skill.name),
+    ["other-entry", "internal-entry"],
+  );
 });
 
 test("Scout Skill catalog checks cycles while selected dependency loading stays strict", () => {
@@ -473,6 +507,7 @@ function parseMetadata(
   name: string,
   options: {
     type?: string;
+    domain?: string;
     phase?: string | null;
     family?: string | null;
     tags?: string | null;
@@ -485,6 +520,9 @@ function parseMetadata(
     `name: ${name}`,
     "description: Test Scout Skill metadata.",
     `type: ${options.type ?? "domain"}`,
+    ...((options.type ?? "domain") === "domain"
+      ? [`domain: ${options.domain ?? "validation"}`]
+      : options.domain ? [`domain: ${options.domain}`] : []),
     `id: ${name}`,
     "version: 1.0.0",
     ...(options.phase === null ? [] : [`phase: ${options.phase ?? "[research]"}`]),
@@ -514,6 +552,7 @@ function scoutSkillText(name: string): string {
     `name: ${name}`,
     "description: Test Scout Skill metadata.",
     "type: domain",
+    "domain: validation",
     `id: ${name}`,
     "version: 1.0.0",
     "phase: [research]",

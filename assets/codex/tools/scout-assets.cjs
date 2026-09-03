@@ -38,13 +38,22 @@ function readMountManifest() {
   }
 }
 
+function readManifestDomain(manifest) {
+  if (typeof manifest.domain !== "string" || manifest.domain.length === 0) {
+    fail("mount manifest does not declare a workflow domain.");
+  }
+  return manifest.domain;
+}
+
 function printSummary(manifest) {
+  const domain = readManifestDomain(manifest);
   printJson({
     identity: {
       agentId: manifest.agentId,
       mountRoot: manifest.mountRoot,
     },
     profile: {
+      domain,
       phases: manifest.agentProfile?.phases ?? [],
       resourceParks: manifest.agentProfile?.resourceParks ?? [],
     },
@@ -63,38 +72,79 @@ function printSummary(manifest) {
 }
 
 function printFamily(manifest, args) {
-  requireArgumentRange("family", args, 0, 1);
-  const nodes = buildFamilyNodes(manifest);
-  if (args.length === 0) {
-    return printJson({
-      phases: manifest.agentProfile?.phases ?? [],
-      families: [...new Set(nodes.map((node) => node.name))].sort(),
-    });
+  const domain = readManifestDomain(manifest);
+  const query = parseFamilyArguments(args);
+  const phases = [...new Set(manifest.agentProfile?.phases ?? [])];
+  if (query.phase !== undefined && !phases.includes(query.phase)) {
+    fail(`Phase is not supported for the current role: ${query.phase}`);
   }
 
-  const requested = args[0];
-  const matches = requested.includes(".")
-    ? nodes.filter((node) => node.familyPath === requested)
-    : nodes.filter((node) => node.name === requested);
-  if (matches.length === 0) {
-    fail(`Family is not supported for the current role: ${requested}`);
+  const phaseSkills = buildPhaseSkillSets(manifest, phases, domain);
+  const selectedGroups = query.phase === undefined
+    ? buildPhaseGroups(phases, phaseSkills, manifest.skills ?? [])
+    : [{ key: query.phase, phases: [query.phase], skills: phaseSkills.get(query.phase) ?? [] }];
+  const base = {};
+
+  if (query.requested === undefined) {
+    if (query.phase !== undefined) {
+      return printJson({
+        ...base,
+        phase: query.phase,
+        ...projectFamilyGroup(selectedGroups[0].skills),
+      });
+    }
+    const output = { ...base };
+    for (const group of selectedGroups) {
+      const projected = projectFamilyGroup(group.skills);
+      if (Object.keys(projected).length > 0) output[group.key] = projected;
+    }
+    return printJson(output);
   }
-  if (matches.length > 1) {
-    return printJson({
-      phases: manifest.agentProfile?.phases ?? [],
-      family: requested,
+
+  const matchesByGroup = selectedGroups.map((group) => ({
+    ...group,
+    matches: findFamilyNodes(group.skills, query.requested),
+  })).filter((group) => group.matches.length > 0);
+  const candidatePaths = [...new Set(
+    matchesByGroup.flatMap((group) => group.matches.map((node) => node.familyPath)),
+  )].sort();
+  if (candidatePaths.length === 0) {
+    fail(`Family is not supported for the current role: ${query.requested}`);
+  }
+  if (candidatePaths.length > 1) {
+    const output = {
+      ...base,
+      family: query.requested,
       ambiguous: true,
-      candidates: matches.map((node) => node.familyPath).sort(),
-    });
+    };
+    if (query.phase !== undefined) {
+      output.phase = query.phase;
+      output.candidates = candidatePaths;
+      return printJson(output);
+    }
+    for (const group of matchesByGroup) {
+      const candidates = [...new Set(group.matches.map((node) => node.familyPath))].sort();
+      if (candidates.length > 0) output[group.key] = { candidates };
+    }
+    return printJson(output);
   }
 
-  const node = matches[0];
+  const familyPath = candidatePaths[0];
   const output = {
-    phases: manifest.agentProfile?.phases ?? [],
-    family: node.familyPath,
+    ...base,
+    family: familyPath,
   };
-  if (node.children.size > 0) output.children = [...node.children].sort();
-  if (node.skills.length > 0) output.skills = node.skills;
+  if (query.phase !== undefined) output.phase = query.phase;
+  for (const group of matchesByGroup) {
+    const node = group.matches.find((candidate) => candidate.familyPath === familyPath);
+    if (!node) continue;
+    const projected = projectFamilyNode(node);
+    if (query.phase !== undefined) {
+      Object.assign(output, projected);
+    } else {
+      output[group.key] = projected;
+    }
+  }
   return printJson(output);
 }
 
@@ -139,9 +189,9 @@ function printPlugin(manifest, args) {
   });
 }
 
-function buildFamilyNodes(manifest) {
+function buildFamilyNodes(skills) {
   const nodes = new Map();
-  for (const skill of manifest.skills ?? []) {
+  for (const skill of skills ?? []) {
     const family = skill.family ?? [];
     for (let index = 0; index < family.length; index += 1) {
       const path = family.slice(0, index + 1).join("/");
@@ -161,6 +211,113 @@ function buildFamilyNodes(manifest) {
     }
   }
   return [...nodes.values()];
+}
+
+function parseFamilyArguments(args) {
+  let requested;
+  let phase;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--phase") {
+      if (phase !== undefined || index + 1 >= args.length || args[index + 1].startsWith("--")) {
+        fail("scout-assets family expects one value after --phase.");
+      }
+      phase = args[index + 1];
+      index += 1;
+      continue;
+    }
+    if (argument.startsWith("--")) {
+      fail(`Unknown scout-assets family option: ${argument}`);
+    }
+    if (requested !== undefined) {
+      fail("scout-assets family expects at most one family name or path.");
+    }
+    requested = argument;
+  }
+  return { requested, phase };
+}
+
+function buildPhaseSkillSets(manifest, phases, domain) {
+  const byName = new Map((manifest.skills ?? []).map((skill) => [skill.name, skill]));
+  const result = new Map();
+  for (const phase of phases) {
+    const selected = new Set();
+    const queue = (manifest.skills ?? [])
+      .filter((skill) => isRootSkillForPhase(skill, domain, phase))
+      .map((skill) => skill.name);
+    while (queue.length > 0) {
+      const name = queue.shift();
+      if (selected.has(name)) continue;
+      const skill = byName.get(name);
+      if (!skill) continue;
+      selected.add(name);
+      for (const dependency of [
+        ...(skill.requiredSkills ?? []),
+        ...(skill.optionalSkills ?? []),
+      ]) {
+        if (!selected.has(dependency)) queue.push(dependency);
+      }
+    }
+    result.set(phase, [...selected].map((name) => byName.get(name)).filter(Boolean));
+  }
+  return result;
+}
+
+function isRootSkillForPhase(skill, domain, phase) {
+  if (skill.type === "internal") return true;
+  return skill.type === "domain"
+    && skill.domain === domain
+    && Array.isArray(skill.phase)
+    && skill.phase.includes(phase);
+}
+
+function buildPhaseGroups(phases, phaseSkills, allSkills) {
+  const allPhases = [...phases];
+  const memberships = new Map();
+  for (const phase of allPhases) {
+    for (const skill of phaseSkills.get(phase) ?? []) {
+      const membership = memberships.get(skill.name) ?? [];
+      membership.push(phase);
+      memberships.set(skill.name, membership);
+    }
+  }
+  const groups = new Map();
+  for (const [skillName, membership] of memberships) {
+    const key = membership.join("+");
+    const group = groups.get(key) ?? {
+      key,
+      phases: membership,
+      skills: [],
+    };
+    const skill = allSkills.find((candidate) => candidate.name === skillName);
+    if (skill) group.skills.push(skill);
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((left, right) => {
+    if (left.phases.length !== right.phases.length) return right.phases.length - left.phases.length;
+    return left.key.localeCompare(right.key);
+  });
+}
+
+function projectFamilyGroup(skills) {
+  const nodes = buildFamilyNodes(skills);
+  const output = {};
+  const families = nodes.map((node) => node.familyPath).sort();
+  if (families.length > 0) output.families = families;
+  return output;
+}
+
+function findFamilyNodes(skills, requested) {
+  const nodes = buildFamilyNodes(skills);
+  return requested.includes(".")
+    ? nodes.filter((node) => node.familyPath === requested)
+    : nodes.filter((node) => node.name === requested);
+}
+
+function projectFamilyNode(node) {
+  if (node.children.size > 0) return { children: [...node.children].sort() };
+  if (node.skills.length > 0) return { skills: node.skills };
+  return {};
 }
 
 function projectSkillIdentity(skill) {
@@ -256,7 +413,7 @@ function usage(code) {
     "Usage:",
     "  scout-assets",
     "  scout-assets summary",
-    "  scout-assets family [family-name|family-path]",
+    "  scout-assets family [family-name|family-path] [--phase phase]",
     "  scout-assets skill <skill-name>",
     "  scout-assets plugin <plugin-name>",
     "  scout-assets --smoke",

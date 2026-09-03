@@ -43,6 +43,7 @@ export function createTestRunPersistence(
   scoutRoot = "/repo",
   eventBus = new InMemoryEventBus(),
   runRootOverride?: string,
+  domain: ScoutDomain = testDomain,
 ): {
   runRoot: string;
   journal: RunJournal;
@@ -64,7 +65,7 @@ export function createTestRunPersistence(
     eventBus,
     scheduler,
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: testDomain,
+    domain,
     journal,
     manifestStore,
     terminate: async () => undefined,
@@ -124,7 +125,14 @@ export function installTestRunScope(
       manifestStore: options.manifestStore,
       scheduler: options.scheduler ?? createTestScheduler(eventBus),
     }
-    : createTestRunPersistence(t, options.runId, scoutRoot, eventBus, options.runRoot);
+    : createTestRunPersistence(
+      t,
+      options.runId,
+      scoutRoot,
+      eventBus,
+      options.runRoot,
+      options.domain,
+    );
   const scope = new RunScope({
     runId: options.runId,
     scoutRoot,
@@ -149,6 +157,7 @@ export function installTestRunScope(
 /** Creates the smallest valid Scheduler used by isolated run tests. */
 export function createTestScheduler(eventBus = new InMemoryEventBus()): Scheduler {
   return new Scheduler(createGraphState({
+    domain: "test",
     workflowProfile: "test-workflow",
     phases: [
       {

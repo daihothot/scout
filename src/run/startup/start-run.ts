@@ -8,7 +8,7 @@ import {
   type GraphState,
 } from "../../core/workflow/index.js";
 import { AssetStore } from "../../asset-store/index.js";
-import { ValidationDomain } from "../../domain/index.js";
+import { createDomainRuntime } from "../../domain/index.js";
 import {
   NoopRuntimeInteractionPort,
   type RuntimeDisclosureEvent,
@@ -42,8 +42,9 @@ export async function startRun(
   const scoutRoot = resolve(options.cwd);
   const scoutConfig = loadScoutConfig(scoutRoot);
   const eventBus = new InMemoryEventBus();
+  const graphState = new AssetStore().buildWorkflow(scoutRoot, scoutConfig.workflow.profile);
   const scheduler = new Scheduler(
-    new AssetStore().buildWorkflow(scoutRoot, scoutConfig.workflow.profile),
+    graphState,
     eventBus,
   );
   const runRoot = join(scoutRoot, "run", runId);
@@ -52,7 +53,7 @@ export async function startRun(
     logsRoot: join(runRoot, "logs"),
   });
   const runStartedAt = Date.now();
-  const domain = new ValidationDomain();
+  const domain = await createDomainRuntime(graphState.domain);
   const journal = RunJournal.create({ runId, runRoot });
   const manifestStore = new RunManifestStore(runRoot);
   runtimeLogger.info({

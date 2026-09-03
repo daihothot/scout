@@ -5,6 +5,7 @@ description: Scout Coordinator 在 Validation Domain 中接收 BDD 目标，组�
 id: domain-validation-coordinator
 version: 0.3.2
 type: domain
+domain: validation
 phase: [Synthesis]
 family: [validation, workflow]
 tags: [scout, validation, bdd, coordination, workflow]

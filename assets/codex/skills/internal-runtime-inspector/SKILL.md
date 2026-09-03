@@ -47,8 +47,14 @@ summary: 使用当前 mount 的稳定查询入口定位 Scout Runtime 资源并�
 
 | 名称 | 实际内容 |
 | --- | --- |
+| `<domain>` | 当前 Workflow Profile 声明的实际 domain。 |
+| `<phase>` | 当前 `role` 参与的一个实际 Phase 名称。 |
+| `<phase-a>`、`<phase-b>` | 示例中的实际 Phase 名称；仅用于说明多个 Phase 的分组。 |
 | `<family-name>` | `scout-assets family` 返回或当前上下文明确提供的一个 family 名称。 |
+| `<family-name-or-path>` | 一个 family 名称或完整的点分隔 `family-path`。 |
 | `<family-path>` | 用于 family 查询和 wildcard 依赖声明的点分隔值；例如 `signal.local.unity.general`。 |
+| `<family-segment>` | `family-path` 中的一个实际段；多个段按 `.` 连接。 |
+| `<child-family>` | 非叶节点查询返回的下一层 family 的实际名称段。 |
 | `<skill-name>` | 需要定位的实际 Skill identity。 |
 | `<skill-path>` | `scout-assets skill` 返回的 Skill 入口文件系统路径。 |
 | `<plugin-name>` | 需要确认的 plugin name。 |
@@ -93,6 +99,7 @@ scout-assets summary
 {
   "identity": { "agentId": "<role>", "mountRoot": "." },
   "profile": {
+    "domain": "<domain>",
     "phases": ["<phase>"],
     "resourceParks": ["<resource-park-name>"]
   },
@@ -117,6 +124,7 @@ scout-assets summary
 路径语义：
 
 - `profile.phases` 是当前 `role` 参与的完整 Phase 列表，不表示 Scheduler 当前正在执行的 `current_phase`。
+- `profile.domain` 是当前 Workflow Profile 声明的 domain。
 - `profile.resourceParks` 是当前 `role` 使用的 Resource Park 名称列表。
 - `runtimeRoots[*].path` 是以当前 `mount` 为基准的相对路径，例如 `.`、`../artifacts` 和 `../tmp`。使用它们时保持当前 mount 上下文。
 - `profileRoots[*].source` 是 profile 的可移植逻辑声明，例如 `~/.guru/knowledge` 或 `${SCOUT_ROOT}`。
@@ -127,7 +135,9 @@ scout-assets summary
 
 场景：需要按语义定位 Skill 族，而不是先猜完整 Skill 名称。
 
-不带参数时，返回当前 `role` 已物化的扁平 family 名称，不返回 parent：
+#### 不传 family 参数
+
+先查看当前 `role` 已物化的 family 范围。多个 phase 都拥有的内容放在以 `+` 连接的共同组中；只属于一个 phase 的内容放在该 phase 组中：
 
 ```bash
 scout-assets family
@@ -137,64 +147,98 @@ scout-assets family
 
 ```json
 {
-  "phases": ["<phase>"],
-  "families": ["<family-name>"]
+  "<phase-a>+<phase-b>": {
+    "families": ["<family-path>"]
+  },
+  "<phase-a>": {
+    "families": ["<family-path>"]
+  }
 }
 ```
 
-输入一个 family 名称或完整 `family-path` 时，工具会在当前 `role` 已物化的 Skill 中解析它：
+`families` 使用点分隔的 `family-path`。不传 family 时只返回 family 范围，不返回 Skill。共同组的 key 只是 phase 集合的稳定文本表示，不是新的 family 名称。
+这一步只用于了解当前可见范围，不代表可以跳过后续的精确 family 查询。
+
+可以追加 `--phase`，只查看一个 phase：
 
 ```bash
-scout-assets family <family-name-or-path>
+scout-assets family --phase <phase>
 ```
 
-如果名称唯一，输出完整 `family-path` 以及下一层 `children` 和/或该 family 下的 `skills`。`family-path` 使用 `.` 分隔 family segment；只有 `skills[*].path` 是文件系统路径：
+这时只在该 phase 的有效 Skill 集合中返回结果；该集合包括该 phase 的 Domain Skill、Internal Skill 以及这些 Skill 的已物化依赖。`<phase>` 必须是当前 `role` 的 `profile.phases` 中已有的值。
 
-```json
-{
-  "phases": ["<phase>"],
-  "family": "<family-path>",
-  "skills": [
-    {
-      "name": "<skill-name>",
-      "path": "<skill-path>"
-    }
-  ]
-}
-```
+#### 传入 family 名称
 
-非叶子 family 只返回带上级的下级 `family-path`，不直接展开后代 Skill：
-
-```json
-{
-  "phases": ["<phase>"],
-  "family": "<family-path>",
-  "children": ["<family-path>.<child-family>"]
-}
-```
-
-如果名称在多个 family 中出现，工具不会猜测，返回一个或多个完整候选 `family-path`。以下示例中的 `<family-path-a>` 和 `<family-path-b>` 分别表示点分隔的 family 路径：
+先传入一个不带点分隔路径的 family 名称进行模糊查询：
 
 ```bash
-scout-assets family <family-name>
+scout-assets family <family-name> [--phase <phase>]
 ```
+
+如果名称在多个 family 中出现，工具不会猜测，只返回一个或多个完整候选 `family-path`。不指定 phase 时，候选按所属 phase 组返回：
 
 ```json
 {
-  "phases": ["<phase>"],
+  "family": "<family-name>",
+  "ambiguous": true,
+  "<phase-a>": {
+    "candidates": ["<family-path-a>", "<family-path-b>"]
+  }
+}
+```
+
+指定 `--phase` 后，只在该 phase 的候选集中判断歧义：
+
+```json
+{
+  "phase": "<phase>",
   "family": "<family-name>",
   "ambiguous": true,
   "candidates": ["<family-path-a>", "<family-path-b>"]
 }
 ```
 
-此时使用候选中的完整 `family-path` 重新查询：
+此时必须从候选中选择一个完整的 `family-path`，再进行精确查询。
+
+#### 传入精确 family-path
+
+输入完整的点分隔 `family-path` 后，工具才会返回该节点的下一层内容：
 
 ```bash
-scout-assets family <family-path>
+scout-assets family <family-path> [--phase <phase>]
 ```
 
-查询成功后，只使用返回的 `skills[*].path` 或继续查询返回的 `children`；不要根据 family 名称自行拼接目录。
+如果该节点不是叶节点，只返回下一层 `children`，不会直接展开后代 Skill：
+
+```json
+{
+  "family": "<family-path>",
+  "<phase>": {
+    "children": ["<family-path>.<child-family>"]
+  }
+}
+```
+
+上面的 `<phase>` 表示未指定 `--phase` 时的 phase 组 key；如果指定了 `--phase`，结果会直接使用 `phase` 字段表示查询范围。
+
+继续使用返回的精确 `family-path` 查询。只有当该节点没有 `children` 时，才返回叶节点 Skill：
+
+```json
+{
+  "family": "<family-path>",
+  "<phase>": {
+    "skills": [
+      {
+        "name": "<skill-name>",
+        "family": ["<family-segment>"],
+        "path": "<skill-path>"
+      }
+    ]
+  }
+}
+```
+
+只有 `skills[*].path` 是文件系统路径。查询成功后，只使用返回的 `skills[*].path` 或继续查询返回的 `children`；不要根据 family 名称自行拼接目录。
 
 ### Inspect Skill Metadata and Current Role Tools
 

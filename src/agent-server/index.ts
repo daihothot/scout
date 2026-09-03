@@ -9,3 +9,4 @@ export * from "./codex/app-server-factory.js";
 export * from "./codex/app-server-event-store.js";
 export * from "./codex/app-server-preflight.js";
 export * from "./codex/model-config.js";
+export * from "./codex/app-server-config.js";

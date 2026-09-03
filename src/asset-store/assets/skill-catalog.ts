@@ -104,6 +104,13 @@ export function parseScoutSkillMetadata(input: {
   if (!Object.values(ScoutSkillTypes).includes(type as ScoutSkillType)) {
     throw new Error(`Scout Skill ${label} has unsupported type: ${type}`);
   }
+  const parsedType = type as ScoutSkillType;
+  const domain = parsedType === ScoutSkillTypes.Domain
+    ? requireScalar(fields, ["domain"], label)
+    : undefined;
+  if (domain !== undefined && !SKILL_TOKEN_PATTERN.test(domain)) {
+    throw new Error(`Scout Skill ${label} domain has invalid token: ${domain}`);
+  }
   const phaseField = findField(fields, ["phase"]);
   const phase = phaseField
     ? parseInlineList(phaseField, label, /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/)
@@ -123,7 +130,8 @@ export function parseScoutSkillMetadata(input: {
 
   return {
     name,
-    type: type as ScoutSkillType,
+    type: parsedType,
+    ...(domain ? { domain } : {}),
     description,
     summary,
     phase,
@@ -222,18 +230,26 @@ export function resolveSkillDependencyLoadOrder(
   return result;
 }
 
-/** Returns Internal Skills and Skills visible in the supplied Phases, dependency-first. */
+/** Returns Internal Skills and current-domain Skills visible in the supplied Phases. */
 export function resolveScoutSkillsForPhases(
   catalog: ScoutSkillCatalogEntry[],
-  phases: readonly ScoutAgentPhase[],
+  input: {
+    domain: string;
+    phases: readonly ScoutAgentPhase[];
+  },
 ): ResolvedScoutSkillCatalogEntry[] {
-  const selectedPhases = new Set(phases);
+  const selectedPhases = new Set(input.phases);
   return resolveSkillDependencyLoadOrder(
     catalog,
     catalog
-      .filter((skill) => (skill.type === ScoutSkillTypes.Domain || skill.type === ScoutSkillTypes.Internal)
-        && (skill.phase?.includes(InternalPhase)
-          || skill.phase?.some((phase) => selectedPhases.has(phase))))
+      .filter((skill) => {
+        if (skill.type === ScoutSkillTypes.Internal) {
+          return skill.phase?.includes(InternalPhase) === true;
+        }
+        return skill.type === ScoutSkillTypes.Domain
+          && skill.domain === input.domain
+          && skill.phase?.some((phase) => selectedPhases.has(phase)) === true;
+      })
       .map((skill) => skill.name),
   );
 }

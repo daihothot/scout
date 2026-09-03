@@ -36,6 +36,7 @@ const reasoningSummaries = new Set<CodexReasoningSummary>([
   "detailed",
   "none",
 ]);
+const DOMAIN_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
 /** Returns the selected Workflow Profile path under `assets/codex/workflows`. */
 export function workflowProfilePath(scoutRoot: string, name: string): string {
@@ -66,7 +67,12 @@ export function readWorkflowProfile(
 
 function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
   const profile = requireRecord(value, path, "Workflow Profile");
-  assertKeys(profile, ["defaults", "phases", "resources", "roles"], path, "top-level");
+  assertKeys(
+    profile,
+    ["domain", "defaults", "phases", "resources", "roles"],
+    path,
+    "top-level",
+  );
   const defaults = requireRecord(profile.defaults, path, "defaults");
   assertKeys(defaults, ["config", "model", "maxThreads", "maxDepth"], path, "defaults");
   const phases = requireRecord(profile.phases, path, "phases");
@@ -118,6 +124,7 @@ function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
   }
   validateEdges(workers, path);
   return {
+    domain: requireDomainId(profile.domain, path),
     defaults: {
       config: requireString(defaults.config, path, "defaults.config"),
       model: parseModel(defaults.model, path, "defaults.model"),
@@ -130,6 +137,14 @@ function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
     resources,
     roles,
   };
+}
+
+function requireDomainId(value: unknown, path: string): string {
+  const domain = requireString(value, path, "domain");
+  if (!DOMAIN_ID_PATTERN.test(domain)) {
+    throw new Error(`Invalid Workflow Profile at ${path}: domain has invalid token: ${domain}`);
+  }
+  return domain;
 }
 
 function parseWorkerPhase(

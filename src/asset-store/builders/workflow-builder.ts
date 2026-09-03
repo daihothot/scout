@@ -17,6 +17,7 @@ export class WorkflowBuilder {
       phases: name === "coordinator" ? [SynthesisPhase] : role.phases ?? [],
     }));
     return createGraphState({
+      domain: this.asset.profile.domain,
       workflowProfile: this.asset.name,
       phases: workerPhases.map(([name, phase]) => ({
         name,

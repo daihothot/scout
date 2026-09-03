@@ -38,7 +38,7 @@ export interface MountShellEnvironmentInput {
 }
 
 /** Creates the full placeholder map, deriving the run id when omitted. */
-export function buildMountMacroValues(input: MountMacroValuesInput): MountMacroValues {
+export function createMountMacroValues(input: MountMacroValuesInput): MountMacroValues {
   return {
     [MountMacros.ScoutRoot]: input.scoutRoot,
     [MountMacros.RunRoot]: input.runRoot,

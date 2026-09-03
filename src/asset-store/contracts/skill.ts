@@ -37,6 +37,8 @@ export interface ScoutSkillFamilyPath {
 export interface ScoutSkillCatalogEntry {
   name: string;
   type: ScoutSkillType;
+  /** Domain label required by Domain Skills; other Skill types omit it. */
+  domain?: string;
   description: string;
   summary: string;
   phase?: ScoutAgentPhase[];
@@ -60,6 +62,8 @@ export interface ResolvedScoutSkillCatalogEntry extends ScoutSkillCatalogEntry {
 export interface MaterializedSkill {
   name: string;
   type: ScoutSkillType;
+  /** Domain label retained for Domain Skill mount inspection. */
+  domain?: string;
   description: string;
   summary: string;
   phase?: ScoutAgentPhase[];

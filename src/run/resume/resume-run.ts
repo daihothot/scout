@@ -8,7 +8,9 @@ import {
   Scheduler,
   type GraphState,
 } from "../../core/workflow/index.js";
-import { ValidationDomain } from "../../domain/index.js";
+import { createDomainRuntime } from "../../domain/index.js";
+import type { ScoutDomain } from "../../domain/index.js";
+import { readWorkflowProfile } from "../../asset-store/index.js";
 import {
   NoopRuntimeInteractionPort,
   type RuntimeDisclosureEvent,
@@ -56,9 +58,31 @@ export async function resumeRun(
   }
   const scoutRoot = dirname(runDirectory);
   const scoutConfig = loadScoutConfig(scoutRoot);
-  const journal = RunJournal.open({ runId: manifest.runId, runRoot });
   const eventBus = new InMemoryEventBus();
-  const scheduler = new Scheduler(projectGraphState(journal.readAll()), eventBus);
+  const journal = RunJournal.open({ runId: manifest.runId, runRoot });
+  let graphState: GraphState;
+  let domain: ScoutDomain;
+  try {
+    graphState = projectGraphState(journal.readAll());
+    const selectedProfile = readWorkflowProfile(scoutRoot, scoutConfig.workflow.profile);
+    if (selectedProfile.name !== graphState.workflowProfile) {
+      throw new Error(
+        `Cannot resume ${manifest.runId} with Workflow Profile ${selectedProfile.name};`
+        + ` the run was created with ${graphState.workflowProfile}.`,
+      );
+    }
+    if (selectedProfile.profile.domain !== graphState.domain) {
+      throw new Error(
+        `Cannot resume ${manifest.runId} with domain ${selectedProfile.profile.domain};`
+        + ` the persisted GraphState requires ${graphState.domain}.`,
+      );
+    }
+    domain = await createDomainRuntime(graphState.domain);
+  } catch (error) {
+    journal.close();
+    throw error;
+  }
+  const scheduler = new Scheduler(graphState, eventBus);
   const interactionPort = options.interactionPort ?? new NoopRuntimeInteractionPort();
   const logger = new Logger({
     runId: manifest.runId,
@@ -88,7 +112,7 @@ export async function resumeRun(
     eventBus,
     scheduler,
     interactionPort,
-    domain: new ValidationDomain(),
+    domain,
     scoutConfig,
     journal,
     manifestStore,
@@ -148,6 +172,7 @@ export async function resumeRun(
   const checkpointSeq = projectRun(
     scope.journal.readAll(),
     resolveSynthesisRole(scope.scheduler.snapshot()).name,
+    scope.domain.journal,
   ).checkpointSeq;
   const agentIds = scope.agentRegistry.listAgents().map((agent) => agent.agentId);
   scope.logger.info({

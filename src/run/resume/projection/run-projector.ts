@@ -11,7 +11,11 @@ import type { AgentHumanInputState } from "../../../agent/human-input/index.js";
 import type { AgentMessage } from "../../../agent/message/types.js";
 import type { AgentStepState } from "../../../agent/step/types.js";
 import type { AgentToolCallState } from "../../../agent/tool-call/types.js";
-import { ValidationEvents } from "../../../domain/validation/validation-events.js";
+import type {
+  ScoutDomainArtifactFact,
+  ScoutDomainGateFact,
+  ScoutDomainJournalProjection,
+} from "../../../domain/types.js";
 import { SystemEvents } from "../../../system/events/index.js";
 import { RunEvents } from "../../events/index.js";
 import type { RunJournalEvent } from "../../journal/index.js";
@@ -50,30 +54,13 @@ export interface ProjectedTaskOutcome {
 }
 
 /** Published artifact identity and verification facts, without artifact body. */
-export interface ProjectedArtifact {
-  artifactId: string;
-  taskId?: string;
-  agentId: string;
-  role: string;
-  ref: string;
-  digest: string;
-  status: string;
+export interface ProjectedArtifact extends ScoutDomainArtifactFact {
   journalSeq: number;
-  publishedAt: string;
 }
 
 /** Validation gate fact retained for coordinator review during resume. */
-export interface ProjectedGate {
-  gateId: string;
-  taskId?: string;
-  agentId: string;
-  checkedRef: string;
-  checkedDigest: string;
-  gateRef: string;
-  gateDigest: string;
-  status: string;
+export interface ProjectedGate extends ScoutDomainGateFact {
   journalSeq: number;
-  recordedAt: string;
 }
 
 /**
@@ -121,6 +108,7 @@ export interface RunProjection {
 export function projectRun(
   events: RunJournalEvent[],
   synthesisRole: string,
+  domainJournal?: ScoutDomainJournalProjection,
 ): RunProjection {
   const created = events.find((event) => RunEvents.run.created.is(event));
   if (!created || !RunEvents.run.created.is(created)) {
@@ -398,16 +386,15 @@ export function projectRun(
       recoveryMessageTask.set(event.payload.message.messageId, event.payload.taskId);
       continue;
     }
-    if (ValidationEvents.artifact.published.is(event)) {
+    const domainFact = domainJournal?.project(event, event.seq);
+    if (domainFact?.kind === "artifact") {
       artifacts.push({
-        ...structuredClone(event.payload),
+        ...structuredClone(domainFact.payload),
         journalSeq: event.seq,
       });
-      continue;
-    }
-    if (ValidationEvents.gate.recorded.is(event)) {
+    } else if (domainFact?.kind === "gate") {
       gates.push({
-        ...structuredClone(event.payload),
+        ...structuredClone(domainFact.payload),
         journalSeq: event.seq,
       });
     }

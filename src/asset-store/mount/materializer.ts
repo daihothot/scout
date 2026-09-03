@@ -29,7 +29,7 @@ import {
   resolveAssetRelativePath,
   skillNameFromPath,
 } from "../files/asset-paths.js";
-import { buildMountMacroValues } from "./macros.js";
+import { createMountMacroValues } from "./macros.js";
 
 /**
  * Owns filesystem writes for one role mount. It creates links and generated
@@ -141,7 +141,7 @@ export class MountMaterializer {
       mountRoot,
       assetsRoot,
       tempRoot,
-      dynamicValues: buildMountMacroValues({
+      dynamicValues: createMountMacroValues({
         scoutRoot,
         runRoot,
         mountRoot,
@@ -286,6 +286,7 @@ function materializeSkills(
     return {
       name: skill.name,
       type: skill.type,
+      ...(skill.domain ? { domain: skill.domain } : {}),
       description: skill.description,
       summary: skill.summary,
       ...(skill.phase ? { phase: [...skill.phase] } : {}),
