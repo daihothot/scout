@@ -364,7 +364,9 @@ export function computeResourceHash(input: {
     `agentProfile:${profileResourceHash(input.agentProfile)}`,
     `agents:${sha256File(join(input.assetsRoot, CodexAssetLayout.agentsMd))}`,
     ...(isSynthesisRole
-      ? []
+      ? [`coordinatorAgents:${sha256File(
+        join(input.assetsRoot, CodexAssetLayout.coordinatorAgentsMd),
+      )}`]
       : [`workerAgents:${sha256File(join(input.assetsRoot, CodexAssetLayout.workerAgentsMd))}`]),
     `config:${input.agentProfile.config}:${sha256File(join(input.assetsRoot, input.agentProfile.config))}`,
     `mcpServers:${sha256File(join(input.assetsRoot, CodexAssetLayout.mcpServers))}`,

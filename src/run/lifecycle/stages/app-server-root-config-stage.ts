@@ -285,7 +285,11 @@ function resolveRoleRuntimeReadableRoots(input: {
   const roots = [
     ...readablePathVariants(join(input.assetsRoot, CodexAssetLayout.agentsMd)),
   ];
-  if (!input.profile.phases.includes(SynthesisPhase)) {
+  if (input.profile.phases.includes(SynthesisPhase)) {
+    roots.push(...readablePathVariants(
+      join(input.assetsRoot, CodexAssetLayout.coordinatorAgentsMd),
+    ));
+  } else {
     roots.push(...readablePathVariants(join(input.assetsRoot, CodexAssetLayout.workerAgentsMd)));
   }
   const skillCatalog = buildScoutSkillCatalog({

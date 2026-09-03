@@ -20,8 +20,22 @@
 ### Runtime Phase
 
 - `phase` 是 Scout Runtime 顶层工作流中的确定性进程节点，也是最小资源投影单位。
-- Scout Runtime 以 `phase` 为边界，为当前执行环境配置和投影所需资源。
+- 每个 `phase` 声明自身需要的资源范围。一个 `role` 绑定多个 `phase` 时，当前 `mount` 提供这些 `phase` 对应资源的合并结果。
 - `phase` 不限定具体资源类型。
+- 当前 `phase` 表示当前工作的流程位置，不会在切换时改变已经生成的 `mount`；`role` 只消费当前 `mount` 已经提供的资源和 Tool。
+
+### Workflow Context
+
+- `workflow` 定义当前 `run` 使用的 `phase` 以及允许的流转关系。
+- `attachment` 是 Scout Runtime 随当前 `response` 注入的上下文块。
+- `<workflow_phase>` attachment 提供当前 `<domain>` 和 `<phase>`；所有 `role` 只使用其中的事实，不从 task 名称、Skill 名称、历史消息或自己的推断中补出。
+
+```text
+<workflow_phase>
+current_domain: <domain>
+current_phase: <phase>
+</workflow_phase>
+```
 
 ### Roles
 
@@ -34,6 +48,7 @@
 - `run-root` 是当前 `run` 的根目录。
 - `other-role` 是当前 `role` 以外的任一具体 `role`。
 - `已注入` 表示该规则文件的完整内容已通过 `developerInstructions` 加入当前 `<role>` 的上下文。
+- 当前 `role` 只能使用当前 `mount`、profile 已暴露且已经确认可见的资源；不得使用旧 run、其它设备或记忆中的路径替代当前资源事实。
 
 当前 `<role>` 可访问的运行时目录结构为：
 
@@ -44,7 +59,8 @@
     │   ├── mount/                    【用途：当前工作目录】【权限：仅可读】
     │   │   ├── AGENTS.md             【本文件】【用途：通用规则原件】【权限：仅可读】
     │   │   ├── agents/
-    │   │   │   └── worker.AGENTS.md  【仅 worker】【用途：worker 通用规则原件】【权限：仅可读】
+    │   │   │   ├── coordinator.AGENTS.md 【仅 coordinator】【用途：coordinator 通用规则原件】【权限：仅可读】
+    │   │   │   └── worker.AGENTS.md      【仅 worker】【用途：worker 通用规则原件】【权限：仅可读】
     │   │   └── .scout/skill/         【用途：当前可见 Skill 根目录】【权限：仅可读】
     │   ├── artifacts/                【用途：正式产物和交接引用】【权限：可读可写】
     │   └── tmp/                      【用途：工具运行临时数据】【权限：可读可写】
@@ -55,8 +71,9 @@
 Scout Runtime 自动注入的规则文件，遗忘规则时可以读取：
 
 ```text
-AGENTS.md                  【已注入所有 role】
-agents/worker.AGENTS.md    【已注入 worker】
+AGENTS.md                       【已注入所有 role】
+agents/coordinator.AGENTS.md    【已注入 coordinator】
+agents/worker.AGENTS.md         【已注入 worker】
 ```
 
 ### Skill Navigation
@@ -84,22 +101,18 @@ agents/worker.AGENTS.md    【已注入 worker】
   .scout/skill/<family-name-1>/<family-name-2>/<skill-name>/SKILL.md
   ```
 
-- 首次启动时，查看当前可见的顶层分类目录：
-
-  ```bash
-  ls -la .scout/skill/
-  ```
-
 ### Skill Categorization
 
 - `domain` 表示任务所属的业务领域，目录节点使用具体领域名称，例如 `validation`。
 - `Dynamic Tool` 是 Scout Runtime 根据当前 `<role>` 注入的 Scout 操作工具。
+- `subfamily` 不是固定层级。只有确实需要把同一类 Skill 再分组时，才在 `family-path` 后追加 `.<subfamily>`，并先声明该名称代表的范围。
 
-| 分类 | `<family-path>` | 定义与入口 |
+| 分类 | `<family-path>` 形式 | 规则 |
 | --- | --- | --- |
-| `internal` | `internal.general` | 所有 `role` 必须首先读取的 Scout 内部 Skill，具体入口见下方命令。 |
-| `scout tool` | `tool.scout.dynamic.<subfamily>` | Dynamic Tool 的操作 Skill；下级 family 分为 `general`、`coordinator` 和 `worker`，当前适用的 Domain Skill 根据工作需要指定要消费的 Tool Skill。 |
-| `domain` | `<domain>.<subfamily>` | 定义当前 `<domain>` 中各 `role` 的业务输入、工作流程、输出和交接。 |
+| `internal` | `internal` 或 `internal.<subfamily>` | 所有 `role` 首先读取 Internal Skill；使用 `<subfamily>` 前先说明分组含义。 |
+| `tool` | `tool.scout.dynamic` 或 `tool.scout.dynamic.<subfamily>` | `Dynamic Tool` 的操作 Skill；使用 `<subfamily>` 前先说明它包含哪些工具。 |
+| `domain` | `<domain>` 或 `<domain>.<subfamily>` | 定义当前 `<domain>` 的业务规则；使用 `<subfamily>` 前先说明它区分的职责或内容。 |
+| `signal` | `signal` 或 `signal.<subfamily>` | 提供可组合的专项 contract；只有当前 Domain Skill 声明需要时才读取，Domain Skill 不一定使用 Signal。 |
 
 所有 `role` 必须首先读取的 Internal Skill：
 
@@ -113,6 +126,34 @@ agents/worker.AGENTS.md    【已注入 worker】
 
   ```bash
   cat .scout/skill/internal/general/internal-skill-consumption/SKILL.md
+  ```
+
+读取 Internal Skill 后，才根据当前 `<role>` 和 Domain Skill 读取 Dynamic Tool：
+
+- 所有 `role` 可查询的共同范围：
+
+  ```text
+  family:tool.scout.dynamic.general.**
+  ```
+
+### Skill Discovery
+
+- Domain Skill 在 `dependencies.skills.required` 或 `optional` 中声明的 `family:<family-path>.*` 或 `family:<family-path>.**` 只是可见范围，不是可直接读取的 Skill 清单。
+- 按 `internal-skill-consumption` 的规则，使用以下命令发现 family 和叶节点 Skill：
+
+  ```bash
+  scout-assets family <family-path>
+  scout-assets skill <skill-name>
+  ```
+
+- `scout-assets family <family-path>` 返回下级 family 或叶节点 Skill；只有叶节点才使用 `scout-assets skill <skill-name>`，并使用返回的实际 `skill.path` 读取。
+- required 范围的匹配叶节点全部读取；optional 范围只读取当前 task 需要的候选。不得猜路径或扫描整个 `.scout/skill/`。
+- 其它 Shell、MCP 或外部能力只有在当前 Domain Skill 声明可用时才能使用。
+
+- 首次启动时，查看当前可见的顶层分类目录：
+
+  ```bash
+  ls -la .scout/skill/
   ```
 
 ### Domain-Driven Skill Types
@@ -167,7 +208,7 @@ Scout 以 `<domain>` 组织业务工作。
 - 当前 `<role>` 按 `Tool Skill` 的 contract 调用对应 `Tool`。
 - Scout 采用响应式交互机制：Scout Runtime 根据 `task` 状态、`Tool` 结果和角色通信更新工作上下文，并在状态变化时触发相关 `<role>`。
 - 当前 `<role>` 完成本次可执行工作后，必须立即结束当前 `response` 并将控制权交还 Scout Runtime；后续状态变化由 Scout Runtime 触发新的 `response`。
-- 结束当前 `response` 只表示交还控制权，不自动改变 `task` 状态，也不表示 `task` 已完成。
+- 结束当前 `response` 只表示交还控制权，不自动改变 `task` 状态，也不表示 `task` 或 `run` 已完成。
 
 ## Scout Delivery
 
@@ -192,6 +233,7 @@ Scout 通过持久产物、稳定引用和正式角色交接完成工作交付�
 - `coordinator` 从 `handoff` 的 `outcome` 获取 `ref`，并通过它定位对应 `artifact`。
 - 下游 `worker` 从当前 `<task>` 获取正式 `ref`，并通过它定位对应 `artifact`。
 - `coordinator` 根据 `Domain Skill` 处理 `handoff`，继续协调工作或形成面向用户的交付。
+- 任何 `role` 都不得读取其它 `role` 的私有 `mount`、`logs` 或非正式上下文；需要其它 role 的结果时，只使用当前 `task` prompt 或 Scout Runtime 提供的正式 `ref`。
 
 ## Scout Constitutional Prohibitions
 

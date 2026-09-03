@@ -221,7 +221,7 @@ test("AssetStore accepts an empty Synthesis shell tool set", () => {
   assert.deepEqual(mount.shellTools, []);
 });
 
-test("AssetStore mounts shared Worker instructions only for Worker roles", () => {
+test("AssetStore mounts the matching shared instructions for each role category", () => {
   const fixtureRoot = createCodexAssetFixture("scout-agent-instructions-");
   const store = new AssetStore();
   for (const agentId of ["coordinator", "researcher", "verifier", "validator"]) {
@@ -239,23 +239,60 @@ test("AssetStore mounts shared Worker instructions only for Worker roles", () =>
     const isCoordinator = agentId === "coordinator";
     assert.deepEqual(
       readdirSync(join(mount.mountRoot, "agents")),
-      isCoordinator ? [] : ["worker.AGENTS.md"],
+      isCoordinator ? ["coordinator.AGENTS.md"] : ["worker.AGENTS.md"],
     );
     assert.deepEqual(
       manifest.assets
-        .filter((asset) => asset.type === "agents_md" || asset.type === "worker_agents_md")
+        .filter((asset) => asset.type.endsWith("agents_md"))
         .map((asset) => asset.id),
       isCoordinator
-        ? ["codex.agents.default"]
+        ? ["codex.agents.default", "codex.agents.coordinator"]
         : ["codex.agents.default", "codex.agents.worker"],
     );
     assert.deepEqual(
       manifest.linkedFiles
         .filter((file) => file.path.endsWith("AGENTS.md"))
         .map((file) => file.path),
-      isCoordinator ? ["AGENTS.md"] : ["AGENTS.md", "agents/worker.AGENTS.md"],
+      isCoordinator
+        ? ["AGENTS.md", "agents/coordinator.AGENTS.md"]
+        : ["AGENTS.md", "agents/worker.AGENTS.md"],
     );
   }
+});
+
+test("Coordinator resource hash includes Coordinator instructions only", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-coordinator-instructions-hash-");
+  const store = new AssetStore();
+  const coordinatorBefore = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-coordinator-instructions-before-test",
+    agentId: "coordinator",
+  });
+  const researcherBefore = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-researcher-instructions-before-test",
+    agentId: "researcher",
+  });
+
+  writeFileSync(
+    join(fixtureRoot, "assets", "codex", "agents", "coordinator.AGENTS.md"),
+    "updated coordinator instructions\n",
+    "utf8",
+  );
+
+  const coordinatorAfter = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-coordinator-instructions-after-test",
+    agentId: "coordinator",
+  });
+  const researcherAfter = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-researcher-instructions-after-test",
+    agentId: "researcher",
+  });
+
+  assert.notEqual(coordinatorAfter.resourceHash, coordinatorBefore.resourceHash);
+  assert.equal(researcherAfter.resourceHash, researcherBefore.resourceHash);
 });
 
 test("AssetStore mounts scout-helper only for Worker profiles", () => {

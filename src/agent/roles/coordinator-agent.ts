@@ -6,7 +6,7 @@ import {
   type ScoutAgentOptions,
 } from "../core/scout-agent.js";
 import { CoordinatorRunner } from "../runner/coordinator/coordinator-runner.js";
-import { readAgentInstructions } from "./instructions.js";
+import { readCoordinatorAgentInstructions } from "./instructions.js";
 import { Result } from "../../core/result.js";
 import type { SendAgentMessageInput } from "../task/types.js";
 import { currentRunScope } from "../../run/run-scope.js";
@@ -60,7 +60,7 @@ export class CoordinatorAgent extends ScoutAgent {
             max_depth: options.agentMount.agentProfile.maxDepth,
           },
         },
-        developerInstructions: readAgentInstructions(options),
+        developerInstructions: readCoordinatorAgentInstructions(options),
         dynamicTools: options.dynamicTools,
       },
     });

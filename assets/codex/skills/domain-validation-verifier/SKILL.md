@@ -107,14 +107,11 @@ Verifier 使用完整集合建立 interface、derived 和 implementation contrac
 
 ## Native Subagent Strategy
 
-- 本技能明确授权父 Verifier 在预计能够提高当前验证效率时自主决定是否使用 Codex native subagent；是否派发、派发数量以及并行或串行方式由父 Verifier 判断，不构成 Phase 的必需步骤。
+- native subagent 的通用委派、父 Worker 责任和结果消费规则遵守 `worker.AGENTS.md`。
 - Phase 1 由父 Verifier 锁定 accepted Research Gate context、唯一 Research pack、verification manual、verification points、当前版本和执行边界；输入未闭环时不得派发依赖这些输入的子任务。
-- 进入 Phase 2 时，父 Verifier 先在当前 plan 中列出 verification point、候选信号范围及其环境依赖。只有存在边界稳定、互不依赖的 verification point，且并行收益高于启动、等待和聚合成本时才派发；只读证据定位与候选信号采集是适合委派的候选范围，但不要求固定数量或必须并行。
-- 只读代码、配置、已有日志和文件证据可以并行检查；具体工具是否可并发必须遵守其当前说明和副作用约束，不能仅因工具可用就自动并行。
-- 共享同一设备、应用 session、用户账号、配置状态、部署目标或其它可变外部环境的操作必须由父 Verifier 串行调度；需要授权、有破坏性或会改变后续验证前提的操作不得交给 child 自主执行。
+- 进入 Phase 2 时，父 Verifier 先在当前 plan 中列出 verification point、候选信号范围及其环境依赖。互不依赖的 verification point、只读证据定位与候选信号采集是可选的委派范围。
 - child 只返回中文 observation 候选、原始信号位置、执行命令、环境信息、失败命令和 limitations；不得调用 Scout dynamic tool、修改 Research artifact、写最终 Verification Report 或提交 task。
 - Phase 3 的 evidence ref 确认、verification point 结论、跨点一致性检查、正式 artifact 聚合和 handoff 只能由父 Verifier 完成。
-- 父 Verifier 决定不派发时直接自行执行，不需要记录 fallback 原因；派发失败或结果不可用时，可以在停止或释放对应 child 后收回该范围，不得与仍在执行的 child 重复验证。
 
 ## Inputs
 

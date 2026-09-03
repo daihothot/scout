@@ -146,8 +146,11 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
   const instructions = agent.spec.developerInstructions ?? "";
   assert.match(instructions, /common instructions/);
   assert.doesNotMatch(instructions, /worker instructions/);
-  assert.doesNotMatch(instructions, /coordinator instructions/);
+  assert.match(instructions, /coordinator instructions/);
   assert.equal(instructions.match(/common instructions/g)?.length, 1);
+  assert.ok(
+    instructions.indexOf("common instructions") < instructions.indexOf("coordinator instructions"),
+  );
 });
 
 test("AgentBuilder rejects a dynamic tool whose guidance Skill is not mounted", () => {
@@ -2132,7 +2135,13 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
   mkdirSync(logsRoot, { recursive: true });
   mkdirSync(tempRoot, { recursive: true });
   writeFileSync(join(mountRoot, "AGENTS.md"), "common instructions", "utf8");
-  if (role !== "coordinator") {
+  if (role === "coordinator") {
+    writeFileSync(
+      join(mountRoot, "agents", "coordinator.AGENTS.md"),
+      "coordinator instructions",
+      "utf8",
+    );
+  } else {
     writeFileSync(join(mountRoot, "agents", "worker.AGENTS.md"), "worker instructions", "utf8");
   }
   const guidanceSkills = role === "coordinator"

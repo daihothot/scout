@@ -100,7 +100,10 @@ export class MountManifestInspector {
     const expected = new Map<string, string>([
       ["AGENTS.md", assetSourcePath(CodexAssetLayout.agentsMd)],
       ...(this.context.agentProfile.phases.includes(SynthesisPhase)
-        ? []
+        ? [[
+          join("agents", "coordinator.AGENTS.md"),
+          assetSourcePath(CodexAssetLayout.coordinatorAgentsMd),
+        ]] as Array<[string, string]>
         : [[
           join("agents", "worker.AGENTS.md"),
           assetSourcePath(CodexAssetLayout.workerAgentsMd),
