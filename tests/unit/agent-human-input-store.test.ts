@@ -51,7 +51,7 @@ test("AgentHumanInputStore projects requests and matching responses", async (t) 
       messageId: "task-1-human-1-response",
       agentId: "researcher",
       taskId: "task-1",
-      body: "<human-response>\n使用 v2。\n</human-response>",
+      body: "<human-response>\nrequestId: task-1-human-1\ntaskId: task-1\nmessageId: task-1-human-1-response\nresponse:\n使用 v2。\n</human-response>",
       queuedAt: "2026-07-23T00:01:00.000Z",
     },
   };

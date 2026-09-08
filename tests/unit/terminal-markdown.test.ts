@@ -647,7 +647,7 @@ test("activity strip shows process during Coordinator and Worker item gaps", () 
   );
   assert.deepEqual(
     worker && [worker.label, worker.type, worker.processing, worker.activity],
-    ["RESEA", "commandExecution", true, "处理中 · 已执行 · rg BDD-001"],
+    ["RESEA", "commandExecution", true, "处理中 · 执行完成 · rg BDD-001"],
   );
 });
 
@@ -685,7 +685,7 @@ test("turn completion makes a stale in-progress item static", () => {
   );
 });
 
-test("activity strip displays command labels instead of command working directories", () => {
+test("activity strip displays completed command results instead of working directories", () => {
   const activity = selectCurrentAgentActivity(tuiState({
     activities: [{
       seq: 1,
@@ -697,14 +697,56 @@ test("activity strip displays command labels instead of command working director
       type: "commandExecution",
       status: "completed",
       label: "rg \"login retry\" src",
-      detail: "/run/agents/researcher/mount",
+      detail: "exit_code: 0 · output: empty",
       updatedAt: "2026-07-10T00:00:01.000Z",
     }],
   }));
 
   assert.deepEqual(
     activity && [activity.type, activity.markdown, activity.activity],
-    ["commandExecution", false, "已执行 · rg \"login retry\" src"],
+    [
+      "commandExecution",
+      false,
+      "执行完成 · rg \"login retry\" src · exit_code: 0 · output: empty",
+    ],
+  );
+});
+
+test("activity strip keeps a failed command visible after its turn completes", () => {
+  const activity = selectCurrentAgentActivity(tuiState({
+    activities: [{
+      seq: 1,
+      agentId: "researcher",
+      role: "researcher",
+      taskId: "researcher-task-0001",
+      threadId: "thread-researcher",
+      turnId: "turn-1",
+      itemId: "command-1",
+      type: "commandExecution",
+      status: "failed",
+      label: "ls /restricted",
+      detail: "exit_code: 1 · stderr: Operation not permitted",
+      updatedAt: "2026-07-10T00:00:01.000Z",
+    }],
+    turnActivities: [{
+      seq: 2,
+      agentId: "researcher",
+      role: "researcher",
+      taskId: "researcher-task-0001",
+      threadId: "thread-researcher",
+      turnId: "turn-1",
+      status: "completed",
+      updatedAt: "2026-07-10T00:00:02.000Z",
+    }],
+  }));
+
+  assert.deepEqual(
+    activity && [activity.status, activity.processing, activity.activity],
+    [
+      "failed",
+      false,
+      "执行失败 · ls /restricted · exit_code: 1 · stderr: Operation not permitted",
+    ],
   );
 });
 

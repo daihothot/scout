@@ -53,9 +53,11 @@ function itemPresentation(
   processing: boolean,
   turnStatus?: string,
 ): TuiAgentActivityStripItem {
-  const status = turnStatus && turnStatus !== "inProgress"
-    ? turnStatus
-    : activity.status;
+  const status = activity.type === "commandExecution" && activity.status !== "inProgress"
+    ? activity.status
+    : turnStatus && turnStatus !== "inProgress"
+      ? turnStatus
+      : activity.status;
   return {
     activityId: `${activity.agentId}:${activity.threadId}:${activity.turnId ?? "no-turn"}:${activity.itemId}`,
     role: activity.role,
@@ -124,7 +126,13 @@ function activityText(activity: AgentActivity, status = activity.status): string
     return status === "inProgress" ? "压缩上下文" : "压缩完成";
   }
   const completedPrefix = status === "inProgress" ? "" : "已执行 · ";
-  if (activity.type === "commandExecution") return `${completedPrefix}${label}`;
+  if (activity.type === "commandExecution") {
+    if (status === "inProgress") return label;
+    const result = detail ? ` · ${detail}` : "";
+    if (status === "failed") return `执行失败 · ${label}${result}`;
+    if (status === "completed") return `执行完成 · ${label}${result}`;
+    return `执行未完成(${status}) · ${label}${result}`;
+  }
   if (activity.type === "mcpToolCall") {
     return `${completedPrefix}${detail ? `${label} ${detail}` : label}`;
   }

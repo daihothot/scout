@@ -513,6 +513,17 @@ export abstract class ScoutAgent {
     }
   }
 
+  /** Ends the currently owned turn after a lifecycle command has been accepted. */
+  async yieldActiveTurn(input: { threadId: string; turnId: string }): Promise<void> {
+    this.assertOwnsActiveTurn(input);
+    const ownership = this.inFlightTurn;
+    if (!ownership) {
+      throw new Error(`Agent ${this.agentId} has no active app-server turn to yield.`);
+    }
+    ownership.interruptRequested = true;
+    await this.ensureOwnedTurnInterrupt(ownership);
+  }
+
   private cancelOwnedTurnWait(error: unknown): void {
     const ownership = this.inFlightTurn;
     if (!ownership || ownership.completed) return;
@@ -656,9 +667,13 @@ export abstract class ScoutAgent {
   }): Promise<ScoutAgentSteerResult> {
     if (typeof this.appServer.steerTurn !== "function") return { steered: false };
     const ownership = this.inFlightTurn;
-    if (!ownership || ownership.completed) return { steered: false };
+    if (!ownership || ownership.completed || ownership.interruptRequested) {
+      return { steered: false };
+    }
     const turnId = ownership.turnId ?? await ownership.turnIdReady;
-    if (!turnId || ownership.completed) return { steered: false };
+    if (!turnId || ownership.completed || ownership.interruptRequested) {
+      return { steered: false };
+    }
     try {
       await this.appServer.steerTurn({
         threadId: ownership.threadId,

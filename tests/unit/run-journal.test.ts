@@ -177,7 +177,12 @@ test("RunJournalWriter persists Human Input semantics and message delivery as se
     messageId: "task-1-human-1-response",
     agentId: "researcher",
     taskId: "task-1",
-    body: agent.turn.human_response("使用 v2。"),
+    body: agent.turn.human_response({
+      requestId: "task-1-human-1",
+      taskId: "task-1",
+      messageId: "task-1-human-1-response",
+      response: "使用 v2。",
+    }),
     queuedAt: "2026-07-23T00:01:00.000Z",
   };
   await eventBus.publishAndWait(AgentEvents.humanInput.responded, {

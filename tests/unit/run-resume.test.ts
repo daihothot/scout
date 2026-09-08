@@ -661,7 +661,12 @@ test("Pending human responses stay in the delivery queue instead of Resume Packe
         messageId: "human-response-message",
         agentId: task.agentId,
         taskId: task.taskId,
-        body: agent.turn.human_response("使用测试账号。"),
+        body: agent.turn.human_response({
+          requestId: "human-response-pending",
+          taskId: task.taskId,
+          messageId: "human-response-message",
+          response: "使用测试账号。",
+        }),
         queuedAt: "2026-07-22T00:01:02.000Z",
       },
     }),
@@ -689,7 +694,12 @@ test("Run projection persists one consumption fact for each Human Input directio
     messageId: "human-consumption-response",
     agentId: task.agentId,
     taskId: task.taskId,
-    body: agent.turn.human_response("使用测试账号。"),
+    body: agent.turn.human_response({
+      requestId: "human-response-pending",
+      taskId: task.taskId,
+      messageId: "human-consumption-response",
+      response: "使用测试账号。",
+    }),
     queuedAt: "2026-07-22T00:01:02.000Z",
   };
   const requestConsumption = {
@@ -2007,7 +2017,12 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
       messageId: "researcher-human-response",
       agentId: researcherTask.agentId,
       taskId: researcherTask.taskId,
-      body: agent.turn.human_response("已确认 Researcher 版本"),
+      body: agent.turn.human_response({
+        requestId: "researcher-human",
+        taskId: researcherTask.taskId,
+        messageId: "researcher-human-response",
+        response: "已确认 Researcher 版本",
+      }),
       queuedAt: "2026-07-22T00:00:09.000Z",
     },
   }, {

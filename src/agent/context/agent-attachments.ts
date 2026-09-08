@@ -38,8 +38,19 @@ export const agent = {
     task_outcome(outcome: string): string {
       return attachments.addTagBlock(AgentContextTags.TaskOutcome, outcome);
     },
-    human_response(response: string): string {
-      return attachments.addTagBlock(AgentContextTags.HumanResponse, response);
+    human_response(input: {
+      requestId: string;
+      taskId: string;
+      messageId: string;
+      response: string;
+    }): string {
+      return attachments.addTagBlock(AgentContextTags.HumanResponse, [
+        `requestId: ${input.requestId}`,
+        `taskId: ${input.taskId}`,
+        `messageId: ${input.messageId}`,
+        "response:",
+        input.response,
+      ].join("\n"));
     },
     workflow_phase(): string {
       const scope = currentRunScope();

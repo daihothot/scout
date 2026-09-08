@@ -47,13 +47,19 @@ export class AgentActivityRecorder {
     if (activity.type === "dynamicToolCall" || activity.type === "mcpToolCall") return;
     if (activity.type === "collabAgentToolCall" || activity.type === "subAgentActivity") return;
     if (activity.type === "reasoning" && activity.status !== "completed") return;
-    this.loggerFor(activity.agentId).info({
+    const logger = this.loggerFor(activity.agentId);
+    const log = {
       module: "agent.activity",
       event: AgentEvents.activity.observed.routeKey,
       agentId: activity.agentId,
       taskId: activity.taskId,
       data: activity,
-    });
+    };
+    if (activity.type === "commandExecution" && activity.status === "failed") {
+      logger.warn(log);
+      return;
+    }
+    logger.info(log);
   }
 
   private recordNativeSubagentActivity(activity: AgentNativeSubagentActivity): void {
