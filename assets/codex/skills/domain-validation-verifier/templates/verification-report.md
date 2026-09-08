@@ -45,7 +45,7 @@ verification_manual_ref: "<填写当前 Verification Manual ref>"
 - checked_pack_digest: sha256:<填写 accepted Gate 对应的 64 位十六进制 digest>
 - evidence_registry_ref: <填写当前 Research evidence registry ref>
 - verification_manual_ref: <填写当前 Verification Manual ref>
-- target_version_or_commit: <填写当前验证目标的确切版本或 commit>
+- target_version: <填写当前验证目标的确切版本>
 
 ## Execution Boundary
 

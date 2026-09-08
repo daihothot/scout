@@ -1,4 +1,5 @@
 const { addIssue } = require("../shared/diagnostics.cjs");
+const { requireNonNoneFields, requireSectionFields } = require("../shared/fields.cjs");
 const { displayPath, evidenceIds, markdownTable, sectionByTitle } = require("../shared/markdown.cjs");
 const { validateAggregateBase } = require("./aggregate-state.cjs");
 
@@ -7,6 +8,18 @@ function validateCodeEvidence(document, displayRoot, issues) {
   if (!state || state.status !== "ready") return { state };
 
   const path = displayPath(document.path, displayRoot);
+  const codebase = requireSectionFields(document, "Codebase", [
+    "codebase",
+    "version",
+    "codebase_path",
+    "codegraph_status",
+  ], displayRoot, issues);
+  requireNonNoneFields(document, "Codebase", codebase, [
+    "codebase",
+    "version",
+    "codebase_path",
+    "codegraph_status",
+  ], displayRoot, issues);
   const section = sectionByTitle(document, 2, "Implementation Claims");
   const rows = section ? markdownTable(section.text) : [];
   if (rows.length === 0) {

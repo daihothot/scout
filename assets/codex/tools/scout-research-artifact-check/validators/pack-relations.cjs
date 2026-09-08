@@ -10,7 +10,7 @@ function validatePackRelations(context) {
   validateKnowledgeAggregation(context);
   validateImplementationEvidence(context);
   validateManualRegistration(context);
-  validateProvenanceConsistency(context);
+  validateCodebaseConsistency(context);
   validateReadyPack(context);
 }
 
@@ -147,20 +147,28 @@ function validateManualRegistration({ documents, aggregateResults, registryIds, 
   }
 }
 
-function validateProvenanceConsistency({ documents, aggregateResults, evidence, packRoot, issues }) {
+function validateCodebaseConsistency({ documents, aggregateResults, evidence, packRoot, issues }) {
   const code = documents.get("code-evidence");
   if (!code || aggregateResults.get("code-evidence")?.state?.status !== "ready") return;
 
-  const codeRoot = sectionFields(code, "Root Repository Provenance");
-  const sourceKeys = new Set(sourceRows(code).map(sourceKey));
+  const codeRoot = sectionFields(code, "Codebase");
 
   for (const [id, artifact] of evidence) {
     if (!id.startsWith("E-CODE-")) continue;
-    const fields = sectionFields(artifact, "Repository Provenance");
-    for (const field of ["root_repo", "root_commit"]) compareField(codeRoot, fields, field, artifact, packRoot, issues);
-    const key = `${scalar(fields.get("source_repo"))}:${scalar(fields.get("source_commit"))}`;
-    if (!sourceKeys.has(key)) {
-      addIssue(issues, "EVIDENCE_SOURCE_PROVENANCE_MISMATCH", displayPath(artifact.path, packRoot), `${id} source ${key} is not declared in code-evidence.md.`);
+    const fields = sectionFields(artifact, "Codebase");
+    for (const field of ["codebase", "version"]) {
+      const aggregateField = field;
+      const evidenceField = field;
+      const expected = scalar(codeRoot.get(aggregateField));
+      const actual = scalar(fields.get(evidenceField));
+      if (actual !== expected) {
+        addIssue(
+          issues,
+          "PACK_CODEBASE_MISMATCH",
+          displayPath(artifact.path, packRoot),
+          `${evidenceField} must match code-evidence.md ${aggregateField} (${expected}).`,
+        );
+      }
     }
   }
 }
@@ -175,26 +183,9 @@ function validateReadyPack({ evidence, packRoot, packState, issues }) {
   }
 }
 
-function compareField(expected, actual, field, document, packRoot, issues) {
-  const expectedValue = scalar(expected.get(field));
-  const actualValue = scalar(actual.get(field));
-  if (expectedValue !== actualValue) {
-    addIssue(issues, "PACK_PROVENANCE_MISMATCH", displayPath(document.path, packRoot), `${field} must match code-evidence.md (${expectedValue}).`);
-  }
-}
-
-function sourceRows(document) {
-  const section = sectionByTitle(document, 2, "Source Repository Provenance");
-  return section ? markdownTable(section.text) : [];
-}
-
 function sectionFields(document, title) {
   const section = sectionByTitle(document, 2, title);
   return section ? bulletFields(section.text) : new Map();
-}
-
-function sourceKey(row) {
-  return `${scalar(row.source_repo)}:${scalar(row.source_commit)}`;
 }
 
 module.exports = { validatePackRelations };

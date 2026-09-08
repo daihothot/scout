@@ -22,42 +22,25 @@ function requireNonNoneFields(document, title, fields, names, displayRoot, issue
   }
 }
 
-function repositoryFields() {
+function codebaseFields() {
   return [
-    "root_repo",
-    "root_version",
-    "root_branch",
-    "root_commit",
-    "root_worktree_state",
-    "root_codebase_path",
-    "source_repo",
-    "source_version",
-    "source_branch",
-    "source_commit",
-    "source_worktree_state",
-    "source_codebase_path",
-    "gitlink_path",
-    "gitlink_commit",
-    "gitlink_matches_source_commit",
+    "codebase",
+    "version",
     "codegraph_status",
   ];
 }
 
-function concreteRepositoryFields() {
+function concreteCodebaseFields() {
   return [
-    "root_repo",
-    "root_commit",
-    "root_codebase_path",
-    "source_repo",
-    "source_commit",
-    "source_codebase_path",
+    "codebase",
+    "version",
     "codegraph_status",
   ];
 }
 
 module.exports = {
-  concreteRepositoryFields,
-  repositoryFields,
+  codebaseFields,
+  concreteCodebaseFields,
   requireNonNoneFields,
   requireSectionFields,
 };

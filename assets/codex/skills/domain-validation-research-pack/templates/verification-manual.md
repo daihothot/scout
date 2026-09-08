@@ -52,7 +52,7 @@ evidence_registry_ref: evidence-registry.md
 - capability: <填写经当前证据确认的能力名称>
 - platform: <填写当前验证目标平台>
 - app_version: <填写当前验证目标应用版本>
-- target_version_or_commit: <填写当前代码库版本对应的明确版本或 commit>
+- target_version: <填写当前代码库的明确版本>
 
 字段标记规则：
 

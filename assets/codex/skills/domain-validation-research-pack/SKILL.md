@@ -23,7 +23,7 @@ summary: 编排知识和代码 producer contracts，形成唯一 Research Pack�
 
 本技能拥有 Research Pack 的编排、聚合、状态和 handoff contract。Guru Knowledge 与当前版本代码的具体采集方法分别由 `tool-guru-knowledge` 和 `tool-jarvis-codebase` 拥有；具体信号语义由对应 Signal Skill 拥有。
 
-模板文件的 `scout.resource` frontmatter 只描述 Runtime 如何物化和提供模板资源。生成 Research artifact 时不得复制该运行时 metadata；checker 会拒绝 artifact frontmatter 中的 `scout.resource`。`evidence-registry.md` 的 `Human Confirmation Evidence` section 只有在 pack 实际包含 `E-HUMAN-*` 时才需要保留；无人工确认 evidence 时可以省略整个 section。
+模板文件的 `scout.resource` frontmatter 只描述 Scout Runtime 如何物化和提供模板资源。生成 Research artifact 时不得复制该运行时 metadata；checker 会拒绝 artifact frontmatter 中的 `scout.resource`。`evidence-registry.md` 的 `Human Confirmation Evidence` section 只有在 pack 实际包含 `E-HUMAN-*` 时才需要保留；无人工确认 evidence 时可以省略整个 section。
 
 ## Skill Type
 
@@ -43,14 +43,6 @@ summary: 编排知识和代码 producer contracts，形成唯一 Research Pack�
 - 生成 `verification-manual.md`，按 verification point 写清用户画像、Given / When / Then、支持证据编号和需要收集的信号。
 - 对 Manual 中选择的 Signal 按对应 contract 定义业务匹配要求。
 - 运行 Research artifact checker、计算 digest 并形成正式 Research handoff。
-
-不使用本技能处理：
-
-- 复制 `tool-guru-knowledge` 的知识目录、检索命令、来源解释或知识明细模板。
-- 复制 `tool-jarvis-codebase` 的代码库解析、CodeGraph 命令或源码明细模板。
-- 判断 BDD 最终通过或失败。
-- 制定 Verifier 的 ReAct 策略、工具顺序或 runtime 执行方案。
-- 采集 runtime signal 或生成 Verification Report。
 
 ## Evidence Model
 
@@ -95,11 +87,11 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 - 由人工确认闭环的事实必须登记为 `E-HUMAN-*`；knowledge 候选或 Researcher 推断不能替代用户确认。
 - task handoff 必须使用英文标题 `Research Handoff State`，在标题下用中文传递 `complete | partial | blocked` 状态、唯一 pack ref、digest、evidence registry ref、verification manual ref、问题或限制、人工确认状态和继续入口；不得复制 artifact 中的证据或验证点详情。存在待人工确认的必需事实时不得提交 handoff，artifact 为其它原因部分完成时不得在 handoff 中描述为 Research 已完成。
 
-## Pack Provenance Model
+## Pack Source Model
 
-- `knowledge-evidence.md` 聚合 `tool-guru-knowledge` 提供的 knowledge repository provenance 和 knowledge source refs。
-- `code-evidence.md` 聚合 `tool-jarvis-codebase` 提供的 root/source repository provenance 和 `E-CODE-*` refs。
-- Domain Skill 不重新解释 producer provenance，也不把本地路径提升为 canonical locator。
+- `knowledge-evidence.md` 聚合 `tool-guru-knowledge` 提供的 knowledge repository、knowledge root 和 knowledge source refs。
+- `code-evidence.md` 聚合 `tool-jarvis-codebase` 提供的 managed codebase 名称、版本、路径、CodeGraph 状态和 `E-CODE-*` refs。
+- Domain Skill 不重新解释 producer source contract，也不把本地路径提升为 canonical locator。
 - Pack 中任何 producer evidence 失效时，相关聚合 claim、registry 和 manual refs 必须同步修正。
 
 ## Native Subagent Orchestration
@@ -121,12 +113,18 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 
 ---
 
-描述：
+Required：
 
 - 上游提供的 BDD ID、Behavior 文件路径、Guru SDK 场景描述或明确验证目标。
-- 可以包含 issue / PR / 用户描述，但这些只能作为定位线索。
+Optional：
 
-注意事项：
+- issue / PR / 用户描述；没有时写 `none`。
+
+Missing：
+
+- 缺少可定位 BDD 或目标不唯一时，停止后续 evidence 生产并进入人工确认。
+
+Confirmation：
 
 - Research 必须收敛到唯一可定位 BDD fact 后再继续整理 knowledge 和代码证据。
 - 无法唯一定位 BDD fact 时，记录为需人工确认项。
@@ -135,52 +133,72 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 
 ---
 
-描述：
+Required：
 
 - 当前 mount 可见本技能、`internal-runtime-inspector`、`tool-guru-knowledge`、`tool-jarvis-codebase`、角色 Domain Skill 已按 Signal 完整读取规则准备的 contract、`scout-research-artifact-check` 和 `scout-artifact-digest`。
 
-注意事项：
+Optional：
 
-- 当前 mount、Skill 和 Tool 的定位与可见性确认遵守 `internal-runtime-inspector`。
-- 两个 producer Skill 各自负责检查自己的 required capabilities。
-- Signal 的完整读取由角色 Domain Skill 与 `internal-skill-consumption` 负责；本技能只在 Manual 中选择并消费适用 contract，不把完整读取等同于全部适用。
-- 缺少 Domain Skill 直接依赖或任一 producer contract 时，记录为阻塞项并向上游报告。
+- 可选 producer、Signal 或 MCP 能力；没有时写 `none`。
+
+Missing：
+
+- 缺少任一 required Skill/Tool 或 artifact target 不可用时，保持 `blocked`，不得猜测替代能力。
+
+Confirmation：
+
+- 当前 mount 可读取所有必需 contract，且角色已完成适用 Signal 集合的 readiness gate。
+- 当前 mount、Skill 和 Tool 的定位与可见性已按 `internal-runtime-inspector` 确认；producer 自己确认其能力。
 
 ### I-003: Producer Scope
 
 ---
 
-描述：
+Required：
 
 - 传给 `tool-guru-knowledge` 的产品、knowledge boundary 和知识查询目标。
 - 传给 `tool-jarvis-codebase` 的 managed repository、版本和 Source Query Targets。
 
-注意事项：
+Optional：
 
-- 两个 producer 必须使用同一个唯一 BDD、产品版本和验证范围。
-- Domain Skill 只负责输入对齐，不复制 producer 的来源解析方法。
-- 任一 producer 返回 scope expansion candidate 时，由父 Researcher 统一判断，不能让 producer 自行扩大 Pack。
+- scope expansion candidate；没有时写 `none`。
+
+Missing：
+
+- 任一 producer scope 缺少产品、BDD 或版本边界时，暂停对应阶段并记录阻塞。
+
+Confirmation：
+
+- 两个 producer 的 BDD、产品版本、平台和验证范围完全一致，且候选扩展已由父 Researcher 明确接受或拒绝。
+- Domain Skill 只负责 scope 对齐，不复制 producer 的来源解析方法。
 
 ### I-004: Target Context
 
 ---
 
-描述：
+Required：
 
-- 当前产品版本、SDK version、branch 或 commit。
+- 当前产品版本和 SDK version。
 - 当前验证目标平台及形成 Verification Manual 所需的目标上下文。
 
-注意事项：
+Optional：
 
-- version / branch / commit 缺失时，记录为需人工确认项。
-- 目标平台缺失且影响 Platform evidence 或 Manual 必填字段时，记录为需人工确认项。
+- 用户画像线索或其它上下文；没有时写 `none`。
+
+Missing：
+
+- 版本或平台缺失且影响必需 evidence 时，进入 Human Confirmation；不得选 `latest` 或猜测平台。
+
+Confirmation：
+
+- 版本、平台、BDD 和 producer scopes 能共同解释当前 Research 范围。
 - producer 对版本、平台和来源状态的具体处理遵守各自 Skill。
 
 ### I-005: Artifact Target
 
 ---
 
-描述：
+Required：
 
 - 当前 Researcher 私有 artifact root 下的唯一 Research pack 目录：
 
@@ -188,11 +206,18 @@ Research workflow 和聚合 artifact 只允许以下状态组合：
 ${SCOUT_ARTIFACT_ROOT}/<bdd-id>-research-pack/
 ```
 
-注意事项：
+Optional：
 
-- `<bdd-id>` 必须使用 Phase 2 唯一收敛的 BDD id；同一 run 的同一 BDD 始终复用这一目录。
-- 收到 Gate 修正意见后原地更新该目录并重新计算 digest，不创建 `-v2`、`-v3` 等版本目录或 pack 副本。
-- 需要写入前必须确认目标位置可写。
+- 已存在的 pack refs；没有时写 `none`。
+
+Missing：
+
+- 目录不可写或无法按唯一 BDD 建立时，停止并记录阻塞，不创建临时副本。
+
+Confirmation：
+
+- artifact root、BDD 目录、写入权限和当前 run 一致；后续修正复用同一 pack ref。
+- `<bdd-id>` 使用 Phase 2 唯一收敛的 BDD id；Gate 修正原地更新，不创建版本副本。
 
 ## Research Workflow
 
@@ -243,12 +268,12 @@ templates/evidence-registry.md
 templates/verification-manual.md
 ```
 
-知识和代码明细证据模板分别由 producer Skill 拥有：
+知识明细 evidence 模板由本 Domain Pack 拥有；producer Skill 只提供事实来源和定位：
 
 ```text
-tool-guru-knowledge/templates/capability-evidence.md
-tool-guru-knowledge/templates/availability-evidence.md
-tool-guru-knowledge/templates/platform-evidence.md
+domain-validation-research-pack/templates/capability-evidence.md
+domain-validation-research-pack/templates/availability-evidence.md
+domain-validation-research-pack/templates/platform-evidence.md
 tool-jarvis-codebase/templates/source-code-evidence.md
 ```
 
@@ -256,16 +281,16 @@ tool-jarvis-codebase/templates/source-code-evidence.md
 
 - Phase 1 必须先读取 `templates/template-index.md`，再读取其中标记为“是”的模板。
 - 进入某类条件 evidence 的收集或写入前，必须读取 `template-index.md` 中对应的条件模板。
-- Phase 3 必须读取 `tool-guru-knowledge/SKILL.md` 及其 `templates/template-index.md`。
+- Phase 3 必须读取 `tool-guru-knowledge/SKILL.md` 及本目录的 `templates/template-index.md` 和条件 evidence 模板。
 - Phase 4 必须读取 `tool-jarvis-codebase/templates/template-index.md` 和 `source-code-evidence.md`。
 - 不得凭记忆缩减模板章节、字段或状态规则；不适用字段使用 `none`、`irrelevant` 或 limitation 明确表达。
-- `scout-research-artifact-check` 只检查弱 Markdown 的结构、状态、provenance 和引用闭环，不判断业务事实是否正确。
+- `scout-research-artifact-check` 只检查弱 Markdown 的结构、状态、来源字段和引用闭环，不判断业务事实是否正确。
 
 文件职责：
 
 - `bdd-evidence.md`：自身即唯一 `E-BDD-001`，记录 Behavior ref、Given / When / Then、claim、status、匹配理由和排除候选。
 - `knowledge-evidence.md`：自身即唯一 `E-KB-001`，摘要聚合 BDD、Capability、Specifications、Availability 和 Platform evidence refs；不嵌完整 evidence block。
-- `code-evidence.md`：登记 implementation claim、root / source repository provenance，并聚合当前版本 `E-CODE-*` artifact refs、locator、claim_supported 和 limitations。
+- `code-evidence.md`：登记 implementation claim、managed codebase 名称、版本、路径和 CodeGraph 状态，并聚合当前版本 `E-CODE-*` artifact refs、locator、claim_supported 和 limitations。
 - `evidence-registry.md`：所有证据编号的集中索引。
 - `verification-manual.md`：验证手册，只引用 evidence id，不粘贴证据正文；verification point 通过 `E-PERSONA-*` 引用独立用户画像 evidence。
 - `evidence/*.md`：除 `E-BDD-001` 和 `E-KB-001` 外，每条 research evidence 的独立 artifact 文件，文件名必须和 evidence id 对齐。
@@ -279,8 +304,8 @@ tool-jarvis-codebase/templates/source-code-evidence.md
 - `E-KB-001` 只由顶层 `knowledge-evidence.md` 拥有并登记到 registry，禁止创建 `evidence/E-KB-001.md` 或其它 `E-KB-*`。
 - 除 `E-BDD-001` 和 `E-KB-001` 外，所有 research evidence 都必须是独立 evidence artifact 文件；`E-CAP-*`、`E-AVAIL-001`、`E-PLATFORM-001`、`E-PERSONA-*`、`E-HUMAN-*`、`E-CODE-*` 都不能只存在于聚合文件中。
 - `bdd-evidence.md` 同时拥有候选收敛过程和 `E-BDD-001` claim；`knowledge-evidence.md`、`evidence-registry.md` 和 `verification-manual.md` 只引用该 evidence id，不复制正文。
-- `tool-guru-knowledge/templates/capability-evidence.md` 是单条 `E-CAP-*` 模板；每个相关 Capability 必须有独立 artifact，并在该 artifact 内完整登记 11 个规格维度。
-- `tool-guru-knowledge` 的 Availability 和 Platform 模板分别只生成一份 `E-AVAIL-001` 和 `E-PLATFORM-001`，跨全部相关 `E-CAP-*` 聚合版本与平台事实。
+- `domain-validation-research-pack/templates/capability-evidence.md` 是单条 `E-CAP-*` 模板；每个相关 Capability 必须有独立 artifact，并在该 artifact 内完整登记 11 个规格维度。
+- 本目录的 Availability 和 Platform 模板分别只生成一份 `E-AVAIL-001` 和 `E-PLATFORM-001`，跨全部相关 `E-CAP-*` 聚合版本与平台事实。
 - `templates/bdd-evidence.md` 是顶层 BDD 聚合证据模板；`user-persona-evidence.md` 和 `human-confirmation-evidence.md` 是本 Domain Skill 拥有的条件 evidence 模板。
 - API Index 和 API 文档只登记为对应 `E-CAP-*` 的 `CAPSRC-*`，其语义写入“数据与接口”规格维度；不得生成 `E-API-*`。
 - `E-PERSONA-*` 使用 `user-persona-evidence.md` 独立表达用户画像，并通过 `Source Evidence` 引用支撑画像字段的 `E-BDD-001`、`E-KB-001`、`E-CAP-*` 或 `E-HUMAN-*`；不得把用户画像字段写入 `E-HUMAN-*`。
@@ -293,201 +318,186 @@ tool-jarvis-codebase/templates/source-code-evidence.md
 - `knowledge-evidence.md` 的 ref field policy：`E-BDD-001` 的 `artifact_ref` 固定为 `bdd-evidence.md`，`E-KB-001` 的 `artifact_ref` 固定为 `knowledge-evidence.md`；其它条目的 `artifact_ref` 必须指向独立 evidence artifact，来源定位保存在对应明细证据中。
 - `code-evidence.md` 的 ref field policy：`E-CODE-*` 来自 `tool-jarvis-codebase` 产物，必须登记 `artifact_ref`。
 - 聚合文件不复制大段来源正文或完整 evidence block；只记录摘要字段和必要 refs。
-- knowledge repository provenance 由 `knowledge-evidence.md` 所有；root / source repository provenance 由 `code-evidence.md` 所有，单条 `E-CODE-*` 仍必须保存可重放 provenance 和 CodeGraph 查询 provenance。
+- knowledge repository、knowledge root 和 source refs 由 `knowledge-evidence.md` 所有；managed codebase 名称、版本、路径和 CodeGraph 状态由 `code-evidence.md` 所有，单条 `E-CODE-*` 仍必须保存可重放源码 locator 和 CodeGraph 查询信息。
 
 ## Phase 1: Confirm Boundary and Inputs
-
 ---
 
-本阶段确认上游输入、当前 mount、两个 producer contracts 和唯一 Research Pack 目标。
+Main Flow：
 
-注意事项：
+Knowledge：
 
-- 从上游输入中提取 product、domain、capability、platform、app version / SDK version / branch / commit、BDD scenario、user persona clue、source refs 和 issue / PR 线索。
-- 读取本技能、`tool-guru-knowledge` 和 `tool-jarvis-codebase` 的 contract 与模板索引；缺失时不得自行复制或缩减 producer 规则。
-- 进入 Phase 6 时，只从角色 Domain Skill 已完成读取的 Signal 集合中选择适用 contract；若新确认了 capability，先按角色 Domain Skill 完整读取该 capability 集合。
-- 缺少 required Domain capability 或 producer contract 时记录为阻塞项；producer 内部能力由对应 Skill 检查。
-- 初始输入明确确认了模板中的必填事实时，可以将该事实登记为 `E-HUMAN-*`；用户画像线索必须进一步整理进独立 `E-PERSONA-*`，不得直接写入人工确认证据结构。
+- 确认 product、domain、BDD、version、platform、producer scopes、Signal readiness 和唯一 pack target。
 
-Exit：
+Flow：
 
-- Required capabilities、两个 producer scopes、artifact target 和输入 scope 已确认。
+```mermaid
+flowchart TD
+  A[读取输入与 mount] --> B{required contract 完整}
+  B -- 否 --> C[记录 blocked]
+  B -- 是 --> D[确认 scope 与 pack target]
+```
 
 Blocked：
 
-- 缺少 `internal-runtime-inspector`、`tool-guru-knowledge`、`tool-jarvis-codebase`、`scoutAssets`、`scoutResearchArtifactCheck`、`scoutArtifactDigest` 或 artifact target 不可写时停止。
+- 缺少 required Skill/Tool、输入边界或 artifact target 不可写时停止。
 
 Partial：
 
-- 仅能确认输入和 mount 边界时，不创建空 Research pack；当前过程状态保留在 task runtime，并按通用消息规则报告上游。
+- 只能确认输入和 mount 边界时不创建空 pack，保留 task 状态。
+
+Exit：
+
+- Required capabilities、producer scopes、Signal readiness 和 artifact target 已确认。
 
 ## Phase 2: Converge to One BDD Fact
-
 ---
 
-本阶段使用 `tool-guru-knowledge` 的候选定位模式获取可重放 Behavior 候选，由父 Researcher 收敛到唯一 BDD fact。
+Main Flow：
 
-调用输入：
+Knowledge：
 
-- 将 BDD ID、Behavior ref、场景描述、issue / PR 或用户描述整理为 `tool-guru-knowledge` 的 Knowledge Query Target。
-- 使用候选定位模式；本阶段不授权 Tool 写正式 evidence artifact。
+- 使用 `tool-guru-knowledge` 的候选定位结果，由父 Researcher 选择唯一 Behavior identity；本阶段不写 producer 的正式证据正文。
 
-注意事项：
+Flow：
 
-- 父 Researcher 必须消费 Tool 返回的 Source Refs、Candidate Evidence、Conflicts、Failed Commands 和 Limitations。
-- 输入能够与一个完整 Behavior identity 和 scenario 唯一对应时，父 Researcher 记录 selected reason。
-- 按模板说明处理画像和范围事实：未注明 `Nice to Have，可不填写` 的事实缺失或冲突时进入人工求证，明确可不填写的字段缺失时不阻塞。
-- 多个仍然有效的候选不能合并，也不能由 Researcher 自行选择；必须发起人工请求并停在当前 task。
-- 输出拥有 `E-BDD-001` 的 `bdd-evidence.md`；`knowledge-evidence.md` 只登记摘要行、固定 `artifact_ref: bdd-evidence.md`、source 和 locator。
-
-Exit：
-
-- 唯一 BDD fact 已定位，`bdd-evidence.md` 已记录 selected fact、排除候选、claim 和 `E-BDD-001` registration。
+```mermaid
+flowchart TD
+  A[查询 Behavior 候选] --> B{唯一匹配}
+  B -- 否 --> C[Human Confirmation]
+  B -- 是 --> D[写入 bdd-evidence]
+```
 
 Blocked：
 
-- Tool 无法形成可重放候选或父 Researcher 无法唯一定位 BDD fact 时停止；候选和需人工确认项保留在当前 task 与人工请求中，不生成空 Research Pack、registry 或 manual。
+- 无可重放候选或多个有效候选无法消歧时停止并保留人工问题。
 
 Partial：
 
-- 已定位候选但其它 evidence 尚未形成时，可以写 `bdd-evidence.md` 草稿；用户画像由独立 `E-PERSONA-*` 承载，不写入 `bdd-evidence.md`。
+- 已有候选但尚未完成其它 evidence 时可保留 `bdd-evidence.md` 草稿。
+
+Exit：
+
+- 唯一 BDD fact、selected reason、Given/When/Then 和 `E-BDD-001` 已记录。
 
 ## Phase 3: Collect Guru Knowledge Evidence
-
 ---
 
-本阶段为已确认的唯一 BDD 分配知识 evidence scope，调用 `tool-guru-knowledge` 形成知识明细 evidence，再构建 `E-KB-001` 聚合。
+Main Flow：
 
-必须加载并执行：
+Knowledge：
 
-```text
-tool-guru-knowledge
+- 调用 `tool-guru-knowledge` 形成 Capability、Availability 和 Platform evidence，再聚合 `E-KB-001`。
+
+Flow：
+
+```mermaid
+flowchart TD
+  A[传入唯一 BDD 与 knowledge scope] --> B[生成知识明细 evidence]
+  B --> C[聚合 knowledge-evidence]
+  C --> D{必需来源闭环}
 ```
-
-注意事项：
-
-- 父 Researcher 提供唯一 BDD ref、产品与 knowledge boundary、目标版本、目标平台、相关 Capability scope、分配的 evidence ids 和允许写入的 artifact target。
-- `tool-guru-knowledge` 拥有知识目录解释、来源定位、11 个规格维度、Availability、Platform、API 来源、provenance 和三类明细 evidence 模板。
-- 父 Researcher 核验返回 artifact refs 与分配范围一致，不重新执行或复制 Tool 的完整知识检索。
-- `knowledge-evidence.md` 自身登记为 `E-KB-001`，只聚合 `E-BDD-001`、`E-CAP-*`、`E-AVAIL-001` 和 `E-PLATFORM-001`；不得创建独立 `E-KB-*` 或 `E-API-*` 文件。
-- Tool 返回的冲突、失败命令和限制必须进入相关明细 evidence 或 `knowledge-evidence.md`，不得在聚合时丢失。
-
-Exit：
-
-- Tool 已形成所需 `E-CAP-*`、`E-AVAIL-001` 和 `E-PLATFORM-001` artifact refs；`knowledge-evidence.md` 已作为 `E-KB-001` 完整聚合它们与 `E-BDD-001`。
 
 Blocked：
 
-- Tool 返回 blocked、关键 artifact 缺失、分配范围不一致或来源冲突影响必需事实时停止，并保留 producer 的原始阻塞事实。
+- producer blocked、关键 artifact 缺失、scope 不一致或来源冲突影响必需事实时停止。
 
 Partial：
 
-- Tool 只缺不影响当前 claim 的非关键知识时可继续，但必须在对应 evidence 和聚合 limitation 中记录缺口。
+- 非关键知识缺失时保留 producer refs 和 limitation，不标记完成。
+
+Exit：
+
+- `E-CAP-*`、`E-AVAIL-001`、`E-PLATFORM-001` 和 `E-KB-001` refs 完整聚合。
 
 ## Phase 4: Collect Current Version Code Evidence
-
 ---
 
-本阶段把 BDD fact 和 knowledge evidence 转成 `tool-jarvis-codebase` 的 Source Query Targets，消费其当前版本源码明细 evidence，并构建代码聚合。
+Main Flow：
 
-必须加载并执行：
+Knowledge：
 
-```text
-tool-jarvis-codebase
+- 使用 `tool-jarvis-codebase` 将 BDD/knowledge claims 转为 Source Query Targets，并聚合当前版本 `E-CODE-*`。
+
+Flow：
+
+```mermaid
+flowchart TD
+  A[形成 Source Query Targets] --> B[读取当前版本源码]
+  B --> C[登记 E-CODE refs]
+  C --> D{implementation claim 有 source_verified}
 ```
-
-注意事项：
-
-- 本技能只负责从 `bdd-evidence.md`、`knowledge-evidence.md` 和 verification point draft 推导 `tool-jarvis-codebase` 的 `I-004 Source Query Target`。
-- `tool-jarvis-codebase` 拥有 repo 解析、版本确认、命令副作用、CodeGraph、源码 locator、provenance 和 `E-CODE-*` 模板。
-- 本阶段把 `tool-jarvis-codebase` 产出的 artifact refs 汇总到 `code-evidence.md`，并记录它们支持的 BDD fact、knowledge evidence 或 verification point。
-- Tool 返回的失败命令、候选缺口和 limitations 必须进入 `code-evidence.md` 或对应明细 evidence。
-
-Exit：
-
-- `code-evidence.md` 已汇总相关 `E-CODE-*` artifact refs、root / source repository provenance，且每个 implementation claim 至少有一个 `source_verified` 的 `E-CODE-*` 支撑。
 
 Blocked：
 
-- 当前版本代码证据无法形成 `E-CODE-*` 时停止；不得把 knowledge evidence 写成 implementation fact。
+- 无法形成当前版本 `E-CODE-*` 或 locator 不可重放时停止，不把 knowledge 写成实现事实。
 
 Partial：
 
-- 只形成 CodeGraph 查询候选但未形成 `E-CODE-*` 时，可以在 `code-evidence.md` 记录查询缺口和 limitation，但不能生成完成状态的 verification manual。
+- 只有 CodeGraph 候选时保留查询缺口，不能生成完成态 Manual。
+
+Exit：
+
+- `code-evidence.md` 已聚合版本、路径、CodeGraph 状态和每个 implementation claim 的 `source_verified` refs。
 
 ## Phase 5: Build Evidence Registry
-
 ---
 
-本阶段把前面阶段收集到的 BDD、knowledge aggregate、capability、availability、platform、user persona、human confirmation 和 source code evidence 集中登记，形成后续 verification manual 可以引用的 evidence id 索引。
+Main Flow：
 
-使用模板：
+Knowledge：
 
-```text
-templates/evidence-registry.md
+- Registry 只索引 evidence id、source、locator、supports 和 limitations，不复制证据正文或形成最终结论。
+
+Flow：
+
+```mermaid
+flowchart TD
+  A[收集聚合与独立 refs] --> B[登记 registry]
+  B --> C{id、locator、supports 闭环}
 ```
-
-注意事项：
-
-- Evidence Registry 只记录 evidence id、source、locator、claim_supported、supports 和 limitations。
-- `E-BDD-001` 的 `artifact_ref` 固定为 `bdd-evidence.md`，`E-KB-001` 的 `artifact_ref` 固定为 `knowledge-evidence.md`；其它 evidence id 的 `artifact_ref` 固定指向 `evidence/<evidence-id>.md`。
-- 用户画像必须使用 `templates/user-persona-evidence.md` 形成独立 `E-PERSONA-*`；画像字段可由 BDD、knowledge 或已登记的 `E-HUMAN-*` 支撑。
-- 通过人工求证闭环的事实必须登记独立 `E-HUMAN-*` artifact，记录确认来源和确认内容；不得把 Researcher 推断登记成人工确认。
-- 不复制证据正文；证据正文保存在对应 evidence artifact 中。
-- 不写最终验证结论，不写 pass / fail，不把 evidence id 当作 fact id。
-- `E-CODE-*` 必须引用 `tool-jarvis-codebase/templates/` 中生成的 source code evidence artifact。
-
-Exit：
-
-- Registry 覆盖 `knowledge-evidence.md` 和 `code-evidence.md` 中全部 evidence id，且没有孤立 supports。
 
 Blocked：
 
-- 重复 evidence id、缺 locator、缺 source 或 supports 无法闭环时停止。
+- evidence id 重复、source/locator 缺失或 supports 无法闭环时停止。
 
 Partial：
 
-- 存在需人工确认项时可保留 registry 草稿，但 verification manual 只能引用已闭环 evidence id。
+- 存在人工确认缺口时可保留 registry 草稿，Manual 只能引用已闭环 refs。
+
+Exit：
+
+- Registry 覆盖 `knowledge-evidence.md`、`code-evidence.md` 的全部 refs，且无孤立 supports。
 
 ## Phase 6: Prepare Verification Manual
-
 ---
 
-本阶段把研究结果整理成 verification manual，锁定后续 Verifier 需要验证的功能点、用户画像 evidence、Given / When / Then、supporting evidence ids 和 signal requirements。
+Main Flow：
 
-使用模板：
+Knowledge：
 
-```text
-templates/verification-manual.md
+- Manual 锁定 verification points、persona ref、Given/When/Then、supporting evidence 和 Signal requirements；Signal Skill 拥有信号语义，Manual 只拥有本任务匹配 requirement。
+
+Flow：
+
+```mermaid
+flowchart TD
+  A[读取 registry 与 BDD] --> B[写入 verification points]
+  B --> C[引用 Signal requirements]
+  C --> D[运行 checker 与 digest]
 ```
-
-注意事项：
-
-- verification point 只描述需要验证的功能点，不写 pass / fail 标准。
-- `Supporting Evidence` 只引用 evidence id，不粘贴证据正文。
-- `Signals To Collect` 只选择适用 Signal，并按对应 Signal Skill 定义业务匹配要求；不制定 runtime 执行策略或最终业务结论。
-- 每个 Signal requirement 都必须引用已按角色 Domain Skill 完整读取的 Signal contract，并将已确认事实映射为完整匹配要求；contract 声明 `source_signal` 时确认其依赖成立，其余血缘与派生约束由 Signal contract 自己拥有。
-- 识别到模板中仍未闭环且未注明可不填写的事实字段时，将当前缺口放入 `Human Confirmation Needed`，立即进入人工确认 Gate 并停止后续工作；不得形成完成态 manual 或 task handoff。
-- 每个 verification point 必须通过 `persona_evidence_ref` 引用 registry 中已登记的 `E-PERSONA-*`，不得内嵌用户画像字段。
-- 人工求证完成后，`E-HUMAN-*` 的 `applies_to` 必须定位被确认的模板字段；`E-PERSONA-*` 通过 `Source Evidence` 引用支撑画像事实的人工确认证据，manual 只在该人工确认证据直接支持 verification point 时引用它。
-- Given / When / Then 只能由 BDD fact 和 `E-PERSONA-*` 派生，不得复制 `code-evidence.md` 中的 implementation claim，也不是最终判定标准。
-- 不包含 Flow；Flow 指 Verifier 的执行路径、ReAct 策略、工具顺序或交互步骤，由下游 Verifier 或验证类 Skill 负责。
-
-Exit：
-
-- 每个 verification point 都有 `persona_evidence_ref`、Given / When / Then、supporting evidence ids；每个已选择 Signal 都有完整 requirement，所有 refs 已通过 `scout-research-artifact-check` 检查。
-- 已准备 task handoff 使用的 verification manual ref、问题或限制、人工确认状态和继续入口；验证点详情、用户画像、supporting evidence ids 和 signals to collect 保留在正式 artifact 中。
 
 Blocked：
 
-- 缺少唯一 BDD fact、缺少当前版本 `E-CODE-*` 或 evidence registry 不闭环时，不生成完成状态的 verification manual。
-- Manual 选择的 Signal contract 不在已完整读取的 Signal 集合中时停止受影响 verification point，不得自行补写信号语义。
+- 缺少唯一 BDD、`E-CODE-*`、persona、Signal contract 或 registry 闭环时停止受影响 Manual。
 
 Partial：
 
-- `E-PERSONA-*` 尚未形成或其中未标注可不填写的事实仍未闭环时，可以生成 manual 草稿，但必须把缺口写入 `Human Confirmation Needed` 和相关 evidence artifact。
-- 完整 pack 写入后执行 `scout-research-artifact-check pack <research-pack-dir>`；检查失败时保持 `draft + partial` 或 `blocked + blocked`，记录失败项，不得提交完成态 handoff。
-- checker 通过后、正式 handoff 前执行 `scout-artifact-digest <research-pack-dir>`；handoff 只能携带该命令返回的 `scout-directory-sha256-v1` digest。
+- 允许在无必需人工确认时保留 Manual 草稿，并记录缺口、checker 结果和继续条件。
+
+Exit：
+
+- 每个 verification point 有 persona、Given/When/Then、supporting refs 和完整 Signal requirement；pack checker 与 digest 均通过。
 
 ## Workflow Exit Rules (Enforcement)
 
@@ -509,13 +519,13 @@ Partial：
 - ER-002：`tool-guru-knowledge` 的 evidence 只能支撑 intent、spec、behavior、availability 和 platform claim。
 - ER-003：`tool-jarvis-codebase` 的 current version evidence 才能支撑 implementation claim。
 - ER-004：runtime evidence 才能支撑 behavior observed claim。
-- ER-005：每类 producer evidence 必须符合其所有者 Skill 的来源、provenance、状态和模板 contract；本技能不得放宽 producer 规则。
+- ER-005：每类 producer evidence 必须符合其所有者 Skill 的来源、状态和模板 contract；本技能不得放宽 producer 规则。
 - ER-006：API Index 和 API 文档只能作为 `E-CAP-*` 的 `CAPSRC-*` 及“数据与接口”规格来源；当前版本 API symbol 由 `E-CODE-*` 支撑，禁止生成 `E-API-*`。
 - ER-007：Availability evidence 不能替代当前有效业务规则。
 - ER-008：Platform evidence 只能说明平台差异或共享契约，不能替代 runtime 观察。
 - ER-009：工具命令和查询输出属于 Activity State；只有整理进 evidence registry 并和可定位来源闭环后，才能支撑 claim。
-- ER-010：Research artifact 可以在 provenance 字段记录本地 source path 或命令输出摘要；evidence locator 必须优先使用 product-relative knowledge path、source-relative code path、source commit 和 symbol 行号。
-- ER-011：本机绝对路径不得写入 canonical knowledge 或对外事实；codebase 绝对路径只允许作为本次 Scout runtime artifact provenance。
+- ER-010：Research artifact 可以记录本次读取的本地 source path 或命令输出摘要；evidence locator 必须优先使用 product-relative knowledge path，或 source version、source-relative code path、symbol 和行号。
+- ER-011：本机绝对路径不得写入 canonical knowledge 或对外事实；codebase 绝对路径只允许标识本次 Scout run 实际读取的 source root。
 - ER-012：事实字段默认要求确切信息；只有模板说明中明确写出 `Nice to Have，可不填写` 的字段允许缺失。结构字段按中文填写说明由 workflow 生成或由 contract 校验。
 - ER-013：每个 Pack 只允许 `knowledge-evidence.md` 拥有 `E-KB-001`，并且必须恰有一份 `E-AVAIL-001` 和一份 `E-PLATFORM-001`。
 - ER-014：Signal Skill 拥有信号结构与解释语义，Manual 拥有当前 verification point 的匹配 requirement；两者都不证明 runtime behavior 已发生。
@@ -527,14 +537,14 @@ Partial：
 - FR-003：`tool-jarvis-codebase` 返回失败、不可重放 locator 或不完整 artifact 时，不得生成 implementation claim。
 - FR-004：Evidence Registry 中出现孤立 evidence id、重复 id、缺 locator 或 supports 无法闭环时，不得生成完成状态的 verification manual。
 - FR-005：artifact 写入失败、模板缺失或模板字段无法填充时，必须记录阻塞项并向上游报告。
-- FR-006：`scout-research-artifact-check` 发现状态组合、模板章节、provenance、evidence id 或 registry/manual 引用不闭环时，不得提交完成态 handoff。
+- FR-006：`scout-research-artifact-check` 发现状态组合、模板章节、source identity、evidence id 或 registry/manual 引用不闭环时，不得提交完成态 handoff。
 
 ## Blocking Rules (Enforcement)
 
 - BR-001：缺少 `internal-runtime-inspector`、`tool-guru-knowledge`、`tool-jarvis-codebase`、`scoutAssets`、`scoutResearchArtifactCheck` 或 `scoutArtifactDigest` 时必须停止。
 - BR-002：无法唯一定位 BDD fact 时必须停止在 Phase 2，不得进入 Phase 3-6。
 - BR-003：任一 producer 无法确认自己的产品或 repository boundary 时，父 Researcher 必须保留其阻塞事实，不得绕过。
-- BR-004：产品版本、branch 或 commit 缺失且当前任务需要 current version code evidence 时必须记录需人工确认项，不得主动选择 `latest`。
+- BR-004：产品版本缺失且当前任务需要 current version code evidence 时必须记录需人工确认项，不得主动选择 `latest`。
 - BR-005：当前版本代码证据无法形成 `E-CODE-*` 闭环时，不得把 knowledge evidence 写成 implementation fact。
 - BR-006：artifact target 不可写时，不得进入完成状态。
 - BR-007：Manual 选择的 Signal contract 不可见时，不得完成受影响 verification point。
@@ -570,7 +580,7 @@ Partial：
 2. 分别消费 `tool-guru-knowledge` 和 `tool-jarvis-codebase` 的正式 evidence artifacts。
 3. 写入 evidence registry。
 4. 使用 `templates/verification-manual.md` 生成 verification manual。
-5. 执行 `scout-research-artifact-check pack <research-pack-dir>` 检查状态、模板、provenance 和 evidence refs。
+5. 执行 `scout-research-artifact-check pack <research-pack-dir>` 检查状态、模板、source identity 和 evidence refs。
 
 输出：
 
