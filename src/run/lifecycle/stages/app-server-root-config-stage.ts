@@ -43,6 +43,7 @@ export interface RunAgentFilesystemPermissionProfile {
   readableRoots: string[];
   writableRoots: string[];
   deniedRoots: string[];
+  network: boolean;
 }
 
 /** Run-wide roots plus the role-owned filesystem permission profiles. */
@@ -160,6 +161,7 @@ export function createClientRootConfig(options: {
       tempRoot,
       readableRoots: [...profileReadableRoots, ...runtimeReadableRoots],
       writableRoots: profileWritableRoots,
+      network: profile.network === true,
     });
     const dynamicValues = createMountMacroValues({
       scoutRoot,
@@ -211,6 +213,7 @@ export function createPreparedClientRootConfig(
       }),
     ],
     writableRoots: [agent.mount.tempRoot, ...agent.mount.writableRoots],
+    network: agent.mount.agentProfile.network === true,
   }));
   return {
     mountRoots,
@@ -233,6 +236,7 @@ interface AppServerRoleRoots {
   tempRoot: string;
   readableRoots: string[];
   writableRoots: string[];
+  network: boolean;
 }
 
 function createPermissionProfiles(input: {
@@ -272,6 +276,7 @@ function createPermissionProfiles(input: {
         logicalSkillRoot,
         canonicalSkillRoot,
       ]),
+      network: role.network,
     } satisfies RunAgentFilesystemPermissionProfile,
   ]));
 }

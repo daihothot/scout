@@ -8,6 +8,7 @@ export interface GenerateCodexConfigOptions {
   runRoot: string;
   artifactRoot: string;
   tempRoot: string;
+  hostTempRoot: string;
   runId: string;
   assetCommitId: string;
   mcpServers: MaterializedMcpServer[];
@@ -28,6 +29,7 @@ export class CodexConfigBuilder {
         runRoot: input.runRoot,
         artifactRoot: input.artifactRoot,
         tempRoot: input.tempRoot,
+        hostTempRoot: input.hostTempRoot,
         assetCommitId: input.assetCommitId,
         runId: input.runId,
       })).map(([key, value]) => `${key} = "${escapeToml(value)}"`),

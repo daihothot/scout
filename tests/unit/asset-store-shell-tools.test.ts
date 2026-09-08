@@ -1611,6 +1611,8 @@ test("AssetStore resolves asset-local shell tool commands against the Scout root
       `export PATH=${JSON.stringify(buildMountShellPath(mount.mountRoot))}\n`,
     ),
   );
+  assert.ok(wrapper.includes(`export SCOUT_TEMP_ROOT=${JSON.stringify(mount.tempRoot)}\n`));
+  assert.doesNotMatch(wrapper, /export TMPDIR=/);
   assert.equal(execFileSync(wrapperPath, [], {
     cwd: mount.mountRoot,
     encoding: "utf8",
@@ -1891,6 +1893,9 @@ test("AssetStore resolves asset-local MCP commands against the Scout root", () =
 
   assert.ok(server);
   assert.equal(server.command, commandPath);
+  const wrapper = readFileSync(server.wrapperPath, "utf8");
+  assert.ok(wrapper.includes(`export SCOUT_TEMP_ROOT=${JSON.stringify(mount.tempRoot)}\n`));
+  assert.doesNotMatch(wrapper, /export TMPDIR=/);
   assert.equal(execFileSync(server.wrapperPath, [], {
     cwd: mount.mountRoot,
     encoding: "utf8",

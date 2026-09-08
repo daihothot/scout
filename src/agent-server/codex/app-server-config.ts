@@ -28,6 +28,7 @@ export function buildClientConfig(input: {
     readableRoots: string[];
     writableRoots: string[];
     deniedRoots: string[];
+    network: boolean;
   }>>;
   model: CodexModelConfig;
   providerConfig: CodexProviderConfig;
@@ -87,7 +88,7 @@ export function buildClientConfig(input: {
     lines.push(
       "",
       `[permissions.${profile.id}.network]`,
-      "enabled = false",
+      `enabled = ${profile.network}`,
       "",
     );
   }

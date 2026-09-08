@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import {
   basename,
   dirname,
@@ -225,6 +226,7 @@ async function smokeShellTools(
       runRoot: mount.runRoot,
       artifactRoot: mount.artifactRoot,
       tempRoot: mount.tempRoot,
+      hostTempRoot: tmpdir(),
       assetCommitId: mount.assetCommitId,
     }),
   };

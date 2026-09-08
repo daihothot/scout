@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import { basename } from "node:path";
 import type { MountContext } from "../contracts/mount-context.js";
 import type { MaterializedMcpServer } from "../contracts/resources.js";
@@ -33,6 +34,7 @@ export class MountGeneratedFilesBuilder {
           runRoot: context.runRoot,
           artifactRoot: context.artifactRoot,
           tempRoot: context.tempRoot,
+          hostTempRoot: tmpdir(),
           runId: context.runId,
           assetCommitId: context.assetCommitId,
           mcpServers: this.mcpServers,

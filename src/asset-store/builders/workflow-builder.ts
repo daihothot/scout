@@ -84,6 +84,7 @@ export class WorkflowBuilder {
       plugins: merge(resources.map(([, resource]) => resource.plugins)),
       readableRoots: merge(resources.map(([, resource]) => resource.readableRoots)),
       writableRoots: merge(resources.map(([, resource]) => resource.writableRoots)),
+      network: resources.some(([, resource]) => resource.network === true),
     };
   }
 }

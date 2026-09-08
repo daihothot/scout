@@ -182,6 +182,7 @@ function parseResourcePark(
     "plugins",
     "readableRoots",
     "writableRoots",
+    "network",
   ], path, label);
   if (resource.default !== undefined && resource.default !== true) {
     throw new Error(
@@ -214,6 +215,7 @@ function parseResourcePark(
     plugins,
     readableRoots: requireStringArray(resource.readableRoots, path, `${label}.readableRoots`),
     writableRoots: requireStringArray(resource.writableRoots, path, `${label}.writableRoots`),
+    ...(resource.network === true ? { network: true } : {}),
   };
 }
 
