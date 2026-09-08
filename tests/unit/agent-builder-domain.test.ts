@@ -1784,7 +1784,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
           success: result.success,
         }];
       }
-      if (prompt.includes("<human-response>\nUse staging account.\n</human-response>")) {
+      if (prompt.includes("response:\nUse staging account.\n</human-response>")) {
         markResponseTurnStarted?.();
         await responseTurnRelease;
         const stale = await appServer.handler({
@@ -2035,6 +2035,147 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   assert.equal(workerResponse.success, false);
   assert.match(workerResponse.contentItems[0]?.text ?? "", /only available to the Coordinator agent/);
   await coordinator.stopAgent("test_cleanup");
+});
+
+test("RequestHumanInput yields its Worker turn before a fast human response starts a fresh task step", async () => {
+  let worker: WorkerAgent | undefined;
+  let coordinator: CoordinatorAgent | undefined;
+  let requestSucceeded = false;
+  let responseSucceeded = false;
+  let submitSucceeded = false;
+  let requestTurnFinished = false;
+  let responseArrivedBeforeRequestTurnFinished = false;
+  let resolveResponseDelivery: (() => void) | undefined;
+  const responseDelivered = new Promise<void>((resolve) => {
+    resolveResponseDelivery = resolve;
+  });
+  const steerInputs: Array<{ threadId: string; expectedTurnId: string }> = [];
+  const appServer = createFakeAppServer({
+    threadIds: ["thread-fast-coordinator", "thread-fast-worker"],
+    turnIdForTurn: (turn) => {
+      const prompt = turn.prompt ?? "";
+      if (prompt.includes("<wait-for-human-request>")) return "turn-fast-coordinator-response";
+      if (prompt.includes("<human-response>")) return "turn-fast-worker-submit";
+      return "turn-fast-worker-request";
+    },
+    onRunTurn: async (turn) => {
+      const prompt = turn.prompt ?? "";
+      if (!worker || !coordinator || !appServer.handler) return;
+      if (prompt.includes("<message>\nRequest a fast human response.\n</message>")) {
+        const result = await appServer.handler({
+          threadId: worker.threadId ?? "",
+          turnId: "turn-fast-worker-request",
+          callId: "call-fast-human-request",
+          namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+          tool: "RequestHumanInput",
+          arguments: { request: "Need the target account." },
+        });
+        requestSucceeded = result.success;
+        await responseDelivered;
+        requestTurnFinished = true;
+        return [{
+          namespace: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
+          tool: "RequestHumanInput",
+          callId: "call-fast-human-request",
+          arguments: { request: "Need the target account." },
+          success: result.success,
+        }];
+      }
+      if (prompt.includes("<wait-for-human-request>\nNeed the target account.\n</wait-for-human-request>")) {
+        const result = await appServer.handler({
+          threadId: coordinator.threadId ?? "",
+          turnId: "turn-fast-coordinator-response",
+          callId: "call-fast-human-response",
+          namespace: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
+          tool: "RespondHumanInput",
+          arguments: {
+            task_id: worker.taskRunner?.snapshot().activeTask?.taskId,
+            response: "Use the prepared account.",
+          },
+        });
+        responseSucceeded = result.success;
+        responseArrivedBeforeRequestTurnFinished = !requestTurnFinished;
+        resolveResponseDelivery?.();
+        return;
+      }
+      if (prompt.includes("response:\nUse the prepared account.\n</human-response>")) {
+        const result = await appServer.handler({
+          threadId: worker.threadId ?? "",
+          turnId: "turn-fast-worker-submit",
+          callId: "call-fast-submit",
+          namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
+          tool: "SubmitTask",
+          arguments: { outcome: "## Outcome\n\n- 已使用独立 Step 消费人工响应。" },
+        });
+        submitSucceeded = result.success;
+      }
+    },
+  });
+  appServer.steerTurn = async (input) => {
+    steerInputs.push({
+      threadId: input.threadId,
+      expectedTurnId: input.expectedTurnId,
+    });
+    return {
+      turnId: input.expectedTurnId,
+      response: {},
+    };
+  };
+  const fixture = createAgentFixture("worker-fast-human-response", { appServer });
+  const workerMount = createMount(fixture.root, "verifier");
+  const workerCommit = createAssetCommit(workerMount);
+  new AgentBackend().start();
+  prepareAgent(fixture, "verifier", workerMount, workerCommit);
+  const builder = new AgentBuilder();
+  coordinator = builder.buildCoordinator();
+  await coordinator.startThread();
+  worker = builder.buildWorker("verifier") as WorkerAgent;
+  await worker.startThread();
+
+  const assignment = await worker.assignTask({
+    description: "Exercise a fast human response",
+    phase: "verify",
+    prompt: agent.turn.message("Request a fast human response."),
+    isBackgrounded: true,
+  });
+  assert.equal(assignment.ok, true);
+  if (!assignment.ok) throw new Error("Expected the Worker task assignment to succeed.");
+
+  await worker.runToIdle();
+  await coordinator.runToIdle();
+
+  assert.equal(requestSucceeded, true);
+  assert.equal(responseSucceeded, true);
+  assert.equal(responseArrivedBeforeRequestTurnFinished, true);
+  assert.equal(submitSucceeded, true);
+  assert.deepEqual(appServer.interruptInputs, [{
+    threadId: "thread-fast-worker",
+    turnId: "turn-fast-worker-request",
+  }]);
+  assert.equal(
+    steerInputs.some((input) => input.expectedTurnId === "turn-fast-worker-request"),
+    false,
+  );
+  const task = worker.taskRunner?.snapshot().activeTask;
+  assert.equal(task?.status, AgentTaskStatuses.Done);
+  assert.equal(task?.stepIds.length, 2);
+  assert.equal(task?.dispositions[0]?.kind, AgentTaskDispositionKinds.WaitingForHuman);
+  assert.equal(task?.dispositions[0]?.stepId, task?.stepIds[0]);
+  assert.equal(task?.dispositions[1]?.kind, AgentTaskDispositionKinds.HandoffSubmitted);
+  assert.equal(task?.dispositions[1]?.stepId, task?.stepIds[1]);
+  assert.notEqual(task?.dispositions[0]?.stepId, task?.dispositions[1]?.stepId);
+  const submittedStep = fixture.stepStore.getStep(task?.stepIds[1] ?? "");
+  assert.deepEqual(submittedStep?.humanInputReferences, [{
+    requestId: task?.dispositions[0]?.kind === AgentTaskDispositionKinds.WaitingForHuman
+      ? task.dispositions[0].requestId
+      : "",
+    kind: "response_consumed",
+  }]);
+
+  await Promise.all([
+    worker.stopAgent("test_cleanup"),
+    coordinator.stopAgent("test_cleanup"),
+  ]);
 });
 
 test("ArchiveTask releases one TaskRunner while preserving its thread and Step runner", async () => {
@@ -2591,6 +2732,7 @@ function createFakeAppServer(options: {
   turnStatus?: "completed" | "failed" | "interrupted";
   turnError?: unknown;
   turnIds?: string[];
+  threadIds?: string[];
   turnIdForTurn?: (turn: { prompt?: string }, index: number) => string;
   resolveTimelineEntry?: (entry: AppServerTimelineEntry) => AppServerResolvedTimelineEntry;
   parentThreadIds?: Record<string, string | null>;
@@ -2682,9 +2824,11 @@ function createFakeAppServer(options: {
       return options.threadSnapshot?.(threadId)?.turns[turnId];
     },
     startThread: async (threadInput: ThreadStartOptions) => {
+      const threadIndex = appServer.threadInputs.length;
       appServer.threadInputs.push(threadInput);
+      const threadId = options.threadIds?.[threadIndex] ?? "thread-test";
       return {
-        threadId: "thread-test",
+        threadId,
         startInput: {
           cwd: threadInput.cwd,
           runtimeWorkspaceRoots: threadInput.runtimeWorkspaceRoots,
@@ -2704,7 +2848,7 @@ function createFakeAppServer(options: {
           dynamicTools: threadInput.dynamicTools,
         },
         response: {
-          thread: { id: "thread-test" },
+          thread: { id: threadId },
         },
       };
     },
