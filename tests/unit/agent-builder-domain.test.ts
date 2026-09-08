@@ -70,6 +70,7 @@ import type {
   AgentNativeSubagentActivity,
   AgentTurnActivity,
 } from "../../src/agent/activity/activity-event.js";
+import type { AgentCommandExecutionObservedEvent } from "../../src/agent/command-execution/command-execution-events.js";
 import { InteractionGateway } from "../../src/interaction/index.js";
 import { attachments } from "../../src/agent/context/index.js";
 import { agent } from "../../src/agent/context/agent-attachments.js";
@@ -993,6 +994,198 @@ test("AgentBackend normalizes app-server items into Agent activity", () => {
     updatedAt: "2026-07-14T00:00:00.000Z",
   }]);
   assert.equal(JSON.stringify(activities).includes("private chain of thought"), false);
+});
+
+test("AgentBackend publishes one complete command result fact on completion", async () => {
+  const entry = {
+    seq: 11,
+    stream: "item",
+    kind: "item_completed",
+    receivedAt: "2026-09-05T00:00:00.000Z",
+    threadId: "thread-coordinator",
+    turnId: "turn-command",
+    itemId: "command-1",
+  } satisfies AppServerTimelineEntry;
+  const appServer = createFakeAppServer({
+    resolveTimelineEntry: (resolvedEntry) => ({
+      entry: resolvedEntry,
+      item: {
+        id: "command-1",
+        type: "commandExecution",
+        command: "jarvis ws schema call behavior-control",
+        cwd: "/repo/mount",
+        status: "completed",
+        exitCode: 0,
+        aggregatedOutput: "[RESULT] {\"status\":\"ok\"}",
+        durationMs: 25,
+      },
+    }),
+  });
+  const fixture = createAgentFixture("agent-command-result", {
+    appServer,
+    domain: createStaticDomain("domain-command-result", []),
+  });
+  const coordinator = new CoordinatorAgent(fixture.options);
+  fixture.registry.registerAgent(coordinator);
+  fixture.registry.bindThread(coordinator.agentId, entry.threadId);
+  const commands: AgentCommandExecutionObservedEvent[] = [];
+  fixture.eventBus.subscribe(AgentEvents.commandExecution.observed, (event) => {
+    if (AgentEvents.commandExecution.observed.is(event)) commands.push(event.payload);
+  });
+  new AgentBackend().start();
+
+  appServer.emitTimeline(entry);
+  await waitFor(() => commands.length === 1);
+
+  assert.deepEqual(commands, [{
+    sourceSeq: 11,
+    agentId: "coordinator",
+    role: "coordinator",
+    threadId: "thread-coordinator",
+    turnId: "turn-command",
+    itemId: "command-1",
+    command: "jarvis ws schema call behavior-control",
+    cwd: "/repo/mount",
+    status: "completed",
+    exitCode: 0,
+    aggregatedOutput: "[RESULT] {\"status\":\"ok\"}",
+    durationMs: 25,
+    observedAt: "2026-09-05T00:00:00.000Z",
+  }]);
+});
+
+test("AgentBackend projects a failed command with a bounded diagnostic summary", async () => {
+  const entry = {
+    seq: 12,
+    stream: "item",
+    kind: "item_completed",
+    receivedAt: "2026-09-05T00:00:01.000Z",
+    threadId: "thread-coordinator",
+    turnId: "turn-command",
+    itemId: "command-2",
+  } satisfies AppServerTimelineEntry;
+  const appServer = createFakeAppServer({
+    resolveTimelineEntry: (resolvedEntry) => ({
+      entry: resolvedEntry,
+      item: {
+        id: "command-2",
+        type: "commandExecution",
+        command: "ls /restricted",
+        cwd: "/repo/mount",
+        status: "completed",
+        exitCode: 1,
+        aggregatedOutput: `ls: /restricted: Operation not permitted ${"x".repeat(300)}`,
+        durationMs: 10,
+      },
+      progressItem: {
+        itemId: "command-2",
+        threadId: "thread-coordinator",
+        turnId: "turn-command",
+        type: "commandExecution",
+        status: "completed",
+        label: "ls /restricted",
+        detail: "/repo/mount",
+        item: {
+          id: "command-2",
+          type: "commandExecution",
+          command: "ls /restricted",
+          cwd: "/repo/mount",
+          status: "completed",
+          exitCode: 1,
+          aggregatedOutput: `ls: /restricted: Operation not permitted ${"x".repeat(300)}`,
+          durationMs: 10,
+        },
+        updatedAt: "2026-09-05T00:00:01.000Z",
+      },
+    }),
+  });
+  const fixture = createAgentFixture("agent-command-activity-failure", {
+    appServer,
+    domain: createStaticDomain("domain-command-activity-failure", []),
+  });
+  const coordinator = new CoordinatorAgent(fixture.options);
+  fixture.registry.registerAgent(coordinator);
+  fixture.registry.bindThread(coordinator.agentId, entry.threadId);
+  const activities: AgentActivity[] = [];
+  fixture.eventBus.subscribe(AgentEvents.activity.observed, (event) => {
+    if (AgentEvents.activity.observed.is(event)) activities.push(event.payload);
+  });
+  new AgentBackend().start();
+
+  appServer.emitTimeline(entry);
+  await waitFor(() => activities.length === 1);
+
+  assert.equal(activities[0]?.status, "failed");
+  assert.match(
+    activities[0]?.detail ?? "",
+    /^exit_code: 1 · ls: \/restricted: Operation not permitted /,
+  );
+  assert.equal(activities[0]?.detail?.endsWith("…"), true);
+  assert.equal((activities[0]?.detail.length ?? Number.POSITIVE_INFINITY) <= 260, true);
+});
+
+test("AgentBackend keeps heredoc bodies out of Activity labels", async () => {
+  const entry = {
+    seq: 13,
+    stream: "item",
+    kind: "item_completed",
+    receivedAt: "2026-09-05T00:00:02.000Z",
+    threadId: "thread-coordinator",
+    turnId: "turn-command",
+    itemId: "command-3",
+  } satisfies AppServerTimelineEntry;
+  const command = [
+    "/bin/zsh -lc 'cat > ../artifacts/execution-pack.md <<'\"'\"'EOF'\"'\"'",
+    "# RBT Execution Pack",
+    "private artifact body",
+    "EOF'",
+  ].join("\n");
+  const item = {
+    id: "command-3",
+    type: "commandExecution" as const,
+    command,
+    cwd: "/repo/mount",
+    status: "completed",
+    exitCode: 0,
+    aggregatedOutput: "",
+    durationMs: 10,
+  };
+  const appServer = createFakeAppServer({
+    resolveTimelineEntry: (resolvedEntry) => ({
+      entry: resolvedEntry,
+      item,
+      progressItem: {
+        itemId: item.id,
+        threadId: "thread-coordinator",
+        turnId: "turn-command",
+        type: "commandExecution",
+        status: item.status,
+        label: item.command,
+        detail: item.cwd,
+        item,
+        updatedAt: entry.receivedAt,
+      },
+    }),
+  });
+  const fixture = createAgentFixture("agent-command-activity-heredoc", {
+    appServer,
+    domain: createStaticDomain("domain-command-activity-heredoc", []),
+  });
+  const coordinator = new CoordinatorAgent(fixture.options);
+  fixture.registry.registerAgent(coordinator);
+  fixture.registry.bindThread(coordinator.agentId, entry.threadId);
+  const activities: AgentActivity[] = [];
+  fixture.eventBus.subscribe(AgentEvents.activity.observed, (event) => {
+    if (AgentEvents.activity.observed.is(event)) activities.push(event.payload);
+  });
+  new AgentBackend().start();
+
+  appServer.emitTimeline(entry);
+  await waitFor(() => activities.length === 1);
+
+  assert.match(activities[0]?.label ?? "", /cat > \.\.\/artifacts\/execution-pack\.md$/);
+  assert.doesNotMatch(activities[0]?.label ?? "", /RBT Execution Pack|private artifact body/);
+  assert.equal(activities[0]?.detail, "exit_code: 0 · output: empty");
 });
 
 test("AgentBackend publishes context compaction as ordinary activity", () => {

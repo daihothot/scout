@@ -101,6 +101,27 @@ export class AgentActivityBackend {
       && resolved.progressItem.type !== "mcpToolCall"
       ? resolved.progressItem
       : undefined;
+    let progressStatus = progressItem?.status;
+    let progressDetail = progressItem?.detail;
+    let progressLabel = progressItem?.label;
+    if (progressItem?.item.type === "commandExecution" && entry.kind === "item_completed") {
+      const command = progressItem.item;
+      const exitCode = command.exitCode;
+      const output = command.aggregatedOutput?.trim()
+        ? command.aggregatedOutput.trim()
+        : "output: empty";
+      const singleLineOutput = output.replace(/\s+/g, " ").trim();
+      const outputSummary = singleLineOutput.length > 240
+        ? `${singleLineOutput.slice(0, 239)}…`
+        : singleLineOutput;
+      progressStatus = exitCode !== undefined && exitCode !== null && exitCode !== 0
+        ? "failed"
+        : command.status;
+      progressDetail = `exit_code: ${exitCode ?? "unknown"} · ${outputSummary}`;
+    }
+    if (progressItem?.item.type === "commandExecution") {
+      progressLabel = summarizeCommandLabel(progressItem.label);
+    }
     const activity: AgentActivity | undefined = progressItem
       ? {
         seq: entry.seq,
@@ -111,9 +132,9 @@ export class AgentActivityBackend {
         turnId: progressItem.turnId,
         itemId: progressItem.itemId,
         type: progressItem.type,
-        status: progressItem.status,
-        label: progressItem.label,
-        detail: progressItem.detail,
+        status: progressStatus ?? progressItem.status,
+        label: progressLabel ?? progressItem.label,
+        detail: progressDetail,
         updatedAt: progressItem.updatedAt,
       }
       : resolved.item
@@ -145,6 +166,16 @@ export class AgentActivityBackend {
       this.scope.eventBus.publish(AgentEvents.activity.observed, activity);
     }
   }
+}
+
+function summarizeCommandLabel(command: string): string {
+  const normalized = command.replace(/\s+/g, " ").trim();
+  const heredocIndex = normalized.search(/<<-?/);
+  const summary = heredocIndex >= 0
+    ? normalized.slice(0, heredocIndex).trim()
+    : normalized;
+  if (summary.length <= 240) return summary;
+  return `${summary.slice(0, 239)}…`;
 }
 
 function itemLabel(item: NonNullable<AppServerResolvedTimelineEntry["item"]>): string {

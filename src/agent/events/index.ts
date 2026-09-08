@@ -8,8 +8,10 @@ import type { AgentMessageEventCatalog } from "../message/message-events.js";
 import type { AgentHumanInputEventCatalog } from "../human-input/human-input-events.js";
 import type { AgentStepEventCatalog } from "../step/step-events.js";
 import type { AgentToolCallEventCatalog } from "../tool-call/tool-call-events.js";
+import type { AgentCommandExecutionEventCatalog } from "../command-execution/command-execution-events.js";
 
 import "../activity/activity-event.js";
+import "../command-execution/command-execution-events.js";
 import "../thread/thread-events.js";
 import "../thread/turn-events.js";
 import "../message/message-events.js";
@@ -23,6 +25,7 @@ import { AgentEvents as AgentEventCatalog } from "./catalog.js";
 /** Fully typed registry of all agent-owned event routes. */
 export const AgentEvents = AgentEventCatalog as EventCatalogRegistry<"agent">
   & DefinedEventCatalog<AgentActivityEventCatalog>
+  & DefinedEventCatalog<AgentCommandExecutionEventCatalog>
   & DefinedEventCatalog<AgentThreadEventCatalog>
   & DefinedEventCatalog<AgentTurnEventCatalog>
   & DefinedEventCatalog<AgentMessageEventCatalog>
