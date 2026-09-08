@@ -1,7 +1,7 @@
 const { basename, isAbsolute } = require("node:path");
 const { COVERAGE_DIMENSIONS, COVERAGE_STATES, EVIDENCE_ID_PATTERN, EVIDENCE_TEMPLATES } = require("../shared/constants.cjs");
 const { addIssue } = require("../shared/diagnostics.cjs");
-const { concreteRepositoryFields, repositoryFields, requireNonNoneFields, requireSectionFields } = require("../shared/fields.cjs");
+const { codebaseFields, concreteCodebaseFields, requireNonNoneFields, requireSectionFields } = require("../shared/fields.cjs");
 const { bulletFields, displayPath, evidenceIds, hasTemplateInstruction, isPlaceholder, markdownTable, normalized, scalar, sectionByTitle } = require("../shared/markdown.cjs");
 const { codebaseTemplatePath, knowledgeTemplatePath, researchTemplatePath, validateTemplateSections } = require("../shared/templates.cjs");
 
@@ -105,11 +105,10 @@ function validateCapabilityEvidence(document, displayRoot, issues) {
 
 function validateSourceCodeEvidence(document, status, displayRoot, issues) {
   const path = displayPath(document.path, displayRoot);
-  const provenance = requireSectionFields(document, "Repository Provenance", repositoryFields(), displayRoot, issues);
-  requireNonNoneFields(document, "Repository Provenance", provenance, concreteRepositoryFields(), displayRoot, issues);
-  const replay = requireSectionFields(document, "Replay Locator", [
+  const codebase = requireSectionFields(document, "Codebase", codebaseFields(), displayRoot, issues);
+  requireNonNoneFields(document, "Codebase", codebase, concreteCodebaseFields(), displayRoot, issues);
+  const locator = requireSectionFields(document, "Source Locator", [
     "source_relative_file",
-    "source_file_worktree_state",
     "canonical_locator",
   ], displayRoot, issues);
   requireSectionFields(document, "Primary Symbol", [
@@ -129,29 +128,16 @@ function validateSourceCodeEvidence(document, status, displayRoot, issues) {
     addIssue(issues, "PRIMARY_SYMBOL_COUNT", path, "Each E-CODE artifact must contain exactly one Primary Symbol section.");
   }
 
-  const sourceFile = replay && scalar(replay.get("source_relative_file"));
-  const sourceCommit = provenance && scalar(provenance.get("source_commit"));
+  const sourceFile = locator && scalar(locator.get("source_relative_file"));
+  const version = codebase && scalar(codebase.get("version"));
   if (sourceFile && (isAbsolute(sourceFile) || sourceFile.split(/[\\/]/).includes(".."))) {
-    addIssue(issues, "INVALID_SOURCE_RELATIVE_FILE", path, "source_relative_file must be relative to the source repository.");
+    addIssue(issues, "INVALID_SOURCE_RELATIVE_FILE", path, "source_relative_file must be relative to the managed codebase.");
   }
-  if (sourceFile && sourceCommit) {
-    const expected = `${sourceCommit}:${sourceFile}`;
-    if (scalar(replay.get("canonical_locator")) !== expected) {
+  if (sourceFile && version) {
+    const expected = `${version}:${sourceFile}`;
+    if (scalar(locator.get("canonical_locator")) !== expected) {
       addIssue(issues, "INVALID_CANONICAL_LOCATOR", path, `canonical_locator must equal ${expected}.`);
     }
-  }
-
-  if (status !== "source_verified") return;
-  if (normalized(replay && replay.get("source_file_worktree_state")) !== "clean") {
-    addIssue(issues, "SOURCE_FILE_NOT_CLEAN", path, "source_verified requires source_file_worktree_state: clean.");
-  }
-  const gitlinkPath = scalar(provenance && provenance.get("gitlink_path"));
-  const gitlinkCommit = scalar(provenance && provenance.get("gitlink_commit"));
-  if ((gitlinkPath === "none") !== (gitlinkCommit === "none")) {
-    addIssue(issues, "INCOMPLETE_GITLINK", path, "gitlink_path and gitlink_commit must both be none or both be concrete.");
-  }
-  if (gitlinkPath !== "none" && (gitlinkCommit !== sourceCommit || normalized(provenance.get("gitlink_matches_source_commit")) !== "true")) {
-    addIssue(issues, "GITLINK_COMMIT_MISMATCH", path, "source_verified nested evidence requires gitlink_commit to equal source_commit.");
   }
 }
 

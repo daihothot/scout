@@ -1,9 +1,9 @@
 ---
 assetKind: scout.skill
 name: domain-validation-researcher
-description: Scout Researcher 在 Validation Domain 中接收 BDD 定位输入、调用适用研究方法，并形成可供 Research Pack Gate 检查的可追溯 handoff 时使用。
+description: Scout Researcher 在 Validation Domain 中确认 BDD、编排研究方法并提交可追溯 Research handoff 时使用。
 id: domain-validation-researcher
-version: 0.5.9
+version: 0.6.0
 type: domain
 domain: validation
 phase: [research]
@@ -14,152 +14,117 @@ dependencies:
   skills:
     required: [domain-validation-research-pack, internal-skill-consumption, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**]
   shellTools:
-    required: [find, sort]
-summary: 规范 Validation Researcher 的输入收敛、方法委派和领域 handoff。
+    required: [scoutAssets]
+summary: 收敛 Validation Research 输入并提交正式 Research handoff。
 ---
 
 # Domain Validation Researcher
 
-当 Researcher 在 Validation Domain 中需要把 BDD 定位输入收敛为可供下游消费的 Research handoff 时使用本技能。
+当 Researcher 需要把 Coordinator 提供的目标收敛为唯一 BDD，并交付可供 Gate 检查的 Research pack 时使用本技能。
 
-本技能定义 Validation Research 的角色工作流；Research Pack 编排由 `domain-validation-research-pack` 所有，知识与代码采集方法分别由 `tool-guru-knowledge` 和 `tool-jarvis-codebase` 所有。
+本技能拥有 Researcher 的输入确认、研究编排和 handoff；Research Pack 的 artifact contract 由 `domain-validation-research-pack` 定义，知识与代码采集方法由各自 Tool Skill 定义。
 
 ## Skill Type
 
 - type: domain
 - layout: workflow
-- note: 本技能是领域入口 Skill，不复制专项研究 Skill 的模板、命令或证据结构。
+- note: 本技能拥有 Validation Research 的角色流程和交接，不复制 producer 的采集 contract。
 
 ## Core Use
 
 使用本技能处理：
 
-- 检查 Coordinator task 是否提供可定位的 BDD 输入和当前研究边界。
-- 选择并执行当前 Validation task 所需的研究方法 Skill。
-- 区分已确认输入、来源内容、研究归纳、候选和未确认项。
-- 将专项研究产物整理成稳定 Research handoff。
-
-不使用本技能处理：
-
-- 自行扩展到未分配的 BDD、产品、版本或来源范围。
-- 重复定义 `domain-validation-research-pack` 的 evidence pack、模板或验证手册字段。
-- 执行运行时验证、判定 BDD 是否通过或执行最终 gate。
-- 直接向用户请求输入。
+- 核对当前 task 的 BDD 定位、版本和研究边界。
+- 冻结当前可见的通用及 Capability Signal Skill 集合，完整读取其 contract。
+- 选择适用的 Knowledge/Code producer，并将结果交给 Research Pack 编排。
+- 在人工事实未闭环时保留 Human Confirmation Gate。
+- 按固定字段提交 Research handoff。
 
 ## Signal Consumption
 
-`Signal set` 是当前 Validation role 必须作为一个整体消费的 Signal Skill 集合。`general Signal set` 是每个 Validation Research task 都必须消费的通用集合；`capability Signal set` 是 BDD 已确认涉及某个 Capability 后必须消费的专项集合。`<capability>` 表示该 Capability 的实际目录名。
-
-本领域当前 Signal 根目录为：
-
-```text
-.scout/skill/signal/local/unity/general/
-```
-
-### Freeze General Signal Set
-
-在调用知识、代码或其它研究工具前，执行一次以下命令：
+Research 阶段先冻结当前可见 Signal 集合，再理解可用于 Manual 的 interface 和 requirement；不选择 runtime acquisition。
 
 ```bash
-find -L .scout/skill/signal/local/unity/general -mindepth 2 -maxdepth 2 -type f -name 'SKILL.md' -print | sort
+scout-assets family signal.local.unity.general --phase <phase>
 ```
 
-将排序后的完整输出冻结为当前 task 的 `general Signal list`。目录不可读、命令失败或列表为空时，不得开始依赖该集合的研究。
+对已确认的 Capability `<capability>`，使用：
 
-### Freeze Capability Signal Set
+```bash
+scout-assets family signal.local.unity.general.<capability> --phase <phase>
+```
 
-- 只根据 BDD fact 与已确认 Capability 选择 `<capability>`；尚未确认时不猜测、不预读。
-- 每选择一个 `<capability>`，在形成相关 research claim 或 verification manual requirement 前执行一次以下命令：
+按 `internal-runtime-inspector` 的 family 规则逐级查询返回的完整点分隔 `family-path`；到达叶节点后冻结返回的 Skill 列表，并按列表顺序对每个入口完整执行 `internal-skill-consumption`。查询失败、没有下级或任一成员未通过 readiness gate 时，停止依赖该集合的研究并报告缺口；不得凭名称拼接路径或跳过成员。
 
-  ```bash
-  find -L .scout/skill/signal/local/unity/general/<capability> -mindepth 2 -maxdepth 2 -type f -name 'SKILL.md' -print | sort
-  ```
+## Research Model
 
-- 将排序后的完整输出冻结为该 `<capability>` 的 `capability Signal list`。目录不可读、命令失败或列表为空时，不得开始依赖该集合的研究。
-
-### Consume Frozen Sets
-
-1. 按 `general Signal list` 的固定顺序，将每个入口分别作为 `<target-skill-path>`，完整执行 `internal-skill-consumption`。
-2. 按每个 `capability Signal list` 的固定顺序执行同样处理。
-3. 只有集合内每个成员都通过 `internal-skill-consumption` 的 readiness gate，才能开始依赖该集合的工作；不得因名称、摘要或预判不适用而跳过成员。
-
-Researcher 使用已完成的集合理解 interface contract、derived contract 和可表达的 verification requirement，不选择 implementation candidate，也不执行 acquisition。通用集合完成不表示任意 Capability 已选择。完整消费失败时停止受影响研究范围并报告实际缺口；不生成 coverage 或 applicability 记录。
-
-## Validation Research Model
-
-- Coordinator 提供的是 BDD 定位输入；唯一 BDD fact 由 Researcher 使用专项研究方法确认。
-- Research artifact 负责锁定待验证功能点、来源、证据、限制和需人工确认项，不是运行时验证结论。
-- Guru Knowledge 与当前版本代码属于不同 producer 来源，必须分别遵守对应 Tool Skill。
-- `domain-validation-research-pack` 是当前 Validation Research 的编排和聚合产物所有者，本技能只负责进入条件和领域 handoff。
-- Research handoff 的 complete、partial 或 blocked 必须与实际专项产物状态一致。
-- 同一 run/BDD 只维护一个 `<bdd-id>-research-pack/`；Gate 修正原地写入该 pack，并以新 digest 再次 handoff。
-
-## Human Confirmation Gate
-
-- 仅当适用专项 Research Skill 判定某项必需事实无法从当前输入、证据或可用能力确认，并阻止唯一 BDD、目标版本证据、研究范围或必需产物闭环时，进入本 Gate。
-- 进入本 Gate 后立即停止当前研究，不继续处理后续阶段；已经形成的 artifact、evidence 和 limitation 保留当前状态。
-- 通过正式人工请求入口提出一次最小问题并保持当前 task 为 `running`；Gate 未解除时不得进入 Phase 3，也不得提交任何 Research handoff。
-- 可选未知项是否进入本 Gate 完全遵循专项 Research Skill。
-- 只有与待确认事实、当前 task 和研究目标明确匹配的用户确认才能解除本 Gate；解除后从当前研究阶段继续。
-
-## Native Subagent Strategy
-
-- native subagent 的通用委派、父 Worker 责任和结果消费规则遵守 `worker.AGENTS.md`。存在未解除的 `Human Confirmation Gate` 时，不得派发依赖该事实的 child。
-- Knowledge 与 Code 是可选的 producer 拆分；具体边界、输入、只读权限和返回结构分别遵守 `tool-guru-knowledge` 与 `tool-jarvis-codebase`。
-- 父 Researcher 独占 Human Confirmation Gate、Persona/Human evidence、evidence id 与 ref 分配、正式 artifact 写入、checker、digest 和 Research handoff。
-- child 不能形成最终 Research 状态；父 Researcher 只抽查进入正式 claim 的关键 locator，并负责两个 producer 的共同 BDD、版本、平台和 artifact scope 对齐。
+- Coordinator 的输入只是定位线索；唯一 BDD fact 必须由 Researcher 通过 `tool-guru-knowledge` 确认。
+- Knowledge evidence 支撑意图和规格；当前版本 Code evidence 支撑 implementation claim；Research 不形成运行通过结论。
+- 同一 run/BDD 只维护一个 `<bdd-id>-research-pack/`，Gate 修正原地更新并重新计算 digest。
+- Researcher 父 Agent 拥有 BDD 唯一选择、人工请求、evidence id、artifact 写入、checker、digest 和 handoff；child 只能返回 producer 结果。
 
 ## Inputs
 
 ### I-001: Research Task
 ---
 
-描述：
+Required：
 
-- Coordinator synthesis 后的 task id、验证目标、已确认用户意图、输入 refs、预期交付和禁止越权边界。
+- Coordinator task id、Validation 目标、已确认用户意图、当前 workflow phase 和交付入口。
 
-注意事项：
+Optional：
 
-- 不读取或拼接未通过 task 提供的其它 Agent 上下文。
-- task 不属于 Researcher 时停止并交回 Coordinator。
+- issue/PR 线索、补充说明或已存在的 artifact refs；没有时写 `none`。
+
+Missing：
+
+- 缺少 task、目标或当前 phase 时，停止研究并将缺口交回 Coordinator。
+
+Confirmation：
+
+- task 属于当前 Researcher，且目标、phase、交付入口和禁止越权边界彼此一致。
 
 ### I-002: BDD Locator
 ---
 
-描述：
+Required：
 
-- BDD ID、Behavior 文件路径或可定位的 Guru SDK 场景描述。
+- BDD ID、Behavior 文件路径，或足以定位 Behavior 的场景描述。
 
-注意事项：
+Optional：
 
-- 多个候选、无候选或场景语义不完整时，不得自行选择。
+- 关键词、来源 ref 或候选列表；没有时写 `none`。
+
+Missing：
+
+- 无候选、多个未消歧候选或场景语义不完整时，保留候选并进入人工确认，不自行选择。
+
+Confirmation：
+
+- 通过 `tool-guru-knowledge` 得到一个可重放的 Behavior identity 与 scenario，且与目标一致。
 
 ### I-003: Product and Version Boundary
 ---
 
-描述：
+Required：
 
-- 当前产品、版本、branch、commit、平台、用户画像线索和来源 refs。
+- 产品、当前版本、目标平台以及已确认的 research boundary。
 
-注意事项：
+Optional：
 
-- 当前版本代码证据所需边界缺失时，按专项 Skill 记录 partial、blocked 或需人工确认项。
-- 不主动选择 latest 或扩大到其它 codebase。
+- 用户画像线索、Capability 线索和来源 refs；没有时写 `none`。
 
-## Validation Research Workflow
+Missing：
 
-- Phase 1：确认 task、BDD locator 和研究边界。
-- Phase 2：加载并执行适用研究方法 Skill。
-- Phase 3：核对专项产物状态并提交领域 handoff。
+- 版本或平台缺失时，按 Research Pack 和 producer contract 判断；影响必需事实时记录 Human Confirmation Gate，不选择 `latest` 或扩大范围。
 
-## Research Handoff Output Layout
+Confirmation：
 
-本技能不定义新的 canonical artifact 或模板。
+- 两个 producer 使用同一产品、版本、平台和唯一 BDD，且 scope 可写入同一 pack。
 
-输出要求：
+## Research Handoff Output
 
-- 正式 artifact 及字段结构由 `domain-validation-research-pack` 定义。
-- Research handoff 必须使用下列固定十字段；英文 Markdown 标题和字段 key 保持原样，字段内容使用中文，字段不得增加、删除、改名或展开为额外摘要：
+正式 handoff 使用固定字段，英文标题和 key 保持原样，字段内容使用中文：
 
 ```markdown
 # Research Handoff State
@@ -171,149 +136,150 @@ Researcher 使用已完成的集合理解 interface contract、derived contract 
 - digest: <当前 pack digest>
 - evidence_registry_ref: <evidence-registry.md ref>
 - verification_manual_ref: <verification-manual.md ref>
-- issues_or_limitations: <问题 ids 或最小限制；没有时写 none>
+- issues_or_limitations: <问题或限制；没有时写 none>
 - human_confirmation_state: <resolved | not_required>
 - continuation_entry: <下一步消费入口>
 ```
-- Research handoff 不得复制 evidence claim、源码定位、verification point 的 Given / When / Then、signals to collect、checker 完整输出或 artifact 文件清单；这些内容只能通过正式 artifact ref 消费。
-- `complete` 只表示当前 Research 交付完整，不表示 BDD 已通过验证。
 
-### Artifact Relationship Rules
-
-- 摘要产物：Research handoff 只传递专项 Research pack 的状态、关键 refs、digest、问题或限制和继续入口，不复制 pack 内容。
-- 明细产物：知识和代码 evidence 分别由对应 Tool Skill 所有；聚合、Persona 和 Human evidence 由 `domain-validation-research-pack` 所有。
-- Registry / Pack state：沿用专项 Skill 生成的 evidence registry；Pack 状态由 checker 根据必需聚合 artifact 派生，本技能不创建第二套状态 artifact。
-- Claim owner：BDD、knowledge 和 implementation claim 的所有权遵守专项 Skill。
-- 下游引用规则：Research Validator 先从正式 handoff 获取唯一 pack ref、digest、evidence registry ref 和 verification manual ref；只有对应 Research Pack Gate accepted 后，Coordinator 才把 Gate ref、同一 pack ref / digest 和 manual ref 交给 Verifier。
-- Ref 字段策略：本技能只传递已有 ref，不产生第二套 artifact_ref 或 evidence id。
-- 修正关系：Validator Gate 只适用于其记录的 digest；Researcher 在同一 pack ref 内修正后提交新 digest，不创建 revision pack 或 Gate follow-up artifact。
+handoff 只传递状态、refs、digest、问题和继续入口，不复制 evidence 正文、BDD 细节、源码定位或 checker 全量输出。`complete` 只表示 Research 交付完整，不表示 BDD 已通过。
 
 ## Phase 1: Confirm Research Boundary
 ---
 
-本阶段确认任务属于 Validation Research，并检查 BDD 与版本边界。
+Main Flow：
 
-注意事项：
+Knowledge：
 
-- 保留 Coordinator 已确认内容、未确认内容和输入 refs。
-- 判断 BDD 是否唯一定位需要实际研究，不以 Coordinator 推断替代。
-- 缺少必要能力或产物写入位置时记录阻塞项。
+- 当前 task 的 workflow phase attachment 是唯一流程入口；Researcher 只消费已提供的目标和边界。
 
-Exit：
+Flow：
 
-- 已确认可执行的 Research scope 和适用研究 Skill。
+```mermaid
+flowchart TD
+  A[读取 task 与 BDD locator] --> B{输入可确认}
+  B -- 否 --> C[记录缺口]
+  C --> D[Blocked 或 Human Gate]
+  B -- 是 --> E[冻结 Signal 集合]
+  E --> F[进入研究方法]
+```
 
 Blocked：
 
-- task 职责不匹配、BDD 输入无法进入定位流程或 required Skill 不可见时停止。
+- task 不属于当前 Researcher、required Skill 不可见或没有可定位 BDD 输入时停止。
 
 Partial：
 
-- BDD 可定位但版本或其它必填事实边界不完整时，按专项 Skill 判断是否进入 `Human Confirmation Gate`；进入 Gate 后停留在当前 Phase，不得把 partial artifact 状态解释为允许 handoff。
+- 目标可定位但版本、平台或其它必需边界未闭环时，保留已确认范围和缺口。
+
+Exit：
+
+- Research scope、唯一输入来源、适用 producer 和 Signal 列表已确认。
 
 ## Phase 2: Execute Research Method
 ---
 
-本阶段加载并执行 `domain-validation-research-pack`，由它编排两个 producer Skill、Domain 模板和 Evidence Pack。
+Main Flow：
 
-注意事项：
+Knowledge：
 
-- 必须读取当前 mount 中实际 Skill 内容，不凭记忆执行。
-- 不复制或弱化专项 Skill 的 evidence、provenance、状态和验证手册规则。
-- 工具活动只有整理进正式 artifact 后才能成为 Research handoff 的引用对象。
-- 收到 Gate 问题时只修改原 `<bdd-id>-research-pack/`，不得创建 `-vN` 目录或 pack 副本。
+- `domain-validation-research-pack` 编排 BDD、Knowledge、Code、Registry 和 Manual；Researcher 只按其 contract 提供输入并消费结果。
 
-Exit：
+Flow：
 
-- 专项 Skill 已形成 complete、partial 或 blocked 的正式 Research 产物，且不存在尚未解除的 `Human Confirmation Gate`。
+```mermaid
+flowchart TD
+  A[读取 Research Pack contract] --> B[定位唯一 BDD]
+  B --> C[调用 Knowledge producer]
+  C --> D[调用 Code producer]
+  D --> E[构建或更新 Research pack]
+  E --> F{必需事实闭环}
+  F -- 否 --> G[Human Gate 或 Partial]
+  F -- 是 --> H[进入 handoff]
+```
+
+Constraints：
+
+- producer 只在自己的 scope 内工作；Researcher 不把 knowledge 候选写成代码事实，也不把工具活动当 evidence。
+- BDD、版本、平台和 artifact scope 必须在两个 producer 间保持一致。
 
 Blocked：
 
-- 专项 Skill 的 required 输入、能力、模板或写入目标缺失时按其规则停止。
+- producer contract、模板、artifact target 或必需来源不可用，导致 pack 无法继续时停止。
 
 Partial：
 
-- 专项 Skill 允许部分产出时，保留 phase resume、缺口和继续条件；存在尚未解除的 `Human Confirmation Gate` 时不得退出本 Phase。
+- producer 已形成可定位的部分 evidence 时，保留原始 refs 和 limitation，不伪造 complete。
+
+Returns To Main Flow：
+
+- `producer_ready`：继续构建 pack；`human_confirmation_needed`：停在当前 task 等待正式回复；`producer_blocked`：进入 Phase Blocked。
 
 ## Phase 3: Submit Research Handoff
 ---
 
-本阶段检查 Research 产物状态和 handoff 摘要是否一致，并通过正式 task 入口提交。
+Main Flow：
 
-注意事项：
+Knowledge：
 
-- handoff 必须包含 Verification Manual ref；尚未形成时明确说明停留阶段和原因。
-- 不得在 handoff 中复制 artifact 文件列表、证据正文、关键验证点详情或检查工具完整输出。
-- complete、partial、blocked 必须来自实际产物，不由自然语言自评。
-- 每次 handoff 前必须执行 `scout-artifact-digest <research-pack-dir>`，并提交其返回的 `scout-directory-sha256-v1` digest；不得使用自定义目录摘要算法或继续引用修正前 digest。
+- handoff 必须反映当前 pack 的真实状态和最新 digest；所有详细事实由 pack refs 提供。
 
-Exit：
+Flow：
 
-- 正式 Research handoff 已提交，且状态与产物一致。
+```mermaid
+flowchart TD
+  A[检查 pack refs 与状态] --> B[运行 checker]
+  B --> C{checker 通过}
+  C -- 否 --> D[保留 partial 或 blocked]
+  C -- 是 --> E[运行 artifact digest]
+  E --> F[提交固定 handoff]
+```
 
 Blocked：
 
-- 产物无法写入、refs 不闭环或 handoff 无法提交时不得结束 task。
+- pack 不可写、refs 不闭环、checker/digest 失败或正式 handoff 入口不可用时停止。
 
 Partial：
 
-- 不存在待人工确认的必需事实，且专项 Skill 允许部分交接时，可以提交 partial，并明确剩余工作、缺失条件和继续入口。
+- pack 有可消费的部分结果且不存在未解除的必需 Human Gate 时，可提交 `partial` handoff，并写明继续条件。
+
+Exit：
+
+- handoff 已使用最新 `scout-directory-sha256-v1` digest 正式提交，且状态与 pack 一致。
 
 ## Workflow Exit Rules (Enforcement)
 
-- XR-001：不得跳过专项研究 Skill 定义的前置 Phase、模板或验证工具。
-- XR-002：专项产物为 partial 或 blocked 时，领域 handoff 必须使用对应状态。
-- XR-003：Research complete handoff 必须包含可供下游消费的 evidence registry ref 和 Verification Manual ref；详细证据和验证点只存在于对应 artifact。
-- XR-004：Gate 修正后的 handoff 必须保持原 pack ref，并携带修正后 digest 和已处理问题 refs。
-- XR-005：`Human Confirmation Gate` 未解除时必须保持当前 task 为 `running`，不得进入 Phase 3 或提交任何状态的 handoff。
+- XR-001：未唯一定位 BDD 前不得进入 producer 阶段。
+- XR-002：存在必需人工确认项时不得提交 handoff。
+- XR-003：Research pack 修正必须原地更新同一 ref，并重新计算 digest。
+- XR-004：handoff 必须包含固定字段和 Verification Manual ref；不得复制 artifact 正文。
 
 ## Evidence Rules (Enforcement)
 
-- ER-001：Research 来源、knowledge evidence 和 code evidence 的成立条件由专项 Skill 定义。
-- ER-002：Research artifact 只锁定验证内容和证据事实，不证明运行时行为已发生。
-- ER-003：普通 summary、工具调用和共享记忆不得替代正式 evidence ref。
+- ER-001：Knowledge、Code 和 Signal contract 都是来源或方法，不是运行验证结论。
+- ER-002：每个 producer evidence 必须有 source ref、locator、状态和 limitation。
+- ER-003：只有正式 artifact ref 才能进入 handoff；普通消息和工具活动不能替代 ref。
 
 ## Failure Rules (Enforcement)
 
-- FR-001：专项 Skill、模板、命令或 artifact 写入失败时，保留 failed command、影响范围和 limitation。
-- FR-002：BDD 无法唯一定位时不得继续形成唯一 verification point。
-- FR-003：handoff 失败时不得用普通自然语言冒充正式 handoff。
+- FR-001：候选冲突、来源失败、模板缺失或写入失败必须原样记录并保持相应状态。
+- FR-002：不能用推断补齐必需事实，也不能用旧 digest 继续 handoff。
 
 ## Blocking Rules (Enforcement)
 
-- BR-001：缺少 `domain-validation-research-pack` 或其 required capability 时必须停止依赖阶段。
-- BR-002：BDD 无法唯一定位时必须停止，并按 `Human Confirmation Gate` 判断是否需要上游确认。
-- BR-003：正式产物不可写或无法提交时不得报告完成。
+- BR-001：无法唯一定位 BDD、无法读取 required Skill 或无法写入 pack 时停止。
+- BR-002：必需版本/平台事实无法确认时进入 Human Confirmation Gate。
 
 ## Retry Rules (Enforcement)
 
-- RR-001：重试遵守专项 Skill 的只读和副作用边界，并写入其 retry log。
-- RR-002：不得通过更换 BDD、版本、repo 或来源范围制造成功。
-- RR-003：同一外部错误或不可读入口在一次有明确新输入、环境变化或实质修复后的复测仍失败时，提交 blocked 或 partial，不循环执行相同失败路径；仅重写文字、重算 digest 或再次调用同一失败命令不构成新输入。
+- RR-001：工具重试遵守 producer Skill；不得通过换版本、换目标或扩大 scope 规避失败。
 
 ## Prohibited Rules (Enforcement)
 
-- PR-001：禁止把 Research 结果描述为 BDD 已验证或 gate 已通过。
-- PR-002：禁止复制专项 Skill 的模板和业务规则形成第二套产物。
-- PR-003：禁止直接面向用户请求输入或自行扩大研究范围。
-- PR-004：禁止用 `-vN`、副本目录或 `gate-followup.md` 保存 Research 修订历史。
-- PR-005：禁止把 Research handoff 的英文 Markdown 标题改成中文，或在标题下使用非中文自然语言内容；contract 字段和值除外。
+- PR-001：禁止修改代码、配置、Knowledge source 或下游 artifact。
+- PR-002：禁止自行选择多个 BDD、复制 producer 方法论或声称运行验证通过。
 
-## Example
+## Checklist
 
-输入：
-
-```text
-Coordinator 分配 account-anon-first-launch-signin 的 Research task，并提供目标 SDK 版本。
-```
-
-流程：
-
-1. 确认 BDD locator、版本和 task 边界。
-2. 加载 `domain-validation-research-pack` 形成正式 Research pack。
-3. 按实际产物状态提交 Research handoff。
-
-输出：
-
-- 专项 Skill 产生的 artifact refs 和 evidence refs。
-- Research handoff state、唯一 pack ref、digest、evidence registry ref、Verification Manual ref、问题或限制、人工确认状态和继续入口；标题使用英文，内容使用中文。
+- task、BDD、版本和平台边界已确认。
+- Signal 集合已按列表完整读取，适用 producer 结果已对齐。
+- Research pack、checker、digest 和固定 handoff refs 闭环。

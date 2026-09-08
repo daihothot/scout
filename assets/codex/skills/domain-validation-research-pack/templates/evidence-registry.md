@@ -111,7 +111,7 @@ completion_state: partial
 
 - artifact_ref: <填写 E-CODE-* 独立 evidence artifact ref>
 - source: <填写 SRC-* 引用>
-- locator: <填写 source commit、相对路径、symbol 和行号>
+- locator: <填写 source version、相对路径、symbol 和行号>
 - claim_supported: <填写 source code evidence 能够支持的 claim>
 - supports: <填写该 evidence 支持的 IC-* 或 VP-* 引用>
 - limitations: <填写 source code evidence 的额外限制；Nice to Have，可不填写>

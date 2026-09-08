@@ -67,7 +67,6 @@
         "jarvis",
         "codegraph",
         "rg",
-        "git",
         "find",
         "grep",
         "ls"
@@ -91,9 +90,7 @@
       "shellTools": [],
       "mcpServers": [],
       "plugins": [],
-      "readableRoots": [
-        "${SCOUT_ROOT}"
-      ],
+      "readableRoots": [],
       "writableRoots": []
     },
     "research-artifacts": {

@@ -29,12 +29,9 @@ completion_state: partial
 - `ready + complete`
 - `blocked + blocked`
 
-## Knowledge Repository Provenance
+## Knowledge Source
 
 - knowledge_repo: <填写当前 knowledge 仓库名称>
-- knowledge_branch: <填写收集证据时的 branch>
-- knowledge_commit: <填写收集证据时的完整 commit>
-- knowledge_worktree_state: <填写 clean 或具体修改状态>
 - knowledge_root: <填写本次 run 使用的 knowledge 根路径>
 
 ## Knowledge Aggregate
@@ -60,7 +57,7 @@ completion_state: partial
 
 ### E-CAP-001
 
-- template: tool-guru-knowledge/templates/capability-evidence.md
+- template: domain-validation-research-pack/templates/capability-evidence.md
 - artifact_ref: <填写 E-CAP-* 独立 evidence artifact ref>
 - capability: <填写 Capability 名称>
 - relation_to_bdd: <填写 primary、upstream、downstream 或 supporting>
@@ -78,7 +75,7 @@ completion_state: partial
 
 ### E-AVAIL-001
 
-- template: tool-guru-knowledge/templates/availability-evidence.md
+- template: domain-validation-research-pack/templates/availability-evidence.md
 - artifact_ref: evidence/E-AVAIL-001.md
 - capability_refs: <填写该 Availability 聚合覆盖的 E-CAP-* 引用>
 - claim_supported: <填写目标版本下相关 Capabilities 的可用性 claim>
@@ -89,7 +86,7 @@ completion_state: partial
 
 ### E-PLATFORM-001
 
-- template: tool-guru-knowledge/templates/platform-evidence.md
+- template: domain-validation-research-pack/templates/platform-evidence.md
 - artifact_ref: evidence/E-PLATFORM-001.md
 - capability_refs: <填写该 Platform 聚合覆盖的 E-CAP-* 引用>
 - claim_supported: <填写目标平台下相关 Capabilities 的共享契约或差异 claim>

@@ -26,20 +26,12 @@ completion_state: partial
 - `ready + complete`
 - `blocked + blocked`
 
-## Root Repository Provenance
+## Codebase
 
-- root_repo: <填写 managed root repository 名称>
-- root_version: <填写当前代码库声明的版本号>
-- root_branch: <填写收集证据时的 branch>
-- root_commit: <填写收集证据时的完整 commit>
-- root_worktree_state: <填写 clean 或具体修改状态>
-- root_codebase_path: <填写本次 run 解析出的 managed checkout 路径>
-
-## Source Repository Provenance
-
-| source_id | source_repo | source_version | source_branch | source_commit | source_worktree_state | source_codebase_path | gitlink_path | gitlink_commit | codegraph_status |
-|---|---|---|---|---|---|---|---|---|---|
-| SRC-001 | <填写实际拥有目标源码的仓库名称> | <填写源码仓库版本> | <填写源码仓库 branch> | <填写源码仓库完整 commit> | <填写 clean 或具体修改状态> | <填写源码仓库路径> | <非嵌套仓库填写 none，否则填写 gitlink 路径> | <非嵌套仓库填写 none，否则填写 gitlink commit> | <填写查询时确认的 CodeGraph 状态> |
+- codebase: <填写当前 managed codebase 名称>
+- version: <填写当前 managed codebase 的版本号>
+- codebase_path: <填写本次 run 解析出的 managed codebase 路径>
+- codegraph_status: <填写查询时确认的 CodeGraph 状态>
 
 ## Scope
 
@@ -53,15 +45,15 @@ completion_state: partial
 
 ## Implementation Claims
 
-| claim_id | claim | source_id | code_evidence | limitations |
+| claim_id | claim | codebase | code_evidence | limitations |
 |---|---|---|---|---|
-| IC-001 | <填写当前版本代码能够支持的 implementation claim> | <填写 SRC-* 引用> | <填写 E-CODE-* 引用> | <填写该 claim 的额外限制；Nice to Have，可不填写> |
+| IC-001 | <填写当前版本代码能够支持的 implementation claim> | <填写 codebase 名称> | <填写 E-CODE-* 引用> | <填写该 claim 的额外限制；Nice to Have，可不填写> |
 
 ## Source Code Evidence Refs
 
-| evidence_id | artifact_ref | source | locator | claim_supported | supports | limitations |
+| evidence_id | artifact_ref | codebase | locator | claim_supported | supports | limitations |
 |---|---|---|---|---|---|---|
-| E-CODE-001 | <填写独立 source code evidence artifact ref> | <填写 SRC-* 引用> | <填写 source commit、相对路径、symbol 和行号> | <填写 source code evidence 能够支持的 claim> | <填写 IC-* 或 VP-* 引用> | <填写额外限制；Nice to Have，可不填写> |
+| E-CODE-001 | <填写独立 source code evidence artifact ref> | <填写 codebase 名称> | <填写 version、相对路径、symbol 和行号> | <填写 source code evidence 能够支持的 claim> | <填写 IC-* 或 VP-* 引用> | <填写额外限制；Nice to Have，可不填写> |
 
 ## Aggregation Notes
 

@@ -8,7 +8,7 @@ function researchTemplatePath(file) {
 }
 
 function knowledgeTemplatePath(file) {
-  return join(__dirname, "..", "..", "..", "skills", "tool-guru-knowledge", "templates", file);
+  return join(__dirname, "..", "..", "..", "skills", "domain-validation-research-pack", "templates", file);
 }
 
 function codebaseTemplatePath(file) {
