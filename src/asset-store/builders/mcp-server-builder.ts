@@ -79,7 +79,7 @@ export class McpServerBuilder {
         wrapperContent: [
           "#!/bin/sh",
           ...exports,
-          `export TMPDIR=${JSON.stringify(this.options.tempRoot)}`,
+          `export SCOUT_TEMP_ROOT=${JSON.stringify(this.options.tempRoot)}`,
           "export GIT_CONFIG_COUNT=1",
           "export GIT_CONFIG_KEY_0=core.excludesFile",
           "export GIT_CONFIG_VALUE_0=/dev/null",

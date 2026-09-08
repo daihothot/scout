@@ -10,6 +10,8 @@ export interface WorkflowResourcePark {
   readonly plugins: readonly string[];
   readonly readableRoots: readonly string[];
   readonly writableRoots: readonly string[];
+  /** Whether commands from this park need outbound/local network access. */
+  readonly network?: boolean;
 }
 
 /** One ordered Worker Phase and its outgoing graph edges. */

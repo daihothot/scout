@@ -20,4 +20,5 @@ export interface AgentProfile {
   plugins: string[];
   readableRoots: string[];
   writableRoots: string[];
+  network?: boolean;
 }

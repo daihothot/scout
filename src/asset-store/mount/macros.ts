@@ -33,6 +33,7 @@ export interface MountShellEnvironmentInput {
   runRoot: string;
   artifactRoot: string;
   tempRoot: string;
+  hostTempRoot: string;
   assetCommitId: string;
   runId?: string;
 }
@@ -64,8 +65,9 @@ export function buildMountShellEnvironment(input: MountShellEnvironmentInput): R
     [MountMacros.RunId]: input.runId ?? runIdFromRunRoot(input.runRoot),
     [MountMacros.RunRoot]: input.runRoot,
     [MountMacros.ArtifactRoot]: input.artifactRoot,
+    [MountMacros.TempRoot]: input.tempRoot,
     [MountMacros.AssetCommitId]: input.assetCommitId,
-    TMPDIR: input.tempRoot,
+    TMPDIR: input.hostTempRoot,
     GIT_CONFIG_COUNT: "1",
     GIT_CONFIG_KEY_0: "core.excludesFile",
     GIT_CONFIG_VALUE_0: "/dev/null",

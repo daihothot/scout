@@ -61,7 +61,7 @@ export class ShellToolBuilder {
         wrapperContent: [
           "#!/bin/sh",
           `export PATH=${JSON.stringify(buildMountShellPath(this.mountRoot))}`,
-          `export TMPDIR=${JSON.stringify(this.tempRoot)}`,
+          `export SCOUT_TEMP_ROOT=${JSON.stringify(this.tempRoot)}`,
           "export GIT_CONFIG_COUNT=1",
           "export GIT_CONFIG_KEY_0=core.excludesFile",
           "export GIT_CONFIG_VALUE_0=/dev/null",
