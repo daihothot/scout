@@ -46,6 +46,7 @@ const persistedEventTypes: EventType[] = [
   AgentEvents.step.toolCallReferenced,
   AgentEvents.step.humanInputReferenced,
   AgentEvents.toolCall.observed,
+  AgentEvents.commandExecution.observed,
   AgentEvents.humanInput.requested,
   AgentEvents.humanInput.responded,
 ];

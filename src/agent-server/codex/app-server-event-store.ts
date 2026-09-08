@@ -61,8 +61,7 @@ export interface AppServerCommandExecutionItem extends AppServerBaseItem {
   cwd?: string;
   status: AppServerItemStatus;
   exitCode?: number | null;
-  stdout?: string;
-  stderr?: string;
+  aggregatedOutput?: string | null;
   durationMs?: number | null;
 }
 
@@ -1064,8 +1063,7 @@ function normalizeItem(value: unknown): AppServerItem | undefined {
         cwd: readString(raw, "cwd"),
         status: readStatus(raw),
         exitCode: readNumberOrNull(raw, "exitCode"),
-        stdout: readString(raw, "stdout"),
-        stderr: readString(raw, "stderr"),
+        aggregatedOutput: readStringOrNull(raw, "aggregatedOutput"),
         durationMs: readNumberOrNull(raw, "durationMs"),
       };
     case "dynamicToolCall":
@@ -1203,6 +1201,11 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function readString(object: Record<string, unknown> | undefined, key: string): string | undefined {
   return typeof object?.[key] === "string" ? object[key] : undefined;
+}
+
+function readStringOrNull(object: Record<string, unknown>, key: string): string | null | undefined {
+  if (object[key] === null) return null;
+  return readString(object, key);
 }
 
 function readStatus(object: Record<string, unknown>): AppServerItemStatus {

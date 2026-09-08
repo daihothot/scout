@@ -65,6 +65,7 @@ test("AppServerEventStore reduces plan, goal, item progress and final response",
       cwd: "/repo",
       status: "completed",
       exitCode: 0,
+      aggregatedOutput: "test output",
     },
   }));
   store.ingestNotification(notification("item/agentMessage/delta", {
@@ -88,6 +89,12 @@ test("AppServerEventStore reduces plan, goal, item progress and final response",
   assert.equal(snapshot.progressItems.length, 1);
   assert.equal(snapshot.progressItems[0]?.type, "commandExecution");
   assert.equal(snapshot.progressItems[0]?.status, "completed");
+  assert.equal(
+    snapshot.progressItems[0]?.item.type === "commandExecution"
+      ? snapshot.progressItems[0].item.aggregatedOutput
+      : undefined,
+    "test output",
+  );
 
   const latest = store.timelineSince(0).at(-1);
   assert.equal(latest?.kind, "turn_completed");
