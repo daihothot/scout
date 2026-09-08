@@ -188,11 +188,17 @@ export class AgentHumanInputBackend {
     response: string;
   }): Promise<{ message: AgentMessage; respondedAt: string }> {
     const respondedAt = new Date().toISOString();
+    const messageId = `${input.requestId}-response`;
     const message: AgentMessage = {
-      messageId: `${input.requestId}-response`,
+      messageId,
       agentId: input.target.agentId,
       taskId: input.taskId,
-      body: attachments.compose(agent.turn.human_response(input.response)),
+      body: attachments.compose(agent.turn.human_response({
+        requestId: input.requestId,
+        taskId: input.taskId,
+        messageId,
+        response: input.response,
+      })),
       queuedAt: respondedAt,
     };
     await this.eventBus.publishAndWait(AgentEvents.humanInput.responded, {

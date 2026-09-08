@@ -350,21 +350,30 @@ test("AgentActivityRecorder writes stable activity to the role activity log", as
     status: "completed",
     label: "rg BDD-001",
   }));
-  await eventBus.publishAndWait(AgentEvents.activity.turnObserved, turnActivity({
+  await eventBus.publishAndWait(AgentEvents.activity.observed, activity({
     seq: 5,
-    status: "inProgress",
+    type: "commandExecution",
+    status: "failed",
+    label: "ls /restricted",
+    detail: "exit_code: 1 · stderr: Operation not permitted",
   }));
   await eventBus.publishAndWait(AgentEvents.activity.turnObserved, turnActivity({
     seq: 6,
+    status: "inProgress",
+  }));
+  await eventBus.publishAndWait(AgentEvents.activity.turnObserved, turnActivity({
+    seq: 7,
     status: "completed",
   }));
   recorder.stop();
 
   const activityLogPath = join(logsRoot, "activity.log");
   const text = readFileSync(activityLogPath, "utf8");
-  assert.equal(readEventCount(text), 4);
+  assert.equal(readEventCount(text), 5);
   assert.match(text, /detail: "Stable summary"/);
   assert.match(text, /label: "rg BDD-001"/);
+  assert.match(text, /WARN module=agent\.activity/);
+  assert.match(text, /exit_code: 1 · stderr: Operation not permitted/);
   assert.doesNotMatch(text, /Partial summary/);
   assert.doesNotMatch(text, /ArchiveTask/);
   assert.match(text, /event=agent\.activity\.turn_observed/);

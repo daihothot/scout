@@ -87,6 +87,7 @@ export class AgentTaskBackend {
     const recordedDisposition = task.dispositions.find((disposition) =>
       disposition.stepId === stepId
     );
+    let result: Awaited<ReturnType<AgentHumanInputBackend["request"]>>;
     if (recordedDisposition?.kind === AgentTaskDispositionKinds.WaitingForHuman) {
       if (
         recordedDisposition.callId !== input.delivery.callId
@@ -94,32 +95,31 @@ export class AgentTaskBackend {
       ) {
         throw new Error(`Worker task ${task.taskId} step ${stepId} already has a different disposition.`);
       }
-      const result = await this.humanInputBackend.request({
+      result = await this.humanInputBackend.request({
         taskId: task.taskId,
         stepId,
         worker: input.caller,
         request: input.call.request,
         requestId: recordedDisposition.requestId,
       });
-      if (result.message) {
-        const coordinator = this.humanInputBackend.resolveAgent(result.agentId);
-        await this.humanInputBackend.deliverMessage(coordinator, result.message);
-      }
-      return toTaskHumanInputResult(result);
-    }
-    if (recordedDisposition) {
+    } else if (recordedDisposition) {
       throw new Error(`Worker task ${task.taskId} step ${stepId} already recorded disposition ${recordedDisposition.kind}.`);
+    } else {
+      result = await this.humanInputBackend.request({
+        taskId: task.taskId,
+        stepId,
+        worker: input.caller,
+        request: input.call.request,
+      });
+      if (result.created) {
+        await this.recordHumanInputDisposition(task, stepId, input, result.requestId);
+      }
     }
 
-    const result = await this.humanInputBackend.request({
-      taskId: task.taskId,
-      stepId,
-      worker: input.caller,
-      request: input.call.request,
+    await input.caller.yieldActiveTurn({
+      threadId: input.delivery.threadId,
+      turnId: input.delivery.turnId,
     });
-    if (result.created) {
-      await this.recordHumanInputDisposition(task, stepId, input, result.requestId);
-    }
     if (result.message) {
       const coordinator = this.humanInputBackend.resolveAgent(result.agentId);
       await this.humanInputBackend.deliverMessage(coordinator, result.message);

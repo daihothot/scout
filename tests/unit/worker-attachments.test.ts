@@ -35,9 +35,18 @@ test("agent turn attachments build payload text", () => {
     "</task-outcome>",
   ].join("\n"));
 
-  const humanResponse = agent.turn.human_response("选择 A");
+  const humanResponse = agent.turn.human_response({
+    requestId: "request-1",
+    taskId: "task-1",
+    messageId: "request-1-response",
+    response: "选择 A",
+  });
   assert.equal(humanResponse, [
     "<human-response>",
+    "requestId: request-1",
+    "taskId: task-1",
+    "messageId: request-1-response",
+    "response:",
     "选择 A",
     "</human-response>",
   ].join("\n"));
@@ -64,7 +73,12 @@ test("attachments compose valid tag blocks and reject invalid blocks", () => {
 
 test("plain agent messages reject Runtime protocol tags", () => {
   assert.throws(
-    () => agent.turn.message(agent.turn.human_response("选择 A")),
+    () => agent.turn.message(agent.turn.human_response({
+      requestId: "request-1",
+      taskId: "task-1",
+      messageId: "request-1-response",
+      response: "选择 A",
+    })),
     /must not contain Runtime tag: human-response/,
   );
   assert.throws(

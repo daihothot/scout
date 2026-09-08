@@ -579,9 +579,20 @@ test("TaskRunner records a delayed human response on the step that consumes it",
   });
   await harness.runtime.runTasksToIdle();
 
+  const pendingTask = harness.runtime.getTaskSnapshot("task-1");
+  const pendingRequestId = pendingTask?.dispositions[1]?.kind
+      === AgentTaskDispositionKinds.WaitingForHuman
+    ? pendingTask.dispositions[1].requestId
+    : undefined;
+  assert.ok(pendingRequestId);
   await harness.runtime.queueMessage({
     taskId: "task-1",
-    message: agent.turn.human_response("User picked A."),
+    message: agent.turn.human_response({
+      requestId: pendingRequestId,
+      taskId: "task-1",
+      messageId: `${pendingRequestId}-response`,
+      response: "User picked A.",
+    }),
   });
   await harness.runtime.runTasksToIdle();
 
@@ -605,7 +616,12 @@ test("TaskRunner records a delayed human response on the step that consumes it",
   assert.deepEqual(steps[1]?.humanInputReferences, []);
   assert.equal(task?.dispositions[2]?.kind, AgentTaskDispositionKinds.HandoffSubmitted);
   assert.deepEqual(steps[2]?.humanInputReferences, []);
-  assert.match(turnPrompts[2] ?? "", /<human-response>\nUser picked A\.\n<\/human-response>/);
+  assert.ok((turnPrompts[2] ?? "").includes(agent.turn.human_response({
+    requestId: pendingRequestId,
+    taskId: "task-1",
+    messageId: `${pendingRequestId}-response`,
+    response: "User picked A.",
+  })));
   assert.ok(harness.events.some((event) =>
     AgentEvents.task.stepStarted.is(event)
     && (event.payload as AgentTaskState).status === AgentTaskStatuses.Running
