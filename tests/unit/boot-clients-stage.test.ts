@@ -40,6 +40,7 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  setFixtureWorkflowProfile(fixtureRoot, "validation");
   const staleAuthPath = join(
     fixtureRoot,
     "run",
@@ -266,6 +267,7 @@ test("RunAppServerStage preserves its owned client when a second start cannot in
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  setFixtureWorkflowProfile(fixtureRoot, "validation");
   const runId = "boot-clients-failure";
   const scope = new RunScope({
     runId,
@@ -304,6 +306,7 @@ test("RunAppServerStage rejects a missing target model provider without falling 
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  setFixtureWorkflowProfile(fixtureRoot, "validation");
   const runId = "boot-clients-provider-missing";
   const scope = new RunScope({
     runId,
@@ -344,6 +347,7 @@ test("RunAppServerStage rebinds target Codex auth without retaining copied crede
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  setFixtureWorkflowProfile(fixtureRoot, "validation");
   const runId = "boot-clients-auth-rebind";
   const isolatedAuthPath = join(
     fixtureRoot,
@@ -408,6 +412,21 @@ test("RunAppServerStage rebinds target Codex auth without retaining copied crede
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function setFixtureWorkflowProfile(fixtureRoot: string, profile: string): void {
+  const path = join(
+    fixtureRoot,
+    "assets",
+    "scout",
+    "config",
+    "scout.config.json",
+  );
+  const config = JSON.parse(readFileSync(path, "utf8")) as {
+    workflow: { profile: string };
+  };
+  config.workflow.profile = profile;
+  writeFileSync(path, JSON.stringify(config, null, 2) + "\n", "utf8");
 }
 
 function installTestCodexHome(
