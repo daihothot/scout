@@ -42,7 +42,9 @@ test("every Scout Skill projects the runtime metadata needed by its mount", () =
     assert.ok(skill.description.length > 0);
     assert.ok(skill.summary.length > 0);
     if (skill.type === ScoutSkillTypes.Domain) {
-      assert.equal(skill.domain, "validation");
+      const domain = skill.domain;
+      assert.equal(typeof domain, "string");
+      assert.ok(domain !== undefined && domain.length > 0);
     } else {
       assert.equal(skill.domain, undefined);
     }
@@ -56,9 +58,54 @@ test("every Scout Skill projects the runtime metadata needed by its mount", () =
   assert.deepEqual(byName.get("internal-runtime-inspector")?.phase, [InternalPhase]);
   assert.equal(byName.get("internal-skill-creator")?.phase, undefined);
   assert.deepEqual(byName.get("internal-skill-consumption")?.phase, [InternalPhase]);
-  assert.deepEqual(byName.get("domain-validation-researcher")?.family, [
-    "validation", "workflow",
+  const rbtCoordinator = byName.get("domain-rbt-coordinator");
+  assert.equal(rbtCoordinator?.domain, "rbt");
+  assert.deepEqual(rbtCoordinator?.phase, ["Synthesis"]);
+  assert.deepEqual(rbtCoordinator?.family, ["rbt", "workflow"]);
+  const rbtExecutor = byName.get("domain-rbt-executor");
+  assert.equal(rbtExecutor?.domain, "rbt");
+  assert.deepEqual(rbtExecutor?.phase, ["execute"]);
+  assert.deepEqual(rbtExecutor?.family, ["rbt", "workflow"]);
+  assert.ok(rbtExecutor?.requiredSkills.includes("tool-unity-pipeline-cli"));
+  assert.ok(rbtExecutor?.requiredSkills.includes("tool-jarvis-behavior"));
+  assert.equal(rbtExecutor?.requiredSkills.includes("tool-jarvis-websocket"), false);
+  const rbtReviewer = byName.get("domain-rbt-reviewer");
+  assert.equal(rbtReviewer?.domain, "rbt");
+  assert.deepEqual(rbtReviewer?.phase, ["review"]);
+  assert.deepEqual(rbtReviewer?.family, ["rbt", "workflow"]);
+  const rbtExecutionPack = byName.get("domain-rbt-execution-pack");
+  assert.equal(rbtExecutionPack?.domain, "rbt");
+  assert.deepEqual(rbtExecutionPack?.phase, ["execute", "review"]);
+  assert.deepEqual(rbtExecutionPack?.family, ["rbt", "artifact"]);
+  assert.ok(rbtExecutionPack?.resources.some((resource) =>
+    resource.path === "templates/platform-evidence.md"
+    && resource.requirement === "required"
+  ));
+  assert.deepEqual(byName.get("signal-rbt-evidence-via-jarvis-behavior")?.requiredSkills, [
+    "signal-rbt-evidence", "tool-jarvis-behavior",
   ]);
+  assert.deepEqual(byName.get("signal-rbt-behavior-trace-by-rbt-evidence")?.requiredSkills, [
+    "signal-rbt-evidence",
+  ]);
+  assert.deepEqual(byName.get("signal-rbt-state-snapshot-by-rbt-evidence")?.requiredSkills, [
+    "signal-rbt-evidence",
+  ]);
+  assert.deepEqual(byName.get("signal-rbt-error-by-rbt-evidence")?.requiredSkills, [
+    "signal-rbt-evidence",
+  ]);
+  assert.deepEqual(byName.get("signal-account-state-by-rbt-state-snapshot")?.requiredSkills, [
+    "signal-rbt-state-snapshot-by-rbt-evidence",
+  ]);
+  assert.deepEqual(
+    byName.get("signal-rbt-state-snapshot-via-jarvis-behavior")?.requiredSkills,
+    [
+      "signal-rbt-state-snapshot-by-rbt-evidence",
+      "signal-rbt-evidence-via-jarvis-behavior",
+    ],
+  );
+  assert.equal(byName.has("signal-account-state-by-rbt-evidence-source"), false);
+  assert.equal(byName.has("signal-rbt-evidence-source"), false);
+  assert.equal(byName.has("signal-rbt-evidence-source-via-jarvis-behavior"), false);
   assert.deepEqual(byName.get("signal-runtime-log")?.family, [
     "signal", "local", "unity", "general",
   ]);
@@ -73,99 +120,50 @@ test("every Scout Skill projects the runtime metadata needed by its mount", () =
   ]);
 });
 
-test("each Workflow role projects every visible Skill and its dependency closure", () => {
-  const graph = new AssetStore().buildWorkflow(scoutRoot, "validation");
+test("RBT roles receive only their Execution Pack and Signal responsibilities", () => {
+  const graph = new AssetStore().buildWorkflow(scoutRoot, "rbt");
   const catalog = buildScoutSkillCatalog({
     assetsRoot,
     skillPaths: listScoutSkillPaths(assetsRoot),
   });
-  const expectedInventories: Record<string, string[]> = {
-    coordinator: [
-      "domain-validation-coordinator",
-      "internal-runtime-inspector",
-      "internal-skill-consumption",
-      "tool-scout-archive-task",
-      "tool-scout-assign-task",
-      "tool-scout-respond-human-input",
-      "tool-scout-send-message",
-      "tool-scout-submit-phase-outcome",
-    ],
-    researcher: [
-      "domain-validation-research-pack",
-      "domain-validation-researcher",
-      "internal-runtime-inspector",
-      "internal-skill-consumption",
-      "signal-callback-event-by-runtime-log",
-      "signal-local-storage",
-      "signal-runtime-log",
-      "signal-runtime-log-via-unity-pipeline-cli",
-      "tool-guru-knowledge",
-      "tool-jarvis-codebase",
-      "tool-scout-request-human-input",
-      "tool-scout-send-message",
-      "tool-scout-submit-task",
-      "tool-unity-pipeline-cli",
-    ],
-    verifier: [
-      "domain-validation-verifier",
-      "internal-runtime-inspector",
-      "internal-skill-consumption",
-      "signal-callback-event-by-runtime-log",
-      "signal-local-storage",
-      "signal-runtime-log",
-      "signal-runtime-log-via-unity-pipeline-cli",
-      "tool-jarvis-codebase",
-      "tool-scout-request-human-input",
-      "tool-scout-send-message",
-      "tool-scout-submit-task",
-      "tool-unity-pipeline-cli",
-    ],
-    validator: [
-      "domain-validation-research-pack",
-      "domain-validation-validator",
-      "domain-validation-verifier",
-      "internal-runtime-inspector",
-      "internal-skill-consumption",
-      "signal-callback-event-by-runtime-log",
-      "signal-local-storage",
-      "signal-runtime-log",
-      "signal-runtime-log-via-unity-pipeline-cli",
-      "tool-guru-knowledge",
-      "tool-jarvis-codebase",
-      "tool-scout-request-human-input",
-      "tool-scout-send-message",
-      "tool-scout-submit-task",
-      "tool-unity-pipeline-cli",
-    ],
-  };
+  validateScoutSkillCatalog(catalog);
 
-  assert.ok(graph.roles.every((role) => !role.phases.includes(InternalPhase)));
-
-  for (const role of graph.roles) {
-    const projected = resolveScoutSkillsForPhases(catalog, {
-      domain: "validation",
+  const projectedByRole = new Map(graph.roles.map((role) => [
+    role.name,
+    resolveScoutSkillsForPhases(catalog, {
+      domain: graph.domain,
       phases: role.phases,
-    });
-    assert.deepEqual(
-      projected.map((skill) => skill.name).sort(),
-      expectedInventories[role.name]?.sort(),
-    );
-    assert.ok(projected.every((skill) =>
-      skill.phase === undefined
-      || skill.phase.includes(InternalPhase)
-      || skill.phase.some((phase) => role.phases.includes(phase))
-    ));
-    assert.equal(projected.some((skill) => skill.name === "internal-skill-creator"), false);
-  }
+    }).map((skill) => skill.name),
+  ] as const));
 
-  const startupOnly = resolveScoutSkillsForPhases(catalog, {
-    domain: "validation",
-    phases: ["future-worker-phase"],
-  });
-  assert.deepEqual(startupOnly.map((skill) => skill.name).sort(), [
-    "internal-runtime-inspector",
-    "internal-skill-consumption",
-  ].sort());
+  const coordinator = projectedByRole.get("coordinator") ?? [];
+  const executor = projectedByRole.get("executor") ?? [];
+  const reviewer = projectedByRole.get("reviewer") ?? [];
+
+  assert.ok(coordinator.includes("domain-rbt-coordinator"));
+  assert.equal(coordinator.includes("domain-rbt-execution-pack"), false);
+  assert.equal(coordinator.some((name) => name.startsWith("signal-") && name.includes("rbt")), false);
+
+  for (const inventory of [executor, reviewer]) {
+    assert.ok(inventory.includes("domain-rbt-execution-pack"));
+    assert.ok(inventory.includes("signal-rbt-evidence"));
+    assert.ok(inventory.includes("signal-rbt-evidence-via-jarvis-behavior"));
+    assert.ok(inventory.includes("signal-rbt-behavior-trace-by-rbt-evidence"));
+    assert.ok(inventory.includes("signal-rbt-state-snapshot-by-rbt-evidence"));
+    assert.ok(inventory.includes("signal-rbt-state-snapshot-via-jarvis-behavior"));
+    assert.ok(inventory.includes("signal-rbt-error-by-rbt-evidence"));
+    assert.ok(inventory.includes("signal-account-state-by-rbt-state-snapshot"));
+    assert.equal(inventory.includes("signal-rbt-evidence-source"), false);
+    assert.equal(inventory.includes("signal-rbt-evidence-source-via-jarvis-behavior"), false);
+    assert.equal(inventory.includes("signal-account-state-by-rbt-evidence-source"), false);
+  }
+  assert.ok(executor.includes("domain-rbt-executor"));
+  assert.equal(executor.includes("domain-rbt-reviewer"), false);
+  assert.ok(executor.includes("tool-unity-pipeline-cli"));
+  assert.ok(executor.includes("tool-jarvis-websocket"));
+  assert.ok(reviewer.includes("domain-rbt-reviewer"));
+  assert.equal(reviewer.includes("domain-rbt-executor"), false);
+  assert.equal(reviewer.includes("tool-unity-pipeline-cli"), false);
 });
 
 test("Scout Skill resources retain resource-level required and optional metadata", () => {

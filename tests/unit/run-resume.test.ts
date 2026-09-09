@@ -43,11 +43,7 @@ import {
   type ScoutEvent,
 } from "../../src/core/events/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
-import {
-  ValidationDomain,
-  ValidationEvents,
-  validationJournalProjection,
-} from "../../src/domain/validation/index.js";
+import type { ScoutDomain } from "../../src/domain/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import {
   RunJournal,
@@ -71,7 +67,7 @@ import {
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 
 const projectRun = (events: Parameters<typeof projectRunEvents>[0]) =>
-  projectRunEvents(events, "coordinator", validationJournalProjection);
+  projectRunEvents(events, "coordinator");
 import {
   InitializeRunStage,
   PrepareEnvironmentStage,
@@ -525,7 +521,7 @@ test("Coordinator keeps an outcome when its completed turn started before the ou
   );
 });
 
-test("Coordinator re-evaluates a completed outcome after a newer outcome or gate", () => {
+test("Coordinator re-evaluates a completed outcome after a newer outcome", () => {
   const task = taskState({ status: AgentTaskStatuses.Done });
   const firstCheck = [
     scoutEvent(AgentEvents.task.assigned, taskState()),
@@ -557,39 +553,25 @@ test("Coordinator re-evaluates a completed outcome after a newer outcome or gate
     }, "2026-07-22T00:03:00.000Z"),
   ];
 
-  for (const newerFact of [
-    scoutEvent(AgentEvents.task.outcomeSubmitted, {
-      task,
-      stepId: "researcher-task-0001-step-0002",
-      outcome: "## Outcome\n\n更新结果。",
-      submittedAt: "2026-07-22T00:04:00.000Z",
-    }, "2026-07-22T00:04:00.000Z"),
-    scoutEvent(ValidationEvents.gate.recorded, {
-      gateId: "gate-0001",
+  const newerOutcome = scoutEvent(AgentEvents.task.outcomeSubmitted, {
+    task,
+    stepId: "researcher-task-0001-step-0002",
+    outcome: "## Outcome\n\n更新结果。",
+    submittedAt: "2026-07-22T00:04:00.000Z",
+  }, "2026-07-22T00:04:00.000Z");
+  const projection = projectRun(journalEvents(...firstCheck, newerOutcome));
+  assert.deepEqual(
+    planResumeActions({
+      projection,
+      agentId: "coordinator",
+      role: "coordinator",
+      synthesisRole: "coordinator",
+    }),
+    [{
+      type: ResumeActionTypes.EvaluateOutcome,
       taskId: task.taskId,
-      agentId: "validator",
-      checkedRef: "agents/researcher/artifacts/research-pack",
-      checkedDigest: "sha256:pack",
-      gateRef: "agents/validator/artifacts/research-pack-gate-0001.md",
-      gateDigest: "sha256:gate",
-      status: "needs_fix",
-      recordedAt: "2026-07-22T00:00:30.000Z",
-    }, "2026-07-22T00:04:00.000Z"),
-  ]) {
-    const projection = projectRun(journalEvents(...firstCheck, newerFact));
-    assert.deepEqual(
-      planResumeActions({
-        projection,
-        agentId: "coordinator",
-        role: "coordinator",
-        synthesisRole: "coordinator",
-      }),
-      [{
-        type: ResumeActionTypes.EvaluateOutcome,
-        taskId: task.taskId,
-      }],
-    );
-  }
+    }],
+  );
 });
 
 test("Coordinator Resume Packet processes pending user input without duplicating its body", () => {
@@ -987,10 +969,9 @@ test("Coordinator resume packet uses its own interrupted Step prompt only", () =
   );
 });
 
-test("Resume Packet bounds long outcomes and keeps artifact refs without message duplication", () => {
+test("Resume Packet bounds long outcomes without message duplication", () => {
   const task = taskState({ status: AgentTaskStatuses.Done });
   const longOutcome = "很长的结论".repeat(1000);
-  const artifactRef = "agents/researcher/artifacts/research-pack/evidence/E-CODE-001.md";
   const projection = projectRun(journalEvents(
     scoutEvent(AgentEvents.task.assigned, taskState()),
     ...Array.from({ length: 12 }, (_, index) =>
@@ -1001,16 +982,6 @@ test("Resume Packet bounds long outcomes and keeps artifact refs without message
         submittedAt: `2026-07-22T00:01:${String(index).padStart(2, "0")}.000Z`,
       })
     ),
-    scoutEvent(ValidationEvents.artifact.published, {
-      artifactId: "artifact-1",
-      taskId: task.taskId,
-      agentId: task.agentId,
-      role: task.role,
-      ref: artifactRef,
-      digest: "sha256:artifact",
-      status: "published",
-      publishedAt: "2026-07-22T00:02:00.000Z",
-    }),
     scoutEvent(AgentEvents.message.queued, {
       messageId: "pending-1",
       agentId: "coordinator",
@@ -1037,7 +1008,6 @@ test("Resume Packet bounds long outcomes and keeps artifact refs without message
   };
 
   assert.ok(Buffer.byteLength(body ?? "", "utf8") <= 12 * 1024);
-  assert.match(JSON.stringify(packet), new RegExp(artifactRef));
   assert.doesNotMatch(JSON.stringify(packet), /只应由恢复队列投递一次/);
   assert.equal(workerPacket.reported?.[0]?.outcome?.truncated, true);
 });
@@ -1820,7 +1790,7 @@ test("RestoreAgentsStage rejects a codex-home symlink that escapes the run", asy
   assert.equal(escaped.scope.agentRegistry.listAgents().length, 0);
 });
 
-test("resume stages restore tasks, messages, interruptions and Validation artifacts from a Test RunScope", async (t) => {
+test("resume stages restore tasks, messages, and interruptions from a Test RunScope", async (t) => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-run-resume-flow-"));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
@@ -1842,7 +1812,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     eventBus: initialEventBus,
     scheduler: createTestScheduler(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: new ValidationDomain(),
+    domain: runtimeTestDomain(),
     journal: initialJournal,
     manifestStore: initialManifestStore,
     terminate: async () => undefined,
@@ -1854,31 +1824,6 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   await new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
   }).start();
-
-  const researchPackRef = "agents/researcher/artifacts/account-anon-restore-existing-account-research-pack";
-  const researchPack = join(runRoot, researchPackRef);
-  mkdirSync(researchPack, { recursive: true });
-  writeFileSync(join(researchPack, "index.md"), "# Research Pack\n\n恢复证据。\n", "utf8");
-  const gateRef = "agents/validator/artifacts/research-pack-gate-0001.md";
-  writeFileSync(join(runRoot, gateRef), [
-    "---",
-    "artifact_type: ResearchPackGate",
-    "artifact_version: 1",
-    "status: ready",
-    "completion_state: complete",
-    "gate: needs_fix",
-    'gate_id: "gate-0001"',
-    'created_at: "2026-07-22T00:02:00.000Z"',
-    'validator_task_id: "validator-task-0001"',
-    `checked_pack_ref: "${researchPackRef}"`,
-    'checked_pack_digest: "sha256:research-pack"',
-    "---",
-    "",
-    "# Validator Handoff: Research Pack Gate",
-    "",
-    "需要修正。",
-    "",
-  ].join("\n"), "utf8");
 
   const researcherStep = agentStepState({
     stepId: "researcher-task-0001-step-0001",
@@ -2165,7 +2110,7 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     eventBus: resumedEventBus,
     scheduler: createTestScheduler(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: new ValidationDomain(),
+    domain: runtimeTestDomain(),
     journal: resumedJournal,
     manifestStore: resumedManifestStore,
     terminate: (reason) => executor.terminate(reason),
@@ -2281,10 +2226,8 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
     AgentEvents.thread.resumed.is(event)
     && event.payload.threadId === "researcher-old-thread"
   ));
-  assert.ok(projection.artifacts.some((artifact) => artifact.ref === researchPackRef));
-  assert.ok(projection.artifacts.some((artifact) => artifact.ref === gateRef));
-  assert.equal(projection.gates[0]?.gateId, "gate-0001");
-  assert.equal(projection.gates[0]?.status, "needs_fix");
+  assert.deepEqual(projection.artifacts, []);
+  assert.deepEqual(projection.gates, []);
   assert.deepEqual(projection.pendingMessages, []);
   assert.equal(
     restoredEvents.filter((event) =>
@@ -2317,8 +2260,6 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   assert.match(coordinatorPrompt, /<resume>/);
   assert.match(coordinatorPrompt, /inspect_interruption/);
   assert.match(coordinatorPrompt, /resolve_termination/);
-  assert.match(coordinatorPrompt, new RegExp(researchPackRef));
-  assert.match(coordinatorPrompt, new RegExp(gateRef));
   assert.equal(coordinatorPrompt.split("用户待处理输入").length - 1, 1);
   assert.equal(coordinatorPrompt.split("请确认 Validator 的边界").length - 1, 1);
   assert.doesNotMatch(coordinatorPrompt, /已确认 Researcher 版本/);
@@ -2332,63 +2273,6 @@ test("resume stages restore tasks, messages, interruptions and Validation artifa
   await termination;
   assert.equal(dynamicToolHandlerInstalled, false);
   assert.equal(existsSync(join(runRoot, ".run.lock")), false);
-});
-
-test("ValidationDomain records artifacts after an accepted task outcome event", async (t) => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-validation-artifact-event-"));
-  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
-  mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(process.cwd(), "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
-    recursive: true,
-  });
-  makeFixtureShellToolsResolvable(fixtureRoot);
-  const runId = "validation-artifact-event";
-  const eventBus = new InMemoryEventBus();
-  const scope = installTestRunScope(t, {
-    runId,
-    runRoot: join(fixtureRoot, "run", runId),
-    scoutRoot: fixtureRoot,
-    eventBus,
-    domain: new ValidationDomain(),
-  });
-  await new PrepareEnvironmentStage({
-    preflightMount: async () => ({ status: "passed" }),
-  }).start();
-  const domainStage = new DomainStage();
-  await domainStage.start();
-
-  const artifactRef = "agents/researcher/artifacts/account-anon-restore-existing-account-research-pack";
-  const artifactPath = join(
-    scope.environment.agents["researcher"].mount.artifactRoot,
-    "account-anon-restore-existing-account-research-pack",
-  );
-  mkdirSync(artifactPath, { recursive: true });
-  writeFileSync(join(artifactPath, "index.md"), "# Research Pack\n\n事件驱动证据。\n", "utf8");
-  assert.equal(
-    scope.journal.readAll().some((event) => ValidationEvents.artifact.published.is(event)),
-    false,
-  );
-
-  const task = taskState({
-    status: AgentTaskStatuses.Done,
-    updatedAt: "2026-07-23T00:00:00.000Z",
-  });
-  await scope.eventBus.publishAndWait(AgentEvents.task.outcomeSubmitted, {
-    task,
-    stepId: `${task.taskId}-step-0001`,
-    outcome: "## Outcome\n\n- Research Pack 已提交。",
-    submittedAt: task.updatedAt,
-  }, {
-    occurredAt: task.updatedAt,
-  });
-
-  const artifactEvent = scope.journal.readAll().find((event) =>
-    ValidationEvents.artifact.published.is(event)
-  );
-  assert.ok(artifactEvent && ValidationEvents.artifact.published.is(artifactEvent));
-  assert.equal(artifactEvent.payload.taskId, task.taskId);
-  assert.equal(artifactEvent.payload.ref, artifactRef);
-  await domainStage.stop();
 });
 
 test("RunStageExecutor releases the journal lock when startup fails after installing the RunScope", async (t) => {
@@ -2409,7 +2293,7 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
     eventBus: new InMemoryEventBus(),
     scheduler: createTestScheduler(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: new ValidationDomain(),
+    domain: runtimeTestDomain(),
     journal,
     manifestStore: new RunManifestStore(runRoot),
     terminate: (reason) => executor.terminate(reason),
@@ -2529,7 +2413,7 @@ async function assertThreadRestoreFailure(
     scoutRoot: fixtureRoot,
     eventBus,
     appServer,
-    domain: new ValidationDomain(),
+    domain: runtimeTestDomain(),
   });
   await new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
@@ -2620,7 +2504,7 @@ async function installRolloutLocatorFixture(
     scoutRoot: fixtureRoot,
     eventBus,
     appServer: options.appServer ?? ({} as CodexAppServerClient),
-    domain: new ValidationDomain(),
+    domain: runtimeTestDomain(),
   });
   await new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
@@ -2795,4 +2679,12 @@ function noopLogger(): Logger {
     warn: () => undefined,
     error: () => undefined,
   } as unknown as Logger;
+}
+
+function runtimeTestDomain(): ScoutDomain {
+  return {
+    domainId: "test",
+    name: "test",
+    dynamicToolsForRole: () => [],
+  };
 }

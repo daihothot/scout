@@ -10,7 +10,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  AssetStore,
   readWorkflowProfile,
 } from "../../src/asset-store/index.js";
 import { WorkflowBuilder } from "../../src/asset-store/builders/workflow-builder.js";
@@ -23,7 +22,7 @@ import {
 import { projectGraphState } from "../../src/run/resume/projection/index.js";
 import { createTestRunPersistence } from "../helpers/run-persistence.js";
 import { createDomainRuntime } from "../../src/domain/index.js";
-import { ValidationDomain } from "../../src/domain/validation/index.js";
+import { RbtDomain } from "../../src/domain/rbt/index.js";
 
 const scoutRoot = process.cwd();
 const profilePath = join(
@@ -31,93 +30,15 @@ const profilePath = join(
   "assets",
   "codex",
   "workflows",
-  "validation.json",
+  "rbt.json",
 );
 
 test("Domain Runtime is selected by the GraphState domain identifier", async () => {
-  assert.ok(await createDomainRuntime("validation") instanceof ValidationDomain);
+  assert.ok(await createDomainRuntime("rbt") instanceof RbtDomain);
   await assert.rejects(
     createDomainRuntime("missing-domain"),
     /Cannot load Workflow domain: missing-domain/,
   );
-});
-
-test("WorkflowBuilder preserves Worker Phase and role declaration order", () => {
-  const asset = readWorkflowProfile(scoutRoot, "validation");
-  const graph = new AssetStore().buildWorkflow(scoutRoot, "validation");
-
-  assert.equal(asset.name, "validation");
-  assert.equal(asset.profile.domain, "validation");
-  assert.equal(graph.domain, "validation");
-  assert.deepEqual(Object.keys(asset.profile.phases.workers), [
-    "research",
-    "research-reviewer",
-    "verify",
-    "verify-reviewer",
-  ]);
-  assert.deepEqual(Object.keys(asset.profile.resources), [
-    "common-inspection",
-    "worker-core",
-    "repository-access",
-    "research-artifacts",
-    "artifact-review",
-    "runtime-verification",
-  ]);
-  assert.deepEqual(
-    new WorkflowBuilder(asset).buildAgentProfile("coordinator").resourceParks,
-    ["common-inspection"],
-  );
-  assert.deepEqual(
-    new WorkflowBuilder(asset).buildAgentProfile("researcher").resourceParks,
-    ["common-inspection", "worker-core", "repository-access", "research-artifacts"],
-  );
-  assert.deepEqual(
-    new WorkflowBuilder(asset).buildAgentProfile("validator").resourceParks,
-    ["common-inspection", "worker-core", "artifact-review"],
-  );
-  assert.deepEqual(
-    new WorkflowBuilder(asset).buildAgentProfile("verifier").resourceParks,
-    ["common-inspection", "worker-core", "repository-access", "runtime-verification"],
-  );
-  assert.deepEqual(graph.phases.map((phase) => phase.name), [
-    "research",
-    "research-reviewer",
-    "verify",
-    "verify-reviewer",
-  ]);
-  assert.deepEqual(graph.phases.map((phase) => phase.roles), [
-    ["researcher"],
-    ["validator"],
-    ["verifier"],
-    ["validator"],
-  ]);
-  assert.deepEqual(graph.roles.map((role) => role.name), [
-    "coordinator",
-    "researcher",
-    "validator",
-    "verifier",
-  ]);
-  assert.deepEqual(graph.roles[0]?.phases, ["Synthesis"]);
-  assert.equal(graph.currentPhase, "research");
-  assert.equal(Object.isFrozen(graph), true);
-});
-
-test("Scheduler follows completed and error edges without selecting Phase roles", () => {
-  const scheduler = new Scheduler(
-    new AssetStore().buildWorkflow(scoutRoot, "validation"),
-    new InMemoryEventBus(),
-  );
-
-  assert.equal(scheduler.advance("completed").state.currentPhase, "research-reviewer");
-  assert.equal(scheduler.advance("error").state.currentPhase, "research");
-  scheduler.advance("completed");
-  scheduler.advance("completed");
-  assert.equal(scheduler.snapshot().currentPhase, "verify");
-  scheduler.advance("completed");
-  assert.equal(scheduler.snapshot().currentPhase, "verify-reviewer");
-  const completed = scheduler.advance("completed");
-  assert.equal(completed.state.currentPhase, "research");
-  assert.equal(completed.cycleCompleted, true);
 });
 
 test("Phase selects the first available role in declaration order", () => {
@@ -195,17 +116,17 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     const withSuccess = structuredClone(original) as {
       phases: { workers: Record<string, { edges: Record<string, unknown> }> };
     };
-    withSuccess.phases.workers.research!.edges.success = "research-reviewer";
+    withSuccess.phases.workers.execute!.edges.success = "review";
     writeFileSync(targetPath, JSON.stringify(withSuccess), "utf8");
     assert.throws(
       () => readWorkflowProfile(fixtureRoot, "invalid"),
-      /unknown phases\.workers\.research\.edges field\(s\): success/,
+      /unknown phases\.workers\.execute\.edges field\(s\): success/,
     );
 
     const withUnknownTarget = structuredClone(original) as {
       phases: { workers: Record<string, { edges: { completed: string } }> };
     };
-    withUnknownTarget.phases.workers.research!.edges.completed = "missing";
+    withUnknownTarget.phases.workers.execute!.edges.completed = "missing";
     writeFileSync(targetPath, JSON.stringify(withUnknownTarget), "utf8");
     assert.throws(
       () => readWorkflowProfile(fixtureRoot, "invalid"),
@@ -229,7 +150,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     const coordinatorWithPhase = structuredClone(original) as {
       roles: { coordinator: { phases?: string[] } };
     };
-    coordinatorWithPhase.roles.coordinator.phases = ["research"];
+    coordinatorWithPhase.roles.coordinator.phases = ["execute"];
     writeFileSync(targetPath, JSON.stringify(coordinatorWithPhase), "utf8");
     assert.throws(
       () => readWorkflowProfile(fixtureRoot, "invalid"),
@@ -247,7 +168,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     const withTwoDefaultResources = structuredClone(original) as {
       resources: Record<string, { default?: true }>;
     };
-    withTwoDefaultResources.resources["worker-core"]!.default = true;
+    withTwoDefaultResources.resources["rbt-execution"]!.default = true;
     writeFileSync(targetPath, JSON.stringify(withTwoDefaultResources), "utf8");
     assert.throws(
       () => readWorkflowProfile(fixtureRoot, "invalid"),
@@ -257,11 +178,11 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     const withUnknownResourcePhase = structuredClone(original) as {
       resources: Record<string, { phases: string[] }>;
     };
-    withUnknownResourcePhase.resources["worker-core"]!.phases.push("missing");
+    withUnknownResourcePhase.resources["rbt-execution"]!.phases.push("missing");
     writeFileSync(targetPath, JSON.stringify(withUnknownResourcePhase), "utf8");
     assert.throws(
       () => readWorkflowProfile(fixtureRoot, "invalid"),
-      /resources\.worker-core references unknown Phase missing/,
+      /resources\.rbt-execution references unknown Phase missing/,
     );
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });

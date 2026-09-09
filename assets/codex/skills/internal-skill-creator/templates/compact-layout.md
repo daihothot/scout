@@ -25,14 +25,15 @@ scout:
 | `skill-type` | 选定的实际 type。 |
 | `responsibility-note` | Skill Type 中的简短责任说明。 |
 | `core-use-item` | 当前 Skill 处理的一项工作。 |
-| `core-exclusion-item` | 当前 Skill 不处理的一项工作。 |
 | `definitions-section-name` | 当前 contract 需要定义术语时使用的实际章节名。 |
 | `definitions-used-by-this-skill` | 理解后续 contract 前必须声明的术语。 |
 | `contract-section-name` | 与当前 contract 语义一致的实际章节名。 |
 | `type-required-contract-content` | type template 要求的模型、contract 或规则内容。 |
 | `input-name` | 一项正式输入的实际名称。 |
-| `input-description` | 输入内容、来源和可推断边界。 |
-| `input-boundary` | 输入缺失、冲突或不可验证时的处理规则。 |
+| `required-input-field` | 必需输入字段、字段语义和权威来源。 |
+| `optional-input-field` | 可选输入字段及其缺失语义；没有时使用 `none`。 |
+| `missing-input-handling` | 一个输入字段缺失、空值、不可读或不唯一时的处理。 |
+| `input-confirmation-condition` | 输入字段、来源和当前事实必须满足的整体确认条件。 |
 | `conditional-section-name` | 条件内容适用时使用的实际章节名。 |
 | `applicable-conditional-contract-content` | 当前条件已经成立的 contract 内容。 |
 | `result-section-name` | 正式输出或结果 contract 的实际章节名。 |
@@ -68,10 +69,6 @@ scout:
 
 - <core-use-item>
 
-不使用本技能处理：
-
-- <core-exclusion-item>
-
 ## <definitions-section-name>
 
 <definitions-used-by-this-skill>
@@ -85,13 +82,21 @@ scout:
 ### I-001: <input-name>
 ---
 
-描述：
+Required：
 
-- <input-description>
+- <required-input-field>
 
-注意事项：
+Optional：
 
-- <input-boundary>
+- <optional-input-field>
+
+Missing：
+
+- <missing-input-handling>
+
+Confirmation：
+
+- <input-confirmation-condition>
 
 ## <conditional-section-name>
 
@@ -142,7 +147,9 @@ scout:
 - <completion-check>
 ````
 
-`Core Use` 必须保留。只有存在容易误路由的相邻能力时，才保留其中的“`不使用本技能处理`”及 `core-exclusion-item`；否则删除这个子段。definitions、`Inputs`、conditional、result 和 `Example` 只在存在真实内容时保留，但保留时必须处于上面规定的位置。contract 章节必须存在，并承载 type template 要求的核心内容。
+`Core Use` 必须保留，并且只列当前 Skill 实际处理的工作。不要添加“`不使用本技能处理`”或其它反向用途清单。definitions、`Inputs`、conditional、result 和 `Example` 只在存在真实内容时保留，但保留时必须处于上面规定的位置。contract 章节必须存在，并承载 type template 要求的核心内容。
+
+保留 `Inputs` 时，每个 Input 必须完整包含 `Required`、`Optional`、`Missing` 和 `Confirmation`。没有可选字段时在 `Optional` 中写 `none`，不能删除该项。`Missing` 必须逐字段定义处理；`Confirmation` 必须给出可以直接判断的整体通过条件。
 
 type template 的 Required Content 按语义写入 Core Use、definitions、contract、`Inputs` 或 result；contract 章节承载其中的核心模型和规则。只有条件成立时才适用的内容写入 conditional 章节。存在多组 conditional content 时，可以在 `Inputs` 与 result 之间按语义递进添加多个章节，不能把它们改写成编号 Phase 或伪 workflow。
 
@@ -173,6 +180,7 @@ type template 的 Required Content 按语义写入 Core Use、definitions、cont
 - type template 要求的内容已按 Template Application 映射到实际语义章节，没有复制 type template 标题。
 - 正文不存在为了表现流程而创建的编号 Phase、Workflow Overview 或 Workflow Exit Rules。
 - Core Use、definitions、model/contract、Inputs、conditional、result 和 Enforcement 按规定顺序排列。
+- 每个 Input 都完整声明 `Required`、`Optional`、`Missing` 和 `Confirmation`，且 `Confirmation` 可以直接判断。
 - 术语在首次使用前声明，各章节从模型和 contract 递进到规则和检查。
 - Enforcement 小节使用固定类别和顺序，不存在宽泛或自定义 rule category。
 - 正式输出、状态事实、artifact、ref 和 handoff 的所有者不冲突。

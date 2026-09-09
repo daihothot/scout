@@ -166,6 +166,19 @@ summary: <skill-summary>
 
 正文必须声明当前 type、layout 和责任边界。type 只能是 `internal`、`domain`、`tool` 或 `signal`；layout 只能是 `workflow` 或 `compact`。具体章节、位置和格式由选定的 layout template 定义。
 
+正文只写当前 Skill 实际处理的工作、拥有的 contract 和执行约束。不要写“`不使用本技能处理`”或其它反向用途清单，也不要枚举相邻角色、Skill 或工具负责的工作；外部责任只在说明当前 Skill 的直接依赖或交接边界确实需要时引用。当前 Skill 无条件禁止的自身行为写入适用的 `Prohibited Rules (Enforcement)`，不能改写成“不使用”说明。
+
+### Input Contracts
+
+正文存在 `Inputs` 时，每个 `I-*` 必须使用以下四项：
+
+- `Required`：列出进入当前 contract 前必须具备的每个字段、字段语义和权威来源。缺少任一字段时输入不能确认通过。
+- `Optional`：只列真实可选字段，并说明缺失时按 `none` 处理还是进入哪个后续选择步骤；没有可选字段时写 `none`。
+- `Missing`：逐字段说明缺失、空值、不可读或不唯一时的处理动作。Optional 缺失不得阻塞基础 contract，也不得通过猜测生成默认值。
+- `Confirmation`：列出必须互相对齐的字段、来源或当前事实，以及输入确认通过的完整条件。冲突和不可验证必须保留实际差异，不能改写为缺失或成功。
+
+`Inputs` 只声明当前 Skill 开始工作前实际消费的外部事实。执行过程中产生的值写入对应步骤或结果；不被当前 contract 消费的 Runtime identity 不写入 Input。
+
 ## Family Classification
 
 family 表达文件系统分类和归属，不表达依赖、执行顺序或 layout：
@@ -311,90 +324,188 @@ index 自身必须是 required supplementary resource，并使用以下最小结
 ## Phase 1: Classify Responsibility And Layout
 ---
 
-1. 根据责任归属判断目标应是 AGENTS、Skill、template 还是 reference。
-2. 确定为 Skill 后，根据实际责任选择一个 type。
-3. 判断 contract 是否包含必须按顺序执行的阶段、状态转换或完成门禁，选择一个 layout。
+Main Flow：
 
-Exit：
+Knowledge：
 
-- 目标对象的所有者、type 和 layout 已唯一确定。
+- 责任归属决定目标应是 AGENTS、Skill、template 还是 reference。
+- Skill type 只由当前对象实际拥有的责任决定。
+- layout 只由 contract 是否需要确定性阶段、状态转换或完成门禁决定。
+- type 与 layout 相互独立，不能根据名称、family 或彼此推断。
+
+Flow：
+
+```mermaid
+flowchart TD
+  A["确认责任所有者"] --> B{"目标是 Skill？"}
+  B -- "否" --> X["Blocked"]
+  B -- "是" --> C["选择 type 和 layout"]
+  C --> D{"选择唯一？"}
+  D -- "否" --> X
+  D -- "是" --> E["Phase 1 Exit"]
+```
 
 Blocked：
 
-- 一段内容无法确定所有者，或同时需要两个 type 或两个 layout。
+- 内容责任所有者无法唯一确定。
+- 当前对象同时需要两个 Skill type。
+- 当前 contract 同时需要两个 layout。
 
 Partial：
 
-- `none`；责任和布局没有收敛时不得开始写入。
+- `none`
+
+Exit：
+
+- 目标对象的责任所有者已唯一确定。
+- Skill type 已唯一确定。
+- layout 已唯一确定。
 
 ## Phase 2: Author Skill Contract
 ---
 
-1. 完整读取 `templates/template-index.md`、匹配的 type template 和 layout template。
-2. 创建或更新 identity、frontmatter、依赖与正文。
-3. 同时应用本技能、type template 和 layout template，只写当前对象拥有的职责。
+Main Flow：
 
-Exit：
+Knowledge：
 
-- Skill 主文件符合选定 type 和 layout，所有作者占位符已替换。
+- 必须完整读取 `templates/template-index.md`、匹配的 type template 和 layout template。
+- type template 定义内容责任，layout template 定义正文结构；两者同时生效。
+- 每个 Input 都包含 `Required`、`Optional`、`Missing` 和 `Confirmation`。
+- workflow layout 的 Main Flow 按 `Knowledge`、`Flow`、`Blocked`、`Partial`、`Exit` 组织。
+- workflow layout 的每个 Subflow 按 `Knowledge`、`Flow`、`Constraints`、`Blocked`、`Partial`、`Returns To Main Flow` 组织。
+- Phase 存在内部流程时使用一张 Main Flow 和必要的 Subflow；Main Flow 只保留主干，Subflow 就近闭合自己的上下文。
+- Subflow 的局部 Blocked 通过 `Returns To Main Flow` 映射为主干结果，Phase 状态只由 Main Flow 决定。
+- 每条 Blocked 只表达一个原子条件。
+
+Flow：
+
+```mermaid
+flowchart TD
+  A["读取匹配的 type 和 layout template"] --> B["建立 Skill contract"]
+  B --> C["完成适用的 Input 和 Phase 结构"]
+  C --> D["删除说明、空章节和占位符"]
+  D --> E{"作者 contract 完整？"}
+  E -- "否" --> X["Blocked"]
+  E -- "是" --> F["Phase 2 Exit"]
+```
 
 Blocked：
 
-- identity、phase、family、依赖或 contract 无法根据当前源码事实确认。
+- identity 无法根据当前源码事实确认。
+- phase 无法根据当前源码事实确认。
+- family 无法根据当前源码事实确认。
+- 依赖无法根据当前源码事实确认。
+- contract 无法根据当前源码事实确认。
 
 Partial：
 
-- `none`；未确认内容不得用猜测或默认值补齐。
+- `none`
+
+Exit：
+
+- Skill 主文件符合选定 type 和 layout。
+- 所有 Input contract 完整。
+- workflow layout 的每个 Phase 符合 Main Flow、Subflow 和原子 Blocked 规则。
+- 所有作者占位符已替换。
 
 ## Phase 3: Validate Resources And Boundaries
 ---
 
-1. 检查 supplementary resource metadata、index 和正文引用。
-2. 检查 AGENTS、各 Skill type、template 和 reference 之间是否存在职责复制或越界。
-3. 检查 required dependencies、composition 声明和资源读取条件是否完整。
+Main Flow：
 
-Exit：
+Knowledge：
 
-- 所有资源可按声明读取，引用有效，职责边界没有冲突。
+- supplementary resource metadata、index 和正文引用共同定义资源可读边界。
+- AGENTS、各 Skill type、template 和 reference 不能复制彼此拥有的方法论。
+- required dependencies、composition 声明和资源读取条件必须来自当前 contract。
+
+Flow：
+
+```mermaid
+flowchart TD
+  A["检查 resources 和引用"] --> B["检查职责边界"]
+  B --> C["检查 dependencies 和 composition"]
+  C --> D{"资源与边界闭合？"}
+  D -- "否" --> X["Blocked"]
+  D -- "是" --> E["Phase 3 Exit"]
+```
 
 Blocked：
 
-- required resource、required Skill、显式引用或责任所有者无法确认。
+- required resource 无法确认。
+- required Skill 无法确认。
+- 显式引用无法确认。
+- 责任所有者无法确认。
 
 Partial：
 
-- 不依赖缺失内容的独立范围可以保留；受影响 contract 不得声明完成。
+- 不依赖缺失内容的独立范围；保留在当前 Skill 草稿中。
+
+Exit：
+
+- 所有 required resource 可按声明读取。
+- 所有正文引用有效。
+- 职责边界没有冲突。
+- required dependencies 完整。
+- composition 声明完整。
 
 ## Phase 4: Verify Materialization And Behavior
 ---
 
-1. 运行 build 与相关 asset-store 或 materialization 测试，确认各 phase 的目录投影和权限。
-2. 对 role 行为敏感的改动启动真实 `run`，观察实际读取顺序和执行行为。
+Main Flow：
 
-在 Scout checkout 中检查源码资产：
+Knowledge：
+
+- build 和相关 asset-store 或 materialization 测试验证源码资产、目录投影和权限。
+- 对 role 行为敏感的改动需要真实 `run` 验证实际读取顺序和执行行为。
+- 只有当前工作目录是 Scout Runtime 为当前 `role` 生成的 `mount`，并且存在 `mount-manifest.json` 时，才使用 `scout-assets summary` 检查当前物化结果。
+- 当前源码和运行结果优先于文档结论。
+
+源码资产检查命令：
 
 ```sh
 find assets/codex/skills -maxdepth 2 -name SKILL.md -print
 sed -n '1,40p' assets/codex/skills/<skill-name>/SKILL.md
 ```
 
-只有当前工作目录是 Scout Runtime 为当前 `role` 生成的 `mount`，并且其中存在 `mount-manifest.json` 时，才检查当前物化结果：
+物化结果检查命令：
 
 ```sh
 scout-assets summary
 ```
 
-Exit：
+Flow：
 
-- 必需的源码、物化和行为验证均已通过，或不适用项已明确说明。
+```mermaid
+flowchart TD
+  A["运行 build 和资源验证"] --> B{"基础验证通过？"}
+  B -- "否" --> X["Blocked"]
+  B -- "是" --> C{"需要真实 role 行为验证？"}
+  C -- "否" --> E["Phase 4 Exit"]
+  C -- "是" --> D["运行并检查真实行为"]
+  D --> F{"行为符合 contract？"}
+  F -- "否" --> X
+  F -- "是" --> E
+```
 
 Blocked：
 
-- build、资源物化、权限或真实行为与 contract 不一致。
+- build 失败。
+- 资源物化与 contract 不一致。
+- 权限与 contract 不一致。
+- 真实 role 行为与 contract 不一致。
 
 Partial：
 
-- 无法执行的验证必须说明原因和剩余风险，不能声明对应行为已经验证。
+- 已完成且不依赖失败项的验证结果；保留在当前工作结果中。
+- 无法执行的验证缺口和剩余风险；保留在当前工作结果中。
+
+Exit：
+
+- build 已通过。
+- 必需的资源物化验证已通过。
+- 必需的权限验证已通过。
+- 改动对 role 行为敏感时，真实 run 行为验证已通过。
 
 ## Workflow Exit Rules (Enforcement)
 
@@ -430,6 +541,7 @@ Partial：
 - `family` 必填、分类正确，生成的 Skill 入口符合 `.scout/skill/<family-segment>/<skill-name>/SKILL.md`。
 - required/optional Skill identity 和 family-path 符合声明规则，展开后的依赖无环；required family-path 至少匹配一个 Skill。
 - required / optional resource metadata 完整，正文适用条件与 metadata 一致。
+- 每个 `I-*` 都完整声明 `Required`、`Optional`、`Missing` 和 `Confirmation`，且 `Confirmation` 是可以直接判断的整体通过条件。
 - AGENTS、Domain Skill、Tool Skill、Signal Skill、Internal Skill、template 和 reference 的责任没有交叉复制。
 - Skill 的读取与 composition 规则引用 `internal-skill-consumption`，不复制其通用算法。
 - 当前 phase 的真实 mount 只包含应见 Skill，并且逻辑路径和 canonical target 权限都正确。

@@ -23,32 +23,18 @@ status: candidate
 
 ## Claim
 
-- <填写由当前 source commit、primary symbol、signature 和 key lines 直接支持的 source symbol evidence claim>
+- <填写由当前 managed codebase version、primary symbol、signature 和 key lines 直接支持的 source symbol evidence claim>
 
-## Repository Provenance
+## Codebase
 
-- root_repo: <填写 managed root repository 名称>
-- root_version: <填写当前代码库声明的版本号>
-- root_branch: <填写收集证据时的 branch>
-- root_commit: <填写收集证据时的完整 commit>
-- root_worktree_state: <填写 clean 或具体修改状态>
-- root_codebase_path: <填写本次 run 解析出的 managed checkout 路径>
-- source_repo: <填写实际拥有目标源码的仓库名称>
-- source_version: <填写 source repository 当前版本号>
-- source_branch: <填写 source repository 当前 branch>
-- source_commit: <填写 source repository 完整 commit>
-- source_worktree_state: <填写 clean 或具体修改状态>
-- source_codebase_path: <填写本次 run 解析出的 source repository 路径>
-- gitlink_path: <非嵌套仓库填写 none，否则填写 root 中的 gitlink 路径>
-- gitlink_commit: <非嵌套仓库填写 none，否则填写 root commit 记录的 gitlink commit>
-- gitlink_matches_source_commit: <填写 true 或 false>
+- codebase: <填写当前 managed codebase 名称>
+- version: <填写当前 managed codebase 的版本号>
 - codegraph_status: <填写收集源码前确认的 CodeGraph 状态>
 
-## Replay Locator
+## Source Locator
 
-- source_relative_file: <填写相对 source repository 的源码路径>
-- source_file_worktree_state: <填写目标源码文件的 clean 或具体修改状态>
-- canonical_locator: <填写 source_commit:source_relative_file>
+- source_relative_file: <填写相对 managed codebase 的源码路径>
+- canonical_locator: <填写 version:source_relative_file>
 
 ## Primary Symbol
 
@@ -73,11 +59,11 @@ status: candidate
 
 ## Supports
 
-- VP-001
-- F-001
+- <填写使用方 artifact contract 定义的实际 claim 或 requirement IDs；没有时填写 none>
 
 ## Limitations
 
 - 源码 evidence 只拥有 source symbol evidence claim；业务 implementation claim 由上游 `code-evidence.md` 定义，它也不能证明该行为已经在运行时触发。
 - 每个 `E-CODE-*` 只允许一个 primary symbol；多个独立 symbol 必须拆成多个 evidence artifact。
-- `source_verified` 要求目标源码文件对 `source_commit` 保持 clean，且 `canonical_locator` 可由 `source_commit + source_relative_file` 重放。
+- `source_verified` 要求 `canonical_locator` 可由 `version + source_relative_file` 定位，且 primary symbol、signature 和 key lines 来自该版本的实际源码。
+- Knowledge 只能作为定位线索，不能代替实际源码填写 `source_relative_file`、`Primary Symbol`、行号、signature 或 key lines。

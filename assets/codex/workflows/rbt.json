@@ -1,0 +1,149 @@
+{
+  "domain": "rbt",
+  "defaults": {
+    "config": "config/base.config.toml",
+    "model": {
+      "id": "gpt-5.6",
+      "provider": "custom",
+      "reasoningEffort": "high",
+      "reasoningSummary": "concise"
+    },
+    "maxThreads": 6,
+    "maxDepth": 1
+  },
+  "phases": {
+    "workers": {
+      "execute": {
+        "edges": {
+          "completed": "review",
+          "error": null
+        }
+      },
+      "review": {
+        "edges": {
+          "completed": null,
+          "error": "execute"
+        }
+      }
+    }
+  },
+  "resources": {
+    "common-inspection": {
+      "default": true,
+      "phases": [],
+      "shellTools": [
+        "scoutAssets",
+        "scoutMemory",
+        "cat",
+        "sed",
+        "pwd"
+      ],
+      "mcpServers": [],
+      "plugins": [],
+      "readableRoots": [],
+      "writableRoots": []
+    },
+    "knowledge-access": {
+      "phases": [
+        "Synthesis"
+      ],
+      "shellTools": [
+        "jarvis",
+        "rg",
+        "find",
+        "ls"
+      ],
+      "mcpServers": [],
+      "plugins": [],
+      "readableRoots": [
+        "~/.guru/knowledge"
+      ],
+      "writableRoots": []
+    },
+    "rbt-execution": {
+      "phases": [
+        "execute"
+      ],
+      "shellTools": [
+        "scoutJsonWrite",
+        "jarvis",
+        "codegraph",
+        "rg",
+        "find",
+        "grep",
+        "ls",
+        "wc",
+        "head",
+        "tail",
+        "sort",
+        "uniq",
+        "unity"
+      ],
+      "mcpServers": [],
+      "plugins": [],
+      "readableRoots": [
+        "~/.guru/knowledge",
+        "~/.guru/codebase/gurusdk-unity"
+      ],
+      "writableRoots": [
+        "~/.guru/codebase/gurusdk-unity/.codegraph",
+        "~/.codegraph",
+        "~/.guru/jarvis/runtime"
+      ],
+      "network": true
+    },
+    "rbt-review": {
+      "phases": [
+        "review"
+      ],
+      "shellTools": [
+        "scoutJsonWrite",
+        "scoutArtifactDigest",
+        "jarvis",
+        "rg",
+        "find",
+        "grep",
+        "ls",
+        "wc",
+        "head",
+        "tail",
+        "sort",
+        "uniq"
+      ],
+      "mcpServers": [],
+      "plugins": [],
+      "readableRoots": [
+        "~/.guru/knowledge",
+        "~/.guru/codebase/gurusdk-unity"
+      ],
+      "writableRoots": [
+        "~/.guru/jarvis/runtime"
+      ],
+      "network": true
+    }
+  },
+  "roles": {
+    "coordinator": {
+      "multiAgent": false,
+      "customAgents": []
+    },
+    "executor": {
+      "phases": [
+        "execute"
+      ],
+      "multiAgent": true,
+      "customAgents": [
+        "scout-helper"
+      ]
+    },
+    "reviewer": {
+      "phases": [
+        "review"
+      ],
+      "multiAgent": true,
+      "customAgents": [
+        "scout-helper"
+      ]
+    }
+  }
+}

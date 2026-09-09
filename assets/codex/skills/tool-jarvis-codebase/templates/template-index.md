@@ -19,7 +19,7 @@ status: ready
 | template | 用途 | 是否必读 | 说明 |
 |---|---|---|---|
 | templates/template-index.md | 模板目录导航和读取顺序说明。 | 是 | 维护模板目录时必须同步更新本文件。 |
-| templates/source-code-evidence.md | `E-CODE-*` 使用的单条 source code evidence 模板。 | 是 | 记录可重放 locator、唯一 primary symbol、key lines、CodeGraph 查询与源码采集命令、supports 和 limitations。 |
+| templates/source-code-evidence.md | `E-CODE-*` 使用的单条 source code evidence 模板。 | 是 | 记录 version-based locator、唯一 primary symbol、key lines、CodeGraph 查询与源码采集命令、supports 和 limitations。 |
 
 ## Maintenance Rules
 
