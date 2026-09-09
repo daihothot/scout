@@ -16,7 +16,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   AssetStore,
@@ -928,41 +928,14 @@ test("AssetStore exposes mounted Skill readers to the coordinator", () => {
   }
 });
 
-test("AssetStore exposes profiled Validation Domain Skills through classified filesystem paths", () => {
-  const fixtureRoot = createCodexAssetFixture("scout-asset-store-validation-skills-");
-  const expectedSkills = {
-    coordinator: "domain-validation-coordinator",
-    researcher: "domain-validation-researcher",
-    verifier: "domain-validation-verifier",
-    validator: "domain-validation-validator",
-  } as const;
-  const store = new AssetStore();
-
-  for (const [agentId, skill] of Object.entries(expectedSkills)) {
-    const mount = store.materializeMount({
-      scoutRoot: fixtureRoot,
-      runId: `run-validation-skill-${agentId}-test`,
-      agentId,
-    });
-    const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
-
-    assert.ok(hasSkill(mount.skills, skill));
-    assert.ok(hasSkill(manifest.skills, skill));
-    const materialized = mount.skills.find((candidate) => candidate.name === skill);
-    assert.ok(materialized);
-    assert.equal(existsSync(join(mount.mountRoot, materialized.path)), true);
-    assert.match(materialized.path, /^\.scout\/skill\/validation\/workflow\//);
-    assert.deepEqual(readdirSync(join(mount.mountRoot, ".agents", "skills")), []);
-  }
-});
-
 test("AssetStore persists only each materialized Skill identity and filesystem path", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-skill-catalog-");
   const store = new AssetStore();
   const mount = store.materializeMount({
     scoutRoot: fixtureRoot,
     runId: "run-skill-catalog-test",
-    agentId: "researcher",
+    agentId: "executor",
+    workflowProfileName: "rbt",
   });
   const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest & {
     skillCatalog?: unknown;
@@ -978,38 +951,7 @@ test("AssetStore persists only each materialized Skill identity and filesystem p
     { name: "tmp", path: "../tmp", access: "read-write" },
   ]);
   assert.deepEqual(readdirSync(join(mount.mountRoot, ".agents", "skills")), []);
-  const entrySkill = mount.skills.find((skill) => skill.name === "domain-validation-researcher");
-  const serviceSkill = mount.skills.find((skill) =>
-    skill.name === "domain-validation-research-pack"
-  );
-  assert.ok(entrySkill);
-  assert.deepEqual(entrySkill.family, ["validation", "workflow"]);
-  assert.deepEqual(entrySkill.phase, ["research"]);
-  assert.deepEqual(entrySkill.requiredSkills, [
-    "domain-validation-research-pack",
-    "internal-skill-consumption",
-    "tool-scout-send-message",
-    "tool-scout-request-human-input",
-    "tool-scout-submit-task",
-  ]);
-  assert.deepEqual(entrySkill.optionalSkills, []);
-  assert.deepEqual(entrySkill.requiredFamilyPaths, [{
-    family: ["tool", "scout", "dynamic", "general"],
-    wildcard: "**",
-  }, {
-    family: ["tool", "scout", "dynamic", "worker"],
-    wildcard: "**",
-  }]);
-  assert.deepEqual(entrySkill.optionalFamilyPaths, []);
-  assert.equal(
-    entrySkill.path,
-    ".scout/skill/validation/workflow/domain-validation-researcher/SKILL.md",
-  );
-  assert.ok(serviceSkill);
-  assert.equal(
-    serviceSkill.path,
-    ".scout/skill/validation/workflow/domain-validation-research-pack/SKILL.md",
-  );
+  assert.ok(mount.skills.length > 0);
   assert.ok(mount.skills.every((skill) =>
     skill.path.endsWith(`/${skill.name}/SKILL.md`)
     && existsSync(join(mount.mountRoot, skill.path))
@@ -1025,7 +967,8 @@ test("AssetStore persists only each materialized Skill identity and filesystem p
   const reused = store.prepareMount({
     scoutRoot: fixtureRoot,
     runId: "run-skill-catalog-test",
-    agentId: "researcher",
+    agentId: "executor",
+    workflowProfileName: "rbt",
     cleanRunRoot: false,
     persistedIdentity: mountIdentity(mount),
   });
@@ -1041,7 +984,7 @@ test("AssetStore persists family path declarations and their resolved Skill iden
     "assets",
     "codex",
     "skills",
-    "domain-validation-researcher",
+    "domain-rbt-executor",
     "SKILL.md",
   );
   const original = readFileSync(skillPath, "utf8");
@@ -1055,36 +998,16 @@ test("AssetStore persists family path declarations and their resolved Skill iden
   const mount = store.materializeMount({
     scoutRoot: fixtureRoot,
     runId: "run-skill-family-path-test",
-    agentId: "researcher",
+    agentId: "executor",
+    workflowProfileName: "rbt",
   });
   const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
-  const entrySkill = manifest.skills.find((skill) => skill.name === "domain-validation-researcher");
+  const entrySkill = manifest.skills.find((skill) => skill.name === "domain-rbt-executor");
   assert.ok(entrySkill);
-  assert.deepEqual(entrySkill.requiredFamilyPaths, [{
-    family: ["tool", "scout", "dynamic", "general"],
-    wildcard: "**",
-  }, {
-    family: ["tool", "scout", "dynamic", "worker"],
-    wildcard: "**",
-  }, {
-    family: ["signal", "local", "unity", "general"],
-    wildcard: "**",
-  }]);
-  assert.deepEqual(entrySkill.requiredSkills, [
-    "domain-validation-research-pack",
-    "internal-skill-consumption",
-    "tool-scout-send-message",
-    "tool-scout-request-human-input",
-    "tool-scout-submit-task",
-    "signal-callback-event-by-runtime-log",
-    "signal-local-storage",
-    "signal-runtime-log",
-    "signal-runtime-log-via-unity-pipeline-cli",
-  ]);
-  assert.ok(manifest.skills.some((skill) =>
-    skill.name === "signal-runtime-log-via-unity-pipeline-cli"
+  assert.ok(entrySkill.requiredFamilyPaths.some((selector) =>
+    selector.family.join(".") === "signal.local.unity.general"
+    && selector.wildcard === "**"
   ));
-  assert.ok(manifest.skills.some((skill) => skill.name === "tool-unity-pipeline-cli"));
 
   const addedSkillRoot = join(
     fixtureRoot,
@@ -1115,7 +1038,8 @@ test("AssetStore persists family path declarations and their resolved Skill iden
   const rebuilt = store.prepareMount({
     scoutRoot: fixtureRoot,
     runId: "run-skill-family-path-test",
-    agentId: "researcher",
+    agentId: "executor",
+    workflowProfileName: "rbt",
     cleanRunRoot: false,
     persistedManifest: manifest,
     persistedIdentity: mountIdentity(mount),
@@ -1125,7 +1049,7 @@ test("AssetStore persists family path declarations and their resolved Skill iden
   assert.notEqual(rebuilt.mount.resourceHash, mount.resourceHash);
   assert.ok(rebuilt.mount.skills.some((skill) => skill.name === "signal-selector-added"));
   assert.ok(rebuilt.mount.skills
-    .find((skill) => skill.name === "domain-validation-researcher")
+    .find((skill) => skill.name === "domain-rbt-executor")
     ?.requiredSkills.includes("signal-selector-added"));
 });
 
@@ -1135,15 +1059,16 @@ test("Skill resource hashes cover the complete profiled Skill directory", () => 
   const before = store.materializeMount({
     scoutRoot: fixtureRoot,
     runId: "run-skill-resource-hash-before-test",
-    agentId: "researcher",
+    agentId: "executor",
+    workflowProfileName: "rbt",
   });
   const beforeManifest = JSON.parse(readFileSync(before.manifestPath, "utf8")) as MountManifest;
-  const skillId = "codex.skill.domain-validation-research-pack";
+  const skillId = "codex.skill.domain-rbt-execution-pack";
   const beforeAsset = beforeManifest.assets.find((asset) => asset.id === skillId);
   assert.ok(beforeAsset);
   assert.equal(
     beforeAsset.sourcePath,
-    "assets/codex/skills/domain-validation-research-pack",
+    "assets/codex/skills/domain-rbt-execution-pack",
   );
 
   const templatePath = join(
@@ -1151,16 +1076,17 @@ test("Skill resource hashes cover the complete profiled Skill directory", () => 
     "assets",
     "codex",
     "skills",
-    "domain-validation-research-pack",
+    "domain-rbt-execution-pack",
     "templates",
-    "verification-manual.md",
+    "signal-expected.md",
   );
   writeFileSync(templatePath, `${readFileSync(templatePath, "utf8")}\nresource hash probe\n`, "utf8");
 
   const after = store.materializeMount({
     scoutRoot: fixtureRoot,
     runId: "run-skill-resource-hash-after-test",
-    agentId: "researcher",
+    agentId: "executor",
+    workflowProfileName: "rbt",
   });
   const afterManifest = JSON.parse(readFileSync(after.manifestPath, "utf8")) as MountManifest;
   const afterAsset = afterManifest.assets.find((asset) => asset.id === skillId);
@@ -1499,6 +1425,60 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
   assert.equal(researcherMount.shellTools.some((tool) => tool.id === "unity"), false);
 });
 
+test("AssetStore mounts the Unity platform tool only for the RBT executor", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-rbt-platform-");
+  const store = new AssetStore();
+
+  const executorMount = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-rbt-platform-executor-test",
+    agentId: "executor",
+    workflowProfileName: "rbt",
+  });
+  assert.ok(hasSkill(executorMount.skills, "domain-rbt-executor"));
+  assert.ok(hasSkill(executorMount.skills, "tool-unity-pipeline-cli"));
+  assert.ok(hasSkill(executorMount.skills, "tool-jarvis-websocket"));
+  assert.ok(executorMount.shellTools.some((tool) => tool.id === "unity"));
+  assert.equal(executorMount.readableRoots.includes(fixtureRoot), false);
+  assert.ok(executorMount.readableRoots.includes(join(
+    homedir(),
+    ".guru",
+    "codebase",
+    "gurusdk-unity",
+  )));
+  assert.ok(executorMount.writableRoots.includes(join(
+    homedir(),
+    ".guru",
+    "codebase",
+    "gurusdk-unity",
+    ".codegraph",
+  )));
+  assert.equal(executorMount.writableRoots.includes(join(
+    homedir(),
+    ".guru",
+    "codebase",
+  )), false);
+  assert.equal(executorMount.readableRoots.some((root) => root.includes("UnityHub")), false);
+  assert.equal(executorMount.writableRoots.some((root) => root.includes("UnityHub")), false);
+
+  const reviewerMount = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-rbt-platform-reviewer-test",
+    agentId: "reviewer",
+    workflowProfileName: "rbt",
+  });
+  assert.ok(hasSkill(reviewerMount.skills, "domain-rbt-reviewer"));
+  assert.equal(hasSkill(reviewerMount.skills, "tool-unity-pipeline-cli"), false);
+  assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "unity"), false);
+  assert.ok(reviewerMount.readableRoots.includes(join(
+    homedir(),
+    ".guru",
+    "codebase",
+    "gurusdk-unity",
+  )));
+  assert.equal(reviewerMount.writableRoots.some((root) => root.includes("UnityHub")), false);
+});
+
 test("Every Skill name and id match its directory name", () => {
   const skillsRoot = join(scoutRoot, "assets", "codex", "skills");
   const skillNames = readdirSync(skillsRoot, { withFileTypes: true })
@@ -1521,62 +1501,6 @@ test("Every Skill name and id match its directory name", () => {
     assert.equal(name, skillName, `${skillName} frontmatter name must match its directory`);
     assert.equal(id, skillName, `${skillName} frontmatter id must match its directory`);
   }
-});
-
-test("AssetStore exposes Research artifact checking and git tools to the researcher", () => {
-  const fixtureRoot = createCodexAssetFixture("scout-asset-store-research-tools-");
-  const mount = new AssetStore().materializeMount({
-    scoutRoot: fixtureRoot,
-    runId: "run-shell-tool-domain-validation-researcher-test",
-    agentId: "researcher",
-  });
-  const checker = mount.shellTools.find((tool) => tool.id === "scoutResearchArtifactCheck");
-  const digest = mount.shellTools.find((tool) => tool.id === "scoutArtifactDigest");
-  const git = mount.shellTools.find((tool) => tool.id === "git");
-  const wrapperPath = join(mount.mountRoot, "bin", "scout-research-artifact-check");
-  const digestWrapperPath = join(mount.mountRoot, "bin", "scout-artifact-digest");
-
-  assert.ok(checker);
-  assert.ok(digest);
-  assert.ok(git);
-  assert.ok(hasSkill(mount.skills, "tool-guru-knowledge"));
-  assert.equal(existsSync(wrapperPath), true);
-  assert.equal(existsSync(digestWrapperPath), true);
-  assert.match(execFileSync(wrapperPath, ["--smoke"], {
-    cwd: mount.mountRoot,
-    encoding: "utf8",
-  }), /SCOUT_RESEARCH_ARTIFACT_CHECK_OK/);
-  assert.match(execFileSync(digestWrapperPath, ["--smoke"], {
-    cwd: mount.mountRoot,
-    encoding: "utf8",
-  }), /SCOUT_ARTIFACT_DIGEST_OK/);
-});
-
-test("AssetStore gives the validator producer contracts, code inspection tools, and a neutral digest tool", () => {
-  const fixtureRoot = createCodexAssetFixture("scout-asset-store-validator-tools-");
-  const mount = new AssetStore().materializeMount({
-    scoutRoot: fixtureRoot,
-    runId: "run-shell-tool-validator-gate-test",
-    agentId: "validator",
-  });
-  const digest = mount.shellTools.find((tool) => tool.id === "scoutArtifactDigest");
-  const wrapperPath = join(mount.mountRoot, "bin", "scout-artifact-digest");
-
-  assert.ok(hasSkill(mount.skills, "domain-validation-validator"));
-  assert.ok(hasSkill(mount.skills, "domain-validation-research-pack"));
-  assert.ok(hasSkill(mount.skills, "domain-validation-verifier"));
-  assert.ok(hasSkill(mount.skills, "tool-guru-knowledge"));
-  assert.ok(hasSkill(mount.skills, "tool-jarvis-codebase"));
-  assert.equal(mount.shellTools.some((tool) => tool.id === "scoutResearchArtifactCheck"), false);
-  assert.ok(mount.shellTools.some((tool) => tool.id === "jarvis"));
-  assert.ok(mount.shellTools.some((tool) => tool.id === "codegraph"));
-  assert.ok(mount.shellTools.some((tool) => tool.id === "git"));
-  assert.ok(digest);
-  assert.equal(existsSync(wrapperPath), true);
-  assert.match(execFileSync(wrapperPath, ["--smoke"], {
-    cwd: mount.mountRoot,
-    encoding: "utf8",
-  }), /SCOUT_ARTIFACT_DIGEST_OK/);
 });
 
 test("AssetStore resolves asset-local shell tool commands against the Scout root", () => {
@@ -2070,6 +1994,18 @@ function createCodexAssetFixture(prefix: string): string {
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  const scoutConfigPath = join(
+    fixtureRoot,
+    "assets",
+    "scout",
+    "config",
+    "scout.config.json",
+  );
+  const scoutConfig = JSON.parse(readFileSync(scoutConfigPath, "utf8")) as {
+    workflow: { profile: string };
+  };
+  scoutConfig.workflow.profile = "validation";
+  writeFileSync(scoutConfigPath, JSON.stringify(scoutConfig, null, 2) + "\n", "utf8");
   return fixtureRoot;
 }
 

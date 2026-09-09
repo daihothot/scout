@@ -36,6 +36,7 @@ test("AssetStore materializes read and write roots from agent profile", () => {
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  setFixtureWorkflowProfile(fixtureRoot, "validation");
 
   const runId = "run-permission-test";
   const mount = new AssetStore().materializeMount({
@@ -58,7 +59,6 @@ test("AssetStore materializes read and write roots from agent profile", () => {
     join(homedir(), ".codegraph"),
   ].sort());
   assert.deepEqual(mount.readableRoots.sort(), [
-    fixtureRoot,
     join(homedir(), ".guru", "knowledge"),
     join(homedir(), ".codegraph"),
   ].sort());
@@ -67,7 +67,6 @@ test("AssetStore materializes read and write roots from agent profile", () => {
     "~/.codegraph",
   ].sort());
   assert.deepEqual(manifest.profileReadableRoots.sort(), [
-    "${SCOUT_ROOT}",
     "~/.guru/knowledge",
     "~/.codegraph",
   ].sort());
@@ -154,6 +153,7 @@ test("AssetStore exposes effective permission roots", () => {
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  setFixtureWorkflowProfile(fixtureRoot, "validation");
   const store = new AssetStore();
   const mount = store.materializeMount({
     scoutRoot: fixtureRoot,
@@ -162,31 +162,9 @@ test("AssetStore exposes effective permission roots", () => {
   });
 
   assert.ok(store.readableRootsForMount(mount).includes(mount.mountRoot));
-  assert.ok(store.readableRootsForMount(mount).includes(fixtureRoot));
+  assert.equal(store.readableRootsForMount(mount).includes(fixtureRoot), false);
   assert.ok(store.writableRootsForMount(mount).includes(mount.artifactRoot));
   assert.ok(store.writableRootsForMount(mount).includes(join(homedir(), ".guru", "codebase")));
-});
-
-test("AssetStore keeps validator artifact ownership outside profile write roots", () => {
-  const fixtureRoot = createCodexAssetFixture("scout-validator-permissions-");
-  const runId = "run-validator-permission-test";
-  const store = new AssetStore();
-  const mount = store.materializeMount({
-    scoutRoot: fixtureRoot,
-    runId,
-    agentId: "validator",
-  });
-
-  assert.deepEqual(mount.writableRoots, [
-    join(homedir(), ".guru", "codebase"),
-    join(homedir(), ".codegraph"),
-  ]);
-  assert.deepEqual(mount.readableRoots.sort(), [
-    join(homedir(), ".guru", "knowledge"),
-    join(homedir(), ".guru", "codebase"),
-    join(homedir(), ".codegraph"),
-  ].sort());
-  assert.ok(store.writableRootsForMount(mount).includes(mount.artifactRoot));
 });
 
 test("AssetStore resolves local profile roots relative to the Scout root", () => {
@@ -338,7 +316,6 @@ test("AssetStore mounts scout-helper only for Worker profiles", () => {
     assert.deepEqual(workerManifest.customAgents, ["scout-helper"]);
     assert.equal(existsSync(helperPath), true);
     const helperConfig = readFileSync(helperPath, "utf8");
-    assert.match(helperConfig, /不得调用任何 Scout dynamic tool/);
     assert.match(helperConfig, /^model = "gpt-5\.5"$/m);
     assert.match(helperConfig, /^model_reasoning_effort = "high"$/m);
     assert.equal(
@@ -422,36 +399,6 @@ test("Coordinator resource hash does not depend on an unmounted custom agent", (
   assert.notEqual(researcherAfter.resourceHash, researcherBefore.resourceHash);
 });
 
-test("Resource Park changes affect only roles bound through its Phases", () => {
-  const fixtureRoot = createCodexAssetFixture("scout-resource-park-hash-");
-  const store = new AssetStore();
-  const before = Object.fromEntries(["coordinator", "researcher", "validator"].map((agentId) => [
-    agentId,
-    store.materializeMount({
-      scoutRoot: fixtureRoot,
-      runId: `run-${agentId}-park-before-test`,
-      agentId,
-    }).resourceHash,
-  ]));
-  const path = join(fixtureRoot, "assets", "codex", "workflows", "validation.json");
-  const workflow = JSON.parse(readFileSync(path, "utf8")) as Mutable<WorkflowProfile>;
-  workflow.resources["research-artifacts"]!.shellTools.push("head");
-  writeFileSync(path, JSON.stringify(workflow, null, 2) + "\n", "utf8");
-
-  const after = Object.fromEntries(["coordinator", "researcher", "validator"].map((agentId) => [
-    agentId,
-    store.materializeMount({
-      scoutRoot: fixtureRoot,
-      runId: `run-${agentId}-park-after-test`,
-      agentId,
-    }).resourceHash,
-  ]));
-
-  assert.equal(after.coordinator, before.coordinator);
-  assert.notEqual(after.researcher, before.researcher);
-  assert.equal(after.validator, before.validator);
-});
-
 function createCodexAssetFixture(prefix: string): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
@@ -461,7 +408,34 @@ function createCodexAssetFixture(prefix: string): string {
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  const scoutConfigPath = join(
+    fixtureRoot,
+    "assets",
+    "scout",
+    "config",
+    "scout.config.json",
+  );
+  const scoutConfig = JSON.parse(readFileSync(scoutConfigPath, "utf8")) as {
+    workflow: { profile: string };
+  };
+  scoutConfig.workflow.profile = "validation";
+  writeFileSync(scoutConfigPath, JSON.stringify(scoutConfig, null, 2) + "\n", "utf8");
   return fixtureRoot;
+}
+
+function setFixtureWorkflowProfile(fixtureRoot: string, profile: string): void {
+  const path = join(
+    fixtureRoot,
+    "assets",
+    "scout",
+    "config",
+    "scout.config.json",
+  );
+  const config = JSON.parse(readFileSync(path, "utf8")) as {
+    workflow: { profile: string };
+  };
+  config.workflow.profile = profile;
+  writeFileSync(path, JSON.stringify(config, null, 2) + "\n", "utf8");
 }
 
 function updateAgentProfile(

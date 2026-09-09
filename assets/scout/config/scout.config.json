@@ -1,6 +1,6 @@
 {
   "workflow": {
-    "profile": "validation"
+    "profile": "rbt"
   },
   "restore": {
     "allowAssetResourceDrift": true
