@@ -20,11 +20,14 @@ import {
   EventSubscriptionPriorities,
   InMemoryEventBus,
 } from "../../src/core/events/index.js";
+import { WorkflowEvents } from "../../src/core/workflow/index.js";
+import { SystemEvents } from "../../src/system/events/index.js";
 import {
   RunJournal,
   RunJournalWriter,
   readJournalEvents,
 } from "../../src/run/journal/index.js";
+import { WorkflowJournalStage } from "../../src/run/lifecycle/index.js";
 import {
   RunEvents,
   type RunJournalWriteFailedEvent,
@@ -38,7 +41,7 @@ import {
 const projectRun = (events: Parameters<typeof projectRunEvents>[0]) =>
   projectRunEvents(events, "coordinator");
 
-test("RunJournalWriter persists monotonic EventBus events and holds one runtime lock", async (t) => {
+test("RunJournalWriter persists recovery events and excludes runtime readiness telemetry", async (t) => {
   const eventBus = new InMemoryEventBus();
   const { journal } = createTestRunPersistence(t, "journal-sequence", "/repo", eventBus);
   await eventBus.publishAndWait(RunEvents.runtime.attached, {
@@ -56,8 +59,11 @@ test("RunJournalWriter persists monotonic EventBus events and holds one runtime 
   });
 
   assert.equal(journal.readAll()[2]?.key.routeKey, RunEvents.runtime.attached.routeKey);
-  assert.equal(journal.readAll()[3]?.key.routeKey, RunEvents.runtime.ready.routeKey);
-  assert.deepEqual(journal.readAll().map((event) => event.seq), [1, 2, 3, 4]);
+  assert.equal(
+    journal.readAll().some((event) => RunEvents.runtime.ready.is(event)),
+    false,
+  );
+  assert.deepEqual(journal.readAll().map((event) => event.seq), [1, 2, 3]);
   assert.throws(
     () => RunJournal.open({ runId: journal.runId, runRoot: journal.runRoot }),
     /already attached/,
@@ -121,9 +127,10 @@ test("RunJournal repairs an incomplete tail before the next EventBus append", as
     "/repo",
     eventBus,
   );
-  await eventBus.publishAndWait(RunEvents.runtime.ready, {
+  await eventBus.publishAndWait(RunEvents.runtime.attached, {
     mode: "start",
-    readyAt: "2026-07-22T00:00:00.000Z",
+    attachedAt: "2026-07-22T00:00:00.000Z",
+    processId: process.pid,
   }, {
     occurredAt: "2026-07-22T00:00:00.000Z",
   });
@@ -206,7 +213,7 @@ test("RunJournalWriter persists Human Input semantics and message delivery as se
   );
 });
 
-test("RunJournalWriter persists thread start, restart, resume and close lifecycle facts", async (t) => {
+test("RunJournalWriter persists thread identities without resume and close telemetry", async (t) => {
   const eventBus = new InMemoryEventBus();
   const { journal } = createTestRunPersistence(t, "journal-thread", "/repo", eventBus);
   const started = {
@@ -263,8 +270,6 @@ test("RunJournalWriter persists thread start, restart, resume and close lifecycl
     [
       AgentEvents.thread.started.routeKey,
       AgentEvents.thread.restarted.routeKey,
-      AgentEvents.thread.resumed.routeKey,
-      AgentEvents.thread.closed.routeKey,
     ],
   );
   const restartEvent = journal.readAll().find((event) =>
@@ -386,15 +391,16 @@ test("RunJournalWriter retries the same event once after a transient write failu
     }
   };
 
-  await eventBus.publishAndWait(RunEvents.runtime.ready, {
+  await eventBus.publishAndWait(RunEvents.runtime.attached, {
     mode: "start",
-    readyAt: "2026-07-23T00:00:00.000Z",
+    attachedAt: "2026-07-23T00:00:00.000Z",
+    processId: process.pid,
   });
 
   assert.equal(attempts, 2);
   assert.equal(journal.failed, false);
   assert.deepEqual(failures, []);
-  assert.equal(journal.readAll().at(-1)?.key.routeKey, RunEvents.runtime.ready.routeKey);
+  assert.equal(journal.readAll().at(-1)?.key.routeKey, RunEvents.runtime.attached.routeKey);
 });
 
 test("RunJournalWriter drops an unrecoverable event without blocking later dispatch or writes", async (t) => {
@@ -410,7 +416,7 @@ test("RunJournalWriter drops an unrecoverable event without blocking later dispa
   eventBus.subscribe<RunJournalWriteFailedEvent>(RunEvents.journal.writeFailed, (event) => {
     failures.push(event.payload);
   });
-  eventBus.subscribe(RunEvents.runtime.ready, () => {
+  eventBus.subscribe(RunEvents.runtime.attached, () => {
     downstreamDeliveries += 1;
   }, {
     priority: EventSubscriptionPriorities.Normal,
@@ -418,9 +424,10 @@ test("RunJournalWriter drops an unrecoverable event without blocking later dispa
   const restoreJournalPath = blockJournalWrites(journal.path);
 
   try {
-    await eventBus.publishAndWait(RunEvents.runtime.ready, {
+    await eventBus.publishAndWait(RunEvents.runtime.attached, {
       mode: "start",
-      readyAt: "2026-07-23T00:00:00.000Z",
+      attachedAt: "2026-07-23T00:00:00.000Z",
+      processId: process.pid,
     });
   } finally {
     restoreJournalPath();
@@ -429,9 +436,9 @@ test("RunJournalWriter drops an unrecoverable event without blocking later dispa
   assert.equal(downstreamDeliveries, 1);
   assert.equal(journal.failed, true);
   assert.equal(failures.length, 1);
-  assert.equal(failures[0]?.failedEventKey, RunEvents.runtime.ready.routeKey);
+  assert.equal(failures[0]?.failedEventKey, RunEvents.runtime.attached.routeKey);
   assert.equal(
-    journal.readAll().some((event) => RunEvents.runtime.ready.is(event)),
+    journal.readAll().some((event) => RunEvents.runtime.attached.is(event)),
     false,
   );
 
@@ -447,6 +454,125 @@ test("RunJournalWriter drops an unrecoverable event without blocking later dispa
   );
   assert.equal(
     journal.readAll().some((event) => RunEvents.journal.writeFailed.is(event)),
+    false,
+  );
+});
+
+test("WorkflowJournalStage replaces a completed Workflow with the next recovery window", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const persistence = createTestRunPersistence(
+    t,
+    "journal-workflow-replay",
+    "/repo",
+    eventBus,
+  );
+  installTestRunScope(t, {
+    runId: persistence.journal.runId,
+    eventBus,
+    journal: persistence.journal,
+    manifestStore: persistence.manifestStore,
+    scheduler: persistence.scheduler,
+  });
+  const stage = new WorkflowJournalStage();
+  await stage.start();
+  t.after(() => stage.stop());
+  await eventBus.publishAndWait(RunEvents.runtime.attached, {
+    mode: "start",
+    attachedAt: "2026-07-24T00:00:00.000Z",
+    processId: process.pid,
+  });
+  persistence.scheduler.advance("completed");
+  persistence.scheduler.advance("completed");
+  persistence.scheduler.advance("completed");
+  const completed = persistence.scheduler.advance("completed");
+  assert.equal(completed.cycleCompleted, true);
+  assert.ok(persistence.journal.readAll().some((event) =>
+    WorkflowEvents.workflow.advanced.is(event)
+  ));
+
+  await eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
+    messageId: "workflow-replay-message",
+    text: "重新执行",
+    attachment: agent.turn.message("重新执行"),
+    submittedAt: "2026-07-24T00:01:00.000Z",
+  });
+
+  const events = persistence.journal.readAll();
+  assert.deepEqual(events.map((event) => event.seq), [1, 2, 3, 4]);
+  assert.deepEqual(events.map((event) => event.key.routeKey), [
+    RunEvents.run.created.routeKey,
+    WorkflowEvents.workflow.initialized.routeKey,
+    RunEvents.runtime.attached.routeKey,
+    SystemEvents.interaction.userMessageSubmitted.routeKey,
+  ]);
+  assert.equal(events.some((event) => WorkflowEvents.workflow.advanced.is(event)), false);
+  assert.equal(persistence.manifestStore.read().checkpointSeq, 3);
+  assert.throws(
+    () => RunJournal.open({
+      runId: persistence.journal.runId,
+      runRoot: persistence.journal.runRoot,
+    }),
+    /already attached/,
+  );
+});
+
+test("WorkflowJournalStage blocks replay while the completed Workflow retains a Task", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const persistence = createTestRunPersistence(
+    t,
+    "journal-workflow-replay-blocked",
+    "/repo",
+    eventBus,
+  );
+  installTestRunScope(t, {
+    runId: persistence.journal.runId,
+    eventBus,
+    journal: persistence.journal,
+    manifestStore: persistence.manifestStore,
+    scheduler: persistence.scheduler,
+  });
+  const stage = new WorkflowJournalStage();
+  await stage.start();
+  t.after(() => stage.stop());
+  await eventBus.publishAndWait(RunEvents.runtime.attached, {
+    mode: "start",
+    attachedAt: "2026-07-24T00:00:00.000Z",
+    processId: process.pid,
+  });
+  await eventBus.publishAndWait(AgentEvents.task.assigned, {
+    taskId: "researcher-task-0001",
+    taskSequence: 1,
+    agentId: "researcher",
+    role: "researcher",
+    phase: "research",
+    description: "unfinished",
+    initialPrompt: "unfinished",
+    status: "queued",
+    stepIds: [],
+    dispositions: [],
+    protocolRepairAttempts: 0,
+    createdAt: "2026-07-24T00:00:01.000Z",
+    updatedAt: "2026-07-24T00:00:01.000Z",
+  });
+  persistence.scheduler.advance("completed");
+  persistence.scheduler.advance("completed");
+  persistence.scheduler.advance("completed");
+  persistence.scheduler.advance("completed");
+
+  await assert.rejects(
+    eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
+      messageId: "workflow-replay-blocked-message",
+      text: "重新执行",
+      attachment: agent.turn.message("重新执行"),
+      submittedAt: "2026-07-24T00:01:00.000Z",
+    }),
+    /1 unarchived Task/,
+  );
+  assert.equal(
+    persistence.journal.readAll().some((event) =>
+      SystemEvents.interaction.userMessageSubmitted.is(event)
+      && event.payload.messageId === "workflow-replay-blocked-message"
+    ),
     false,
   );
 });

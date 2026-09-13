@@ -14,15 +14,12 @@ const persistedEventTypes: EventType[] = [
   WorkflowEvents.workflow.initialized,
   WorkflowEvents.workflow.advanced,
   RunEvents.runtime.attached,
-  RunEvents.runtime.ready,
   RunEvents.runtime.detached,
   RunEvents.runtime.interrupted,
   SystemEvents.interaction.userMessageSubmitted,
   AgentEvents.coordinator.messageProduced,
   AgentEvents.thread.started,
-  AgentEvents.thread.resumed,
   AgentEvents.thread.restarted,
-  AgentEvents.thread.closed,
   AgentEvents.message.queued,
   AgentEvents.message.consumed,
   AgentEvents.turn.started,
@@ -34,7 +31,6 @@ const persistedEventTypes: EventType[] = [
   AgentEvents.task.stepInterrupted,
   AgentEvents.task.dispositionRecorded,
   AgentEvents.task.outcomeSubmitted,
-  AgentEvents.task.done,
   AgentEvents.task.archived,
   AgentEvents.task.failed,
   AgentEvents.task.stopped,
@@ -46,15 +42,14 @@ const persistedEventTypes: EventType[] = [
   AgentEvents.step.toolCallReferenced,
   AgentEvents.step.humanInputReferenced,
   AgentEvents.toolCall.observed,
-  AgentEvents.commandExecution.observed,
   AgentEvents.humanInput.requested,
   AgentEvents.humanInput.responded,
 ];
 
 /**
- * Subscribes to the event facts that form run history and appends them to the
- * active journal. It reports persistent write failure once and owns no event
- * production or recovery policy.
+ * Appends shared and Domain recovery facts to their active journals. It
+ * reports persistent write failure once and owns no event production or
+ * recovery-window policy.
  */
 export class RunJournalWriter {
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
@@ -63,7 +58,37 @@ export class RunJournalWriter {
   start(): void {
     if (this.unsubscribers.length > 0) return;
     const scope = currentRunScope();
-    const eventTypes = [...persistedEventTypes, ...(scope.domain.journal?.eventTypes ?? [])];
+    const domainEventTypes = scope.domain.journal?.eventTypes ?? [];
+    if (scope.domainJournal === scope.journal) {
+      this.subscribeJournal(
+        scope,
+        [...persistedEventTypes, ...domainEventTypes],
+        scope.journal,
+        "run",
+      );
+      return;
+    }
+    this.subscribeJournal(scope, persistedEventTypes, scope.journal, "run");
+    this.subscribeJournal(
+      scope,
+      domainEventTypes,
+      scope.domainJournal,
+      "domain",
+    );
+  }
+
+  stop(): void {
+    while (this.unsubscribers.length > 0) {
+      this.unsubscribers.pop()?.();
+    }
+  }
+
+  private subscribeJournal(
+    scope: ReturnType<typeof currentRunScope>,
+    eventTypes: readonly EventType[],
+    journal: ReturnType<typeof currentRunScope>["journal"],
+    journalName: string,
+  ): void {
     const uniqueEventTypes = [...new Map(eventTypes.map((type) => [type.routeKey, type])).values()];
     for (const type of uniqueEventTypes) {
       this.unsubscribers.push(
@@ -71,7 +96,7 @@ export class RunJournalWriter {
           let failure: unknown;
           for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
-              scope.journal.append(event);
+              journal.append(event);
               this.failurePublished = false;
               return;
             } catch (error) {
@@ -84,6 +109,7 @@ export class RunJournalWriter {
             const payload = {
               failedEventId: event.id,
               failedEventKey: event.key.routeKey,
+              journal: journalName,
               error: failure instanceof Error
                 ? failure.stack ?? failure.message
                 : String(failure),
@@ -96,7 +122,7 @@ export class RunJournalWriter {
               scope.logger.warn({
                 module: "run.journal",
                 event: "run_journal_write_failed",
-                message: `Failed to append ${payload.failedEventKey} to the run journal after 2 attempts.`,
+                message: `Failed to append ${payload.failedEventKey} to the ${journalName} journal after 2 attempts.`,
                 data: payload,
               });
             } catch {
@@ -107,12 +133,6 @@ export class RunJournalWriter {
           priority: EventSubscriptionPriorities.High,
         }),
       );
-    }
-  }
-
-  stop(): void {
-    while (this.unsubscribers.length > 0) {
-      this.unsubscribers.pop()?.();
     }
   }
 }

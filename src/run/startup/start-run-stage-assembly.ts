@@ -11,6 +11,7 @@ import {
   RunRuntimeStage,
   RunScopeStage,
   RunStageExecutor,
+  WorkflowJournalStage,
 } from "../lifecycle/index.js";
 import type { RunScope } from "../run-scope.js";
 import { PrepareEnvironmentStage } from "./stages/prepare-environment-stage.js";
@@ -32,6 +33,7 @@ export class StartRunStageAssembly {
     executor.registerSerial(
       runScopeStage,
       new RunJournalWriterStage(),
+      new WorkflowJournalStage(),
       new InitializeRunStage(),
       new RunRuntimeStage("start"),
       new InteractionStage(),

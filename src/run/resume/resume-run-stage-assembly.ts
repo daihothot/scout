@@ -8,6 +8,7 @@ import {
   RunRuntimeStage,
   RunScopeStage,
   RunStageExecutor,
+  WorkflowJournalStage,
 } from "../lifecycle/index.js";
 import type { RunScope } from "../run-scope.js";
 import {
@@ -44,6 +45,7 @@ export class ResumeRunStageAssembly {
     executor.registerSerial(
       runScopeStage,
       new RunJournalWriterStage(),
+      new WorkflowJournalStage(),
       new ResumeClientsStage(),
       new RestoreEnvironmentStage(),
       new RecordResumeInterruptionsStage(),

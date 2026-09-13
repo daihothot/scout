@@ -64,7 +64,8 @@ export interface ProjectedGate extends ScoutDomainGateFact {
 }
 
 /**
- * Read model derived from the run journal at a single checkpoint. It combines
+ * Read model derived from the Scout journal and the separately supplied Domain
+ * journal at a single checkpoint. It combines
  * active and archived tasks, thread state, deliveries, human-input requests,
  * turns, outcomes, artifacts, and gates; it is not a second source of truth
  * and does not perform runtime restoration.
@@ -100,7 +101,7 @@ export interface RunProjection {
 }
 
 /**
- * Folds ordered journal events into a recovery read model. The projector
+ * Folds ordered Scout events and separately supplied Domain events into a recovery read model. The projector
  * validates required starts and matching identifiers, preserves the last
  * journal sequence as the checkpoint, and fails on contradictory facts rather
  * than inventing state. It is read-only with respect to the journal.
@@ -109,6 +110,7 @@ export function projectRun(
   events: RunJournalEvent[],
   synthesisRole: string,
   domainJournal?: ScoutDomainJournalProjection,
+  domainEvents: RunJournalEvent[] = [],
 ): RunProjection {
   const created = events.find((event) => RunEvents.run.created.is(event));
   if (!created || !RunEvents.run.created.is(created)) {
@@ -386,6 +388,9 @@ export function projectRun(
       recoveryMessageTask.set(event.payload.message.messageId, event.payload.taskId);
       continue;
     }
+  }
+
+  for (const event of domainEvents) {
     const domainFact = domainJournal?.project(event, event.seq);
     if (domainFact?.kind === "artifact") {
       artifacts.push({

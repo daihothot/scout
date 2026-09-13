@@ -55,6 +55,18 @@ export async function startRun(
   const runStartedAt = Date.now();
   const domain = await createDomainRuntime(graphState.domain);
   const journal = RunJournal.create({ runId, runRoot });
+  let domainJournal: RunJournal | undefined;
+  try {
+    domainJournal = RunJournal.create({
+      runId,
+      runRoot,
+      fileName: `${domain.domainId}-events.jsonl`,
+      lockFileName: `.${domain.domainId}-events.lock`,
+    });
+  } catch (error) {
+    journal.close();
+    throw error;
+  }
   const manifestStore = new RunManifestStore(runRoot);
   runtimeLogger.info({
     module: "run.lifecycle",
@@ -79,6 +91,7 @@ export async function startRun(
     domain,
     scoutConfig,
     journal,
+    domainJournal,
     manifestStore,
     terminate: (reason) => executor.terminate(reason),
   });
@@ -119,12 +132,16 @@ export async function startRun(
       });
     }
     if (runScopeStage.scopeCreated && runScopeStage.scope.hasEnvironment) {
+      journal.close();
+      domainJournal.close();
       return toRunSummary(
         runScopeStage.scope.environment,
         runScopeStage.scope.scheduler.snapshot(),
         "failed",
       );
     }
+    journal.close();
+    domainJournal.close();
     throw error;
   }
 

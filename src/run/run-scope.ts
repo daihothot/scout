@@ -32,6 +32,7 @@ export interface RunScopeOptions {
   domain: ScoutDomain;
   scoutConfig?: ScoutConfig;
   journal: RunJournal;
+  domainJournal?: RunJournal;
   manifestStore: RunManifestStore;
   terminate(reason: string): Promise<void>;
 }
@@ -57,6 +58,8 @@ export class RunScope {
   readonly domain: ScoutDomain;
   readonly scoutConfig: ScoutConfig;
   readonly journal: RunJournal;
+  /** Domain-owned journal. Tests may omit it and use the run journal as an in-memory fallback. */
+  readonly domainJournal: RunJournal;
   readonly manifestStore: RunManifestStore;
   private readonly terminateRun: RunScopeOptions["terminate"];
   private activeAppServer?: CodexAppServerClient;
@@ -75,6 +78,7 @@ export class RunScope {
     this.domain = options.domain;
     this.scoutConfig = options.scoutConfig ?? defaultScoutConfig;
     this.journal = options.journal;
+    this.domainJournal = options.domainJournal ?? options.journal;
     this.manifestStore = options.manifestStore;
     this.terminateRun = options.terminate;
   }
