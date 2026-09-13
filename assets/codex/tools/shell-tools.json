@@ -86,6 +86,23 @@
       }
     },
     {
+      "id": "rbtReviewReport",
+      "name": "rbt-review-report",
+      "command": "node",
+      "args": [
+        "assets/codex/skills/domain-rbt-review-pack/scripts/render-review-report.mjs"
+      ],
+      "exposeAs": "rbt-review-report",
+      "required": true,
+      "smoke": {
+        "scope": "run",
+        "args": [
+          "--smoke"
+        ],
+        "marker": "RBT_REVIEW_REPORT_OK"
+      }
+    },
+    {
       "id": "unity",
       "name": "unity",
       "command": "unity",

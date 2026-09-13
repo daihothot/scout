@@ -1470,8 +1470,16 @@ test("AssetStore mounts RBT guidance without exposing its host runtime commands"
     workflowProfileName: "rbt",
   });
   assert.ok(hasSkill(reviewerMount.skills, "domain-rbt-reviewer"));
-  assert.equal(hasSkill(reviewerMount.skills, "tool-unity-pipeline-cli"), false);
+  assert.equal(hasSkill(reviewerMount.skills, "tool-unity-pipeline"), false);
+  assert.ok(hasSkill(reviewerMount.skills, "tool-rbt-behavior"));
   assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "unity"), false);
+  assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "jarvis-codebase"), false);
+  assert.ok(reviewerMount.shellTools.some((tool) => tool.id === "rbtReviewReport"));
+  assert.equal(existsSync(join(reviewerMount.mountRoot, "bin", "rbt-review-report")), true);
+  assert.equal(
+    execFileSync(join(reviewerMount.mountRoot, "bin", "rbt-review-report"), ["--smoke"], { encoding: "utf8" }).trim(),
+    "RBT_REVIEW_REPORT_OK",
+  );
   assert.ok(reviewerMount.readableRoots.includes(join(
     homedir(),
     ".guru",
