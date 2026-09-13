@@ -2545,7 +2545,7 @@ function makeFixtureShellToolsResolvable(scoutRoot: string): void {
     tools: Array<{ id: string; command: string }>;
   };
   for (const tool of registry.tools) {
-    if (["codegraph", "jarvis", "unity"].includes(tool.id)) {
+    if (["codegraph", "jarvis-codebase", "unity"].includes(tool.id)) {
       tool.command = process.execPath;
     }
   }

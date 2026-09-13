@@ -461,6 +461,13 @@ Knowledge：
 - 只有当前工作目录是 Scout Runtime 为当前 `role` 生成的 `mount`，并且存在 `mount-manifest.json` 时，才使用 `scout-assets summary` 检查当前物化结果。
 - 当前源码和运行结果优先于文档结论。
 
+Testing Boundary：
+
+- Skill 正文、标题、措辞、阅读顺序、示例、template/reference 文案和 `version` 不是单元测试 contract；不得为它们编写文本匹配或快照测试。
+- 只验证 Scout Runtime 实际消费的机制：metadata 解析与校验、依赖展开、resource 发现与 hash、materialization、权限、Dynamic Tool 注册以及 role 可观测行为。
+- 解析、校验、依赖和 hash 机制测试使用最小合成 fixture；不读取、替换或复制生产 Skill 文案作为测试输入。
+- 使用真实 Workflow Profile 验证资源投影时，只断言实际 mount、权限、工具可见性或 role 行为，不断言 Skill 文本。
+
 源码资产检查命令：
 
 ```sh
@@ -532,6 +539,7 @@ Exit：
 - PR-002：禁止在本技能或 type/layout template 中复制 `internal-skill-consumption` 的读取和 composition 算法。
 - PR-003：禁止把 type template 和 layout template 拼成两套并列正文结构。
 - PR-004：禁止 `<implemented-owner-id>` 反向 required 某个具体 implementation contract owner。
+- PR-005：禁止通过生产 Skill 正文、supplementary resource 文案或版本号的文本断言固定作者内容。
 
 ## Checklist
 
@@ -545,3 +553,4 @@ Exit：
 - AGENTS、Domain Skill、Tool Skill、Signal Skill、Internal Skill、template 和 reference 的责任没有交叉复制。
 - Skill 的读取与 composition 规则引用 `internal-skill-consumption`，不复制其通用算法。
 - 当前 phase 的真实 mount 只包含应见 Skill，并且逻辑路径和 canonical target 权限都正确。
+- 测试只覆盖 Runtime contract 和可观测行为，没有断言 Skill 文案；机制测试使用最小合成 fixture。
