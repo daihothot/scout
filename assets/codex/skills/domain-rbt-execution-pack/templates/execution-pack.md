@@ -6,6 +6,7 @@ scout:
 artifact_type: RBTExecutionPack
 artifact_version: 1
 pack_id: "<填写稳定 pack ID 原始值>"
+target_version: "<填写目标版本原始值>"
 status: draft
 completion_state: partial
 ---
@@ -34,13 +35,13 @@ Frontmatter 与本节中的 `pack_id`、`status`、`completion_state` 必须填�
 - bdd_source_ref: <填写可读 BDD source ref 原始值>
 - capabilityId: <填写当前 BDD 或 Domain Skill 明确选择的 capability identity 原始值>
 - bddScenarioId: <填写当前 BDD 明确声明或由 Domain Skill 明确映射的 scenario identity 原始值>
-- runId: <原样填写 Scout Runtime 注入的 SCOUT_RUN_ID>
+- target_version: <填写当前 managed codebase 的目标版本原始值>
 - executor_role: executor
 
 ## Selected Behavioral Identities
 
-- scenarioId: <填写 <bddScenarioId>/run/<runId> 的实际值>
-- campaignId: <填写 <scenarioId>/campaign/main 的实际值>
+- scenarioId: <填写稳定的 bddScenarioId；不加入 Scout run ID>
+- campaignId: <填写 <scenarioId>/campaign/main；不加入 Scout run ID>
 - rootId: <填写已确认的 root node ID；Runtime 尚未确认时填写待 Runtime 确认>
 - hookNodeIds: <填写已确认的 Hook node IDs；Runtime 尚未确认时填写待 Runtime 确认>
 - variantIds: <填写计划使用或检查的 variant IDs；没有时填写 none；Runtime 尚未确认时填写待 Runtime 确认>
@@ -66,7 +67,7 @@ Frontmatter 与本节中的 `pack_id`、`status`、`completion_state` 必须填�
 | --- | --- | --- |
 | <填写 before.<stable-name> 或 after.<stable-name>> | <填写该观察点> | <填写 SR-* IDs> |
 
-本模板只记录已确认或待 Runtime 确认的 Behavioral identities；不在 Pack 中记录 Command `correlationId`。实际 `correlationId` 由 Executor 调用时产生并由 Scout Runtime 记录。
+本模板只记录已确认或待确认的 Behavioral identities；不在 Pack 或执行文件中记录 Command `correlationId`。
 
 ## Agent Execution Plan
 
@@ -82,11 +83,11 @@ Frontmatter 与本节中的 `pack_id`、`status`、`completion_state` 必须填�
 | --- | --- | --- |
 | BDD Evidence | `bdd-evidence.md` | <填写该文件实际 status + completion_state> |
 | Code Evidence | `code-evidence.md` | <填写该文件实际 status + completion_state> |
-| Platform Evidence | `platform-evidence.md` | <填写该文件实际 status + completion_state> |
 | Journal Expected | `journal-expected.md` | <填写该文件实际 status + completion_state> |
 | Signal Expected | `signal-expected.md` | <填写该文件实际 status + completion_state> |
 | Human Input Evidence | `human-input-evidence.md` | <填写该文件实际 status + completion_state> |
 | Evidence Registry | `evidence-registry.md` | <填写该文件实际 status + completion_state> |
+| Execute File | `../execute-file.json` | <填写 ready + complete 或 blocked + blocked> |
 
 `state` 填写该 artifact 的完整 `status + completion_state`，例如 `ready + complete` 或 `blocked + blocked`。
 
@@ -94,6 +95,7 @@ Frontmatter 与本节中的 `pack_id`、`status`、`completion_state` 必须填�
 
 - writer: executor
 - bdd_conclusion: not_defined_in_execution_pack
+- reuse_key: <填写 bdd_id + target_version>
 
 ## Handoff
 

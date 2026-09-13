@@ -57,7 +57,7 @@ completion_state: partial
 
 ## Aggregation Notes
 
-- 本文件只聚合当前 managed codebase 中实际读取的业务源码证据引用及 claim mapping；不能替代独立 source code evidence artifact。每个 `E-CODE-*` 必须按 `tool-jarvis-codebase/templates/source-code-evidence.md` 写入 `evidence/E-CODE-*.md`。
+- 本文件只聚合当前 managed codebase 中实际读取的业务源码证据引用及 claim mapping；不能替代独立 source code evidence artifact。每个 `E-CODE-*` 必须按本 Skill 的 `templates/source-code-evidence.md` 写入 `evidence/E-CODE-*.md`。
 - `E-CODE-*` 必须能回到当前源码的 version、相对路径、symbol 和实际行号。Knowledge 文档、Knowledge locator、BDD 文本或其中的 symbol anchor 不能代替源码证据。
 - `E-CODE-*` 只证明与 BDD 业务路径、状态转换或预期值直接相关的业务代码。Behavioral control、hook 注册、schema、Gateway、Tool 或测试基础设施实现不得作为支持 BDD claim 的代码证据。
 - 代码证据可以证明当前版本业务代码的实现事实，不能证明对应 node、variant 或 EvidenceSource 已在本次 Runtime 中可用。

@@ -157,11 +157,19 @@ test("mount preflight resolves a managed codebase before running CodeGraph statu
   mkdirSync(artifactRoot, { recursive: true });
   mkdirSync(codebaseRoot, { recursive: true });
   writeFileSync(
-    join(mountRoot, "bin", "jarvis"),
-    `#!/bin/sh\nprintf '%s\\n' ${JSON.stringify(codebaseRoot)}\n`,
+    join(mountRoot, "bin", "jarvis-codebase"),
+    [
+      "#!/bin/sh",
+      "if [ \"$1\" != \"gurusdk-unity\" ] || [ \"$2\" != \"path\" ] || [ -n \"$3\" ]; then",
+      "  printf 'unexpected arguments: %s\\n' \"$*\" >&2",
+      "  exit 2",
+      "fi",
+      `printf '%s\\n' ${JSON.stringify(codebaseRoot)}`,
+      "",
+    ].join("\n"),
     "utf8",
   );
-  chmodSync(join(mountRoot, "bin", "jarvis"), 0o755);
+  chmodSync(join(mountRoot, "bin", "jarvis-codebase"), 0o755);
   writeFileSync(
     join(mountRoot, "bin", "codegraph"),
     "#!/bin/sh\nprintf 'CODEGRAPH_OK %s %s\\n' \"$1\" \"$2\"\n",
@@ -177,7 +185,7 @@ test("mount preflight resolves a managed codebase before running CodeGraph statu
       readableRoots: [mountRoot, codebaseRoot],
       writableRoots: [artifactRoot, codebaseRoot],
       shellTools: [
-        testShellTool({ exposeAs: "jarvis" }),
+        testShellTool({ exposeAs: "jarvis-codebase" }),
         testShellTool({
           exposeAs: "codegraph",
           smoke: {

@@ -1425,7 +1425,7 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
   assert.equal(researcherMount.shellTools.some((tool) => tool.id === "unity"), false);
 });
 
-test("AssetStore mounts the Unity platform tool only for the RBT executor", () => {
+test("AssetStore mounts RBT guidance without exposing its host runtime commands", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-rbt-platform-");
   const store = new AssetStore();
 
@@ -1436,9 +1436,11 @@ test("AssetStore mounts the Unity platform tool only for the RBT executor", () =
     workflowProfileName: "rbt",
   });
   assert.ok(hasSkill(executorMount.skills, "domain-rbt-executor"));
-  assert.ok(hasSkill(executorMount.skills, "tool-unity-pipeline-cli"));
-  assert.ok(hasSkill(executorMount.skills, "tool-jarvis-websocket"));
-  assert.ok(executorMount.shellTools.some((tool) => tool.id === "unity"));
+  assert.ok(hasSkill(executorMount.skills, "tool-unity-pipeline"));
+  assert.ok(hasSkill(executorMount.skills, "tool-rbt-behavior"));
+  assert.equal(executorMount.shellTools.some((tool) => tool.id === "unity"), false);
+  assert.ok(executorMount.shellTools.some((tool) => tool.id === "jarvis-codebase"));
+  assert.ok(executorMount.shellTools.some((tool) => tool.id === "codegraph"));
   assert.equal(executorMount.readableRoots.includes(fixtureRoot), false);
   assert.ok(executorMount.readableRoots.includes(join(
     homedir(),
