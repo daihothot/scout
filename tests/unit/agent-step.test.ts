@@ -99,7 +99,7 @@ test("Tool Call backend owns provider facts and Step stores only their ids", asy
   const item = {
     id: "item-tool-1",
     type: "dynamicToolCall" as const,
-    namespace: "scout",
+    namespace: "scout_agent_test",
     tool: "Inspect",
     arguments: { path: "artifact" },
     status: "completed" as const,
@@ -126,6 +126,57 @@ test("Tool Call backend owns provider facts and Step stores only their ids", asy
   assert.equal(calls[0]?.toolCallId, "item-tool-1");
   assert.equal(calls[0]?.status, "completed");
   assert.deepEqual(scope.stepStore.getStep(running.stepId)?.toolCallIds, ["item-tool-1"]);
+});
+
+test("Tool Call backend ignores Domain dynamic tools and external MCP tools", (t) => {
+  const eventBus = new InMemoryEventBus();
+  const scope = installTestRunScope(t, {
+    runId: "tool-call-boundary",
+    eventBus,
+  });
+  const running = step({ stepId: "tool-boundary-step", turnId: "turn-1" });
+  scope.stepStore.addStep(running);
+  const toolCallBackend = new AgentToolCallBackend();
+  const agent = { agentId: "researcher" } as ScoutAgent;
+  const entry = {
+    seq: 4,
+    receivedAt: "2026-08-20T00:00:01.000Z",
+    stream: "item" as const,
+    kind: "item_completed",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    itemId: "item-tool-1",
+  };
+
+  toolCallBackend.handleAppServerTimelineEntry(agent, entry, {
+    entry,
+    item: {
+      id: "item-tool-1",
+      type: "dynamicToolCall",
+      namespace: "rbt_behavior",
+      tool: "JarvisBehavior",
+      arguments: {},
+      status: "completed",
+      contentItems: [],
+      success: true,
+    },
+  });
+  toolCallBackend.handleAppServerTimelineEntry(agent, { ...entry, seq: 5, itemId: "item-tool-2" }, {
+    entry,
+    item: {
+      id: "item-tool-2",
+      type: "mcpToolCall",
+      server: "external_server",
+      tool: "query",
+      arguments: {},
+      status: "completed",
+      result: {},
+      error: null,
+    },
+  });
+
+  assert.deepEqual(scope.toolCallStore.list({ stepId: running.stepId }), []);
+  assert.deepEqual(scope.stepStore.getStep(running.stepId)?.toolCallIds, []);
 });
 
 test("Step lifecycle snapshots retain references that arrive before Step creation", async (t) => {
@@ -158,7 +209,7 @@ test("Step lifecycle snapshots retain references that arrive before Step creatio
     threadId: "thread-1",
     turnId: "turn-1",
     itemId: "pending-call",
-    namespace: "scout",
+    namespace: "scout_agent_test",
     tool: "Inspect",
     arguments: { path: "artifact" },
     status: "completed",

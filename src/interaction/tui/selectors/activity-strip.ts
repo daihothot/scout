@@ -3,6 +3,7 @@ import type {
   AgentActivity,
   AgentTurnActivity,
 } from "../../../agent/activity/activity-event.js";
+import type { AgentCommandExecutionObservedEvent } from "../../../agent/command-execution/command-execution-events.js";
 import type { TuiState } from "../tui-store.js";
 
 /** Reduced activity item used by the compact activity strip. */
@@ -23,13 +24,30 @@ export function selectCurrentAgentActivity(
   state: TuiState,
 ): TuiAgentActivityStripItem | undefined {
   const latest = latestActivity(state.activities);
+  const latestCommand = latestCommandExecution(state.commandExecutions ?? []);
   const latestTurn = latestTurnActivity(state.turnActivities);
-  if (!latest && !latestTurn) return undefined;
+  if (!latest && !latestCommand && !latestTurn) return undefined;
+  if (latestCommand && (!latest || compareTimelineFacts(latestCommandFact(latestCommand), latest) > 0)) {
+    if (!latestTurn || compareTimelineFacts(latestCommandFact(latestCommand), latestTurn) >= 0) {
+      return commandPresentation(latestCommand);
+    }
+  }
   if (latestTurn && (!latest || compareTimelineFacts(latestTurn, latest) > 0)) {
     const item = latestActivity(state.activities.filter((activity) =>
       activity.threadId === latestTurn.threadId
       && activity.turnId === latestTurn.turnId
     ));
+    const command = latestCommandExecution((state.commandExecutions ?? []).filter((candidate) =>
+      candidate.threadId === latestTurn.threadId
+      && candidate.turnId === latestTurn.turnId
+    ));
+    if (
+      latestTurn.status !== "inProgress"
+      && command
+      && (!item || compareTimelineFacts(latestCommandFact(command), item) > 0)
+    ) {
+      return commandPresentation(command);
+    }
     if (latestTurn.status !== "inProgress" && item) {
       return itemPresentation(item, false, latestTurn.status);
     }
@@ -102,6 +120,56 @@ function latestTurnActivity(activities: AgentTurnActivity[]): AgentTurnActivity 
     if (!latest) return current;
     return compareTimelineFacts(current, latest) > 0 ? current : latest;
   }, undefined);
+}
+
+function latestCommandExecution(
+  commands: AgentCommandExecutionObservedEvent[],
+): AgentCommandExecutionObservedEvent | undefined {
+  return commands.reduce<AgentCommandExecutionObservedEvent | undefined>((latest, current) => {
+    if (!latest) return current;
+    return compareTimelineFacts(latestCommandFact(current), latestCommandFact(latest)) > 0
+      ? current
+      : latest;
+  }, undefined);
+}
+
+function latestCommandFact(command: AgentCommandExecutionObservedEvent): Pick<AgentActivity, "seq" | "updatedAt"> {
+  return { seq: command.sourceSeq, updatedAt: command.observedAt };
+}
+
+function commandPresentation(command: AgentCommandExecutionObservedEvent): TuiAgentActivityStripItem {
+  const label = summarizeCommand(command.command);
+  const detail = [
+    command.exitCode === undefined || command.exitCode === null ? undefined : `exit_code: ${command.exitCode}`,
+  ].filter(Boolean).join(" · ");
+  const failed = command.status === "failed"
+    || (command.exitCode !== undefined && command.exitCode !== null && command.exitCode !== 0);
+  const status = failed ? "failed" : command.status;
+  const execution = failed
+    ? "执行失败"
+    : command.status === "completed"
+      ? "执行完成"
+      : `执行未完成(${command.status})`;
+  return {
+    activityId: `${command.agentId}:${command.threadId}:${command.turnId ?? "no-turn"}:${command.itemId}`,
+    role: command.role,
+    label: roleLabel(command.role),
+    taskId: command.taskId,
+    type: "commandExecution",
+    activity: `${execution} · ${label}${detail ? ` · ${detail}` : ""}`,
+    markdown: false,
+    status,
+    processing: false,
+  };
+}
+
+function summarizeCommand(command: string): string {
+  const normalized = command.replace(/\s+/g, " ").trim();
+  const heredocIndex = normalized.search(/<<-?/);
+  const summary = heredocIndex >= 0
+    ? normalized.slice(0, heredocIndex).trim()
+    : normalized;
+  return summary.length <= 240 ? summary : `${summary.slice(0, 239)}…`;
 }
 
 function compareTimelineFacts(

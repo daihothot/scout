@@ -67,9 +67,9 @@ import type {
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import type {
   AgentActivity,
-  AgentNativeSubagentActivity,
   AgentTurnActivity,
 } from "../../src/agent/activity/activity-event.js";
+import type { AgentNativeSubagentEvent } from "../../src/agent/subagent/subagent-events.js";
 import type { AgentCommandExecutionObservedEvent } from "../../src/agent/command-execution/command-execution-events.js";
 import { InteractionGateway } from "../../src/interaction/index.js";
 import { attachments } from "../../src/agent/context/index.js";
@@ -996,7 +996,7 @@ test("AgentBackend normalizes app-server items into Agent activity", () => {
   assert.equal(JSON.stringify(activities).includes("private chain of thought"), false);
 });
 
-test("AgentBackend publishes one complete command result fact on completion", async () => {
+test("AgentBackend publishes one command fact without the command result on completion", async () => {
   const entry = {
     seq: 11,
     stream: "item",
@@ -1048,13 +1048,12 @@ test("AgentBackend publishes one complete command result fact on completion", as
     cwd: "/repo/mount",
     status: "completed",
     exitCode: 0,
-    aggregatedOutput: "[RESULT] {\"status\":\"ok\"}",
     durationMs: 25,
     observedAt: "2026-09-05T00:00:00.000Z",
   }]);
 });
 
-test("AgentBackend projects a failed command with a bounded diagnostic summary", async () => {
+test("AgentBackend projects a failed command without its return value", async () => {
   const entry = {
     seq: 12,
     stream: "item",
@@ -1107,24 +1106,25 @@ test("AgentBackend projects a failed command with a bounded diagnostic summary",
   fixture.registry.registerAgent(coordinator);
   fixture.registry.bindThread(coordinator.agentId, entry.threadId);
   const activities: AgentActivity[] = [];
+  const commands: AgentCommandExecutionObservedEvent[] = [];
   fixture.eventBus.subscribe(AgentEvents.activity.observed, (event) => {
     if (AgentEvents.activity.observed.is(event)) activities.push(event.payload);
+  });
+  fixture.eventBus.subscribe(AgentEvents.commandExecution.observed, (event) => {
+    if (AgentEvents.commandExecution.observed.is(event)) commands.push(event.payload);
   });
   new AgentBackend().start();
 
   appServer.emitTimeline(entry);
-  await waitFor(() => activities.length === 1);
+  await waitFor(() => commands.length === 1);
 
-  assert.equal(activities[0]?.status, "failed");
-  assert.match(
-    activities[0]?.detail ?? "",
-    /^exit_code: 1 · ls: \/restricted: Operation not permitted /,
-  );
-  assert.equal(activities[0]?.detail?.endsWith("…"), true);
-  assert.equal((activities[0]?.detail.length ?? Number.POSITIVE_INFINITY) <= 260, true);
+  assert.equal(activities.length, 0);
+  assert.equal(commands[0]?.status, "completed");
+  assert.equal(commands[0]?.exitCode, 1);
+  assert.equal(Object.hasOwn(commands[0] ?? {}, "aggregatedOutput"), false);
 });
 
-test("AgentBackend keeps heredoc bodies out of Activity labels", async () => {
+test("AgentBackend keeps command bodies out of Activity facts", async () => {
   const entry = {
     seq: 13,
     stream: "item",
@@ -1175,17 +1175,21 @@ test("AgentBackend keeps heredoc bodies out of Activity labels", async () => {
   fixture.registry.registerAgent(coordinator);
   fixture.registry.bindThread(coordinator.agentId, entry.threadId);
   const activities: AgentActivity[] = [];
+  const commands: AgentCommandExecutionObservedEvent[] = [];
   fixture.eventBus.subscribe(AgentEvents.activity.observed, (event) => {
     if (AgentEvents.activity.observed.is(event)) activities.push(event.payload);
+  });
+  fixture.eventBus.subscribe(AgentEvents.commandExecution.observed, (event) => {
+    if (AgentEvents.commandExecution.observed.is(event)) commands.push(event.payload);
   });
   new AgentBackend().start();
 
   appServer.emitTimeline(entry);
-  await waitFor(() => activities.length === 1);
+  await waitFor(() => commands.length === 1);
 
-  assert.match(activities[0]?.label ?? "", /cat > \.\.\/artifacts\/execution-pack\.md$/);
-  assert.doesNotMatch(activities[0]?.label ?? "", /RBT Execution Pack|private artifact body/);
-  assert.equal(activities[0]?.detail, "exit_code: 0 · output: empty");
+  assert.equal(activities.length, 0);
+  assert.match(commands[0]?.command ?? "", /RBT Execution Pack|private artifact body/);
+  assert.equal(Object.hasOwn(commands[0] ?? {}, "aggregatedOutput"), false);
 });
 
 test("AgentBackend publishes context compaction as ordinary activity", () => {
@@ -1248,7 +1252,7 @@ test("AgentBackend publishes context compaction as ordinary activity", () => {
   );
 });
 
-test("AgentBackend publishes native subagent audit facts and concise activity", () => {
+test("AgentBackend publishes native subagent facts without activity duplication", () => {
   const entry = {
     seq: 8,
     stream: "item",
@@ -1301,12 +1305,12 @@ test("AgentBackend publishes native subagent audit facts and concise activity", 
   const researcher = new AgentBuilder().buildWorker("researcher");
   fixture.registry.bindThread(researcher.agentId, entry.threadId);
   const activities: AgentActivity[] = [];
-  const nativeSubagentActivities: AgentNativeSubagentActivity[] = [];
+  const nativeSubagentActivities: AgentNativeSubagentEvent[] = [];
   fixture.eventBus.subscribe<AgentActivity>(AgentEvents.activity.observed, (event) => {
     activities.push(event.payload);
   });
-  fixture.eventBus.subscribe<AgentNativeSubagentActivity>(
-    AgentEvents.activity.nativeSubagentObserved,
+  fixture.eventBus.subscribe<AgentNativeSubagentEvent>(
+    AgentEvents.subagent.observed,
     (event) => {
       nativeSubagentActivities.push(event.payload);
     },
@@ -1339,10 +1343,7 @@ test("AgentBackend publishes native subagent audit facts and concise activity", 
     },
     updatedAt: "2026-07-21T00:00:00.000Z",
   }]);
-  assert.equal(activities.length, 1);
-  assert.equal(activities[0]?.label, "Native subagent spawnAgent");
-  assert.equal(activities[0]?.detail, "thread-child-1");
-  assert.equal(JSON.stringify(activities).includes("检查一个边界明确的只读子任务"), false);
+  assert.equal(activities.length, 0);
 });
 
 test("AgentBackend publishes turn lifecycle separately from item activity", () => {

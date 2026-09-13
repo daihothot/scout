@@ -3,6 +3,7 @@ import { AgentActivityBackend } from "./agent-activity-backend.js";
 import { AgentStepBackend } from "./agent-step-backend.js";
 import { AgentToolCallBackend } from "./agent-tool-call-backend.js";
 import { AgentCommandExecutionBackend } from "./agent-command-execution-backend.js";
+import { AgentSubagentBackend } from "./agent-subagent-backend.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 
@@ -14,6 +15,7 @@ import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 export class AgentBackend {
   readonly registry: RunScope["agentRegistry"];
   readonly activity: AgentActivityBackend;
+  readonly subagent: AgentSubagentBackend;
   readonly commandExecution: AgentCommandExecutionBackend;
   readonly step: AgentStepBackend;
   readonly toolCall: AgentToolCallBackend;
@@ -27,6 +29,7 @@ export class AgentBackend {
     this.domain = scope.domain;
     this.registry = scope.agentRegistry;
     this.activity = new AgentActivityBackend();
+    this.subagent = new AgentSubagentBackend();
     this.commandExecution = new AgentCommandExecutionBackend();
     this.step = new AgentStepBackend();
     this.toolCall = new AgentToolCallBackend({
@@ -82,6 +85,7 @@ export class AgentBackend {
     this.step.handleAppServerTimelineEntry(agent, entry, resolved);
     this.toolCall.handleAppServerTimelineEntry(agent, entry, resolved);
     this.commandExecution.handleAppServerTimelineEntry(agent, entry, resolved);
+    this.subagent.handleAppServerTimelineEntry(agent, entry, resolved);
     this.activity.handleAppServerTimelineEntry(agent, entry, resolved);
   }
 

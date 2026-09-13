@@ -2,7 +2,7 @@ import { event } from "../../core/events/index.js";
 import { AgentEvents } from "../events/catalog.js";
 import type { ScoutAgentRole } from "../thread/types.js";
 
-/** Complete shell-command result retained for runtime consumers and recovery. */
+/** Normalized shell-command fact exposed to Scout's generic agent telemetry. */
 export interface AgentCommandExecutionObservedEvent {
   sourceSeq: number;
   agentId: string;
@@ -15,7 +15,6 @@ export interface AgentCommandExecutionObservedEvent {
   cwd?: string;
   status: string;
   exitCode?: number | null;
-  aggregatedOutput?: string | null;
   durationMs?: number | null;
   observedAt: string;
 }
@@ -28,6 +27,6 @@ const agentCommandExecutionEventCatalog = {
 
 AgentEvents.add(agentCommandExecutionEventCatalog);
 
-/** Event routes for complete shell-command observations. */
+/** Event routes for shell-command observations without command output. */
 export type AgentCommandExecutionEventCatalog =
   typeof agentCommandExecutionEventCatalog;

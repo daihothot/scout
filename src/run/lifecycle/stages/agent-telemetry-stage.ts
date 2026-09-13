@@ -1,6 +1,8 @@
 import {
   AgentActivityRecorder,
+  AgentCommandExecutionRecorder,
   AgentHumanInputRecorder,
+  AgentSubagentRecorder,
   AgentThreadRecorder,
   AgentToolCallRecorder,
   StepEventRecorder,
@@ -15,6 +17,8 @@ export class AgentTelemetryStage implements RunStage {
   private taskRecorder?: TaskEventRecorder;
   private stepRecorder?: StepEventRecorder;
   private activityRecorder?: AgentActivityRecorder;
+  private subagentRecorder?: AgentSubagentRecorder;
+  private commandExecutionRecorder?: AgentCommandExecutionRecorder;
   private threadRecorder?: AgentThreadRecorder;
   private humanInputRecorder?: AgentHumanInputRecorder;
   private toolCallRecorder?: AgentToolCallRecorder;
@@ -23,6 +27,8 @@ export class AgentTelemetryStage implements RunStage {
     const taskRecorder = new TaskEventRecorder();
     const stepRecorder = new StepEventRecorder();
     const activityRecorder = new AgentActivityRecorder();
+    const subagentRecorder = new AgentSubagentRecorder();
+    const commandExecutionRecorder = new AgentCommandExecutionRecorder();
     const threadRecorder = new AgentThreadRecorder();
     const humanInputRecorder = new AgentHumanInputRecorder();
     const toolCallRecorder = new AgentToolCallRecorder();
@@ -33,11 +39,20 @@ export class AgentTelemetryStage implements RunStage {
         stepRecorder.start();
         try {
           activityRecorder.start();
-          humanInputRecorder.start();
-          toolCallRecorder.start();
+          try {
+            subagentRecorder.start();
+            commandExecutionRecorder.start();
+            humanInputRecorder.start();
+            toolCallRecorder.start();
+          } catch (error) {
+            subagentRecorder.stop();
+            throw error;
+          }
         } catch (error) {
           toolCallRecorder.stop();
           humanInputRecorder.stop();
+          commandExecutionRecorder.stop();
+          activityRecorder.stop();
           stepRecorder.stop();
           throw error;
         }
@@ -53,6 +68,8 @@ export class AgentTelemetryStage implements RunStage {
     this.taskRecorder = taskRecorder;
     this.stepRecorder = stepRecorder;
     this.activityRecorder = activityRecorder;
+    this.subagentRecorder = subagentRecorder;
+    this.commandExecutionRecorder = commandExecutionRecorder;
     this.humanInputRecorder = humanInputRecorder;
     this.toolCallRecorder = toolCallRecorder;
   }
@@ -65,6 +82,18 @@ export class AgentTelemetryStage implements RunStage {
       errors.push(error);
     }
     this.activityRecorder = undefined;
+    try {
+      this.subagentRecorder?.stop();
+    } catch (error) {
+      errors.push(error);
+    }
+    this.subagentRecorder = undefined;
+    try {
+      this.commandExecutionRecorder?.stop();
+    } catch (error) {
+      errors.push(error);
+    }
+    this.commandExecutionRecorder = undefined;
     try {
       this.humanInputRecorder?.stop();
     } catch (error) {

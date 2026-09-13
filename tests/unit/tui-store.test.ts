@@ -222,7 +222,7 @@ test("TuiStore preserves same activity item id for Coordinator and Worker", () =
   );
 });
 
-test("TuiStore hides dynamic tool calls and retains Worker activity", () => {
+test("TuiStore hides tool calls and command executions from Activity state", () => {
   const store = createStore();
   store.addAgentActivity(activity({
     agentId: "researcher",
@@ -230,17 +230,22 @@ test("TuiStore hides dynamic tool calls and retains Worker activity", () => {
     type: "dynamicToolCall",
     label: "update_plan",
   }));
-  store.addAgentActivity(activity({
+  store.addAgentCommandExecution({
+    sourceSeq: 2,
     agentId: "researcher",
+    role: "researcher",
     taskId: "researcher-task-0001",
-    type: "commandExecution",
-    label: "rg BDD-001",
-  }));
+    threadId: "thread-researcher",
+    turnId: "turn-researcher",
+    itemId: "command-1",
+    command: "rg BDD-001",
+    status: "completed",
+    exitCode: 0,
+    observedAt: "2026-07-10T00:00:02.000Z",
+  });
 
-  assert.deepEqual(
-    store.snapshot().activities.map((event) => [event.type, event.label]),
-    [["commandExecution", "rg BDD-001"]],
-  );
+  assert.deepEqual(store.snapshot().activities, []);
+  assert.equal(store.snapshot().commandExecutions?.length, 1);
 });
 
 test("TuiStore retains the latest lifecycle state for each Agent turn", () => {

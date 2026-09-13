@@ -7,7 +7,7 @@ import type { ScoutAgent } from "../core/scout-agent.js";
 import { AgentEvents } from "../events/index.js";
 import type { AgentCommandExecutionObservedEvent } from "../command-execution/command-execution-events.js";
 
-/** Publishes one complete runtime fact for each completed shell command. */
+/** Publishes one generic command fact for each completed shell command. */
 export class AgentCommandExecutionBackend {
   private readonly scope: RunScope = currentRunScope();
 
@@ -19,6 +19,7 @@ export class AgentCommandExecutionBackend {
     const item = resolved.item;
     if (entry.stream !== "item" || entry.kind !== "item_completed") return;
     if (!item || item.type !== "commandExecution") return;
+    if (!entry.threadId) return;
 
     const activeTask = this.scope.taskStore.findActiveTaskForAgent(agent.agentId);
     const observedAt = entry.receivedAt;
@@ -27,14 +28,13 @@ export class AgentCommandExecutionBackend {
       agentId: agent.agentId,
       role: agent.role,
       ...(activeTask ? { taskId: activeTask.taskId } : {}),
-      threadId: entry.threadId as string,
+      threadId: entry.threadId,
       ...(entry.turnId ? { turnId: entry.turnId } : {}),
       itemId: item.id,
       command: item.command,
       ...(item.cwd ? { cwd: item.cwd } : {}),
       status: item.status,
       ...(item.exitCode === undefined ? {} : { exitCode: item.exitCode }),
-      ...(item.aggregatedOutput === undefined ? {} : { aggregatedOutput: item.aggregatedOutput }),
       ...(item.durationMs === undefined ? {} : { durationMs: item.durationMs }),
       observedAt,
     } satisfies AgentCommandExecutionObservedEvent, { occurredAt: observedAt });

@@ -2,6 +2,7 @@ import type { DefinedEventCatalog, EventCatalogRegistry } from "../../core/event
 import type { AgentTaskEventCatalog } from "../task/task-events.js";
 import type { CoordinatorRunnerEventCatalog } from "../runner/coordinator/coordinator-runner-events.js";
 import type { AgentActivityEventCatalog } from "../activity/activity-event.js";
+import type { AgentSubagentEventCatalog } from "../subagent/subagent-events.js";
 import type { AgentThreadEventCatalog } from "../thread/thread-events.js";
 import type { AgentTurnEventCatalog } from "../thread/turn-events.js";
 import type { AgentMessageEventCatalog } from "../message/message-events.js";
@@ -11,6 +12,7 @@ import type { AgentToolCallEventCatalog } from "../tool-call/tool-call-events.js
 import type { AgentCommandExecutionEventCatalog } from "../command-execution/command-execution-events.js";
 
 import "../activity/activity-event.js";
+import "../subagent/subagent-events.js";
 import "../command-execution/command-execution-events.js";
 import "../thread/thread-events.js";
 import "../thread/turn-events.js";
@@ -25,6 +27,7 @@ import { AgentEvents as AgentEventCatalog } from "./catalog.js";
 /** Fully typed registry of all agent-owned event routes. */
 export const AgentEvents = AgentEventCatalog as EventCatalogRegistry<"agent">
   & DefinedEventCatalog<AgentActivityEventCatalog>
+  & DefinedEventCatalog<AgentSubagentEventCatalog>
   & DefinedEventCatalog<AgentCommandExecutionEventCatalog>
   & DefinedEventCatalog<AgentThreadEventCatalog>
   & DefinedEventCatalog<AgentTurnEventCatalog>
