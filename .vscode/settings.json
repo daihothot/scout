@@ -3,10 +3,13 @@
         "Agentic",
         "Backgrounded",
         "codegraph",
-        "unsubscribers",
-        "unarchived",
+        "collab",
+        "gurusdk",
+        "Materializer",
         "Rollouts",
-        "Materializer"
+        "unarchived",
+        "unsubscribers",
+        "Websockt"
     ],
     "js/ts.experimental.useTsgo": false
 }
