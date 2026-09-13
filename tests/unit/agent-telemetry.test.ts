@@ -5,16 +5,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   AgentActivity,
-  AgentNativeSubagentActivity,
   AgentTurnActivity,
 } from "../../src/agent/activity/activity-event.js";
+import type { AgentNativeSubagentEvent } from "../../src/agent/subagent/subagent-events.js";
 import { attachments } from "../../src/agent/context/attachments.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import {
   AgentActivityRecorder,
+  AgentCommandExecutionRecorder,
   AgentHumanInputRecorder,
+  AgentSubagentRecorder,
   AgentToolCallRecorder,
   AgentThreadRecorder,
   StepEventRecorder,
@@ -347,33 +349,23 @@ test("AgentActivityRecorder writes stable activity to the role activity log", as
   await eventBus.publishAndWait(AgentEvents.activity.observed, activity({
     seq: 4,
     type: "commandExecution",
-    status: "completed",
-    label: "rg BDD-001",
-  }));
-  await eventBus.publishAndWait(AgentEvents.activity.observed, activity({
-    seq: 5,
-    type: "commandExecution",
     status: "failed",
-    label: "ls /restricted",
-    detail: "exit_code: 1 · stderr: Operation not permitted",
+    label: "jarvis ws schema call behavior-control",
   }));
   await eventBus.publishAndWait(AgentEvents.activity.turnObserved, turnActivity({
-    seq: 6,
+    seq: 5,
     status: "inProgress",
   }));
   await eventBus.publishAndWait(AgentEvents.activity.turnObserved, turnActivity({
-    seq: 7,
+    seq: 6,
     status: "completed",
   }));
   recorder.stop();
 
   const activityLogPath = join(logsRoot, "activity.log");
   const text = readFileSync(activityLogPath, "utf8");
-  assert.equal(readEventCount(text), 5);
+  assert.equal(readEventCount(text), 3);
   assert.match(text, /detail: "Stable summary"/);
-  assert.match(text, /label: "rg BDD-001"/);
-  assert.match(text, /WARN module=agent\.activity/);
-  assert.match(text, /exit_code: 1 · stderr: Operation not permitted/);
   assert.doesNotMatch(text, /Partial summary/);
   assert.doesNotMatch(text, /ArchiveTask/);
   assert.match(text, /event=agent\.activity\.turn_observed/);
@@ -382,7 +374,41 @@ test("AgentActivityRecorder writes stable activity to the role activity log", as
   assert.equal(existsSync(join(logsRoot, "researcher-task-0001.log")), false);
 });
 
-test("AgentActivityRecorder writes complete native subagent facts to a dedicated log", async (t) => {
+test("AgentCommandExecutionRecorder writes command facts without return values", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-command-recorder-"));
+  const logsRoot = join(root, "agents", "researcher", "logs");
+  const eventBus = new InMemoryEventBus();
+  const registry = installTestRunScope(t, {
+    runId: "run-command-recorder",
+    eventBus,
+  }).agentRegistry;
+  registerAgent(registry, "researcher", logsRoot);
+  const recorder = new AgentCommandExecutionRecorder();
+  recorder.start();
+
+  await eventBus.publishAndWait(AgentEvents.commandExecution.observed, {
+    sourceSeq: 10,
+    agentId: "researcher",
+    role: "researcher",
+    taskId: "researcher-task-0001",
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    itemId: "command-1",
+    command: "printf result",
+    status: "completed",
+    exitCode: 0,
+    observedAt: "2026-07-14T00:00:10.000Z",
+  });
+  recorder.stop();
+
+  const text = readFileSync(join(logsRoot, "command-execution.log"), "utf8");
+  assert.equal(readEventCount(text), 1);
+  assert.match(text, /event=agent\.command_execution/);
+  assert.match(text, /command: "printf result"/);
+  assert.doesNotMatch(text, /aggregatedOutput/);
+});
+
+test("AgentSubagentRecorder writes complete native subagent facts to a dedicated log", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-subagent-recorder-"));
   const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
@@ -391,16 +417,12 @@ test("AgentActivityRecorder writes complete native subagent facts to a dedicated
     eventBus,
   }).agentRegistry;
   registerAgent(registry, "researcher", logsRoot);
-  const recorder = new AgentActivityRecorder();
+  const activityRecorder = new AgentActivityRecorder();
+  const recorder = new AgentSubagentRecorder();
+  activityRecorder.start();
   recorder.start();
 
-  await eventBus.publishAndWait(AgentEvents.activity.observed, activity({
-    type: "collabAgentToolCall",
-    status: "completed",
-    label: "Native subagent spawnAgent",
-    detail: "thread-child-1",
-  }));
-  await eventBus.publishAndWait(AgentEvents.activity.nativeSubagentObserved, {
+  await eventBus.publishAndWait(AgentEvents.subagent.observed, {
     seq: 2,
     agentId: "researcher",
     role: "researcher",
@@ -423,8 +445,8 @@ test("AgentActivityRecorder writes complete native subagent facts to a dedicated
       },
     },
     updatedAt: "2026-07-21T00:00:00.000Z",
-  } satisfies AgentNativeSubagentActivity);
-  await eventBus.publishAndWait(AgentEvents.activity.nativeSubagentObserved, {
+  } satisfies AgentNativeSubagentEvent);
+  await eventBus.publishAndWait(AgentEvents.subagent.observed, {
     seq: 3,
     agentId: "researcher",
     role: "researcher",
@@ -437,13 +459,14 @@ test("AgentActivityRecorder writes complete native subagent facts to a dedicated
     agentThreadId: "thread-child-1",
     agentPath: "019f-child-1",
     updatedAt: "2026-07-21T00:00:01.000Z",
-  } satisfies AgentNativeSubagentActivity);
+  } satisfies AgentNativeSubagentEvent);
+  activityRecorder.stop();
   recorder.stop();
 
   const subagentLogPath = join(logsRoot, "subagent.log");
   const text = readFileSync(subagentLogPath, "utf8");
   assert.equal(readEventCount(text), 2);
-  assert.match(text, /event=agent\.activity\.native_subagent_observed/);
+  assert.match(text, /event=agent\.subagent\.observed/);
   assert.match(text, /tool: "spawnAgent"/);
   assert.match(text, /receiverThreadIds:/);
   assert.match(text, /thread-child-1/);
@@ -730,7 +753,7 @@ function activity(input: Partial<AgentActivity>): AgentActivity {
     threadId: "thread-researcher",
     turnId: "turn-1",
     itemId: `item-${input.seq ?? 1}`,
-    type: "commandExecution",
+    type: "reasoning",
     status: "inProgress",
     label: "command",
     updatedAt: "2026-07-14T00:00:00.000Z",

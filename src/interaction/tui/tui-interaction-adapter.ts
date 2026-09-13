@@ -11,6 +11,7 @@ import type {
   AgentActivity,
   AgentTurnActivity,
 } from "../../agent/activity/activity-event.js";
+import type { AgentCommandExecutionObservedEvent } from "../../agent/command-execution/command-execution-events.js";
 import type { AgentTaskState } from "../../agent/task/types.js";
 import type { AgentStepState } from "../../agent/step/types.js";
 import type { RunLifecycleSnapshot } from "../../run/lifecycle/run-stage.js";
@@ -35,6 +36,10 @@ export class TuiInteractionAdapter implements RuntimeInteractionPort {
 
   async publishAgentActivity(activity: AgentActivity): Promise<void> {
     this.store.addAgentActivity(activity);
+  }
+
+  async publishAgentCommandExecution(command: AgentCommandExecutionObservedEvent): Promise<void> {
+    this.store.addAgentCommandExecution(command);
   }
 
   async publishAgentTurnActivity(activity: AgentTurnActivity): Promise<void> {

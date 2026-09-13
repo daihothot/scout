@@ -56,6 +56,7 @@ export class AgentToolCallBackend {
     ) return;
     const item = resolved.item;
     if (!item || (item.type !== "dynamicToolCall" && item.type !== "mcpToolCall")) return;
+    if (!isScoutOwnedToolCall(item)) return;
     if (!entry.threadId || !entry.turnId) return;
     const step = this.findStep(agent.agentId, entry.turnId);
     if (!step) return;
@@ -109,6 +110,14 @@ export class AgentToolCallBackend {
     return candidates.find((step) => step.turnId === turnId)
       ?? candidates.find((step) => step.status === "running");
   }
+}
+
+function isScoutOwnedToolCall(
+  item: Extract<NonNullable<AppServerResolvedTimelineEntry["item"]>, { type: "dynamicToolCall" | "mcpToolCall" }>,
+): boolean {
+  return item.type === "dynamicToolCall"
+    ? item.namespace?.startsWith("scout_agent_") === true
+    : item.server.startsWith("scout_agent_");
 }
 
 function isTerminalStatus(status: string): boolean {

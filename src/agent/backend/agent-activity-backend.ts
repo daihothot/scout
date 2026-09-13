@@ -5,16 +5,15 @@ import type {
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import type {
   AgentActivity,
-  AgentNativeSubagentActivity,
   AgentTurnActivity,
 } from "../activity/activity-event.js";
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { AgentEvents } from "../events/index.js";
 
 /**
- * Projects app-server timeline entries into agent activity facts. It owns no
- * task state and only publishes observations after the caller has resolved the
- * relevant timeline item.
+ * Projects app-server timeline entries into activity and native subagent facts.
+ * It owns no task state and only publishes observations after the caller has
+ * resolved the relevant timeline item.
  */
 export class AgentActivityBackend {
   private readonly scope: RunScope;
@@ -57,71 +56,18 @@ export class AgentActivityBackend {
     ) return;
 
     const activeTask = this.scope.taskStore.findActiveTaskForAgent(agent.agentId);
-    if (resolved.item?.type === "collabAgentToolCall") {
-      this.scope.eventBus.publish(AgentEvents.activity.nativeSubagentObserved, {
-        seq: entry.seq,
-        agentId: agent.agentId,
-        role: agent.role,
-        taskId: activeTask?.taskId,
-        threadId: entry.threadId,
-        turnId: entry.turnId,
-        itemId: resolved.item.id,
-        type: resolved.item.type,
-        tool: resolved.item.tool,
-        status: resolved.item.status,
-        senderThreadId: resolved.item.senderThreadId,
-        receiverThreadIds: [...resolved.item.receiverThreadIds],
-        prompt: resolved.item.prompt,
-        model: resolved.item.model,
-        reasoningEffort: resolved.item.reasoningEffort,
-        agentsStates: structuredClone(resolved.item.agentsStates),
-        updatedAt: entry.receivedAt,
-      } satisfies AgentNativeSubagentActivity);
-    } else if (resolved.item?.type === "subAgentActivity") {
-      this.scope.eventBus.publish(AgentEvents.activity.nativeSubagentObserved, {
-        seq: entry.seq,
-        agentId: agent.agentId,
-        role: agent.role,
-        taskId: activeTask?.taskId,
-        threadId: entry.threadId,
-        turnId: entry.turnId,
-        itemId: resolved.item.id,
-        type: resolved.item.type,
-        kind: resolved.item.kind,
-        agentThreadId: resolved.item.agentThreadId,
-        agentPath: resolved.item.agentPath,
-        updatedAt: entry.receivedAt,
-      } satisfies AgentNativeSubagentActivity);
-    }
     // Dynamic and MCP calls have their own Tool Call fact stream. Command
-    // execution remains an Activity because it is not yet a progress item
-    // owned by a separate store.
+    // execution has its own complete fact stream and is not an Activity.
     const progressItem = resolved.progressItem
       && resolved.progressItem.type !== "dynamicToolCall"
       && resolved.progressItem.type !== "mcpToolCall"
+      && resolved.progressItem.type !== "commandExecution"
+      && resolved.progressItem.type !== "collabAgentToolCall"
       ? resolved.progressItem
       : undefined;
     let progressStatus = progressItem?.status;
     let progressDetail = progressItem?.detail;
     let progressLabel = progressItem?.label;
-    if (progressItem?.item.type === "commandExecution" && entry.kind === "item_completed") {
-      const command = progressItem.item;
-      const exitCode = command.exitCode;
-      const output = command.aggregatedOutput?.trim()
-        ? command.aggregatedOutput.trim()
-        : "output: empty";
-      const singleLineOutput = output.replace(/\s+/g, " ").trim();
-      const outputSummary = singleLineOutput.length > 240
-        ? `${singleLineOutput.slice(0, 239)}…`
-        : singleLineOutput;
-      progressStatus = exitCode !== undefined && exitCode !== null && exitCode !== 0
-        ? "failed"
-        : command.status;
-      progressDetail = `exit_code: ${exitCode ?? "unknown"} · ${outputSummary}`;
-    }
-    if (progressItem?.item.type === "commandExecution") {
-      progressLabel = summarizeCommandLabel(progressItem.label);
-    }
     const activity: AgentActivity | undefined = progressItem
       ? {
         seq: entry.seq,
@@ -142,6 +88,9 @@ export class AgentActivityBackend {
         && resolved.item.type !== "userMessage"
         && resolved.item.type !== "dynamicToolCall"
         && resolved.item.type !== "mcpToolCall"
+        && resolved.item.type !== "commandExecution"
+        && resolved.item.type !== "collabAgentToolCall"
+        && resolved.item.type !== "subAgentActivity"
         ? {
           seq: entry.seq,
           agentId: agent.agentId,
@@ -155,9 +104,7 @@ export class AgentActivityBackend {
           label: itemLabel(resolved.item),
           detail: resolved.item.type === "reasoning"
             ? reasoningSummary(resolved.item.summary)
-            : resolved.item.type === "subAgentActivity"
-              ? `${resolved.item.kind}: ${resolved.item.agentThreadId}`
-              : undefined,
+            : undefined,
           updatedAt: entry.receivedAt,
         }
         : undefined;
@@ -168,16 +115,6 @@ export class AgentActivityBackend {
   }
 }
 
-function summarizeCommandLabel(command: string): string {
-  const normalized = command.replace(/\s+/g, " ").trim();
-  const heredocIndex = normalized.search(/<<-?/);
-  const summary = heredocIndex >= 0
-    ? normalized.slice(0, heredocIndex).trim()
-    : normalized;
-  if (summary.length <= 240) return summary;
-  return `${summary.slice(0, 239)}…`;
-}
-
 function itemLabel(item: NonNullable<AppServerResolvedTimelineEntry["item"]>): string {
   switch (item.type) {
     case "reasoning":
@@ -186,10 +123,6 @@ function itemLabel(item: NonNullable<AppServerResolvedTimelineEntry["item"]>): s
       return "Context compaction";
     case "fileChange":
       return "File changes";
-    case "collabAgentToolCall":
-      return `Native subagent ${item.tool}`;
-    case "subAgentActivity":
-      return "Native subagent activity";
     case "unknown":
       return `Unknown item (${item.rawType})`;
     default:

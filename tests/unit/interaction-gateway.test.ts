@@ -17,6 +17,7 @@ import type {
   AgentActivity,
   AgentTurnActivity,
 } from "../../src/agent/activity/activity-event.js";
+import type { AgentNativeSubagentEvent } from "../../src/agent/subagent/subagent-events.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import type { AgentStepState } from "../../src/agent/step/types.js";
 import { SystemEvents } from "../../src/system/events/index.js";
@@ -230,6 +231,27 @@ test("interaction gateway projects assigned task plan and Worker activity into T
     detail: "Locate the current Behavior source.",
     updatedAt: "2026-07-10T00:00:02.000Z",
   } satisfies AgentActivity);
+  await bus.publishAndWait(AgentEvents.subagent.observed, {
+    seq: 2,
+    agentId: "researcher",
+    role: "researcher",
+    taskId: "researcher-task-0001",
+    threadId: "thread-researcher",
+    turnId: "turn-1",
+    itemId: "subagent-1",
+    type: "collabAgentToolCall",
+    tool: "spawnAgent",
+    status: "completed",
+    senderThreadId: "thread-researcher",
+    receiverThreadIds: ["thread-child-1"],
+    prompt: "检查只读子任务。",
+    model: "gpt-5.5",
+    reasoningEffort: "high",
+    agentsStates: {
+      "thread-child-1": { status: "running", message: null },
+    },
+    updatedAt: "2026-07-10T00:00:02.500Z",
+  } satisfies AgentNativeSubagentEvent);
   await bus.publishAndWait(AgentEvents.activity.turnObserved, {
     seq: 2,
     agentId: "researcher",
@@ -251,6 +273,8 @@ test("interaction gateway projects assigned task plan and Worker activity into T
     }],
   }]);
   assert.equal(store.snapshot().activities[0]?.taskId, "researcher-task-0001");
+  assert.equal(store.snapshot().activities[1]?.type, "collabAgentToolCall");
+  assert.equal(store.snapshot().activities[1]?.detail, "thread-child-1");
   assert.equal(store.snapshot().turnActivities[0]?.status, "inProgress");
 
   await bus.publishAndWait(AgentEvents.task.done, taskState({

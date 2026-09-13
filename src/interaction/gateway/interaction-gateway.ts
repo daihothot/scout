@@ -13,6 +13,8 @@ import type {
   AgentActivity,
   AgentTurnActivity,
 } from "../../agent/activity/activity-event.js";
+import type { AgentCommandExecutionObservedEvent } from "../../agent/command-execution/command-execution-events.js";
+import type { AgentNativeSubagentEvent } from "../../agent/subagent/subagent-events.js";
 import type {
   CoordinatorMessageProducedPayload,
 } from "../../agent/runner/coordinator/coordinator-runner-events.js";
@@ -46,6 +48,14 @@ export class InteractionGateway {
       scope.eventBus.subscribe<AgentTurnActivity>(
         AgentEvents.activity.turnObserved,
         (event) => this.handleAgentTurnActivity(event),
+      ),
+      scope.eventBus.subscribe<AgentNativeSubagentEvent>(
+        AgentEvents.subagent.observed,
+        (event) => this.handleAgentSubagent(event),
+      ),
+      scope.eventBus.subscribe<AgentCommandExecutionObservedEvent>(
+        AgentEvents.commandExecution.observed,
+        (event) => this.handleAgentCommandExecution(event),
       ),
       scope.eventBus.subscribe(
         AgentEvents.task,
@@ -154,6 +164,74 @@ export class InteractionGateway {
           eventId: event.id,
           agentId: event.payload.agentId,
           turnId: event.payload.turnId,
+        },
+      );
+    }
+  }
+
+  private async handleAgentSubagent(event: ScoutEvent<AgentNativeSubagentEvent>): Promise<void> {
+    try {
+      const subagent = event.payload;
+      const activity: AgentActivity = subagent.type === "collabAgentToolCall"
+        ? {
+            seq: subagent.seq,
+            agentId: subagent.agentId,
+            role: subagent.role,
+            taskId: subagent.taskId,
+            threadId: subagent.threadId,
+            turnId: subagent.turnId,
+            itemId: subagent.itemId,
+            type: subagent.type,
+            status: subagent.status,
+            label: `Native subagent ${subagent.tool}`,
+            detail: subagent.receiverThreadIds.join(", ") || undefined,
+            updatedAt: subagent.updatedAt,
+          }
+        : {
+            seq: subagent.seq,
+            agentId: subagent.agentId,
+            role: subagent.role,
+            taskId: subagent.taskId,
+            threadId: subagent.threadId,
+            turnId: subagent.turnId,
+            itemId: subagent.itemId,
+            type: subagent.type,
+            status: subagent.kind === "started" ? "inProgress" : subagent.kind,
+            label: "Native subagent activity",
+            detail: `${subagent.kind}: ${subagent.agentThreadId}`,
+            updatedAt: subagent.updatedAt,
+          };
+      await currentRunScope().interactionPort.publishAgentActivity(
+        activity,
+      );
+    } catch (error) {
+      this.warnInteractionError(
+        "agent_subagent_publish_failed",
+        "Failed to publish native subagent activity through the interaction port.",
+        error,
+        {
+          eventId: event.id,
+          agentId: event.payload.agentId,
+          itemId: event.payload.itemId,
+        },
+      );
+    }
+  }
+
+  private async handleAgentCommandExecution(
+    event: ScoutEvent<AgentCommandExecutionObservedEvent>,
+  ): Promise<void> {
+    try {
+      await currentRunScope().interactionPort.publishAgentCommandExecution?.(event.payload);
+    } catch (error) {
+      this.warnInteractionError(
+        "agent_command_execution_publish_failed",
+        "Failed to publish an agent command execution through the interaction port.",
+        error,
+        {
+          eventId: event.id,
+          agentId: event.payload.agentId,
+          itemId: event.payload.itemId,
         },
       );
     }

@@ -6,6 +6,7 @@ import type {
   AgentActivity,
   AgentTurnActivity,
 } from "../../agent/activity/activity-event.js";
+import type { AgentCommandExecutionObservedEvent } from "../../agent/command-execution/command-execution-events.js";
 import type { ScoutEvent } from "../../core/events/index.js";
 import type { RunLifecycleSnapshot } from "../../run/lifecycle/run-stage.js";
 import type {
@@ -84,6 +85,7 @@ export interface TuiState {
   tasks: TuiTaskSummary[];
   steps?: AgentStepState[];
   activities: AgentActivity[];
+  commandExecutions?: AgentCommandExecutionObservedEvent[];
   turnActivities: AgentTurnActivity[];
 }
 
@@ -107,6 +109,7 @@ export class TuiStore {
   private readonly taskMap = new Map<string, TuiTaskSummary>();
   private readonly stepMap = new Map<string, AgentStepState>();
   private readonly activityMap = new Map<string, AgentActivity>();
+  private readonly commandExecutionMap = new Map<string, AgentCommandExecutionObservedEvent>();
   private readonly turnActivityMap = new Map<string, AgentTurnActivity>();
   private readonly logs: TuiLogEntry[] = [];
   private lifecycle?: RunLifecycleSnapshot;
@@ -137,6 +140,7 @@ export class TuiStore {
       tasks: [...this.taskMap.values()],
       steps: [...this.stepMap.values()].map((step) => structuredClone(step)),
       activities: [...this.activityMap.values()],
+      commandExecutions: [...this.commandExecutionMap.values()],
       turnActivities: [...this.turnActivityMap.values()],
     };
   }
@@ -234,8 +238,17 @@ export class TuiStore {
   }
 
   addAgentActivity(activity: AgentActivity): void {
-    if (activity.type === "dynamicToolCall" || activity.type === "mcpToolCall") return;
+    if (
+      activity.type === "dynamicToolCall"
+      || activity.type === "mcpToolCall"
+      || activity.type === "commandExecution"
+    ) return;
     this.activityMap.set(activityKey(activity), activity);
+    this.emit();
+  }
+
+  addAgentCommandExecution(command: AgentCommandExecutionObservedEvent): void {
+    this.commandExecutionMap.set(commandKey(command), structuredClone(command));
     this.emit();
   }
 
@@ -516,6 +529,10 @@ function activityKey(activity: AgentActivity): string {
 
 function turnActivityKey(activity: AgentTurnActivity): string {
   return `${activity.agentId}:${activity.threadId}:${activity.turnId}`;
+}
+
+function commandKey(command: AgentCommandExecutionObservedEvent): string {
+  return `${command.agentId}:${command.threadId}:${command.turnId ?? "no-turn"}:${command.itemId}`;
 }
 
 function tuiStatusForRunLifecycle(snapshot: RunLifecycleSnapshot): TuiRunStatus {

@@ -2,6 +2,7 @@ import type {
   AgentActivity,
   AgentTurnActivity,
 } from "../../agent/activity/activity-event.js";
+import type { AgentCommandExecutionObservedEvent } from "../../agent/command-execution/command-execution-events.js";
 import type { AgentTaskState } from "../../agent/task/types.js";
 import type { AgentStepState } from "../../agent/step/types.js";
 import type { ScoutEvent } from "../../core/events/index.js";
@@ -77,6 +78,7 @@ export interface RuntimeInteractionPort {
   publishSubprocessProgress(progress: SubprocessProgressSnapshot): Promise<void>;
   disclose(event: RuntimeDisclosureEvent): Promise<void>;
   publishAgentActivity(activity: AgentActivity): Promise<void>;
+  publishAgentCommandExecution?(command: AgentCommandExecutionObservedEvent): Promise<void>;
   publishAgentTurnActivity(activity: AgentTurnActivity): Promise<void>;
   publishTaskEvent(event: ScoutEvent): Promise<void>;
   publishStepEvent?(event: ScoutEvent): Promise<void>;
@@ -103,6 +105,10 @@ export class NoopRuntimeInteractionPort implements RuntimeInteractionPort {
   }
 
   async publishAgentActivity(): Promise<void> {
+    // no-op
+  }
+
+  async publishAgentCommandExecution(): Promise<void> {
     // no-op
   }
 

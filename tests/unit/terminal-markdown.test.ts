@@ -616,18 +616,18 @@ test("activity strip shows process during Coordinator and Worker item gaps", () 
     }],
   }));
   const worker = selectCurrentAgentActivity(tuiState({
-    activities: [{
-      seq: 2,
+    commandExecutions: [{
+      sourceSeq: 2,
       agentId: "researcher",
       role: "researcher",
       taskId: "researcher-task-0001",
       threadId: "thread-researcher",
       turnId: "turn-researcher-1",
       itemId: "command-1",
-      type: "commandExecution",
+      command: "rg BDD-001",
       status: "completed",
-      label: "rg BDD-001",
-      updatedAt: "2026-07-10T00:00:02.000Z",
+      exitCode: 0,
+      observedAt: "2026-07-10T00:00:02.000Z",
     }],
     turnActivities: [{
       seq: 1,
@@ -647,7 +647,7 @@ test("activity strip shows process during Coordinator and Worker item gaps", () 
   );
   assert.deepEqual(
     worker && [worker.label, worker.type, worker.processing, worker.activity],
-    ["RESEA", "commandExecution", true, "处理中 · 执行完成 · rg BDD-001"],
+    ["RESEA", "commandExecution", false, "执行完成 · rg BDD-001 · exit_code: 0"],
   );
 });
 
@@ -685,20 +685,19 @@ test("turn completion makes a stale in-progress item static", () => {
   );
 });
 
-test("activity strip displays completed command results instead of working directories", () => {
+test("activity strip displays completed command status instead of working directories", () => {
   const activity = selectCurrentAgentActivity(tuiState({
-    activities: [{
-      seq: 1,
+    commandExecutions: [{
+      sourceSeq: 1,
       agentId: "researcher",
       role: "researcher",
       taskId: "researcher-task-0001",
       threadId: "thread-researcher",
       itemId: "command-1",
-      type: "commandExecution",
+      command: "rg \"login retry\" src",
       status: "completed",
-      label: "rg \"login retry\" src",
-      detail: "exit_code: 0 · output: empty",
-      updatedAt: "2026-07-10T00:00:01.000Z",
+      exitCode: 0,
+      observedAt: "2026-07-10T00:00:01.000Z",
     }],
   }));
 
@@ -707,26 +706,25 @@ test("activity strip displays completed command results instead of working direc
     [
       "commandExecution",
       false,
-      "执行完成 · rg \"login retry\" src · exit_code: 0 · output: empty",
+      "执行完成 · rg \"login retry\" src · exit_code: 0",
     ],
   );
 });
 
 test("activity strip keeps a failed command visible after its turn completes", () => {
   const activity = selectCurrentAgentActivity(tuiState({
-    activities: [{
-      seq: 1,
+    commandExecutions: [{
+      sourceSeq: 1,
       agentId: "researcher",
       role: "researcher",
       taskId: "researcher-task-0001",
       threadId: "thread-researcher",
       turnId: "turn-1",
       itemId: "command-1",
-      type: "commandExecution",
+      command: "ls /restricted",
       status: "failed",
-      label: "ls /restricted",
-      detail: "exit_code: 1 · stderr: Operation not permitted",
-      updatedAt: "2026-07-10T00:00:01.000Z",
+      exitCode: 1,
+      observedAt: "2026-07-10T00:00:01.000Z",
     }],
     turnActivities: [{
       seq: 2,
@@ -745,8 +743,49 @@ test("activity strip keeps a failed command visible after its turn completes", (
     [
       "failed",
       false,
-      "执行失败 · ls /restricted · exit_code: 1 · stderr: Operation not permitted",
+      "执行失败 · ls /restricted · exit_code: 1",
     ],
+  );
+});
+
+test("activity strip omits heredoc bodies from command presentation", () => {
+  const activity = selectCurrentAgentActivity(tuiState({
+    commandExecutions: [{
+      sourceSeq: 1,
+      agentId: "researcher",
+      role: "researcher",
+      taskId: "researcher-task-0001",
+      threadId: "thread-researcher",
+      turnId: "turn-1",
+      itemId: "command-1",
+      command: "cat > execution-pack.md <<'EOF'\n# private body\nEOF",
+      status: "completed",
+      exitCode: 0,
+      observedAt: "2026-07-10T00:00:01.000Z",
+    }],
+  }));
+
+  assert.equal(activity?.activity, "执行完成 · cat > execution-pack.md · exit_code: 0");
+});
+
+test("activity strip presents a failed command without an exit code as failed", () => {
+  const activity = selectCurrentAgentActivity(tuiState({
+    commandExecutions: [{
+      sourceSeq: 1,
+      agentId: "researcher",
+      role: "researcher",
+      threadId: "thread-researcher",
+      turnId: "turn-1",
+      itemId: "command-1",
+      command: "missing-command",
+      status: "failed",
+      observedAt: "2026-07-10T00:00:01.000Z",
+    }],
+  }));
+
+  assert.deepEqual(
+    activity && [activity.status, activity.activity],
+    ["failed", "执行失败 · missing-command"],
   );
 });
 
