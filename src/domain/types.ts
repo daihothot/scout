@@ -53,9 +53,11 @@ export type ScoutDomainJournalFact =
   | { kind: "artifact"; payload: ScoutDomainArtifactFact }
   | { kind: "gate"; payload: ScoutDomainGateFact };
 
-/** Domain-owned event persistence and resume projection boundary. */
+/** Domain-owned event contract and read-model projection boundary. */
 export interface ScoutDomainJournalProjection {
+  /** Event routes written to `<domain>-events.jsonl`, never to the Scout journal. */
   readonly eventTypes: readonly EventType[];
+  /** Projects a Domain journal event into shared resume facts when needed. */
   project(event: ScoutEvent, journalSeq: number): ScoutDomainJournalFact | undefined;
 }
 

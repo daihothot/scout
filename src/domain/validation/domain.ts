@@ -93,9 +93,10 @@ export class ValidationDomain implements ScoutDomain {
   restore(): void {
     const scope = currentRunScope();
     const events = scope.journal.readAll();
+    const domainEvents = scope.domainJournal.readAll();
     this.recordedArtifacts.clear();
     this.recordedGates.clear();
-    for (const event of events) {
+    for (const event of domainEvents) {
       if (ValidationEvents.artifact.published.is(event)) {
         this.recordedArtifacts.add(`${event.payload.ref}\0${event.payload.digest}`);
       } else if (ValidationEvents.gate.recorded.is(event)) {

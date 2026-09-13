@@ -14,7 +14,7 @@ dependencies:
   skills:
     required: [tool-jarvis-codebase, internal-skill-consumption, family:signal.local.unity.general.**, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**, tool-unity-pipeline-cli]
   shellTools:
-    required: [scoutAssets, jarvis, codegraph]
+    required: [scoutAssets, jarvis-codebase, codegraph]
     optional: [rg, sed, cat]
 summary: 消费 accepted Research Pack Gate，逐项采集验证证据并提交 Verification Report。
 ---

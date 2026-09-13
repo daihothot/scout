@@ -47,6 +47,7 @@ export function createTestRunPersistence(
 ): {
   runRoot: string;
   journal: RunJournal;
+  domainJournal?: RunJournal;
   manifestStore: RunManifestStore;
   scheduler: Scheduler;
 } {
@@ -55,6 +56,14 @@ export function createTestRunPersistence(
     : undefined;
   const runRoot = runRootOverride ?? join(root!, runId);
   const journal = RunJournal.create({ runId, runRoot });
+  const domainJournal = domain.journal
+    ? RunJournal.create({
+      runId,
+      runRoot,
+      fileName: `${domain.domainId}-events.jsonl`,
+      lockFileName: `.${domain.domainId}-events.lock`,
+    })
+    : undefined;
   const manifestStore = new RunManifestStore(runRoot);
   const scheduler = createTestScheduler(eventBus);
   const scope = new RunScope({
@@ -67,6 +76,7 @@ export function createTestRunPersistence(
     interactionPort: new NoopRuntimeInteractionPort(),
     domain,
     journal,
+    domainJournal,
     manifestStore,
     terminate: async () => undefined,
   });
@@ -93,9 +103,10 @@ export function createTestRunPersistence(
   t.after(() => {
     writer.stop();
     journal.close();
+    if (domainJournal && domainJournal !== journal) domainJournal.close();
     if (root !== undefined) rmSync(root, { recursive: true, force: true });
   });
-  return { runRoot, journal, manifestStore, scheduler };
+  return { runRoot, journal, domainJournal, manifestStore, scheduler };
 }
 
 export function installTestRunScope(
@@ -109,6 +120,7 @@ export function installTestRunScope(
     interactionPort?: RuntimeInteractionPort;
     domain?: ScoutDomain;
     journal?: RunJournal;
+    domainJournal?: RunJournal;
     manifestStore?: RunManifestStore;
     appServer?: CodexAppServerClient;
     environment?: RunEnvironment;
@@ -122,6 +134,7 @@ export function installTestRunScope(
     ? {
       runRoot: options.runRoot ?? options.journal.runRoot,
       journal: options.journal,
+      domainJournal: options.domainJournal,
       manifestStore: options.manifestStore,
       scheduler: options.scheduler ?? createTestScheduler(eventBus),
     }
