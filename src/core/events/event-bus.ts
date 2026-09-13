@@ -9,6 +9,7 @@ export interface EventPublishOptions {
 
 /** Stable priority values used to order subscriber execution. */
 export const EventSubscriptionPriorities = {
+  Critical: 400,
   High: 300,
   Normal: 200,
   Low: 100,
