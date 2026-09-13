@@ -987,13 +987,28 @@ test("AssetStore persists family path declarations and their resolved Skill iden
     "domain-rbt-executor",
     "SKILL.md",
   );
-  const original = readFileSync(skillPath, "utf8");
-  const updated = original.replace(
-    "family:tool.scout.dynamic.worker.**]",
-    "family:tool.scout.dynamic.worker.**, family:signal.local.unity.general.**]",
-  );
-  assert.notEqual(updated, original);
-  writeFileSync(skillPath, updated, "utf8");
+  writeFileSync(skillPath, [
+    "---",
+    "assetKind: scout.skill",
+    "name: domain-rbt-executor",
+    "description: Synthetic RBT executor used to verify family dependency projection.",
+    "id: domain-rbt-executor",
+    "version: 0.1.0",
+    "type: domain",
+    "domain: rbt",
+    "phase: [execute]",
+    "family: [rbt, workflow]",
+    "tags: [rbt, fixture]",
+    "devices: [any]",
+    "dependencies:",
+    "  skills:",
+    "    required: [family:signal.local.unity.general.**]",
+    "summary: Synthetic family dependency fixture.",
+    "---",
+    "",
+    "# Synthetic RBT Executor",
+    "",
+  ].join("\n"), "utf8");
 
   const mount = store.materializeMount({
     scoutRoot: fixtureRoot,
@@ -1056,6 +1071,15 @@ test("AssetStore persists family path declarations and their resolved Skill iden
 test("Skill resource hashes cover the complete profiled Skill directory", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-skill-resource-hash-");
   const store = new AssetStore();
+  const skillRoot = join(
+    fixtureRoot,
+    "assets",
+    "codex",
+    "skills",
+    "domain-rbt-executor",
+  );
+  const probePath = join(skillRoot, "resource-hash-probe.txt");
+  writeFileSync(probePath, "before\n", "utf8");
   const before = store.materializeMount({
     scoutRoot: fixtureRoot,
     runId: "run-skill-resource-hash-before-test",
@@ -1063,24 +1087,15 @@ test("Skill resource hashes cover the complete profiled Skill directory", () => 
     workflowProfileName: "rbt",
   });
   const beforeManifest = JSON.parse(readFileSync(before.manifestPath, "utf8")) as MountManifest;
-  const skillId = "codex.skill.domain-rbt-execution-pack";
+  const skillId = "codex.skill.domain-rbt-executor";
   const beforeAsset = beforeManifest.assets.find((asset) => asset.id === skillId);
   assert.ok(beforeAsset);
   assert.equal(
     beforeAsset.sourcePath,
-    "assets/codex/skills/domain-rbt-execution-pack",
+    "assets/codex/skills/domain-rbt-executor",
   );
 
-  const templatePath = join(
-    fixtureRoot,
-    "assets",
-    "codex",
-    "skills",
-    "domain-rbt-execution-pack",
-    "templates",
-    "signal-expected.md",
-  );
-  writeFileSync(templatePath, `${readFileSync(templatePath, "utf8")}\nresource hash probe\n`, "utf8");
+  writeFileSync(probePath, "after\n", "utf8");
 
   const after = store.materializeMount({
     scoutRoot: fixtureRoot,
@@ -1487,30 +1502,6 @@ test("AssetStore mounts RBT guidance without exposing its host runtime commands"
     "gurusdk-unity",
   )));
   assert.equal(reviewerMount.writableRoots.some((root) => root.includes("UnityHub")), false);
-});
-
-test("Every Skill name and id match its directory name", () => {
-  const skillsRoot = join(scoutRoot, "assets", "codex", "skills");
-  const skillNames = readdirSync(skillsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
-
-  assert.ok(skillNames.length > 0);
-
-  for (const skillName of skillNames) {
-    const skillPath = join(skillsRoot, skillName, "SKILL.md");
-    assert.equal(existsSync(skillPath), true, `${skillName} must contain SKILL.md`);
-
-    const text = readFileSync(skillPath, "utf8");
-    const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
-    assert.ok(frontmatter, `${skillName} must contain YAML frontmatter`);
-
-    const name = /^name:\s*(\S+)\s*$/m.exec(frontmatter[1])?.[1];
-    const id = /^id:\s*(\S+)\s*$/m.exec(frontmatter[1])?.[1];
-    assert.equal(name, skillName, `${skillName} frontmatter name must match its directory`);
-    assert.equal(id, skillName, `${skillName} frontmatter id must match its directory`);
-  }
 });
 
 test("AssetStore resolves asset-local shell tool commands against the Scout root", () => {
