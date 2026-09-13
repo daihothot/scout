@@ -11,7 +11,7 @@ import {
   resolve,
   sep,
 } from "node:path";
-import type { ScoutAgentRole } from "../../agent/thread/types.js";
+import type { ScoutAgentPhase, ScoutAgentRole } from "../../agent/thread/types.js";
 import type { AgentDynamicToolSpec } from "../../agent/tools/types.js";
 import type {
   ScoutDomain,
@@ -79,8 +79,8 @@ export class ValidationDomain implements ScoutDomain {
     }
   }
 
-  /** Returns no role-specific tools because validation has no dynamic tool surface yet. */
-  dynamicToolsForRole(_role: ScoutAgentRole): AgentDynamicToolSpec[] {
+  /** Returns no Phase-specific tools because validation has no dynamic tool surface yet. */
+  dynamicToolsForPhase(_phase: ScoutAgentPhase): AgentDynamicToolSpec[] {
     return [];
   }
 

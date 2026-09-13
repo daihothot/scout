@@ -497,6 +497,6 @@ function testDomain(): RunScope["domain"] {
   return {
     domainId: "test",
     name: "test",
-    dynamicToolsForRole: () => [],
+    dynamicToolsForPhase: () => [],
   };
 }

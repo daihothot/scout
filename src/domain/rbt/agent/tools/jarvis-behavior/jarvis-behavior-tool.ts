@@ -1,0 +1,144 @@
+import type { DynamicToolCallResponse } from "../../../../../agent-server/types.js";
+import type { AgentJsonValue } from "../../../../../agent/tools/types.js";
+import { UnityPipelineTool } from "../../../../tools/index.js";
+import type { ScoutDomainDynamicToolCall } from "../../../../types.js";
+import type { RbtAgentDynamicTool } from "../agent-tools.js";
+import { JarvisWebsocktTool } from "../jarvis-websockt/index.js";
+import { JarvisBehaviorCommandRunner } from "../../../core/jarvis-behavior-command-runner.js";
+import { JarvisBehaviorExecuteFileRunner } from "../../../core/jarvis-behavior-execute-file.js";
+import { readJarvisBehaviorExecuteFile } from "../../../core/jarvis-behavior-execute-file-reader.js";
+import { JarvisBehaviorPlatformGate } from "../../../core/jarvis-behavior-platform-gate.js";
+import { JarvisBehaviorToolStore } from "../../../core/jarvis-behavior-tool-store.js";
+
+const EXECUTE_QUERY_COMMANDS = new Set([
+  "behavior.registry.nodes",
+  "behavior.node.variants",
+  "behavior.evidence.sources",
+  "behavior.trigger.commands",
+]);
+const REVIEW_QUERY_COMMANDS = new Set([
+  "behavior.campaign.query",
+  "behavior.evidence.query",
+]);
+
+type JarvisBehaviorPhase = "execute" | "review";
+
+/** Owns the Agent-facing RBT Behavior input boundary and delegates core work. */
+export class JarvisBehaviorTool implements RbtAgentDynamicTool {
+  private readonly commandRunner: JarvisBehaviorCommandRunner;
+  private readonly platformGate: JarvisBehaviorPlatformGate;
+  private readonly executeFileRunner: JarvisBehaviorExecuteFileRunner;
+
+  constructor(
+    private readonly phase: JarvisBehaviorPhase,
+    private readonly executable = "jarvis",
+    private readonly baseArgs: readonly string[] = [],
+    private readonly unityPipeline = new UnityPipelineTool(),
+    private readonly store = new JarvisBehaviorToolStore(),
+    private readonly websocket = new JarvisWebsocktTool(),
+  ) {
+    this.commandRunner = new JarvisBehaviorCommandRunner(
+      this.phase,
+      this.executable,
+      this.baseArgs,
+      this.store,
+      this.websocket,
+    );
+    this.platformGate = new JarvisBehaviorPlatformGate(this.unityPipeline, this.store);
+    this.executeFileRunner = new JarvisBehaviorExecuteFileRunner(this.commandRunner, this.store);
+  }
+
+  async execute(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
+    try {
+      return await this.executeInput(call);
+    } catch (error) {
+      return failedToolResponse(
+        "invalid_dynamic_tool_input",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.store.clear();
+    await this.websocket.stop();
+  }
+
+  private async executeInput(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
+    const input = requireObject(call.input.arguments, "JarvisBehavior arguments");
+    const hasExecuteFile = Object.hasOwn(input, "execute_file");
+    const hasCommand = Object.hasOwn(input, "command") || Object.hasOwn(input, "payload");
+    if (hasExecuteFile === hasCommand) throw new Error("Provide either execute_file or command + payload.");
+
+    if (hasExecuteFile) {
+      if (this.phase !== "execute") {
+        return failedToolResponse("command_not_available", "execute_file is not available in the current RBT Phase.");
+      }
+      const unexpectedKeys = Object.keys(input).filter((key) => key !== "execute_file");
+      if (unexpectedKeys.length > 0) throw new Error(`execute_file input contains unsupported fields: ${unexpectedKeys.join(", ")}.`);
+      if (typeof input.execute_file !== "string" || input.execute_file.trim().length === 0) {
+        throw new Error("execute_file must be a non-empty path.");
+      }
+      const executeFile = readJarvisBehaviorExecuteFile(call, input.execute_file, this.store);
+      const platform = await this.platformGate.ensure(call);
+      if (!platform.ok) return failedToolResponse(platform.code, platform.message);
+      return this.executeFileRunner.run(call, executeFile, platform.platform);
+    }
+
+    const unexpectedKeys = Object.keys(input).filter((key) => key !== "command" && key !== "payload");
+    if (unexpectedKeys.length > 0) throw new Error(`Behavioral query contains unsupported fields: ${unexpectedKeys.join(", ")}.`);
+    if (typeof input.command !== "string" || input.command.length === 0) throw new Error("command must be a non-empty string.");
+    const allowed = this.phase === "execute" ? EXECUTE_QUERY_COMMANDS : REVIEW_QUERY_COMMANDS;
+    if (!allowed.has(input.command)) {
+      return failedToolResponse("command_not_available", `Behavioral command ${input.command} is not available in the current RBT Phase.`);
+    }
+    const payload = toJsonObject(requireObject(input.payload, "Behavioral query payload"));
+    const platform = await this.platformGate.ensure(call);
+    if (!platform.ok) return failedToolResponse(platform.code, platform.message);
+    const command = await this.commandRunner.run(call, input.command, payload);
+    const output: AgentJsonValue = command.status === "completed"
+      ? { status: "completed", command: input.command, result: command.result?.payload ?? null }
+      : commandFailureOutput(input.command, command);
+    return dynamicResponse(command.status === "completed", output);
+  }
+}
+
+function commandFailureOutput(command: string, execution: { errorCode?: string; error?: string }): AgentJsonValue {
+  return {
+    status: "failed",
+    command,
+    error: {
+      code: execution.errorCode ?? "behavior_command_failed",
+      message: execution.error ?? "Behavioral command failed.",
+    },
+  };
+}
+
+function failedToolResponse(code: string, message: string): DynamicToolCallResponse {
+  return dynamicResponse(false, { status: "failed", error: { code, message } });
+}
+
+function dynamicResponse(success: boolean, output: AgentJsonValue): DynamicToolCallResponse {
+  return { success, contentItems: [{ type: "inputText", text: JSON.stringify(output, null, 2) }] };
+}
+
+function requireObject(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) throw new Error(`${label} must be an object.`);
+  return value;
+}
+
+function toJsonObject(value: Record<string, unknown>): Record<string, AgentJsonValue> {
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, toJsonValue(entry)]));
+}
+
+function toJsonValue(value: unknown): AgentJsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) return value.map(toJsonValue);
+  if (isRecord(value)) return toJsonObject(value);
+  return String(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

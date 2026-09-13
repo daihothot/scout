@@ -22,7 +22,7 @@ test("RunScopeStage creates the Run-owned stores and releases the installed scop
   const domain: ScoutDomain = {
     domainId: "test",
     name: "test",
-    dynamicToolsForRole: () => [],
+    dynamicToolsForPhase: () => [],
   };
   let terminationReason: string | undefined;
   const eventBus = new InMemoryEventBus();
@@ -75,7 +75,7 @@ test("RunScopeStage remains available until every dependent stage stops", async 
     domain: {
       domainId: "test",
       name: "test",
-      dynamicToolsForRole: () => [],
+      dynamicToolsForPhase: () => [],
     },
     ...createTestRunPersistence(t, "boot-run-scope-order", "/repo", eventBus),
     terminate: (reason) => boot.terminate(reason),
@@ -120,7 +120,7 @@ test("RunScopeStage does not record an attachment when another run owns the proc
     domain: {
       domainId: "test",
       name: "test",
-      dynamicToolsForRole: () => [],
+      dynamicToolsForPhase: () => [],
     },
     ...firstPersistence,
     terminate: async () => undefined,
@@ -141,7 +141,7 @@ test("RunScopeStage does not record an attachment when another run owns the proc
     domain: {
       domainId: "test",
       name: "test",
-      dynamicToolsForRole: () => [],
+      dynamicToolsForPhase: () => [],
     },
     ...secondPersistence,
     terminate: async () => undefined,
@@ -177,7 +177,7 @@ test("RunScopeStage detaches normally after a previous Journal write failure", a
     domain: {
       domainId: "test",
       name: "test",
-      dynamicToolsForRole: () => [],
+      dynamicToolsForPhase: () => [],
     },
     ...persistence,
     terminate: async () => undefined,

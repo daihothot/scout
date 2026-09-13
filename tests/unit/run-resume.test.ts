@@ -2685,6 +2685,6 @@ function runtimeTestDomain(): ScoutDomain {
   return {
     domainId: "test",
     name: "test",
-    dynamicToolsForRole: () => [],
+    dynamicToolsForPhase: () => [],
   };
 }

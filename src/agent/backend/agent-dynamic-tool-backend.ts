@@ -22,6 +22,7 @@ import { WorkerAgent } from "../roles/worker-agent.js";
 import { attachments } from "../context/attachments.js";
 import { agent } from "../context/agent-attachments.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
+import { DomainEvents } from "../../domain/domain-events.js";
 
 /** Dependencies required to dispatch agent-owned dynamic tools. */
 export interface AgentDynamicToolBackendOptions {
@@ -97,27 +98,57 @@ export class AgentDynamicToolBackend {
     input: DynamicToolCallInput,
     caller: ScoutAgent,
   ): Promise<DynamicToolCallResponse> {
-    if (!this.domain.handleDynamicToolCall) {
-      return dynamicToolFailure(`Unsupported dynamic tool namespace: ${input.namespace ?? "null"}`);
-    }
-
+    const startedAt = new Date().toISOString();
+    const phase = this.scheduler.current().name;
+    let response: DynamicToolCallResponse;
     try {
-      const result = await this.domain.handleDynamicToolCall({
-        input,
-        caller: {
-          agentId: caller.agentId,
-          role: caller.role,
-          threadId: caller.threadId,
-        },
-      });
-      if (!result) {
-        return dynamicToolFailure(`Unsupported dynamic tool namespace: ${input.namespace ?? "null"}`);
+      if (!this.domain.handleDynamicToolCall) {
+        response = dynamicToolFailure(
+          `Unsupported dynamic tool namespace: ${input.namespace ?? "null"}`,
+        );
+      } else {
+        const assigned = this.scheduler.snapshot().roles.some((role) =>
+          role.name === caller.role && role.phases.includes(phase)
+        );
+        if (!assigned) {
+          response = dynamicToolFailure(
+            `Role ${caller.role} is not assigned to the current Workflow Phase ${phase}.`,
+          );
+        } else {
+          const result = await this.domain.handleDynamicToolCall({
+            input,
+            caller: {
+              agentId: caller.agentId,
+              role: caller.role,
+              phase,
+              threadId: caller.threadId,
+            },
+          });
+          response = result ?? dynamicToolFailure(
+            `Unsupported dynamic tool namespace: ${input.namespace ?? "null"}`,
+          );
+        }
       }
-      return result;
     } catch (error) {
       const message = error instanceof Error ? error.stack ?? error.message : String(error);
-      return dynamicToolFailure(message);
+      response = dynamicToolFailure(message);
     }
+    const completedAt = new Date().toISOString();
+    currentRunScope().eventBus.publish(DomainEvents.agentToolCall.observed, {
+      domainId: this.domain.domainId,
+      callId: input.callId,
+      ...(caller.threadId ? { threadId: caller.threadId } : {}),
+      agentId: caller.agentId,
+      role: caller.role,
+      phase,
+      namespace: input.namespace ?? "",
+      tool: input.tool,
+      arguments: input.arguments,
+      response,
+      startedAt,
+      completedAt,
+    }, { occurredAt: completedAt });
+    return response;
   }
 
   private async handleAssignTaskToolCall(

@@ -22,9 +22,13 @@ export class AgentBuilder {
 
   buildCoordinator(): CoordinatorAgent {
     const role = resolveSynthesisRole(this.scope.scheduler.snapshot()).name;
+    const options = this.agentOptionsForRole(role);
     const agent = new CoordinatorAgent({
-      ...this.agentOptionsForRole(role),
-      dynamicTools: this.dynamicToolsForRole(role),
+      ...options,
+      dynamicTools: this.dynamicToolsForRole(
+        role,
+        buildAgentDynamicTools({ orchestrationTools: true }),
+      ),
     });
     return this.registerAgent(agent) as CoordinatorAgent;
   }
@@ -34,9 +38,18 @@ export class AgentBuilder {
     if (role === resolveSynthesisRole(graphState).name) {
       throw new Error("Coordinator must be built through buildCoordinator().");
     }
+    const agentOptions = this.agentOptionsForRole(role);
+    const phaseDynamicTools = agentOptions.agentMount.agentProfile.phases
+      .flatMap((phase) => this.scope.domain.dynamicToolsForPhase(phase));
     const options = {
-      ...this.agentOptionsForRole(role),
-      dynamicTools: this.dynamicToolsForRole(role),
+      ...agentOptions,
+      dynamicTools: this.dynamicToolsForRole(
+        role,
+        [
+          ...buildAgentDynamicTools({ orchestrationTools: false }),
+          ...phaseDynamicTools,
+        ],
+      ),
     };
     const profile = options.agentMount.agentProfile;
     const agent = new WorkerAgent({
@@ -65,19 +78,23 @@ export class AgentBuilder {
     return this.registerAgent(agent);
   }
 
-  dynamicToolsForRole(role: ScoutAgentRole): DynamicToolSpec[] {
-    const graphState = this.scope.scheduler.snapshot();
-    const synthesisRole = resolveSynthesisRole(graphState).name;
-    const definitions = [
-      ...buildAgentDynamicTools({
-        orchestrationTools: role === synthesisRole,
-      }),
-      ...this.scope.domain.dynamicToolsForRole(role),
-    ];
+  private dynamicToolsForRole(
+    role: ScoutAgentRole,
+    definitions: ReturnType<typeof buildAgentDynamicTools>,
+  ): DynamicToolSpec[] {
+    const uniqueDefinitions = new Map<string, typeof definitions[number]>();
+    for (const definition of definitions) {
+      const identity = `${definition.namespace ?? ""}\0${definition.name}`;
+      const existing = uniqueDefinitions.get(identity);
+      if (existing && JSON.stringify(existing) !== JSON.stringify(definition)) {
+        throw new Error(`Dynamic tool ${definition.name} has conflicting Phase definitions.`);
+      }
+      uniqueDefinitions.set(identity, definition);
+    }
     const mountedSkillNames = new Set(
       this.scope.environment.agents[role].mount.skills.map((skill) => skill.name),
     );
-    return definitions.map(({ guidanceSkill, ...tool }) => {
+    return [...uniqueDefinitions.values()].map(({ guidanceSkill, ...tool }) => {
       if (!mountedSkillNames.has(guidanceSkill)) {
         throw new Error(
           `Dynamic tool ${tool.name} requires unavailable guidance Skill ${guidanceSkill} for ${role}.`,

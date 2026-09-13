@@ -96,7 +96,7 @@ function createRunScope(t: import("node:test").TestContext, runId: string): RunS
     domain: {
       domainId: "test",
       name: "test",
-      dynamicToolsForRole: () => [],
+      dynamicToolsForPhase: () => [],
     },
     ...createTestRunPersistence(t, runId),
     terminate: async () => undefined,

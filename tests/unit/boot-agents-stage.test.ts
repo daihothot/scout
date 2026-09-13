@@ -180,7 +180,7 @@ function createStaticDomain(): ScoutDomain {
   return {
     domainId: "test",
     name: "test",
-    dynamicToolsForRole: () => [],
+    dynamicToolsForPhase: () => [],
   };
 }
 
