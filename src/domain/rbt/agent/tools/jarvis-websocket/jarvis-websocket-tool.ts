@@ -7,7 +7,7 @@ import type { AgentJsonValue } from "../../../../../agent/tools/types.js";
 import type { ScoutDomainDynamicToolCall } from "../../../../types.js";
 import type { RbtAgentDynamicTool } from "../agent-tools.js";
 
-export interface JarvisWebsocktSession {
+export interface JarvisWebSocketSession {
   sessionId: string;
   endpoint: string;
   executable: string;
@@ -15,7 +15,7 @@ export interface JarvisWebsocktSession {
   cwd: string;
 }
 
-export interface JarvisWebsocktConnectInput {
+export interface JarvisWebSocketConnectInput {
   agentId: string;
   sessionId: string;
   endpoint: string;
@@ -25,9 +25,9 @@ export interface JarvisWebsocktConnectInput {
   timeoutMs?: number;
 }
 
-export interface JarvisWebsocktConnectResult {
+export interface JarvisWebSocketConnectResult {
   status: "connected" | "reused" | "failed";
-  session?: JarvisWebsocktSession;
+  session?: JarvisWebSocketSession;
   hostCommands: HostCommandExecution[];
   code?: string;
   error?: string;
@@ -39,14 +39,14 @@ interface SessionObservation {
 }
 
 /** Implements the RBT Domain-internal Jarvis WebSocket dynamic-tool contract. */
-export class JarvisWebsocktTool implements RbtAgentDynamicTool {
-  private readonly sessions = new Map<string, JarvisWebsocktSession>();
+export class JarvisWebSocketTool implements RbtAgentDynamicTool {
+  private readonly sessions = new Map<string, JarvisWebSocketSession>();
 
   constructor(private readonly hostCommands = new HostCommandExecutor()) {}
 
   async execute(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
     try {
-      const input = requireObject(call.input.arguments, "JarvisWebsockt arguments");
+      const input = requireObject(call.input.arguments, "JarvisWebSocket arguments");
       const operation = input.operation;
       if (operation === "disconnect") {
         const sessionId = requiredString(input.session_id, "session_id");
@@ -103,12 +103,12 @@ export class JarvisWebsocktTool implements RbtAgentDynamicTool {
     }
   }
 
-  session(sessionId: string): JarvisWebsocktSession | undefined {
+  session(sessionId: string): JarvisWebSocketSession | undefined {
     const session = this.sessions.get(sessionId);
     return session ? structuredClone(session) : undefined;
   }
 
-  async ensureSession(input: JarvisWebsocktConnectInput): Promise<JarvisWebsocktConnectResult> {
+  async ensureSession(input: JarvisWebSocketConnectInput): Promise<JarvisWebSocketConnectResult> {
     if (input.sessionId.trim().length === 0 || input.endpoint.trim().length === 0) {
       return {
         status: "failed",
@@ -226,8 +226,8 @@ export class JarvisWebsocktTool implements RbtAgentDynamicTool {
     ], 5_000)));
   }
 
-  private saveSession(input: JarvisWebsocktConnectInput): JarvisWebsocktSession {
-    const session: JarvisWebsocktSession = {
+  private saveSession(input: JarvisWebSocketConnectInput): JarvisWebSocketSession {
+    const session: JarvisWebSocketSession = {
       sessionId: input.sessionId,
       endpoint: input.endpoint,
       executable: input.executable,
