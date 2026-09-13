@@ -35,6 +35,7 @@ export class InjectResumeContextStage implements RunStage {
       scope.journal.readAll(),
       synthesisRole,
       scope.domain.journal,
+      scope.domainJournal.readAll(),
     );
     scope.toolCallStore.restore(projection.toolCalls);
     scope.stepStore.restore(projection.steps);

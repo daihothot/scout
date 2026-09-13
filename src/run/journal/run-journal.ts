@@ -5,6 +5,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
   truncateSync,
   unlinkSync,
   writeFileSync,
@@ -27,9 +28,9 @@ interface RunLockRecord {
 }
 
 /**
- * Owns append-only run history and its host-aware lock. Opening repairs only
- * an incomplete final record; callers remain responsible for lifecycle policy
- * and for closing the journal.
+ * Owns the current Workflow recovery window and its host-aware lock. Opening
+ * repairs only an incomplete final record; callers own replacement policy and
+ * journal closure.
  */
 export class RunJournal {
   readonly runId: string;
@@ -44,42 +45,60 @@ export class RunJournal {
   private constructor(input: {
     runId: string;
     runRoot: string;
+    fileName: string;
+    lockFileName: string;
     events: RunJournalEvent[];
     lockToken: string;
   }) {
     this.runId = input.runId;
     this.runRoot = input.runRoot;
-    this.path = join(input.runRoot, "events.jsonl");
-    this.lockPath = join(input.runRoot, ".run.lock");
+    this.path = join(input.runRoot, input.fileName);
+    this.lockPath = join(input.runRoot, input.lockFileName);
     this.lockToken = input.lockToken;
     this.events = input.events;
   }
 
   /** Creates an empty journal and acquires its runtime lock. */
-  static create(input: { runId: string; runRoot: string }): RunJournal {
+  static create(input: {
+    runId: string;
+    runRoot: string;
+    fileName?: string;
+    lockFileName?: string;
+  }): RunJournal {
     mkdirSync(input.runRoot, { recursive: true });
-    const path = join(input.runRoot, "events.jsonl");
+    const fileName = input.fileName ?? "events.jsonl";
+    const lockFileName = input.lockFileName ?? ".run.lock";
+    const path = join(input.runRoot, fileName);
     if (existsSync(path) && readFileSync(path, "utf8").trim().length > 0) {
       throw new Error(`Run journal already exists: ${path}`);
     }
     if (!existsSync(path)) writeFileSync(path, "", "utf8");
-    return RunJournal.open(input);
+    return RunJournal.open({ ...input, fileName, lockFileName });
   }
 
   /** Opens an existing journal after repairing and parsing its tail. */
-  static open(input: { runId: string; runRoot: string }): RunJournal {
-    const path = join(input.runRoot, "events.jsonl");
+  static open(input: {
+    runId: string;
+    runRoot: string;
+    fileName?: string;
+    lockFileName?: string;
+  }): RunJournal {
+    const fileName = input.fileName ?? "events.jsonl";
+    const lockFileName = input.lockFileName ?? ".run.lock";
+    const path = join(input.runRoot, fileName);
     if (!existsSync(path)) throw new Error(`Run journal does not exist: ${path}`);
-    const lockToken = acquireRunLock(input.runId, input.runRoot);
+    const lockToken = acquireRunLock(input.runId, input.runRoot, lockFileName);
     try {
       repairIncompleteTail(path);
       return new RunJournal({
         ...input,
+        fileName,
+        lockFileName,
         events: readJournalEvents(path),
         lockToken,
       });
     } catch (error) {
-      releaseRunLock(join(input.runRoot, ".run.lock"), lockToken);
+      releaseRunLock(join(input.runRoot, lockFileName), lockToken);
       throw error;
     }
   }
@@ -124,6 +143,42 @@ export class RunJournal {
       this.appendFailure = error instanceof Error ? error : new Error(String(error));
       throw this.appendFailure;
     }
+  }
+
+  /** Atomically replaces the current recovery window while retaining its run lock. */
+  replaceAll(inputs: readonly ScoutEvent[]): RunJournalEvent[] {
+    if (this.closed) throw new Error(`Run journal ${this.runId} is closed.`);
+    const recordedAt = new Date().toISOString();
+    const events = inputs.map((input, index): RunJournalEvent => ({
+      id: input.id,
+      key: persistedEventKey(input.key),
+      payload: structuredClone(input.payload),
+      occurredAt: input.occurredAt,
+      version: 1,
+      seq: index + 1,
+      recordedAt,
+    }));
+    const temporaryPath = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(
+        temporaryPath,
+        events.length === 0
+          ? ""
+          : `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+        "utf8",
+      );
+      renameSync(temporaryPath, this.path);
+    } catch (error) {
+      try {
+        unlinkSync(temporaryPath);
+      } catch {
+        // The temporary file may not exist when creation itself failed.
+      }
+      throw error;
+    }
+    this.events = events;
+    this.appendFailure = undefined;
+    return structuredClone(events);
   }
 
   /** Returns a detached snapshot of all successfully parsed journal events. */
@@ -202,8 +257,8 @@ function isPersistedEventKey(value: unknown): value is EventKey {
     && (key.tag === undefined || typeof key.tag === "string");
 }
 
-function acquireRunLock(runId: string, runRoot: string): string {
-  const lockPath = join(runRoot, ".run.lock");
+function acquireRunLock(runId: string, runRoot: string, lockFileName: string): string {
+  const lockPath = join(runRoot, lockFileName);
   const token = randomUUID();
   const hostId = hostname();
   const record: RunLockRecord = {

@@ -2222,10 +2222,10 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     projection.turns.find((turn) => turn.invocationId === "researcher-old-invocation")?.status,
     "interrupted",
   );
-  assert.ok(restoredEvents.some((event) =>
-    AgentEvents.thread.resumed.is(event)
-    && event.payload.threadId === "researcher-old-thread"
-  ));
+  assert.equal(
+    restoredEvents.some((event) => AgentEvents.thread.resumed.is(event)),
+    false,
+  );
   assert.deepEqual(projection.artifacts, []);
   assert.deepEqual(projection.gates, []);
   assert.deepEqual(projection.pendingMessages, []);

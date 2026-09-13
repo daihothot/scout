@@ -46,6 +46,7 @@ export class RestoreAgentsStage implements RunStage {
       scope.journal.readAll(),
       synthesisRole,
       scope.domain.journal,
+      scope.domainJournal.readAll(),
     );
     const roles = graphState.roles.map((role) => role.name);
     const activeRoleNames = new Set(roles);

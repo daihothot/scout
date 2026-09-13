@@ -24,6 +24,7 @@ export class RecordResumeInterruptionsStage implements RunStage {
       scope.journal.readAll(),
       synthesisRole,
       scope.domain.journal,
+      scope.domainJournal.readAll(),
     );
     scope.stepStore.restore(projection.steps);
     for (const turn of projection.turns.filter((candidate) => !candidate.completedAt)) {
@@ -45,6 +46,7 @@ export class RecordResumeInterruptionsStage implements RunStage {
       scope.journal.readAll(),
       synthesisRole,
       scope.domain.journal,
+      scope.domainJournal.readAll(),
     );
     const interruptionReason = "previous_runtime_ended_before_step_completion";
     for (const step of projection.steps) {
@@ -72,6 +74,7 @@ export class RecordResumeInterruptionsStage implements RunStage {
       scope.journal.readAll(),
       synthesisRole,
       scope.domain.journal,
+      scope.domainJournal.readAll(),
     );
     if (projection.checkpointSeq !== scope.journal.lastSeq) {
       throw new Error(`Run projection did not consume journal tail for ${projection.runId}.`);

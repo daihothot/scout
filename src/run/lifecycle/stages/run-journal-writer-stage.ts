@@ -20,7 +20,12 @@ export class RunJournalWriterStage implements RunStage {
       this.writer?.stop();
       this.writer = undefined;
     } finally {
-      currentRunScope().journal.close();
+      const scope = currentRunScope();
+      try {
+        scope.journal.close();
+      } finally {
+        if (scope.domainJournal !== scope.journal) scope.domainJournal.close();
+      }
     }
   }
 }

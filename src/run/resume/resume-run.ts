@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import { InMemoryEventBus } from "../../core/events/index.js";
@@ -60,6 +60,7 @@ export async function resumeRun(
   const scoutConfig = loadScoutConfig(scoutRoot);
   const eventBus = new InMemoryEventBus();
   const journal = RunJournal.open({ runId: manifest.runId, runRoot });
+  let domainJournal: RunJournal | undefined;
   let graphState: GraphState;
   let domain: ScoutDomain;
   try {
@@ -78,8 +79,24 @@ export async function resumeRun(
       );
     }
     domain = await createDomainRuntime(graphState.domain);
+    const domainJournalFileName = `${domain.domainId}-events.jsonl`;
+    const domainJournalPath = join(runRoot, domainJournalFileName);
+    domainJournal = existsSync(domainJournalPath)
+      ? RunJournal.open({
+        runId: manifest.runId,
+        runRoot,
+        fileName: domainJournalFileName,
+        lockFileName: `.${domain.domainId}-events.lock`,
+      })
+      : RunJournal.create({
+        runId: manifest.runId,
+        runRoot,
+        fileName: domainJournalFileName,
+        lockFileName: `.${domain.domainId}-events.lock`,
+      });
   } catch (error) {
     journal.close();
+    domainJournal?.close();
     throw error;
   }
   const scheduler = new Scheduler(graphState, eventBus);
@@ -115,6 +132,7 @@ export async function resumeRun(
     domain,
     scoutConfig,
     journal,
+    domainJournal,
     manifestStore,
     terminate: (reason) => executor.terminate(reason),
   });
@@ -173,6 +191,7 @@ export async function resumeRun(
     scope.journal.readAll(),
     resolveSynthesisRole(scope.scheduler.snapshot()).name,
     scope.domain.journal,
+    scope.domainJournal.readAll(),
   ).checkpointSeq;
   const agentIds = scope.agentRegistry.listAgents().map((agent) => agent.agentId);
   scope.logger.info({
