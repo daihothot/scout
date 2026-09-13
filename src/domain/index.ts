@@ -1,5 +1,7 @@
 /** Domain contracts and the dynamic Domain creation entry exposed to run stages. */
 export * from "./types.js";
+export * from "./domain-events.js";
+export * from "./tools/index.js";
 
 import type { ScoutDomain } from "./types.js";
 
@@ -35,7 +37,7 @@ export async function createDomainRuntime(domainId: string): Promise<ScoutDomain
     || domain === null
     || typeof (domain as ScoutDomain).domainId !== "string"
     || typeof (domain as ScoutDomain).name !== "string"
-    || typeof (domain as ScoutDomain).dynamicToolsForRole !== "function"
+    || typeof (domain as ScoutDomain).dynamicToolsForPhase !== "function"
     || (domain as ScoutDomain).domainId !== domainId
   ) {
     throw new Error(`Workflow domain ${domainId} returned an invalid Domain instance.`);

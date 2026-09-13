@@ -46,7 +46,11 @@ import type {
   ThreadStartOptions,
 } from "../../src/agent-server/codex/app-server-client.js";
 import type { AssetCommit, CodexMount } from "../../src/asset-store/index.js";
-import type { ScoutDomain } from "../../src/domain/index.js";
+import {
+  DomainEvents,
+  type DomainAgentToolCallObservedEvent,
+  type ScoutDomain,
+} from "../../src/domain/index.js";
 import type { ScoutDomainDynamicToolCall } from "../../src/domain/types.js";
 import {
   buildRunContextBundle,
@@ -101,7 +105,7 @@ afterEach(() => {
   release?.();
 });
 
-test("AgentBuilder creates a coordinator with agent and single-domain tools", () => {
+test("AgentBuilder creates a coordinator with orchestration tools only", () => {
   const domainTool = buildDomainTool("domain-a");
   const fixture = createAgentFixture("builder-coordinator", {
     domain: createStaticDomain("domain-a", [domainTool]),
@@ -142,7 +146,7 @@ test("AgentBuilder creates a coordinator with agent and single-domain tools", ()
   ));
   assert.equal(tools.some((tool) => tool.name === "SubmitTask"), false);
   assert.equal(tools.some((tool) => tool.name === "RequestHumanInput"), false);
-  assert.ok(tools.some((tool) => tool.namespace === "domain-a" && tool.name === "DomainProbe"));
+  assert.equal(tools.some((tool) => tool.namespace === "domain-a"), false);
   assert.equal(tools.some((tool) => tool.namespace === "domain-b"), false);
   const instructions = agent.spec.developerInstructions ?? "";
   assert.match(instructions, /common instructions/);
@@ -210,6 +214,35 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   assert.doesNotMatch(instructions, /researcher instructions/);
   assert.equal(instructions.match(/common instructions/g)?.length, 1);
   assert.ok(instructions.indexOf("common instructions") < instructions.indexOf("worker instructions"));
+});
+
+test("AgentBuilder unions and deduplicates Domain tools across a Worker's Phases", () => {
+  const requestedPhases: string[] = [];
+  const shared = buildDomainTool("domain-shared");
+  const domain: ScoutDomain = {
+    domainId: "domain-phase-tools",
+    name: "domain-phase-tools",
+    dynamicToolsForPhase(phase) {
+      requestedPhases.push(phase);
+      return phase === "research"
+        ? [shared, buildDomainTool("domain-research")]
+        : phase === "verify"
+          ? [shared, buildDomainTool("domain-verify")]
+          : [];
+    },
+  };
+  const fixture = createAgentFixture("builder-worker-phase-tools", { domain });
+  const researcherMount = createMount(fixture.root, "researcher");
+  researcherMount.agentProfile.phases = ["research", "verify"];
+  prepareAgent(fixture, "researcher", researcherMount, createAssetCommit(researcherMount));
+
+  const worker = new AgentBuilder().buildWorker("researcher");
+  const domainNamespaces = (worker.spec.dynamicTools ?? [])
+    .filter((tool) => tool.name === "DomainProbe")
+    .map((tool) => tool.namespace);
+
+  assert.deepEqual(requestedPhases, ["research", "verify"]);
+  assert.deepEqual(domainNamespaces, ["domain-shared", "domain-research", "domain-verify"]);
 });
 
 test("AgentBuilder creates an arbitrary Workflow role as a generic Worker", () => {
@@ -1469,7 +1502,7 @@ test("Worker child threads cannot inherit domain tool access from their register
   const domain: ScoutDomain = {
     domainId: "domain-child-tool",
     name: "domain-child-tool",
-    dynamicToolsForRole: () => [buildDomainTool("domain-child-tool")],
+    dynamicToolsForPhase: () => [buildDomainTool("domain-child-tool")],
     handleDynamicToolCall(call) {
       calls.push(call);
       return {
@@ -1505,6 +1538,70 @@ test("Worker child threads cannot inherit domain tool access from their register
   assert.equal(calls.length, 0);
   assert.equal(fixture.registry.resolveAgentByThreadId("thread-child"), undefined);
   assert.equal(fixture.registry.resolveAgentByThreadId("thread-grandchild"), undefined);
+});
+
+test("AgentBackend passes the current Workflow Phase to a Domain tool call", async () => {
+  const calls: ScoutDomainDynamicToolCall[] = [];
+  const observations: DomainAgentToolCallObservedEvent[] = [];
+  const appServer = createFakeAppServer();
+  const domain: ScoutDomain = {
+    domainId: "domain-phase-call",
+    name: "domain-phase-call",
+    dynamicToolsForPhase: () => [buildDomainTool("domain-phase-call")],
+    handleDynamicToolCall(call) {
+      calls.push(call);
+      return {
+        success: true,
+        contentItems: [{ type: "inputText", text: "domain result" }],
+      };
+    },
+  };
+  const fixture = createAgentFixture("worker-domain-phase-call", { appServer, domain });
+  const researcherMount = createMount(fixture.root, "researcher");
+  prepareAgent(
+    fixture,
+    "researcher",
+    researcherMount,
+    createAssetCommit(researcherMount),
+  );
+  const researcher = new AgentBuilder().buildWorker("researcher");
+  fixture.eventBus.subscribe(DomainEvents.agentToolCall.observed, (event) => {
+    if (DomainEvents.agentToolCall.observed.is(event)) observations.push(event.payload);
+  });
+  new AgentBackend().start();
+  await researcher.startThread();
+
+  assert.ok(appServer.handler);
+  const result = await appServer.handler({
+    threadId: researcher.threadId ?? "",
+    turnId: "turn-domain-phase-call",
+    callId: "call-domain-phase-call",
+    namespace: "domain-phase-call",
+    tool: "DomainProbe",
+    arguments: {},
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.caller.phase, "research");
+  assert.equal(observations.length, 1);
+  assert.deepEqual(observations[0], {
+    domainId: "domain-phase-call",
+    callId: "call-domain-phase-call",
+    threadId: researcher.threadId,
+    agentId: researcher.agentId,
+    role: "researcher",
+    phase: "research",
+    namespace: "domain-phase-call",
+    tool: "DomainProbe",
+    arguments: {},
+    response: {
+      success: true,
+      contentItems: [{ type: "inputText", text: "domain result" }],
+    },
+    startedAt: observations[0]?.startedAt,
+    completedAt: observations[0]?.completedAt,
+  });
 });
 
 test("Child threads cannot call Scout agent lifecycle tools", async () => {
@@ -2566,7 +2663,7 @@ function createStaticDomain(domainId: string, tools: AgentDynamicToolSpec[]): Sc
   return {
     domainId,
     name: domainId,
-    dynamicToolsForRole: () => tools,
+    dynamicToolsForPhase: () => tools,
   };
 }
 

@@ -1,4 +1,7 @@
-import type { ScoutAgentRole } from "../agent/thread/types.js";
+import type {
+  ScoutAgentPhase,
+  ScoutAgentRole,
+} from "../agent/thread/types.js";
 import type { AgentDynamicToolSpec } from "../agent/tools/types.js";
 import type {
   EventType,
@@ -15,6 +18,7 @@ export interface ScoutDomainDynamicToolCall {
   caller: {
     agentId: string;
     role: ScoutAgentRole;
+    phase: ScoutAgentPhase;
     threadId?: string;
   };
 }
@@ -59,7 +63,7 @@ export interface ScoutDomainJournalProjection {
 export interface ScoutDomain {
   readonly domainId: string;
   readonly name: string;
-  dynamicToolsForRole(role: ScoutAgentRole): AgentDynamicToolSpec[];
+  dynamicToolsForPhase(phase: ScoutAgentPhase): AgentDynamicToolSpec[];
   readonly journal?: ScoutDomainJournalProjection;
   handleDynamicToolCall?(
     call: ScoutDomainDynamicToolCall,

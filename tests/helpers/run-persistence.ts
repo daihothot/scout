@@ -34,7 +34,7 @@ const noopLogger = {
 const testDomain: ScoutDomain = {
   domainId: "test",
   name: "test",
-  dynamicToolsForRole: () => [],
+  dynamicToolsForPhase: () => [],
 };
 
 export function createTestRunPersistence(

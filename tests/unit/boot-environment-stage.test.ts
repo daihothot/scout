@@ -929,7 +929,7 @@ function installEnvironmentScope(
     domain: {
       domainId: "test",
       name: "test",
-      dynamicToolsForRole: () => [],
+      dynamicToolsForPhase: () => [],
     },
     ...createTestRunPersistence(
       t,
@@ -978,7 +978,7 @@ function installExistingEnvironmentScope(
     domain: {
       domainId: "test",
       name: "test",
-      dynamicToolsForRole: () => [],
+      dynamicToolsForPhase: () => [],
     },
     journal,
     manifestStore,
