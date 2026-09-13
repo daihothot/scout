@@ -48,7 +48,6 @@
         "Synthesis"
       ],
       "shellTools": [
-        "jarvis",
         "rg",
         "find",
         "ls"
@@ -66,7 +65,7 @@
       ],
       "shellTools": [
         "scoutJsonWrite",
-        "jarvis",
+        "jarvis-codebase",
         "codegraph",
         "rg",
         "find",
@@ -76,8 +75,7 @@
         "head",
         "tail",
         "sort",
-        "uniq",
-        "unity"
+        "uniq"
       ],
       "mcpServers": [],
       "plugins": [],

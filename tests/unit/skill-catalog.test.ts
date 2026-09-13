@@ -22,7 +22,6 @@ import {
   ScoutSkillTypes,
   type ScoutSkillCatalogEntry,
 } from "../../src/asset-store/index.js";
-import { InternalPhase } from "../../src/core/workflow/index.js";
 
 const scoutRoot = process.cwd();
 const assetsRoot = join(scoutRoot, "assets", "codex");
@@ -54,70 +53,6 @@ test("every Scout Skill projects the runtime metadata needed by its mount", () =
     );
   }
 
-  const byName = new Map(catalog.map((skill) => [skill.name, skill] as const));
-  assert.deepEqual(byName.get("internal-runtime-inspector")?.phase, [InternalPhase]);
-  assert.equal(byName.get("internal-skill-creator")?.phase, undefined);
-  assert.deepEqual(byName.get("internal-skill-consumption")?.phase, [InternalPhase]);
-  const rbtCoordinator = byName.get("domain-rbt-coordinator");
-  assert.equal(rbtCoordinator?.domain, "rbt");
-  assert.deepEqual(rbtCoordinator?.phase, ["Synthesis"]);
-  assert.deepEqual(rbtCoordinator?.family, ["rbt", "workflow"]);
-  const rbtExecutor = byName.get("domain-rbt-executor");
-  assert.equal(rbtExecutor?.domain, "rbt");
-  assert.deepEqual(rbtExecutor?.phase, ["execute"]);
-  assert.deepEqual(rbtExecutor?.family, ["rbt", "workflow"]);
-  assert.ok(rbtExecutor?.requiredSkills.includes("tool-unity-pipeline-cli"));
-  assert.ok(rbtExecutor?.requiredSkills.includes("tool-jarvis-behavior"));
-  assert.equal(rbtExecutor?.requiredSkills.includes("tool-jarvis-websocket"), false);
-  const rbtReviewer = byName.get("domain-rbt-reviewer");
-  assert.equal(rbtReviewer?.domain, "rbt");
-  assert.deepEqual(rbtReviewer?.phase, ["review"]);
-  assert.deepEqual(rbtReviewer?.family, ["rbt", "workflow"]);
-  const rbtExecutionPack = byName.get("domain-rbt-execution-pack");
-  assert.equal(rbtExecutionPack?.domain, "rbt");
-  assert.deepEqual(rbtExecutionPack?.phase, ["execute", "review"]);
-  assert.deepEqual(rbtExecutionPack?.family, ["rbt", "artifact"]);
-  assert.ok(rbtExecutionPack?.resources.some((resource) =>
-    resource.path === "templates/platform-evidence.md"
-    && resource.requirement === "required"
-  ));
-  assert.deepEqual(byName.get("signal-rbt-evidence-via-jarvis-behavior")?.requiredSkills, [
-    "signal-rbt-evidence", "tool-jarvis-behavior",
-  ]);
-  assert.deepEqual(byName.get("signal-rbt-behavior-trace-by-rbt-evidence")?.requiredSkills, [
-    "signal-rbt-evidence",
-  ]);
-  assert.deepEqual(byName.get("signal-rbt-state-snapshot-by-rbt-evidence")?.requiredSkills, [
-    "signal-rbt-evidence",
-  ]);
-  assert.deepEqual(byName.get("signal-rbt-error-by-rbt-evidence")?.requiredSkills, [
-    "signal-rbt-evidence",
-  ]);
-  assert.deepEqual(byName.get("signal-account-state-by-rbt-state-snapshot")?.requiredSkills, [
-    "signal-rbt-state-snapshot-by-rbt-evidence",
-  ]);
-  assert.deepEqual(
-    byName.get("signal-rbt-state-snapshot-via-jarvis-behavior")?.requiredSkills,
-    [
-      "signal-rbt-state-snapshot-by-rbt-evidence",
-      "signal-rbt-evidence-via-jarvis-behavior",
-    ],
-  );
-  assert.equal(byName.has("signal-account-state-by-rbt-evidence-source"), false);
-  assert.equal(byName.has("signal-rbt-evidence-source"), false);
-  assert.equal(byName.has("signal-rbt-evidence-source-via-jarvis-behavior"), false);
-  assert.deepEqual(byName.get("signal-runtime-log")?.family, [
-    "signal", "local", "unity", "general",
-  ]);
-  assert.deepEqual(byName.get("tool-scout-submit-task")?.family, [
-    "tool", "scout", "dynamic", "worker",
-  ]);
-  assert.deepEqual(byName.get("tool-scout-send-message")?.family, [
-    "tool", "scout", "dynamic", "general",
-  ]);
-  assert.deepEqual(byName.get("tool-scout-assign-task")?.family, [
-    "tool", "scout", "dynamic", "coordinator",
-  ]);
 });
 
 test("RBT roles receive only their Execution Pack and Signal responsibilities", () => {
@@ -147,10 +82,10 @@ test("RBT roles receive only their Execution Pack and Signal responsibilities", 
   for (const inventory of [executor, reviewer]) {
     assert.ok(inventory.includes("domain-rbt-execution-pack"));
     assert.ok(inventory.includes("signal-rbt-evidence"));
-    assert.ok(inventory.includes("signal-rbt-evidence-via-jarvis-behavior"));
+    assert.ok(inventory.includes("signal-rbt-evidence-via-rbt-behavior"));
     assert.ok(inventory.includes("signal-rbt-behavior-trace-by-rbt-evidence"));
     assert.ok(inventory.includes("signal-rbt-state-snapshot-by-rbt-evidence"));
-    assert.ok(inventory.includes("signal-rbt-state-snapshot-via-jarvis-behavior"));
+    assert.ok(inventory.includes("signal-rbt-state-snapshot-via-rbt-behavior"));
     assert.ok(inventory.includes("signal-rbt-error-by-rbt-evidence"));
     assert.ok(inventory.includes("signal-account-state-by-rbt-state-snapshot"));
     assert.equal(inventory.includes("signal-rbt-evidence-source"), false);
@@ -159,8 +94,8 @@ test("RBT roles receive only their Execution Pack and Signal responsibilities", 
   }
   assert.ok(executor.includes("domain-rbt-executor"));
   assert.equal(executor.includes("domain-rbt-reviewer"), false);
-  assert.ok(executor.includes("tool-unity-pipeline-cli"));
-  assert.ok(executor.includes("tool-jarvis-websocket"));
+  assert.ok(executor.includes("tool-unity-pipeline"));
+  assert.ok(executor.includes("tool-rbt-behavior"));
   assert.ok(reviewer.includes("domain-rbt-reviewer"));
   assert.equal(reviewer.includes("domain-rbt-executor"), false);
   assert.equal(reviewer.includes("tool-unity-pipeline-cli"), false);

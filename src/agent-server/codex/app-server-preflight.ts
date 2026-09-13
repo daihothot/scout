@@ -312,17 +312,19 @@ async function smokeShellTools(
         return;
       }
 
-      const jarvisTool = mount.shellTools.find((candidate) => candidate.id === "jarvis");
+      const jarvisTool = mount.shellTools.find((candidate) =>
+        candidate.id === "jarvis-codebase"
+      );
       if (!jarvisTool) {
         finish({
           command,
           status: "failed",
-          error: "Managed CodeGraph smoke requires the jarvis shell tool.",
+          error: "Managed CodeGraph smoke requires the jarvis-codebase shell tool.",
         });
         return;
       }
       const jarvisExecutable = join(mountRoot, "bin", jarvisTool.exposeAs);
-      execFile(jarvisExecutable, ["codebase", smoke.managedCodebase, "path"], {
+      execFile(jarvisExecutable, [smoke.managedCodebase, "path"], {
         cwd: mountRoot,
         env: environment,
         encoding: "utf8",

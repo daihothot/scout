@@ -99,15 +99,17 @@
       }
     },
     {
-      "id": "jarvis",
-      "name": "jarvis",
-      "command": "/Users/chengdai/.guru/guru-jarvis/scripts/jarvis",
-      "exposeAs": "jarvis",
+      "id": "jarvis-codebase",
+      "name": "jarvis-codebase",
+      "command": "jarvis",
+      "args": [
+        "codebase"
+      ],
+      "exposeAs": "jarvis-codebase",
       "required": true,
       "smoke": {
         "scope": "run",
         "args": [
-          "codebase",
           "supported"
         ],
         "marker": "gurusdk-unity"
