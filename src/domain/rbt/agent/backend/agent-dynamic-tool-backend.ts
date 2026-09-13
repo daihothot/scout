@@ -8,24 +8,24 @@ import {
   type RbtAgentDynamicTool,
   type RbtAgentDynamicToolImplementation,
 } from "../tools/index.js";
-import { JarvisWebsocktTool } from "../tools/index.js";
+import { JarvisWebSocketTool } from "../tools/index.js";
 
 export interface RbtAgentDynamicToolFactories {
   unityPipeline?: () => RbtAgentDynamicTool;
-  jarvisWebsockt?: () => JarvisWebsocktTool;
+  jarvisWebSocket?: () => JarvisWebSocketTool;
   jarvisBehavior?: (
     phase: "execute" | "review",
-    websocket?: JarvisWebsocktTool,
+    websocket?: JarvisWebSocketTool,
   ) => RbtAgentDynamicTool;
 }
 
 /** Creates registered RBT tools and routes each call to its Phase-owned instance. */
 export class RbtAgentDynamicToolBackend {
   private readonly toolsByPhase = new Map<string, Map<string, RbtAgentDynamicTool>>();
-  private readonly websocket: JarvisWebsocktTool;
+  private readonly websocket: JarvisWebSocketTool;
 
   constructor(factories: RbtAgentDynamicToolFactories = {}) {
-    this.websocket = factories.jarvisWebsockt?.() ?? new JarvisWebsocktTool();
+    this.websocket = factories.jarvisWebSocket?.() ?? new JarvisWebSocketTool();
     for (const registration of rbtAgentDynamicToolRegistrations) {
       const tool = createTool(registration.implementation, factories, this.websocket);
       const phaseTools = this.toolsByPhase.get(registration.phase)
@@ -72,12 +72,12 @@ export class RbtAgentDynamicToolBackend {
 function createTool(
   implementation: RbtAgentDynamicToolImplementation,
   factories: RbtAgentDynamicToolFactories,
-  websocket: JarvisWebsocktTool,
+  websocket: JarvisWebSocketTool,
 ): RbtAgentDynamicTool {
   switch (implementation) {
     case RbtAgentDynamicToolImplementations.UnityPipeline:
       return factories.unityPipeline?.() ?? new UnityPipelineTool();
-    case RbtAgentDynamicToolImplementations.JarvisWebsockt:
+    case RbtAgentDynamicToolImplementations.JarvisWebSocket:
       return websocket;
     case RbtAgentDynamicToolImplementations.JarvisBehaviorExecute:
       return factories.jarvisBehavior?.("execute", websocket)

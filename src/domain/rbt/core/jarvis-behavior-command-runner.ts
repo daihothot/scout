@@ -8,8 +8,8 @@ import {
 import { currentRunScope } from "../../../run/run-scope.js";
 import type { ScoutDomainDynamicToolCall } from "../../types.js";
 import {
-  JarvisWebsocktTool,
-} from "../agent/tools/jarvis-websockt/index.js";
+  JarvisWebSocketTool,
+} from "../agent/tools/jarvis-websocket/index.js";
 import {
   JarvisBehaviorToolStore,
 } from "./jarvis-behavior-tool-store.js";
@@ -56,7 +56,7 @@ export class JarvisBehaviorCommandRunner {
     private readonly executable: string,
     private readonly baseArgs: readonly string[],
     private readonly store: JarvisBehaviorToolStore,
-    private readonly websocket: JarvisWebsocktTool,
+    private readonly websocket: JarvisWebSocketTool,
   ) {}
 
   async run(

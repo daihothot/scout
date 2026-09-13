@@ -3,7 +3,7 @@ import type { AgentJsonValue } from "../../../../../agent/tools/types.js";
 import { UnityPipelineTool } from "../../../../tools/index.js";
 import type { ScoutDomainDynamicToolCall } from "../../../../types.js";
 import type { RbtAgentDynamicTool } from "../agent-tools.js";
-import { JarvisWebsocktTool } from "../jarvis-websockt/index.js";
+import { JarvisWebSocketTool } from "../jarvis-websocket/index.js";
 import { JarvisBehaviorCommandRunner } from "../../../core/jarvis-behavior-command-runner.js";
 import { JarvisBehaviorExecuteFileRunner } from "../../../core/jarvis-behavior-execute-file.js";
 import { readJarvisBehaviorExecuteFile } from "../../../core/jarvis-behavior-execute-file-reader.js";
@@ -35,7 +35,7 @@ export class JarvisBehaviorTool implements RbtAgentDynamicTool {
     private readonly baseArgs: readonly string[] = [],
     private readonly unityPipeline = new UnityPipelineTool(),
     private readonly store = new JarvisBehaviorToolStore(),
-    private readonly websocket = new JarvisWebsocktTool(),
+    private readonly websocket = new JarvisWebSocketTool(),
   ) {
     this.commandRunner = new JarvisBehaviorCommandRunner(
       this.phase,

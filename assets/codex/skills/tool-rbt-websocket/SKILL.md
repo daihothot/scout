@@ -8,12 +8,12 @@ type: tool
 family: [tool, rbt, websocket]
 tags: [rbt, websocket, session, dynamic-tool]
 devices: [any]
-summary: 约束 JarvisWebsockt 的 session 连接事实和 endpoint 冲突边界。
+summary: 约束 JarvisWebSocket 的 session 连接事实和 endpoint 冲突边界。
 ---
 
 # RBT WebSocket Tool
 
-`JarvisWebsockt` 是 RBT Domain 的 dynamic tool。当前它作为 Behavior Tool 的内部依赖使用，尚未注册为 Agent 入口；后续注册时仍使用本 contract。它只管理 Jarvis daemon-backed WebSocket session。
+`JarvisWebSocket` 是 RBT Domain 的 dynamic tool。当前它作为 Behavior Tool 的内部依赖使用，尚未注册为 Agent 入口；后续注册时仍使用本 contract。它只管理 Jarvis daemon-backed WebSocket session。
 
 ## 职责
 

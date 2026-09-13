@@ -6,7 +6,7 @@ import type { ScoutDomainDynamicToolCall } from "../../../types.js";
 
 export const RbtAgentDynamicToolImplementations = {
   UnityPipeline: "unity-pipeline",
-  JarvisWebsockt: "jarvis-websockt",
+  JarvisWebSocket: "jarvis-websocket",
   JarvisBehaviorExecute: "jarvis-behavior-execute",
   JarvisBehaviorReview: "jarvis-behavior-review",
 } as const;
@@ -65,10 +65,10 @@ const jarvisBehaviorTool: AgentDynamicToolSpec = {
 };
 
 /** RBT Domain-internal WebSocket tool definition; not exposed to the Agent yet. */
-export const jarvisWebsocktAgentTool: AgentDynamicToolSpec = {
+export const jarvisWebSocketAgentTool: AgentDynamicToolSpec = {
   guidanceSkill: "tool-rbt-websocket",
-  namespace: "rbt_websockt",
-  name: "JarvisWebsockt",
+  namespace: "rbt_websocket",
+  name: "JarvisWebSocket",
   description: "管理 RBT Domain 使用的 Jarvis Behavioral WebSocket session。",
   inputSchema: {
     type: "object",
