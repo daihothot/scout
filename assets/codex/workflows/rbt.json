@@ -90,14 +90,14 @@
       ],
       "network": true
     },
-    "rbt-review": {
+      "rbt-review": {
       "phases": [
         "review"
       ],
       "shellTools": [
         "scoutJsonWrite",
         "scoutArtifactDigest",
-        "jarvis",
+        "rbtReviewReport",
         "rg",
         "find",
         "grep",

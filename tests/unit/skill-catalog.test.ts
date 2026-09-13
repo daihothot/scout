@@ -97,8 +97,10 @@ test("RBT roles receive only their Execution Pack and Signal responsibilities", 
   assert.ok(executor.includes("tool-unity-pipeline"));
   assert.ok(executor.includes("tool-rbt-behavior"));
   assert.ok(reviewer.includes("domain-rbt-reviewer"));
+  assert.ok(reviewer.includes("domain-rbt-review-pack"));
   assert.equal(reviewer.includes("domain-rbt-executor"), false);
-  assert.equal(reviewer.includes("tool-unity-pipeline-cli"), false);
+  assert.equal(reviewer.includes("tool-unity-pipeline"), false);
+  assert.ok(reviewer.includes("tool-rbt-behavior"));
 });
 
 test("Scout Skill resources retain resource-level required and optional metadata", () => {
