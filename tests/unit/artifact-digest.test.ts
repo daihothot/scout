@@ -8,6 +8,19 @@ import { join } from "node:path";
 const scoutRoot = process.cwd();
 const digestTool = join(scoutRoot, "assets", "codex", "tools", "scout-artifact-digest.cjs");
 
+test("scout-artifact-digest help succeeds without a target", () => {
+  for (const helpFlag of ["--help", "-h"]) {
+    const result = spawnSync(process.execPath, [digestTool, helpFlag], {
+      cwd: scoutRoot,
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, "");
+    assert.match(result.stdout, /^Usage:/);
+  }
+});
+
 test("scout-artifact-digest produces a location-independent directory digest", () => {
   const first = createPack("scout-artifact-digest-first-");
   const second = createPack("scout-artifact-digest-second-");

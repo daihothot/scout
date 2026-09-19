@@ -8,11 +8,15 @@ const MARKER = "SCOUT_ARTIFACT_DIGEST_OK";
 const DIRECTORY_ALGORITHM = "scout-directory-sha256-v1";
 
 function main(argv) {
+  if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
+    usage(0);
+    return;
+  }
   if (argv.length === 1 && argv[0] === "--smoke") {
     process.stdout.write(`${MARKER}\n`);
     return;
   }
-  if (argv.length !== 1) return usage();
+  if (argv.length !== 1) return usage(1);
 
   const target = resolve(argv[0]);
   try {
@@ -99,14 +103,16 @@ function printDigest(input) {
   ].join("\n"));
 }
 
-function usage() {
-  process.stderr.write([
+function usage(code) {
+  const out = code === 0 ? process.stdout : process.stderr;
+  out.write([
     "Usage:",
     "  scout-artifact-digest <file-or-directory>",
+    "  scout-artifact-digest --help|-h",
     "  scout-artifact-digest --smoke",
     "",
   ].join("\n"));
-  process.exitCode = 1;
+  process.exitCode = code;
 }
 
 main(process.argv.slice(2));

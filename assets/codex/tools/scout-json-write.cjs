@@ -5,6 +5,7 @@ const { dirname, resolve, sep } = require("node:path");
 
 function main(argv) {
   const [command, ...args] = argv;
+  if (argv.length === 1 && (command === "--help" || command === "-h")) usage(0);
   if (command === "--smoke") {
     process.stdout.write("SCOUT_JSON_WRITE_OK\n");
     return;
@@ -75,6 +76,7 @@ function usage(code) {
   out.write([
     "Usage:",
     "  scout-json-write artifact <relative-output.json> <source.json|->",
+    "  scout-json-write --help|-h",
     "  scout-json-write --smoke",
     "",
   ].join("\n"));

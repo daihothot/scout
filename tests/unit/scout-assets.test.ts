@@ -22,7 +22,22 @@ afterEach(() => {
   for (const root of fixtureRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-test("scout-assets summary presents current profile, roots, counts, and issues", () => {
+test("scout-assets help succeeds without a mount manifest", () => {
+  const root = createTemporaryRoot();
+  for (const helpFlag of ["--help", "-h"]) {
+    for (const command of [undefined, "summary", "family", "skill", "plugin", "--smoke"]) {
+      const args = command === undefined ? [helpFlag] : [command, helpFlag];
+      const result = runScoutAssets(root, ...args);
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stderr, "");
+      assert.match(result.stdout, /^Usage:/);
+      assert.ok(result.stdout.includes(`scout-assets ${command ?? "--help"}`));
+      if (command !== undefined) assert.equal(result.stdout.trim().split("\n").length, 2);
+    }
+  }
+});
+
+test("scout-assets summary presents current profile, roots, counts, and role tools", () => {
   const fixture = createFixture();
   const result = runScoutAssets(fixture.mountRoot, "summary");
 
@@ -55,6 +70,16 @@ test("scout-assets summary presents current profile, roots, counts, and issues",
       { source: "~/.artifacts", path: join(homedir(), ".artifacts"), access: "write" },
     ],
   });
+  assert.deepEqual(output.phaseTools.skills, [{
+    name: "tool-scout-send-message",
+    family: ["tool", "scout", "dynamic", "general"],
+    path: ".scout/skill/tool/scout/dynamic/general/tool-scout-send-message/SKILL.md",
+  }]);
+  assert.deepEqual(
+    output.phaseTools.shellTools.map((tool: { commandPathKind: string }) => tool.commandPathKind),
+    ["path-resolved", "absolute", "asset-relative"],
+  );
+  assert.equal(output.phaseTools.mcpServers[0].name, "jarvis");
 });
 
 test("scout-assets family groups current content by phase and resolves leaf families", () => {
@@ -123,6 +148,56 @@ test("scout-assets asks for a parent path when a family name is ambiguous", () =
 
 });
 
+test("scout-assets prefers an exact root path across phase groups before short names", () => {
+  const root = createTemporaryRoot();
+  writeFileSync(join(root, "mount-manifest.json"), JSON.stringify({
+    domain: "rbt",
+    agentProfile: { phases: ["execute", "review"] },
+    skills: [{
+      name: "executor",
+      type: "domain",
+      domain: "rbt",
+      phase: ["execute"],
+      family: ["execution", "workflow"],
+      requiredSkills: ["rbt-tool", "rbt-signal"],
+    }, {
+      name: "reviewer",
+      type: "domain",
+      domain: "rbt",
+      phase: ["review"],
+      family: ["rbt", "workflow"],
+      requiredSkills: ["rbt-tool", "rbt-signal"],
+    }, {
+      name: "rbt-tool",
+      type: "tool",
+      family: ["tool", "rbt"],
+    }, {
+      name: "rbt-signal",
+      type: "signal",
+      family: ["signal", "local", "unity", "rbt"],
+    }],
+  }));
+
+  assert.deepEqual(parseSuccessful(root, "family", "rbt"), {
+    family: "rbt",
+    review: { children: ["rbt.workflow"] },
+  });
+  assert.deepEqual(parseSuccessful(root, "family", "rbt", "--phase", "review"), {
+    family: "rbt",
+    phase: "review",
+    children: ["rbt.workflow"],
+  });
+  assert.deepEqual(parseSuccessful(root, "family", "rbt", "--phase", "execute"), {
+    family: "rbt",
+    phase: "execute",
+    ambiguous: true,
+    candidates: ["signal.local.unity.rbt", "tool.rbt"],
+  });
+  const explicit = parseSuccessful(root, "family", "tool.rbt");
+  assert.equal(explicit.family, "tool.rbt");
+  assert.equal(explicit["execute+review"].skills[0].name, "rbt-tool");
+});
+
 test("scout-assets family can restrict discovery to one phase", () => {
   const fixture = createFixture();
   const verify = parseSuccessful(fixture.mountRoot, "family", "--phase", "verify");
@@ -147,7 +222,7 @@ test("scout-assets family can restrict discovery to one phase", () => {
   assert.match(missing.stderr, /Family is not supported for the current role/);
 });
 
-test("scout-assets skill returns metadata and all current role tools", () => {
+test("scout-assets skill returns only the requested Skill metadata", () => {
   const fixture = createFixture();
   const output = parseSuccessful(fixture.mountRoot, "skill", "domain-validation-researcher");
   assert.equal(output.skill.type, "domain");
@@ -158,17 +233,8 @@ test("scout-assets skill returns metadata and all current role tools", () => {
   const signal = parseSuccessful(fixture.mountRoot, "skill", "validation-signal");
   assert.equal(signal.skill.type, "signal");
   assert.equal("phase" in signal.skill, false);
-  assert.deepEqual(output.phaseTools.skills, [{
-    name: "tool-scout-send-message",
-    family: ["tool", "scout", "dynamic", "general"],
-    path: ".scout/skill/tool/scout/dynamic/general/tool-scout-send-message/SKILL.md",
-  }]);
-  assert.deepEqual(output.phaseTools.shellTools.map((tool: { commandPathKind: string }) => tool.commandPathKind), [
-    "path-resolved",
-    "absolute",
-    "asset-relative",
-  ]);
-  assert.equal(output.phaseTools.mcpServers[0].name, "jarvis");
+  assert.equal("phaseTools" in output, false);
+  assert.equal("phaseTools" in signal, false);
 });
 
 test("scout-assets plugin returns mounted plugin metadata", () => {

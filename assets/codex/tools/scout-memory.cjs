@@ -8,6 +8,7 @@ const MEMORY_FILE_PATTERN = /^(memories|logs|goals|state)_\d+\.sqlite(?:-(?:wal|
 
 function main(argv) {
   const [command = "list"] = argv;
+  if (argv.length === 1 && (command === "--help" || command === "-h")) usage(0);
   if (command === "--smoke") {
     const view = buildMemoryView();
     if (!view.exists || !view.readable) {
@@ -89,6 +90,7 @@ function usage(code) {
   out.write([
     "Usage:",
     "  scout-memory list",
+    "  scout-memory --help|-h",
     "  scout-memory --smoke",
     "",
   ].join("\n"));

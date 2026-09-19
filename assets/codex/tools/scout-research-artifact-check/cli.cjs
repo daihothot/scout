@@ -11,6 +11,10 @@ const { validatePack } = require("./validators/pack.cjs");
 const MARKER = "SCOUT_RESEARCH_ARTIFACT_CHECK_OK";
 
 function main(argv) {
+  if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
+    usage(0);
+    return;
+  }
   if (argv.length === 1 && argv[0] === "--smoke") {
     process.stdout.write(`${MARKER}\n`);
     return;
@@ -20,11 +24,11 @@ function main(argv) {
   if (command === "evidence") return validateEvidenceCommand(args);
   if (command === "aggregate") return validateAggregateCommand(args);
   if (command === "pack") return validatePackCommand(args);
-  usage();
+  usage(1);
 }
 
 function validateEvidenceCommand(args) {
-  if (args.length !== 1) return usage();
+  if (args.length !== 1) return usage(1);
   const file = resolve(args[0]);
   const displayRoot = dirname(file);
   const issues = [];
@@ -44,7 +48,7 @@ function validateEvidenceCommand(args) {
 }
 
 function validateAggregateCommand(args) {
-  if (args.length !== 2) return usage();
+  if (args.length !== 2) return usage(1);
   const [kind, target] = args;
   const file = resolve(target);
   const issues = [];
@@ -75,7 +79,7 @@ function validateAggregateCommand(args) {
 }
 
 function validatePackCommand(args) {
-  if (args.length !== 1) return usage();
+  if (args.length !== 1) return usage(1);
   const packRoot = resolve(args[0]);
   const result = validatePack(packRoot);
   if (result.issues.length > 0) {
@@ -121,18 +125,20 @@ function outputFields(fields) {
     .map(([key, value]) => `${key}=${value}`);
 }
 
-function usage() {
-  process.stderr.write([
+function usage(code) {
+  const out = code === 0 ? process.stdout : process.stderr;
+  out.write([
     "Usage:",
     "  scout-research-artifact-check evidence <evidence-file>",
     "  scout-research-artifact-check aggregate <kind> <aggregate-file>",
     "  scout-research-artifact-check pack <research-pack-dir>",
+    "  scout-research-artifact-check --help|-h",
     "  scout-research-artifact-check --smoke",
     "",
     `Aggregate kinds: ${Object.keys(AGGREGATES).join(", ")}`,
     "",
   ].join("\n"));
-  process.exitCode = 1;
+  process.exitCode = code;
 }
 
 main(process.argv.slice(2));

@@ -8,6 +8,14 @@ const MARKER = "SCOUT_ASSETS_OK";
 
 function main(argv) {
   const [command = "summary", ...args] = argv;
+  if (command === "--help" || command === "-h") {
+    requireArgumentCount(command, args, 0);
+    return usage(0);
+  }
+  if (["summary", "family", "skill", "plugin", "--smoke"].includes(command)
+    && args.some((arg) => arg === "--help" || arg === "-h")) {
+    return usage(0, command);
+  }
   if (command === "--smoke") {
     requireArgumentCount(command, args, 0);
     const manifest = readMountManifest();
@@ -68,6 +76,13 @@ function printSummary(manifest) {
       plugins: (manifest.plugins ?? []).length,
       issues: (manifest.issues ?? []).length,
     },
+    phaseTools: {
+      skills: (manifest.skills ?? [])
+        .filter((candidate) => candidate.family?.[0] === "tool")
+        .map(projectSkillIdentity),
+      shellTools: projectShellTools(manifest),
+      mcpServers: projectMcpServers(manifest),
+    },
   });
 }
 
@@ -105,9 +120,10 @@ function printFamily(manifest, args) {
     ...group,
     matches: findFamilyNodes(group.skills, query.requested),
   })).filter((group) => group.matches.length > 0);
-  const candidatePaths = [...new Set(
+  const matchedPaths = [...new Set(
     matchesByGroup.flatMap((group) => group.matches.map((node) => node.familyPath)),
   )].sort();
+  const candidatePaths = matchedPaths.includes(query.requested) ? [query.requested] : matchedPaths;
   if (candidatePaths.length === 0) {
     fail(`Family is not supported for the current role: ${query.requested}`);
   }
@@ -152,16 +168,7 @@ function printSkill(manifest, args) {
   requireArgumentCount("skill", args, 1);
   const skill = (manifest.skills ?? []).find((candidate) => candidate.name === args[0]);
   if (!skill) fail(`Skill is not materialized for the current role: ${args[0]}`);
-  printJson({
-    skill,
-    phaseTools: {
-      skills: (manifest.skills ?? [])
-        .filter((candidate) => candidate.family?.[0] === "tool")
-        .map(projectSkillIdentity),
-      shellTools: projectShellTools(manifest),
-      mcpServers: projectMcpServers(manifest),
-    },
-  });
+  printJson({ skill });
 }
 
 function printPlugin(manifest, args) {
@@ -407,16 +414,20 @@ function printJson(value) {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-function usage(code) {
+function usage(code, command) {
   const out = code === 0 ? process.stdout : process.stderr;
+  const commands = {
+    summary: "  scout-assets summary [--help|-h]",
+    family: "  scout-assets family [family-name|family-path] [--phase phase] [--help|-h]",
+    skill: "  scout-assets skill <skill-name> [--help|-h]",
+    plugin: "  scout-assets plugin <plugin-name> [--help|-h]",
+    "--smoke": "  scout-assets --smoke [--help|-h]",
+  };
   out.write([
     "Usage:",
-    "  scout-assets",
-    "  scout-assets summary",
-    "  scout-assets family [family-name|family-path] [--phase phase]",
-    "  scout-assets skill <skill-name>",
-    "  scout-assets plugin <plugin-name>",
-    "  scout-assets --smoke",
+    ...(command === undefined
+      ? ["  scout-assets", ...Object.values(commands), "  scout-assets --help|-h"]
+      : [commands[command]]),
     "",
   ].join("\n"));
   process.exit(code);

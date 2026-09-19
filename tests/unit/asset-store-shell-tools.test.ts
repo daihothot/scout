@@ -2011,6 +2011,23 @@ test("scout-memory reports run-level codex memory files without reading sqlite c
   assert.ok(list.files.every((file) => file.readable));
 });
 
+test("Scout shell tools expose side-effect-free help without runtime context", () => {
+  const scripts = [
+    "scout-memory.cjs",
+    "scout-json-write.cjs",
+    join("scout-research-artifact-check", "cli.cjs"),
+  ];
+  for (const script of scripts) {
+    const scriptPath = join(scoutRoot, "assets", "codex", "tools", script);
+    for (const helpFlag of ["--help", "-h"]) {
+      const output = execFileSync(process.execPath, [scriptPath, helpFlag], {
+        encoding: "utf8",
+      });
+      assert.match(output, /^Usage:/);
+    }
+  }
+});
+
 function sha256FileForTest(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }

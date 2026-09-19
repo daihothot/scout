@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: internal-skill-consumption
 description: 读取一个 Scout Skill 时，确定还必须读取的关联 Skill 和附属文件，并在全部规则就绪后开始执行。
 id: internal-skill-consumption
-version: 1.0.0
+version: 1.1.0
 type: internal
 phase: [Internal]
 family: [internal, general]
@@ -452,6 +452,7 @@ Partial：
 
 - RR-001：Skill 文件及其 required Skill closure 已在当前 `<role>` 上下文中完整读取，且 Scout Runtime 没有报告内容变化时，复用基础读取结果，不重复读取文件；当前消费上下文的 optional 选择和 composition 仍需重新判断。
 - RR-002：无法确认是否完整读取或内容是否变化时，重新执行 Phase 2。
+- RR-003：相同 Skill identity 或 family-path 的 `scout-assets` 查询已经成功且 Runtime 没有报告 mount 变化时，复用返回的路径、依赖和 phase tool inventory，不重复查询。
 
 ## Prohibited Rules (Enforcement)
 
