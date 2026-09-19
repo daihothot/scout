@@ -1,5 +1,5 @@
 import { tmpdir } from "node:os";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import type { MountContext } from "../contracts/mount-context.js";
 import type { MaterializedMcpServer } from "../contracts/resources.js";
 import { CodexConfigBuilder } from "./codex-config-builder.js";
@@ -25,6 +25,16 @@ export class MountGeneratedFilesBuilder {
   build(): BuiltMountGeneratedFile[] {
     const context = this.context;
     const pluginNames = context.profiledPluginPaths.map((path) => basename(path));
+    const nativeHookCommand = [
+      process.execPath,
+      join(context.scoutRoot, "dist", "src", "agent-server", "codex", "codex-native-hook.js"),
+      "--run-id",
+      context.runId,
+      "--agent-id",
+      context.agentId,
+      "--state-root",
+      context.tempRoot,
+    ].map(quoteShellArgument).join(" ");
     return [
       {
         path: ".codex/config.toml",
@@ -42,7 +52,36 @@ export class MountGeneratedFilesBuilder {
       },
       {
         path: ".codex/hooks.json",
-        content: "{\n  \"hooks\": []\n}\n",
+        content: renderJson({
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "^Bash$",
+                hooks: [
+                  {
+                    type: "command",
+                    command: nativeHookCommand,
+                    async: false,
+                    timeout: 5,
+                  },
+                ],
+              },
+            ],
+            PostToolUse: [
+              {
+                matcher: "^Bash$",
+                hooks: [
+                  {
+                    type: "command",
+                    command: nativeHookCommand,
+                    async: false,
+                    timeout: 5,
+                  },
+                ],
+              },
+            ],
+          },
+        }),
       },
       {
         path: ".agents/plugins/marketplace.json",
@@ -71,4 +110,8 @@ export class MountGeneratedFilesBuilder {
 
 function renderJson(value: unknown): string {
   return JSON.stringify(value, null, 2) + "\n";
+}
+
+function quoteShellArgument(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }

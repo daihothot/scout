@@ -610,6 +610,49 @@ test("AssetStore reports the failing generated file and errno during inspection"
   assert.doesNotMatch(inspection.reason ?? "", /^mount verification failed$/);
 });
 
+test("AssetStore mounts the Scout command approval native hook", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-command-approval-hook-");
+  const mount = new AssetStore().materializeMount({
+    scoutRoot: fixtureRoot,
+    runId: "run-command-approval-hook",
+    agentId: "coordinator",
+  });
+  const hooks = JSON.parse(
+    readFileSync(join(mount.mountRoot, ".codex", "hooks.json"), "utf8"),
+  ) as {
+    hooks: {
+      PreToolUse: Array<{
+        matcher: string;
+        hooks: Array<{ type: string; command: string; async: boolean; timeout: number }>;
+      }>;
+      PostToolUse: Array<{
+        matcher: string;
+        hooks: Array<{ type: string; command: string; async: boolean; timeout: number }>;
+      }>;
+    };
+  };
+
+  assert.equal(hooks.hooks.PreToolUse[0]?.matcher, "^Bash$");
+  assert.deepEqual(hooks.hooks.PreToolUse[0]?.hooks.map((hook) => ({
+    type: hook.type,
+    async: hook.async,
+    timeout: hook.timeout,
+  })), [{
+    type: "command",
+    async: false,
+    timeout: 5,
+  }]);
+  assert.match(
+    hooks.hooks.PreToolUse[0]?.hooks[0]?.command ?? "",
+    /codex-native-hook\.js'.*--run-id'.*run-command-approval-hook'.*--agent-id'.*coordinator'.*--state-root'/,
+  );
+  assert.equal(hooks.hooks.PostToolUse[0]?.matcher, "^Bash$");
+  assert.equal(
+    hooks.hooks.PostToolUse[0]?.hooks[0]?.command,
+    hooks.hooks.PreToolUse[0]?.hooks[0]?.command,
+  );
+});
+
 test("AssetStore rebuilds an invalid mount manifest with its parse diagnostic", () => {
   const fixtureRoot = createCodexAssetFixture("scout-invalid-mount-manifest-");
   const store = new AssetStore();

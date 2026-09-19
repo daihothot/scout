@@ -310,7 +310,7 @@ export class CodexAppServerClient {
     if (this.stderrLogPath) mkdirSync(dirname(this.stderrLogPath), { recursive: true });
     if (this.transportLogPath) mkdirSync(dirname(this.transportLogPath), { recursive: true });
     this.onDynamicToolCall = options.onDynamicToolCall;
-    this.child = spawn(options.codexPath, ["app-server"], {
+    this.child = spawn(options.codexPath, ["--dangerously-bypass-hook-trust", "app-server"], {
       env,
       stdio: ["pipe", "pipe", "pipe"],
     });
