@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: tool-rbt-behavior
 description: 通过 JarvisBehavior dynamic tool 执行一个 RBT execute-file，或发送一条只读 Behavioral 查询命令。
 id: tool-rbt-behavior
-version: 0.3.0
+version: 0.7.0
 type: tool
 family: [tool, rbt, behavior]
 tags: [rbt, behavior, dynamic-tool, campaign, evidence]
@@ -46,7 +46,7 @@ summary: 规范 JarvisBehavior 的执行文件入口、只读查询入口和 Age
 ```
 
 - `command` 和 `payload` 必须同时存在。
-- `payload` 直接使用当前 Behavioral command schema，不增加 request envelope。
+- `payload` 按本技能的命令约定与 Runtime 返回的 descriptor 填写，不增加 request envelope。
 - 当前 Phase 允许哪些查询由 RBT Domain 决定；本技能不按角色分配权限。
 
 ## Agent Input Boundary
@@ -60,13 +60,13 @@ summary: 规范 JarvisBehavior 的执行文件入口、只读查询入口和 Age
 - schema path；
 - Jarvis CLI 与宿主 shell 输入输出。
 
-当前平台前提是存在唯一、人工已准备并可连接的 Unity Editor。调用方不需要为 `JarvisBehavior` 预先调用 `UnityPipeline`。
+Runtime 在发送 Behavioral 命令前确认唯一可用的 Unity Editor、编译与 Domain Reload 状态，并准备 Play Mode。调用方直接使用本工具，消费执行结果或平台门禁错误。
 
 ## Read-only Commands
 
 | command | payload 的关键输入 | 成功结果主要读取 |
 | --- | --- | --- |
-| `behavior.registry.nodes` | `{}` | `nodes` descriptors。 |
+| `behavior.registry.nodes` | RBT 查询须同时提供 `domain`、`category` | 当前筛选范围内的 `nodes` descriptors。 |
 | `behavior.node.variants` | `id` | 该 node 的 `variants` 和 `paramsSchema`。 |
 | `behavior.evidence.sources` | `{}` | `sources`、kind 与 query capabilities。 |
 | `behavior.trigger.commands` | `{}` | trigger identities、`paramsSchema` 与 `resultSchema`。 |
@@ -77,11 +77,13 @@ summary: 规范 JarvisBehavior 的执行文件入口、只读查询入口和 Age
 
 ### Query Constraints
 
+- `behavior.registry.nodes` 必须同时传入已确定的 `domain`、`category`，使用 Runtime 实际分类名称；禁止空 payload 或省略其中一个字段来扩大查询。
 - identity、variant、operator、field 和参数只能使用当前查询实际返回的 descriptor。
 - `behavior.evidence.query` 的 `sinceSequence` 针对 live record 自身的 sequence，不是 Campaign Journal cursor；当前 source 若返回 `sequence: 0`，传 `sinceSequence: 0` 会将其过滤掉。
 - 同时使用 `match` 和 `fields` 时，`fields` 必须包含全部 match 字段；Runtime 会在投影结果上再次执行 match，缺字段可能得到意外空结果。
 - `limit: 0` 会成功返回空结果。
 - `behavior.campaign.query` 的 campaign `evidenceCount` 是完整 Journal 数量，不一定等于过滤后的 `evidence.length`。
+- 同一 execution identity、command 和 payload 已取得成功结果后复用该结果；Runtime 没有报告状态变化时不得重复发送相同查询。失败后的处理只遵循调用方 Domain Skill 的重试边界。
 
 ## Execute-file Commands
 
@@ -91,7 +93,6 @@ summary: 规范 JarvisBehavior 的执行文件入口、只读查询入口和 Age
 | --- | --- | --- |
 | `behavior.campaign.start` | `campaignId`、`scenarioId`；可选 root/name/capabilities | 开始本次 campaign history。 |
 | `behavior.scenario.activate` | `scenarioId`、`rootId`；可选 `activations`（每项使用 `id`、`variantId`）/`evidenceCapture` | 激活唯一 Scenario。 |
-| `behavior.evidence.capture` | `campaignId`、`captureId` | 执行已声明 capture。 |
 | `behavior.trigger.invoke` | `triggerCommandId`；可选 `scenarioId`、`params` | 执行唯一 trigger。 |
 | `behavior.scenario.deactivate` | `scenarioId` | 移除 Scenario 和 rules，不停止 campaign。 |
 | `behavior.campaign.stop` | `campaignId` | 停止 campaign，不移除 Scenario 或 rules。 |
@@ -110,6 +111,8 @@ summary: 规范 JarvisBehavior 的执行文件入口、只读查询入口和 Age
   "captures": [
     {
       "captureId": "<capture-id>",
+      "nodeId": "<node-id>",
+      "timing": "<before|after|error>",
       "sourceId": "<evidence-source-id>",
       "kind": "state_snapshot",
       "fields": ["<field>"]
@@ -118,7 +121,7 @@ summary: 规范 JarvisBehavior 的执行文件入口、只读查询入口和 Age
 }
 ```
 
-每个 `captures[]` 项必须包含 `captureId`、`sourceId` 和 `kind`；`match`、`fields`、`limit` 按对应 EvidenceSource contract 选填。`behavior.evidence.capture` 只引用这里声明的 `captureId`。
+每个 `captures[]` 项必须包含 `captureId`、`nodeId`、`timing`、`sourceId` 和 `kind`；`timing` 只接受 `before | after | error`，表示在整个 `nodeId` 的对应执行边界采集。`variantId` 只在该 capture 必须限定到该 Node 的某个已注册 Variant 时填写；没有此限定时应省略。`match`、`fields`、`limit` 按对应 EvidenceSource contract 选填。Runtime 在指定 Node 的实际执行边界自动采集，execute-file 不发送独立 capture 命令。
 - 某条 mutation 失败后，Runtime 跳过依赖它的普通命令，只继续当前实际状态所需的 deactivate/stop。
 
 ## Agent-visible Results
@@ -186,7 +189,6 @@ summary: 规范 JarvisBehavior 的执行文件入口、只读查询入口和 Age
 ## Prohibited
 
 - 不传 request envelope、version、correlationId、endpoint、timeout 或 session。
-- 不为启动、停止或确认 Play Mode 预先调用 `UnityPipeline`。
 - 不通过单条查询入口发送 campaign mutation。
 - 不逐条重放 execute-file 中的 mutation。
 - 不根据空结果、命令成功或 execute-file 成功自行推断 BDD 结论。

@@ -9,6 +9,16 @@ const ID_PATTERN = /^(?:JR|SR)-[0-9]+$/;
 main(process.argv.slice(2));
 
 function main(args) {
+  if (args.length === 1 && (args[0] === "--help" || args[0] === "-h")) {
+    process.stdout.write([
+      "Usage:",
+      "  rbt-review-report --input <review-result.json> --output <review-report.html>",
+      "  rbt-review-report --help|-h",
+      "  rbt-review-report --smoke",
+      "",
+    ].join("\n"));
+    return;
+  }
   if (args.length === 1 && args[0] === "--smoke") {
     process.stdout.write("RBT_REVIEW_REPORT_OK\n");
     return;
@@ -104,7 +114,7 @@ function validatePoint(point, index, ids) {
 
 function validateRefs(refs, index) {
   if (!isObject(refs)) throw new Error(`timeline[${index}].refs 必须是对象。`);
-  for (const key of ["journal", "signal", "runtime", "code"]) {
+  for (const key of ["bdd", "journal", "signal", "runtime", "code"]) {
     if (refs[key] !== undefined && (!Array.isArray(refs[key]) || !refs[key].every((value) => typeof value === "string"))) {
       throw new Error(`timeline[${index}].refs.${key} 必须是字符串数组。`);
     }
@@ -112,7 +122,7 @@ function validateRefs(refs, index) {
 }
 
 function normalizeRefs(refs) {
-  return Object.fromEntries(["journal", "signal", "runtime", "code"].map((key) => [
+  return Object.fromEntries(["bdd", "journal", "signal", "runtime", "code"].map((key) => [
     key,
     refs?.[key] ?? [],
   ]));

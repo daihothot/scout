@@ -1440,7 +1440,7 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
   assert.equal(researcherMount.shellTools.some((tool) => tool.id === "unity"), false);
 });
 
-test("AssetStore mounts RBT guidance without exposing its host runtime commands", () => {
+test("AssetStore mounts RBT Executor guidance without exposing its host runtime commands", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-rbt-platform-");
   const store = new AssetStore();
 
@@ -1451,11 +1451,12 @@ test("AssetStore mounts RBT guidance without exposing its host runtime commands"
     workflowProfileName: "rbt",
   });
   assert.ok(hasSkill(executorMount.skills, "domain-rbt-executor"));
-  assert.ok(hasSkill(executorMount.skills, "tool-unity-pipeline"));
+  assert.equal(hasSkill(executorMount.skills, "tool-unity-pipeline"), false);
   assert.ok(hasSkill(executorMount.skills, "tool-rbt-behavior"));
   assert.equal(executorMount.shellTools.some((tool) => tool.id === "unity"), false);
   assert.ok(executorMount.shellTools.some((tool) => tool.id === "jarvis-codebase"));
   assert.ok(executorMount.shellTools.some((tool) => tool.id === "codegraph"));
+  assert.ok(executorMount.shellTools.some((tool) => tool.id === "scoutRbtArtifactCheck"));
   assert.equal(executorMount.readableRoots.includes(fixtureRoot), false);
   assert.ok(executorMount.readableRoots.includes(join(
     homedir(),
@@ -1477,7 +1478,11 @@ test("AssetStore mounts RBT guidance without exposing its host runtime commands"
   )), false);
   assert.equal(executorMount.readableRoots.some((root) => root.includes("UnityHub")), false);
   assert.equal(executorMount.writableRoots.some((root) => root.includes("UnityHub")), false);
+});
 
+test("AssetStore mounts RBT Reviewer guidance without codebase access or host runtime commands", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-asset-store-rbt-reviewer-");
+  const store = new AssetStore();
   const reviewerMount = store.materializeMount({
     scoutRoot: fixtureRoot,
     runId: "run-rbt-platform-reviewer-test",
@@ -1485,22 +1490,30 @@ test("AssetStore mounts RBT guidance without exposing its host runtime commands"
     workflowProfileName: "rbt",
   });
   assert.ok(hasSkill(reviewerMount.skills, "domain-rbt-reviewer"));
+  assert.equal(hasSkill(reviewerMount.skills, "domain-rbt-execution-pack"), false);
+  assert.equal(hasSkill(reviewerMount.skills, "tool-jarvis-codebase"), false);
   assert.equal(hasSkill(reviewerMount.skills, "tool-unity-pipeline"), false);
   assert.ok(hasSkill(reviewerMount.skills, "tool-rbt-behavior"));
   assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "unity"), false);
   assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "jarvis-codebase"), false);
+  assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "codegraph"), false);
+  assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "scoutRbtArtifactCheck"), false);
+  assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "scoutArtifactDigest"), false);
+  assert.ok(reviewerMount.shellTools.some((tool) => tool.id === "scoutJsonWrite"));
   assert.ok(reviewerMount.shellTools.some((tool) => tool.id === "rbtReviewReport"));
   assert.equal(existsSync(join(reviewerMount.mountRoot, "bin", "rbt-review-report")), true);
   assert.equal(
     execFileSync(join(reviewerMount.mountRoot, "bin", "rbt-review-report"), ["--smoke"], { encoding: "utf8" }).trim(),
     "RBT_REVIEW_REPORT_OK",
   );
-  assert.ok(reviewerMount.readableRoots.includes(join(
+  assert.equal(reviewerMount.readableRoots.includes(join(
     homedir(),
     ".guru",
     "codebase",
     "gurusdk-unity",
-  )));
+  )), false);
+  assert.equal(reviewerMount.readableRoots.some((root) => root.includes("gurusdk-unity")), false);
+  assert.equal(reviewerMount.writableRoots.some((root) => root.includes("gurusdk-unity")), false);
   assert.equal(reviewerMount.writableRoots.some((root) => root.includes("UnityHub")), false);
 });
 

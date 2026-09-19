@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: domain-rbt-coordinator
 description: Scout Coordinator 在 RBT Domain 中将人的测试意图收敛为唯一 BDD，并把当前 Phase 的工作交给对应 Worker。
 id: domain-rbt-coordinator
-version: 0.3.0
+version: 0.7.0
 type: domain
 domain: rbt
 phase: [Synthesis]
@@ -13,7 +13,7 @@ devices: [any]
 dependencies:
   skills:
     required: [tool-guru-knowledge, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.coordinator.**]
-summary: 定位唯一 BDD，指派当前 Phase 的 Worker，并消费正式 handoff。
+summary: 定位唯一 BDD，转交 Execute/Review 输入，消费正式 handoff 并协调无需重跑的交付修正。
 ---
 
 # Domain RBT Coordinator
@@ -39,11 +39,10 @@ BDD 的读取方法由 `tool-guru-knowledge` 所有；执行、artifact 和审�
 - 人的自然语言意图不是 BDD fact；只有 Knowledge 中唯一且可定位的 Behavior 才能作为当前输入。
 - `tool-guru-knowledge` 只用于定位和完整读取 Behavior，Coordinator 核对结果是否唯一、一致。
 - Coordinator 使用 `AssignTask`，不自行选择 role、Worker 或 phase，不制定 Executor 执行计划。
-- Coordinator 只把已确认输入、稳定 source ref、边界和交付要求交给 Worker。
+- Coordinator 只把目标、已确认输入、稳定 refs、边界和用户限制交给 Worker；交付要求引用该 Worker 的领域契约，不重定义格式、字段或状态。
 - `status: assigned` 只表示 task 已创建；不能表示 Worker 已开始或完成。
 - 普通消息、progress、工具活动和 Coordinator 摘要不能替代 formal handoff。
 - `execution_only: true` 时，消费 Executor handoff 后交付本轮结果，不创建 Reviewer task，也不推进 review。
-- 当前没有 Review Pack formal contract 时，不创建 Reviewer task，不发明 review 字段或结论。
 
 ## Inputs
 
@@ -57,9 +56,7 @@ Optional：
 
 - `bdd_identity`：人已明确提供的 canonical Behavior `id`；没有时为 `none`。
 - `bdd_source_ref`：人已明确提供的 Knowledge source ref；没有时为 `none`。
-- `human_constraints`：人已确认的执行限制；没有时为 `none`。
-- `platform_type`：人已明确指定的平台类型；没有时为 `none`。
-- `platform_constraints`：人已确认的平台限制；没有时为 `none`。
+- `human_constraints`：人已确认的执行限制，包括明确的环境限制；没有时为 `none`。
 - `execution_only`：人明确要求只执行当前 execute 时为 `true`；没有时为 `false`。
 
 Missing：
@@ -83,7 +80,9 @@ Required：
 Optional：
 
 - 当前 Phase 的 active task；没有时为 `none`；
-- 当前 task 的 formal handoff；尚未提交时为 `none`。
+- 当前 task 的 formal handoff；尚未提交时为 `none`；
+- 已有 Execute 正式交付及 Runtime 提供的执行定位引用；尚未产生时为 `none`；
+- Reviewer 正式提出的 correction request 及对应原 Executor task；没有时为 `none`。
 
 Rules：
 
@@ -96,7 +95,7 @@ Rules：
 本技能不创建 canonical artifact。
 
 - BDD result：唯一 `bdd_identity`、`bdd_source_ref`、已核对的场景摘要和限制；
-- Execute task：BDD identity、BDD source ref、已确认输入、边界、Executor 交付目标和 handoff 要求；
+- Worker task：当前 Phase 的目标、已确认输入、正式 refs、边界和用户限制；要求按该 Worker 的领域契约交付；
 - Phase outcome：只提交当前 Phase formal handoff 支持的 `completed` 或 `error`；
 - 面向用户的综合：只引用正式 handoff、稳定 refs、Runtime 状态和用户确认。
 
@@ -166,8 +165,9 @@ Returns To Main Flow：
 Knowledge：
 
 - `current_phase` 只来自 `<workflow_phase>`；
-- 当前 execute task 的交付 contract 由 `domain-rbt-executor` 和相关 Pack Skill 定义；
-- Coordinator 只传递输入和边界，不制定执行计划。
+- Execute 和 Review 的工作及交付分别由 `domain-rbt-executor`、`domain-rbt-reviewer` 及各自 Pack Skill 定义；
+- Coordinator 只引用这些职责边界，不读取或复制 Worker Skill/模板，也不检查其私有 mount；
+- Skill 按角色和 phase 提供；Coordinator 自己未挂载 Reviewer Skill，不表示 Review 能力缺失。真实资源问题由 Reviewer 或 Runtime 报告。
 
 Flow：
 
@@ -179,27 +179,32 @@ flowchart TD
   D --> E{"status: assigned？"}
   E -- "是" --> F["task assigned"]
   E -- "否" --> G["waiting"]
-  B -- "是" --> H["等待原 task handoff"]
+  B -- "是" --> H["有正式补充则传给原 task，否则等待 handoff"]
   F --> I["返回主干"]
   G --> I
   H --> I
 ```
 
-Subflow — Execute：
+Task Inputs：
+
+| 当前 Phase / 工作 | 转交输入 | 任务目标 |
+| --- | --- | --- |
+| Execute 首次执行 | 已确认的 BDD identity、BDD source ref、场景边界和用户限制 | 按 Executor 契约完成本次执行及正式交付 |
+| Review | Execute 正式交付的 BDD identity、目标版本、Pack 与 execute-file 定位引用，以及 Runtime 提供的精确 `executor_history_ref` | 按 Reviewer 契约从 history 取得执行 identity，比较 JR/SR 与本次 campaign evidence，形成审查交付 |
+| Execute correction | Reviewer 正式指出的输入缺口、相关 refs，以及原 Executor task identity | 仅修正无需新增执行事实的交付问题 |
 
 Constraints：
 
-- task 必须包含 BDD identity、BDD source ref、已确认限制、边界、交付目标和 handoff 要求；
+- task 的交付要求仅说明按当前 Worker 的领域契约生成正式产物并提交 handoff；不列出另一套 artifact 格式、字段清单或状态枚举；
 - 不传 `phase`、`role` 或 Agent；Runtime 根据当前 Phase 路由；
-- 不读取、解释或修改 Execution Pack；
-- correction 只在实际 contract 定义后投递原 task，不创建新 task，不要求 Coordinator 产生新的 Runtime 事实。
+- 正式 refs 和 Runtime 提供的 `executor_history_ref` 原样转交；缺失或冲突时向来源方追问，不从 Pack 正文、私有日志、命名或普通消息猜测补齐；
+- 当前 phase 已有 task 时向原 task 传递正式补充，不重复分配。
 
 Blocked：
 
 - `current_phase` 缺失或不属于当前 Workflow Profile；
 - task 必需输入不完整；
-- `AssignTask` 返回错误或非 `assigned` 且没有可等待的原 task；
-- 当前 Review Pack contract 不存在。
+- `AssignTask` 返回错误或非 `assigned` 且没有可等待的原 task。
 
 Partial：
 
@@ -216,8 +221,15 @@ Returns To Main Flow：
 
 Review：
 
-- 当前没有 Review Pack formal contract 时，只报告 `blocked`；
-- contract 建立后再补充最小 Review task 输入和 handoff 规则，不在本技能中预先发明流程图。
+- 进入 review 且交接输入齐备时，派发 Reviewer task；Review Pack 是 Reviewer 生成的输出，不是派单前要求 Executor 提供的输入。
+- Coordinator 只转交定位和关联信息；JR/SR 的消费、证据比较、输入缺口判断及报告生成由 Reviewer 负责。
+
+Correction：
+
+- 只接受 Reviewer formal handoff 中明确指出的交付输入缺口；必须能用已有依据修正，且无需新执行事实。
+- 按 Phase outcome 规则返回 execute 后，用 `SendMessage` 将原缺口和 refs 交给原 Executor task；不新建执行任务，不替 Executor 规定修改内容或格式。
+- 等待原 Executor 的更正 handoff，再按当前 phase 推进；回到 review 后，将更正的正式 refs 交给原 Reviewer task 继续审查。
+- 需要新 trigger、capture 或其它新执行事实的缺口不进入 correction；保留 Reviewer 的证据不足或执行无效结论，不请求重跑。
 
 ### Phase 3: Deliver Current Phase
 
@@ -226,6 +238,17 @@ Knowledge：
 - 只消费当前 task 的 formal handoff；
 - `execution_only` 为 `true` 时，Executor handoff 是本轮交付边界；
 - 非 `execution_only` 时，按 Workflow Profile 和实际 handoff contract 提交 Phase outcome。
+
+Execution Pack 只在完整时交付；审查结论由 Reviewer 形成，Phase outcome 由 Coordinator 根据当前任务的交付决定。
+
+| 当前正式交付 | Coordinator 的流转处理 |
+| --- | --- |
+| Execute 已完成本轮工作，正式交付与 Runtime 的精确 `executor_history_ref` 均满足 Review 输入 | 提交 `completed`；`execution_only` 时直接交付并结束 |
+| Review 已形成完整审查交付，包括不匹配、证据不足或执行无效结论 | 提交 `completed`，原样保留结论与限制 |
+| Review 正式提出符合上述边界的 correction request | 提交 `error`，由 Runtime 按 Workflow Profile 返回 execute；下个 response 再向原 Executor task 转交修正 |
+| handoff 尚未到达、缺少交接输入或仍有未解决 Human Input | 保留原 task，等待或追问具体缺口；不凭状态名称猜测流转 |
+
+实际任务失败按正式事实和 Workflow Profile 处理；`review:error` 会返回 execute，不能用它表示业务预期不匹配或一般证据不足，也不能据此启动新的执行。
 
 Flow：
 
@@ -242,8 +265,7 @@ flowchart TD
 Constraints：
 
 - `status: assigned` 不得当作 Worker 完成；
-- Executor handoff 的 Pack 状态不等于 BDD coverage 结论；
-- 不把 `partial`、`blocked` 或证据不足改写成通过；
+- 没有完整 Executor handoff 时不得推进 Review；
 - `SubmitPhaseOutcome` 接受后立即结束当前 response，不在同一 response 中处理下一 Phase。
 
 Blocked：
@@ -285,16 +307,16 @@ Exit：
 
 - PR-001：禁止 Coordinator 使用 Behavioral WebSocket 执行、复现或审查测试。
 - PR-002：禁止 Coordinator 读取、创建、补写、解释或修改 Execution Pack、Review Pack 或 Worker artifact。
-- PR-003：禁止因 Reviewer 尚未有 contract 而发明 review 字段、结论或 correction 流程。
 - PR-004：禁止通过新 task 绕过原 task 的人工确认或 handoff。
 
 ## Checklist
 
 - 当前 `workflow_phase` 的 domain 和 phase 已确认。
 - BDD identity 唯一，source ref 可读且与 Behavior identity 一致。
-- Execute task 包含已确认输入、稳定 refs、边界和交付要求。
+- Worker task 包含当前 Phase 所需的已确认输入、正式 refs、边界和用户限制，交付要求引用 Worker 契约。
 - `AssignTask` 没有传 phase、role 或 Agent。
 - assigned、waiting、handoff ready 和 blocked 没有混用。
 - 当前 response 在 assignment、handoff 或 Phase outcome 后结束。
 - execution-only 没有创建 Reviewer task。
+- Review 正常结论与 correction 已区分；修正只使用原 task 和已有执行事实。
 - 没有复制 Tool contract 或 Worker artifact contract。

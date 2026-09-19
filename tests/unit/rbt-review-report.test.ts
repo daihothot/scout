@@ -12,6 +12,13 @@ import test from "node:test";
 
 const script = join(process.cwd(), "assets/codex/skills/domain-rbt-review-pack/scripts/render-review-report.mjs");
 
+test("RBT review report help succeeds without input files", () => {
+  for (const helpFlag of ["--help", "-h"]) {
+    const output = execFileSync(process.execPath, [script, helpFlag], { encoding: "utf8" });
+    assert.match(output, /^Usage:/);
+  }
+});
+
 test("RBT review report renderer computes overall status and renders all timeline details", () => {
   const root = mkdtempSync(join(tmpdir(), "scout-rbt-review-report-"));
   try {
@@ -29,20 +36,31 @@ test("RBT review report renderer computes overall status and renders all timelin
           id: "JR-001",
           title: "预期触发顺序",
           status: "match",
-          expected: { sequence: 1 },
-          actual: { sequence: 1 },
+          expected: { order: 1, kind: "stateSnapshot", sourceId: "account-state", signal_refs: ["SR-001"] },
+          actual: { recordLocator: "evidence[0]", sequence: 1 },
           comparison: "顺序一致。",
-          refs: { journal: ["JR-001"] },
+          refs: { journal: ["JR-001"], signal: ["SR-001"], runtime: ["evidence[0]"] },
         },
         {
           id: "SR-001",
           title: "恢复后账号状态",
           status: "warning",
-          expected: "Initialized",
-          actual: "<缺少字段>",
+          expected: {
+            claim: "恢复完成后账号已初始化。",
+            expected_presence: "present",
+            observation_scope: "本次 campaign 中恢复完成后的 account-state 快照。",
+            fields: [
+              { field: "sourceId", role: "locate", expected_value: "account-state", comparison: "equals" },
+              { field: "data.state", role: "assert", expected_value: "Initialized", comparison: "equals" },
+            ],
+          },
+          actual: {
+            records: [{ sourceId: "account-state", sequence: 1, data: {} }],
+            field_comparisons: [{ field: "data.state", actual_value: "<缺少字段>", result: "unresolved" }],
+          },
           comparison: "证据不足，无法完整比较。",
           note: "保留为注意。",
-          refs: { signal: ["SR-001"], code: ["E-CODE-001"] },
+          refs: { bdd: ["E-BDD-001#T-01"], signal: ["SR-001"], code: ["E-CODE-001"] },
         },
         {
           id: "SR-002",
@@ -63,6 +81,10 @@ test("RBT review report renderer computes overall status and renders all timelin
     assert.match(html, /SR-001/);
     assert.match(html, /SR-002/);
     assert.match(html, /&lt;缺少字段&gt;/);
+    assert.match(html, /signal_refs/);
+    assert.match(html, /observation_scope/);
+    assert.match(html, /data\.state/);
+    assert.match(html, /field_comparisons/);
     assert.match(html, /aria-controls="detail-0"/);
     assert.match(html, /document\.querySelectorAll/);
   } finally {
@@ -92,7 +114,7 @@ test("RBT review report renderer rejects invalid timeline points", () => {
     }));
     assert.throws(
       () => execFileSync(process.execPath, [script, "--input", input, "--output", output], { encoding: "utf8", stdio: "pipe" }),
-      /JR-\* 或 SR-\*/,
+      /必须是 JR-\* 或 SR-\*/,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

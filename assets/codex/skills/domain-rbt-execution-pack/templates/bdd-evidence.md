@@ -6,19 +6,9 @@ scout:
 artifact_type: RBTBDDEvidence
 artifact_version: 1
 evidence_id: E-BDD-001
-status: draft
-completion_state: partial
 ---
 
 # BDD Evidence
-
-## Evidence State
-
-- evidence_id: E-BDD-001
-- status: <填写 draft、ready 或 blocked>
-- completion_state: <填写 partial、complete 或 blocked>
-- blocking_items: <无阻塞项时填写 none；否则说明阻塞事实>
-- limitations: <无已知限制时填写 none；否则说明适用边界>
 
 ## BDD Identity
 
@@ -48,9 +38,3 @@ completion_state: partial
 ## Boundaries
 
 - <填写 BDD 明确排除的行为、后置能力和相邻场景；技术值保持原样>
-
-## Supports
-
-- <填写该 BDD evidence 支持的 JR-* 与 SR-* IDs>
-
-Frontmatter 与 `Evidence State` 中的 `status`、`completion_state` 必须完全一致。

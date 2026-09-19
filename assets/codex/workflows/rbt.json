@@ -91,13 +91,12 @@
       ],
       "network": true
     },
-      "rbt-review": {
+    "rbt-review": {
       "phases": [
         "review"
       ],
       "shellTools": [
         "scoutJsonWrite",
-        "scoutArtifactDigest",
         "rbtReviewReport",
         "rg",
         "find",
@@ -112,8 +111,7 @@
       "mcpServers": [],
       "plugins": [],
       "readableRoots": [
-        "~/.guru/knowledge",
-        "~/.guru/codebase/gurusdk-unity"
+        "~/.guru/knowledge"
       ],
       "writableRoots": [
         "~/.guru/jarvis/runtime"

@@ -80,27 +80,34 @@ test("RBT roles receive only their Execution Pack and Signal responsibilities", 
   assert.equal(coordinator.some((name) => name.startsWith("signal-") && name.includes("rbt")), false);
 
   for (const inventory of [executor, reviewer]) {
-    assert.ok(inventory.includes("domain-rbt-execution-pack"));
     assert.ok(inventory.includes("signal-rbt-evidence"));
-    assert.ok(inventory.includes("signal-rbt-evidence-via-rbt-behavior"));
-    assert.ok(inventory.includes("signal-rbt-behavior-trace-by-rbt-evidence"));
-    assert.ok(inventory.includes("signal-rbt-state-snapshot-by-rbt-evidence"));
-    assert.ok(inventory.includes("signal-rbt-state-snapshot-via-rbt-behavior"));
-    assert.ok(inventory.includes("signal-rbt-error-by-rbt-evidence"));
-    assert.ok(inventory.includes("signal-account-state-by-rbt-state-snapshot"));
-    assert.equal(inventory.includes("signal-rbt-evidence-source"), false);
-    assert.equal(inventory.includes("signal-rbt-evidence-source-via-jarvis-behavior"), false);
-    assert.equal(inventory.includes("signal-account-state-by-rbt-evidence-source"), false);
+    assert.equal(inventory.includes("signal-rbt-behavior-trace-by-rbt-evidence"), false);
+    assert.equal(inventory.includes("signal-rbt-state-snapshot-by-rbt-evidence"), false);
+    assert.equal(inventory.includes("signal-rbt-state-snapshot-via-rbt-behavior"), false);
+    assert.equal(inventory.includes("signal-rbt-error-by-rbt-evidence"), false);
+    assert.equal(inventory.includes("signal-account-state-by-rbt-state-snapshot"), false);
   }
   assert.ok(executor.includes("domain-rbt-executor"));
+  assert.ok(executor.includes("domain-rbt-execution-pack"));
   assert.equal(executor.includes("domain-rbt-reviewer"), false);
-  assert.ok(executor.includes("tool-unity-pipeline"));
+  assert.equal(executor.includes("signal-rbt-evidence-via-rbt-behavior"), false);
+  assert.equal(executor.includes("tool-unity-pipeline"), false);
   assert.ok(executor.includes("tool-rbt-behavior"));
   assert.ok(reviewer.includes("domain-rbt-reviewer"));
   assert.ok(reviewer.includes("domain-rbt-review-pack"));
+  assert.equal(reviewer.includes("domain-rbt-execution-pack"), false);
+  assert.equal(reviewer.includes("tool-jarvis-codebase"), false);
+  assert.ok(reviewer.includes("signal-rbt-evidence-via-rbt-behavior"));
   assert.equal(reviewer.includes("domain-rbt-executor"), false);
   assert.equal(reviewer.includes("tool-unity-pipeline"), false);
   assert.ok(reviewer.includes("tool-rbt-behavior"));
+
+  const reviewerDependencies = resolveSkillDependencyLoadOrder(catalog, ["domain-rbt-reviewer"])
+    .map((skill) => skill.name);
+  assert.equal(reviewerDependencies.includes("domain-rbt-execution-pack"), false);
+  assert.equal(reviewerDependencies.includes("tool-jarvis-codebase"), false);
+  assert.ok(reviewerDependencies.includes("domain-rbt-review-pack"));
+  assert.ok(reviewerDependencies.includes("signal-rbt-evidence-via-rbt-behavior"));
 });
 
 test("Scout Skill resources retain resource-level required and optional metadata", () => {

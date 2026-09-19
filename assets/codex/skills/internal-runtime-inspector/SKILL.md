@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: internal-runtime-inspector
 description: 当前 role 需要使用 pwd、scout-assets 和已物化 Shell Tool 定位 Scout Runtime 资源、解析访问路径或诊断资源缺失时使用。
 id: internal-runtime-inspector
-version: 1.0.0
+version: 1.1.0
 type: internal
 phase: [Internal]
 family: [internal, general]
@@ -52,7 +52,7 @@ summary: 使用当前 mount 的稳定查询入口定位 Scout Runtime 资源并�
 | `<phase-a>`、`<phase-b>` | 示例中的实际 Phase 名称；仅用于说明多个 Phase 的分组。 |
 | `<family-name>` | `scout-assets family` 返回或当前上下文明确提供的一个 family 名称。 |
 | `<family-name-or-path>` | 一个 family 名称或完整的点分隔 `family-path`。 |
-| `<family-path>` | 用于 family 查询和 wildcard 依赖声明的点分隔值；例如 `signal.local.unity.general`。 |
+| `<family-path>` | 用于 family 查询和 wildcard 依赖声明的点分隔值。 |
 | `<family-segment>` | `family-path` 中的一个实际段；多个段按 `.` 连接。 |
 | `<child-family>` | 非叶节点查询返回的下一层 family 的实际名称段。 |
 | `<skill-name>` | 需要定位的实际 Skill identity。 |
@@ -75,9 +75,11 @@ summary: 使用当前 mount 的稳定查询入口定位 Scout Runtime 资源并�
 pwd
 ```
 
-`pwd` 的输出是当前 shell 的实际目录。`scout-assets` 必须从当前 `mount` 运行；不要使用旧 run 或其它设备的路径替换当前输出。当前目录已经确定时不重复执行 `pwd`。
+`pwd` 的输出是当前 shell 的实际目录。`scout-assets` 的资源查询必须从当前 `mount` 运行；不要使用旧 run 或其它设备的路径替换当前输出。当前目录已经确定时不重复执行 `pwd`。
 
-### Inspect Summary
+`scout-assets --help` 与 `scout-assets <子命令> --help` 返回用法并以退出码 0 结束，无需 mount manifest。输出可预估、合并后有界且彼此独立的元数据查询可并发执行；完整 Skill/规则正文仍按 `AGENTS.md` 单独读取。
+
+### Inspect Summary And Current Role Tools
 
 场景：不知道当前 `role` 参与的 Phase、使用的 Resource Park、可访问路径或资源是否已经物化。
 
@@ -91,7 +93,7 @@ scout-assets
 scout-assets summary
 ```
 
-以下示例中，`<resource-park-name>` 表示当前 `role` 使用的一个实际 Resource Park 名称，`<absolute-profile-path>` 表示当前设备上的一个实际绝对路径。
+以下示例中，`<resource-park-name>` 表示当前 `role` 使用的一个实际 Resource Park 名称，`<absolute-profile-path>` 表示当前设备上的一个实际绝对路径；`<tool-skill-name>`、`<shell-tool-id>` 和 `<mcp-server-name>` 分别表示当前 `role` 已物化的一项 Tool Skill、Shell Tool 和 MCP Server 标识。
 
 示例输出（关键字段）：
 
@@ -117,7 +119,12 @@ scout-assets summary
       }
     ]
   },
-  "counts": { "skills": 0, "shellTools": 0, "mcpServers": 0, "plugins": 0, "issues": 0 }
+  "counts": { "skills": 0, "shellTools": 0, "mcpServers": 0, "plugins": 0, "issues": 0 },
+  "phaseTools": {
+    "skills": [{ "name": "<tool-skill-name>" }],
+    "shellTools": [{ "id": "<shell-tool-id>", "commandPathKind": "absolute" }],
+    "mcpServers": [{ "name": "<mcp-server-name>" }]
+  }
 }
 ```
 
@@ -130,6 +137,7 @@ scout-assets summary
 - `profileRoots[*].source` 是 profile 的可移植逻辑声明，例如 `~/.guru/knowledge` 或 `${SCOUT_ROOT}`。
 - `profileRoots[*].path` 是 `scout-assets` 按当前设备解析出的绝对路径，始终以 `/` 开头；实际读取或写入使用 `path`。
 - `counts.issues` 只是物化问题数量。它不证明具体资源内容、外部服务或后续操作成功。
+- `phaseTools` 汇总当前 `role` 已物化的 tool family Skill、Shell Tool 和 MCP Server。该 inventory 属于当前 mount；相同 mount 中后续 Skill 查询复用本结果。
 
 ### Discover Families
 
@@ -169,13 +177,13 @@ scout-assets family --phase <phase>
 
 #### 传入 family 名称
 
-先传入一个不带点分隔路径的 family 名称进行模糊查询：
+可以传入 family 名称或已知的完整路径：
 
 ```bash
-scout-assets family <family-name> [--phase <phase>]
+scout-assets family <family-name|family-path> [--phase <phase>]
 ```
 
-如果名称在多个 family 中出现，工具不会猜测，只返回一个或多个完整候选 `family-path`。不指定 phase 时，候选按所属 phase 组返回：
+查询在所选 phase 范围内优先匹配完整路径，包括不带点的根路径。只有没有精确路径时才按短名称匹配；短名称命中多个路径时返回候选。不指定 phase 时，候选按所属 phase 组返回：
 
 ```json
 {
@@ -202,7 +210,7 @@ scout-assets family <family-name> [--phase <phase>]
 
 #### 传入精确 family-path
 
-输入完整的点分隔 `family-path` 后，工具才会返回该节点的下一层内容：
+命中唯一 `family-path` 后，工具返回该节点的下一层内容；根路径不需要点分隔：
 
 ```bash
 scout-assets family <family-path> [--phase <phase>]
@@ -240,15 +248,15 @@ scout-assets family <family-path> [--phase <phase>]
 
 只有 `skills[*].path` 是文件系统路径。查询成功后，只使用返回的 `skills[*].path` 或继续查询返回的 `children`；不要根据 family 名称自行拼接目录。
 
-### Inspect Skill Metadata and Current Role Tools
+### Inspect Skill Metadata
 
-场景：已经从 family 查询或当前上下文获得准确的 Skill name，需要取得完整 metadata 和当前 `role` 的工具入口。
+场景：已经从 family 查询或当前上下文获得准确的 Skill name，需要取得该 Skill 的完整 metadata。
 
 ```bash
 scout-assets skill <skill-name>
 ```
 
-以下示例中的 `<skill-type>` 和 `<skill-summary>` 分别表示 Skill 的实际 type 和摘要，`<tool-skill-name>`、`<shell-tool-id>` 和 `<mcp-server-name>` 分别表示当前 `role` 已物化的一项 Tool Skill、Shell Tool 和 MCP Server。
+以下示例中的 `<skill-type>` 和 `<skill-summary>` 分别表示 Skill 的实际 type 和摘要。
 
 示例输出（关键字段）：
 
@@ -261,27 +269,11 @@ scout-assets skill <skill-name>
     "path": "<skill-path>",
     "requiredSkills": [],
     "optionalSkills": []
-  },
-  "phaseTools": {
-    "skills": [
-      {
-        "name": "<tool-skill-name>"
-      }
-    ],
-    "shellTools": [
-      {
-        "id": "<shell-tool-id>",
-        "commandPathKind": "absolute"
-      }
-    ],
-    "mcpServers": [
-      { "name": "<mcp-server-name>" }
-    ]
   }
 }
 ```
 
-`skill` 返回的 `skill.path` 是当前 mount 的 Skill 入口。只有该 Skill 的实际 metadata 声明了 `phase` 时，返回结果才包含 `skill.phase`；Tool Skill 和 Signal Skill 不包含该字段。`phaseTools` 汇总当前 `role` 的 manifest 中已经物化的 tool family Skill、Shell Tool 和 MCP Server；Tool 的参数、绝对路径要求及使用时机仍由对应 Tool Skill 规定。
+`skill` 返回的 `skill.path` 是当前 mount 的 Skill 入口。只有该 Skill 的实际 metadata 声明了 `phase` 时，返回结果才包含 `skill.phase`；Tool Skill 和 Signal Skill 不包含该字段。当前角色的工具 inventory 只从 `summary.phaseTools` 取得，不随每个 Skill metadata 重复返回。
 
 ### Inspect Plugin Metadata
 

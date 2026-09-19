@@ -46,6 +46,8 @@ ${SCOUT_ARTIFACT_ROOT}/<bdd-id>/<version>/execute-file.json
           "captures": [
             {
               "captureId": "<captureId>",
+              "nodeId": "<nodeId>",
+              "timing": "<before|after|error>",
               "sourceId": "<sourceId>",
               "kind": "state_snapshot",
               "fields": ["<field>"]
@@ -84,10 +86,10 @@ ${SCOUT_ARTIFACT_ROOT}/<bdd-id>/<version>/execute-file.json
 
 - 第一条必须是唯一的 `behavior.campaign.start`。
 - 随后必须有唯一的 `behavior.scenario.activate`。
-- 中间按最终计划放置零个或多个 `behavior.evidence.capture`。
 - 必须且只能有一次 `behavior.trigger.invoke`。
 - 末尾依次为唯一的 `behavior.scenario.deactivate` 和 `behavior.campaign.stop`。
 - `behavior.node.variants`、registry、EvidenceSource 和 trigger availability 查询发生在正式执行前，不写入执行文件。
+- 每个 `evidenceCapture.captures[]` 必须以 `nodeId` 和 `timing` 绑定真实 Node 执行边界；`timing` 只能是 `before | after | error`。`variantId` 仅在证据必须限定到该 Node 的某个已注册 Variant 时保留，否则从 JSON 中省略。Runtime 在对应 Node 的实际执行边界自动采集，执行文件不增加独立 capture 命令。
 - 所有命令的 `campaignId` 和 `scenarioId` 必须与 `campaign.start` 一致。
 - `scenarioId` 和 `campaignId` 使用稳定 identity，不加入 `SCOUT_RUN_ID`。
 
@@ -115,4 +117,5 @@ ${SCOUT_ARTIFACT_ROOT}/<bdd-id>/<version>/execute-file.json
 - 文件是单个合法 JSON object，路径符合 `<bdd-id>/<version>/execute-file.json`。
 - `commands` 首尾和唯一命令数量正确。
 - 参数与同版本 Pack 的 Behavioral identity、Hook mapping 和执行预期一致。
+- 每个 capture 的 `nodeId`、`timing` 和可选 `variantId` 与同版本源码声明及 Runtime descriptor 一致。
 - 文件中只有 `commands` 及其 `command + payload`，没有 session、shell 或实际执行结果。

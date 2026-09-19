@@ -2,44 +2,38 @@
 scout:
   resource:
     requirement: required
-    description: RBT Execution Pack 模板目录与读取顺序。
+    description: RBT Execution Pack 原子 artifact 模板目录与读取顺序。
 artifact_type: TemplateIndex
-artifact_version: 1
-status: ready
+artifact_version: 4
 ---
 
 # Template Index
-
-## Purpose
-
-本文件索引 `domain-rbt-execution-pack` 维护的全部 required templates。
 
 ## Resource List
 
 | resource | purpose | reading condition |
 | --- | --- | --- |
-| `templates/template-index.md` | 模板导航和读取顺序。 | `required`。 |
-| `templates/execution-pack.md` | Pack、Behavioral identity、Agent 侧计划和 artifact refs。 | `required`。 |
-| `templates/execute-file.md` | 可重放 `execute-file.json` 的结构和边界。 | `required`。 |
-| `templates/bdd-evidence.md` | 唯一 BDD evidence。 | `required`。 |
-| `templates/code-evidence.md` | 当前业务代码 evidence refs 和 implementation claim 聚合。 | `required`。 |
-| `templates/source-code-evidence.md` | 每个 `E-CODE-*` 的独立当前版本业务源码证据。 | 生成任一 `E-CODE-*` 时 `required`。 |
-| `templates/journal-expected.md` | 按相对顺序登记的预期 Campaign Journal records。 | `required`。 |
-| `templates/signal-expected.md` | 当前执行计划的全部 Signal expectation、具体值和代码证据链。 | `required`。 |
+| `templates/template-index.md` | 原子 artifact 导航和读取顺序。 | `required`。 |
+| `templates/bdd-evidence.md` | 本次执行采用的唯一 BDD/case 事实。 | `required`。 |
+| `templates/source-code-evidence.md` | 当前版本单个源码 symbol 事实。 | 生成任一 `E-CODE-*` 时 `required`。 |
+| `templates/journal-expected.md` | 有顺序和关键 identity 的 `JR-*` 观察表。 | `required`。 |
+| `templates/signal-expected.md` | 完整、可独立比较的 `SR-*` expectations。 | `required`。 |
 | `templates/human-input-evidence.md` | Human Input request、response 和计划影响。 | `required`。 |
-| `templates/evidence-registry.md` | 全部稳定 ID 与引用关系。 | `required`。 |
+| `templates/execute-file.md` | 可重放 `execute-file.json` 的结构和边界。 | `required`。 |
 
 ## Reading Order
 
-1. 先读 `execution-pack.md`、`bdd-evidence.md` 和 `code-evidence.md`，建立 BDD / 目标版本 / Behavioral identity、required Given Hook mapping 与来源边界；需要生成 `E-CODE-*` 时同时读取 `source-code-evidence.md`。
-2. 再读 `journal-expected.md`、`signal-expected.md` 和 `human-input-evidence.md`，建立预期流程、预期 Signal 结果、匹配规则和人工往返事实。
-3. 读取 `execute-file.md`，把最终计划写成与 Pack 同版本的可重放 `command + payload` 序列。
-4. 最后读 `evidence-registry.md`，闭合 Agent 侧内容的全部引用。
+1. 读取 `bdd-evidence.md`，确认本次 BDD/case 及其 Given/When/Then locators。
+2. 按实际业务路径读取 `source-code-evidence.md`，为每个必需源码事实生成独立 `E-CODE-*`。
+3. 读取 `signal-expected.md`，为每条可独立定位和判断的 Evidence 建立完整 `SR-*`。
+4. 读取 `journal-expected.md`，用表格列出 Journal 观察点、关键 identity、预期顺序和向下引用的 SR。
+5. 读取 `human-input-evidence.md`，记录已接受 Human Input 事实或 `none`。
+6. 读取 `execute-file.md`，写入与上述预期对齐的唯一可重放命令序列。
 
 ## Maintenance Rules
 
 - 本索引只做导航，不记录当前 BDD、Runtime、task 或执行事实。
 - 模板 frontmatter 中的 `scout.resource` 只控制资源物化，生成 artifact 时不得复制。
-- 模板中的英文 Markdown headings、字段 keys、ID、status、command、schema 字段、Runtime identity、symbol、文件系统 path、URL、version 和其它原始技术值保持原样。
+- 各 artifact 使用直接 refs 建立关系；不创建 manifest、code aggregate 或 registry。
+- 引用只允许上层指向下层：`JR-* -> SR-* -> E-BDD-*/E-CODE-*`；底层 artifact 不登记消费者。
 - 新增、删除、重命名模板或改变职责时必须同步本索引。
-- 所有 `<填写...>` 说明必须在生成 artifact 时替换；不适用的条件行应删除，不能留空。
