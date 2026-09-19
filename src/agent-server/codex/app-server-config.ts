@@ -35,29 +35,32 @@ export function buildClientConfig(input: {
 }): string {
   const homeConfig = input.providerConfig;
   const mountRoots = uniqueResolved(input.mountRoots);
-  const providerLines = [
-    `[model_providers.${input.model.provider}]`,
-    `name = "${escapeToml(homeConfig.name ?? input.model.provider)}"`,
-  ];
-  if (homeConfig.baseUrl !== undefined) {
-    providerLines.push(`base_url = "${escapeToml(homeConfig.baseUrl)}"`);
+  const providerLines: string[] = [];
+  if (input.model.provider !== "openai") {
+    providerLines.push(
+      `[model_providers.${input.model.provider}]`,
+      `name = "${escapeToml(homeConfig.name ?? input.model.provider)}"`,
+    );
+    if (homeConfig.baseUrl !== undefined) {
+      providerLines.push(`base_url = "${escapeToml(homeConfig.baseUrl)}"`);
+    }
+    if (homeConfig.requiresOpenaiAuth !== undefined) {
+      providerLines.push(`requires_openai_auth = ${homeConfig.requiresOpenaiAuth}`);
+    }
+    if (homeConfig.supportsWebsockets !== undefined) {
+      providerLines.push(`supports_websockets = ${homeConfig.supportsWebsockets}`);
+    }
+    const providerEnvKey = homeConfig.experimentalBearerToken
+      ? "CODEX_API_KEY"
+      : homeConfig.envKey;
+    if (providerEnvKey) {
+      providerLines.push(`env_key = "${escapeToml(providerEnvKey)}"`);
+    }
+    providerLines.push(
+      `wire_api = "${escapeToml(homeConfig.wireApi ?? "responses")}"`,
+      "",
+    );
   }
-  if (homeConfig.requiresOpenaiAuth !== undefined) {
-    providerLines.push(`requires_openai_auth = ${homeConfig.requiresOpenaiAuth}`);
-  }
-  if (homeConfig.supportsWebsockets !== undefined) {
-    providerLines.push(`supports_websockets = ${homeConfig.supportsWebsockets}`);
-  }
-  const providerEnvKey = homeConfig.experimentalBearerToken
-    ? "CODEX_API_KEY"
-    : homeConfig.envKey;
-  if (providerEnvKey) {
-    providerLines.push(`env_key = "${escapeToml(providerEnvKey)}"`);
-  }
-  providerLines.push(
-    `wire_api = "${escapeToml(homeConfig.wireApi ?? "responses")}"`,
-    "",
-  );
   const lines = [
     'default_permissions = ":read-only"',
     `model = "${escapeToml(input.model.id)}"`,
@@ -105,6 +108,35 @@ export function buildClientConfig(input: {
 /** Reads and validates one provider block from the user's Codex config. */
 export function readHomeProviderConfig(providerName: string): CodexProviderConfig {
   const codexHome = join(homedir(), ".codex");
+  const authPath = join(codexHome, "auth.json");
+  const hasCodexAuth = (() => {
+    try {
+      const auth = JSON.parse(readFileSync(authPath, "utf8")) as unknown;
+      if (typeof auth !== "object" || auth === null || Array.isArray(auth)) return false;
+      const authRecord = auth as Record<string, unknown>;
+      if (typeof authRecord.OPENAI_API_KEY === "string"
+        && authRecord.OPENAI_API_KEY.trim().length > 0) {
+        return true;
+      }
+      const tokens = authRecord.tokens;
+      return typeof tokens === "object"
+        && tokens !== null
+        && !Array.isArray(tokens)
+        && typeof (tokens as Record<string, unknown>).access_token === "string"
+        && ((tokens as Record<string, unknown>).access_token as string).trim().length > 0;
+    } catch {
+      return false;
+    }
+  })();
+  if (providerName === "openai") {
+    if (!hasCodexAuth) {
+      throw new Error(
+        `Codex built-in model provider "openai" has no usable authentication at ${authPath}.`,
+      );
+    }
+    return { authPath };
+  }
+
   const configPath = join(codexHome, "config.toml");
   let text: string;
   try {
@@ -188,29 +220,10 @@ export function readHomeProviderConfig(providerName: string): CodexProviderConfi
 
   const hasConfiguredEnvironmentCredential = envKey !== undefined
     && Boolean(process.env[envKey]?.trim());
-  const authPath = join(codexHome, "auth.json");
-  const hasCodexAuth = requiresOpenaiAuth === true && (() => {
-    try {
-      const auth = JSON.parse(readFileSync(authPath, "utf8")) as unknown;
-      if (typeof auth !== "object" || auth === null || Array.isArray(auth)) return false;
-      const authRecord = auth as Record<string, unknown>;
-      if (typeof authRecord.OPENAI_API_KEY === "string"
-        && authRecord.OPENAI_API_KEY.trim().length > 0) {
-        return true;
-      }
-      const tokens = authRecord.tokens;
-      return typeof tokens === "object"
-        && tokens !== null
-        && !Array.isArray(tokens)
-        && typeof (tokens as Record<string, unknown>).access_token === "string"
-        && ((tokens as Record<string, unknown>).access_token as string).trim().length > 0;
-    } catch {
-      return false;
-    }
-  })();
+  const canUseCodexAuth = requiresOpenaiAuth === true && hasCodexAuth;
   if (!experimentalBearerToken?.trim()
     && !hasConfiguredEnvironmentCredential
-    && !hasCodexAuth) {
+    && !canUseCodexAuth) {
     throw new Error(
       `Codex model provider "${providerName}" has no usable authentication. Configure a non-empty experimental_bearer_token, set the environment variable named by env_key, or provide usable Codex auth when requires_openai_auth is true.`,
     );
@@ -226,7 +239,7 @@ export function readHomeProviderConfig(providerName: string): CodexProviderConfi
     wireApi: block.match(/^wire_api\s*=\s*"([^"]*)"/m)?.[1],
     authPath: !experimentalBearerToken?.trim()
         && !hasConfiguredEnvironmentCredential
-        && hasCodexAuth
+        && canUseCodexAuth
       ? authPath
       : undefined,
   };

@@ -3,8 +3,8 @@
   "defaults": {
     "config": "config/base.config.toml",
     "model": {
-      "id": "gpt-5.6",
-      "provider": "custom",
+      "id": "gpt-5.6-sol",
+      "provider": "openai",
       "reasoningEffort": "high",
       "reasoningSummary": "concise"
     },

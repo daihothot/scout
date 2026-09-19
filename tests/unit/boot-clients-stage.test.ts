@@ -27,8 +27,34 @@ import {
   type ScoutAgentPermissionProfile,
 } from "../../src/agent/thread/types.js";
 import { AssetStore } from "../../src/asset-store/index.js";
+import {
+  buildClientConfig,
+  readHomeProviderConfig,
+} from "../../src/agent-server/codex/app-server-config.js";
 
 const scoutRoot = process.cwd();
+
+test("built-in OpenAI provider reuses Codex auth without redefining it", (t) => {
+  const targetAuthPath = installTestCodexHome(t, false, "auth");
+  const providerConfig = readHomeProviderConfig("openai");
+
+  assert.deepEqual(providerConfig, { authPath: targetAuthPath });
+
+  const configToml = buildClientConfig({
+    mountRoots: [],
+    permissionProfiles: {},
+    model: {
+      id: "gpt-5.6-sol",
+      provider: "openai",
+      reasoningEffort: "high",
+      reasoningSummary: "concise",
+    },
+    providerConfig,
+  });
+  assert.match(configToml, /^model = "gpt-5\.6-sol"$/m);
+  assert.match(configToml, /^model_provider = "openai"$/m);
+  assert.doesNotMatch(configToml, /^\[model_providers\.openai\]$/m);
+});
 
 test("RunAppServerStage creates the isolated app-server session and owns its stop", async (t) => {
   installTestCodexHome(t, true, "bearer");
