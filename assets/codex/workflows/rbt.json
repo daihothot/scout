@@ -65,6 +65,7 @@
       ],
       "shellTools": [
         "scoutJsonWrite",
+        "scoutRbtArtifactCheck",
         "jarvis-codebase",
         "codegraph",
         "rg",

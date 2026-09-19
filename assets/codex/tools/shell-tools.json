@@ -52,6 +52,23 @@
       }
     },
     {
+      "id": "scoutRbtArtifactCheck",
+      "name": "scout-rbt-artifact-check",
+      "command": "node",
+      "args": [
+        "assets/codex/tools/scout-rbt-artifact-check/cli.cjs"
+      ],
+      "exposeAs": "scout-rbt-artifact-check",
+      "required": true,
+      "smoke": {
+        "scope": "run",
+        "args": [
+          "--smoke"
+        ],
+        "marker": "SCOUT_RBT_ARTIFACT_CHECK_OK"
+      }
+    },
+    {
       "id": "scoutResearchArtifactCheck",
       "name": "scout-research-artifact-check",
       "command": "node",
