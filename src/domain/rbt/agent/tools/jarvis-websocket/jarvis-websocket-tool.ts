@@ -151,7 +151,8 @@ export class JarvisWebSocketTool implements RbtAgentDynamicTool {
       return { status: "reused", session, hostCommands };
     }
 
-    const connect = await this.run(input, [
+    const timeoutMs = input.timeoutMs ?? 10_000;
+    const connectArgs = [
       ...input.baseArgs,
       "ws",
       "connect",
@@ -160,16 +161,26 @@ export class JarvisWebSocketTool implements RbtAgentDynamicTool {
       "--url",
       input.endpoint,
       "--timeout-ms",
-      String(Math.round((input.timeoutMs ?? 10_000))),
-    ], (input.timeoutMs ?? 10_000) + 2_000);
-    hostCommands.push(connect);
-    if (connect.result.status !== "completed") {
-      return {
-        status: "failed",
-        hostCommands,
-        code: "websocket_connect_failed",
-        error: "Jarvis could not connect the Behavioral WebSocket session.",
-      };
+      String(Math.round(timeoutMs)),
+    ];
+    const deadline = Date.now() + timeoutMs;
+    let connect: HostCommandExecution;
+    while (true) {
+      connect = await this.run(input, connectArgs, timeoutMs + 2_000);
+      hostCommands.push(connect);
+      if (connect.result.status === "completed") break;
+
+      const connectOutput = `${connect.result.stdout}\n${connect.result.stderr}\n${connect.result.error ?? ""}`;
+      const remainingMs = deadline - Date.now();
+      if (!/ECONNREFUSED/i.test(connectOutput) || remainingMs <= 0) {
+        return {
+          status: "failed",
+          hostCommands,
+          code: "websocket_connect_failed",
+          error: "Jarvis could not connect the Behavioral WebSocket session.",
+        };
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, Math.min(250, remainingMs)));
     }
 
     const statusAfter = await this.run(input, [

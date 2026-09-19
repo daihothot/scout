@@ -54,11 +54,26 @@ export interface RbtCampaignCommandEvent {
   completedAt: string;
 }
 
+/** Runtime-owned history identity made available after one execution closes. */
+export interface RbtExecutionHistoryReadyEvent {
+  executorHistoryRef: string;
+  executeFileRef: string;
+  runtimeSequence: number;
+  campaignId: string;
+  scenarioId: string;
+  status: "completed" | "failed";
+  agentId: string;
+  role: ScoutAgentRole;
+}
+
 /** In-memory RBT observation routes consumed by Domain telemetry and artifacts. */
 export const RbtEvents = defineEventCatalog("domain.rbt", {
   campaign: {
     start: event<RbtCampaignCommandEvent>(),
     command: event<RbtCampaignCommandEvent>(),
     end: event<RbtCampaignCommandEvent>(),
+  },
+  history: {
+    ready: event<RbtExecutionHistoryReadyEvent>(),
   },
 } as const);

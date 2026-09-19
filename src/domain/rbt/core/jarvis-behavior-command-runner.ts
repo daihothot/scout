@@ -156,7 +156,8 @@ export class JarvisBehaviorCommandRunner {
     hostCommands: HostCommandExecution[],
   ): Promise<{ sessionId: string; schemaPath: string; code?: string; error?: string }> {
     const scope = currentRunScope();
-    const environment = scope.environment.agents[call.caller.role];
+    // The host uses the run's execution target; Reviewer does not need source access.
+    const environment = scope.environment.agents.executor;
     const schemaPath = environment?.mount.readableRoots
       .filter((root) => basename(root) === "gurusdk-unity")
       .map((root) => join(root, BEHAVIOR_SCHEMA_ROOT_RELATIVE_PATH))
@@ -166,7 +167,7 @@ export class JarvisBehaviorCommandRunner {
         sessionId: "",
         schemaPath: "",
         code: "behavior_schema_unavailable",
-        error: "The Behavioral schema is unavailable under the mounted gurusdk-unity codebase.",
+        error: "The Behavioral schema is unavailable under this run's Executor-bound gurusdk-unity codebase.",
       };
     }
     const sessionId = behaviorSessionId(scope.runId, call.caller.agentId, this.phase);

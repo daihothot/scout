@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { AgentJsonValue } from "../../../../agent/tools/types.js";
 import type { UnsubscribeEventHandler } from "../../../../core/events/index.js";
 import { currentRunScope } from "../../../../run/run-scope.js";
@@ -27,6 +27,8 @@ interface CampaignHistoryCommand {
 interface CampaignExecutionHistory {
   runtimeSequence: number;
   executeFileRef: string;
+  campaignId: string;
+  scenarioId: string;
   platform: RbtExecutionPlatform;
   startedAt: string;
   endedAt?: string;
@@ -42,17 +44,17 @@ export class RbtCampaignExecutionHistoryStore {
 
   start(): void {
     if (this.unsubscribe) return;
-    this.unsubscribe = currentRunScope().eventBus.subscribe(RbtEvents.campaign, (event) => {
+    this.unsubscribe = currentRunScope().eventBus.subscribe(RbtEvents.campaign, async (event) => {
       if (RbtEvents.campaign.start.is(event)) {
-        this.recordStart(event.payload);
+        await this.recordStart(event.payload);
         return;
       }
       if (RbtEvents.campaign.command.is(event)) {
-        this.recordCommand(event.payload, false);
+        await this.recordCommand(event.payload, false);
         return;
       }
       if (RbtEvents.campaign.end.is(event)) {
-        this.recordCommand(event.payload, true);
+        await this.recordCommand(event.payload, true);
       }
     });
   }
@@ -63,7 +65,7 @@ export class RbtCampaignExecutionHistoryStore {
     this.active.clear();
   }
 
-  private recordStart(command: RbtCampaignCommandEvent): void {
+  private async recordStart(command: RbtCampaignCommandEvent): Promise<void> {
     const key = historyKey(command.agentId, command.runtimeSequence);
     if (this.active.has(key)) {
       throw new Error(`RBT campaign history is already recording: ${command.campaignId}.`);
@@ -82,6 +84,8 @@ export class RbtCampaignExecutionHistoryStore {
     const history: CampaignExecutionHistory = {
       runtimeSequence: command.runtimeSequence,
       executeFileRef: command.executeFileRef,
+      campaignId: command.campaignId,
+      scenarioId: command.scenarioId,
       platform: structuredClone(command.platform),
       startedAt: command.startedAt,
       ...(command.status === "failed" ? { endedAt: command.completedAt } : {}),
@@ -91,9 +95,10 @@ export class RbtCampaignExecutionHistoryStore {
     };
     if (command.status !== "failed") this.active.set(key, history);
     this.write(history);
+    if (command.status === "failed") await this.publishReady(command, history);
   }
 
-  private recordCommand(command: RbtCampaignCommandEvent, closesHistory: boolean): void {
+  private async recordCommand(command: RbtCampaignCommandEvent, closesHistory: boolean): Promise<void> {
     const key = historyKey(command.agentId, command.runtimeSequence);
     const history = this.active.get(key);
     if (!history) {
@@ -110,12 +115,33 @@ export class RbtCampaignExecutionHistoryStore {
       this.active.delete(key);
     }
     this.write(history);
+    if (closesHistory) await this.publishReady(command, history);
   }
 
   private write(history: CampaignExecutionHistory): void {
     mkdirSync(dirname(history.artifactPath), { recursive: true });
     const { artifactPath: _artifactPath, ...artifact } = history;
     writeFileSync(history.artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
+  }
+
+  private async publishReady(
+    command: RbtCampaignCommandEvent,
+    history: CampaignExecutionHistory,
+  ): Promise<void> {
+    const scope = currentRunScope();
+    if (history.status === "recording") {
+      throw new Error(`RBT campaign history is still recording: ${history.campaignId}.`);
+    }
+    await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
+      executorHistoryRef: relative(scope.runRoot, history.artifactPath).split(sep).join("/"),
+      executeFileRef: history.executeFileRef,
+      runtimeSequence: history.runtimeSequence,
+      campaignId: history.campaignId,
+      scenarioId: history.scenarioId,
+      status: history.status,
+      agentId: command.agentId,
+      role: command.role,
+    }, { occurredAt: command.completedAt });
   }
 }
 

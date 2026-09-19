@@ -95,30 +95,6 @@ export class JarvisBehaviorPlatformGate {
         this.store.removePlatform(call.caller.agentId);
         return failure("unity_play_mode_start_failed", "The Unity Editor did not enter Play Mode.");
       }
-
-      const confirmedStatus = await invoke("editor_status");
-      const confirmedState = isRecord(confirmedStatus.output?.result)
-        ? confirmedStatus.output.result
-        : undefined;
-      if (!confirmedStatus.response.success
-        || confirmedStatus.output?.status !== "completed"
-        || !confirmedState
-        || typeof confirmedState.status !== "string"
-        || (confirmedState.status !== "ready" && confirmedState.status !== "playing")
-        || typeof confirmedState.compiling !== "boolean"
-        || typeof confirmedState.domainReloadInProgress !== "boolean"
-        || typeof confirmedState.playMode !== "string"
-        || typeof confirmedState.unityVersion !== "string"
-        || confirmedState.compiling
-        || confirmedState.domainReloadInProgress
-        || confirmedState.playMode !== "playing") {
-        this.store.removePlatform(call.caller.agentId);
-        return failure("unity_play_mode_start_failed", "The Unity Editor did not enter Play Mode.");
-      }
-      if (confirmedState.unityVersion !== platform.version) {
-        this.store.removePlatform(call.caller.agentId);
-        return failure("unity_editor_version_changed", "The connected Unity Editor version changed while entering Play Mode.");
-      }
     }
     this.store.setPlatform(call.caller.agentId, platform);
     return { ok: true, platform };

@@ -1,11 +1,9 @@
 import type { DynamicToolCallResponse } from "../../../../agent-server/types.js";
 import type { ScoutAgentPhase } from "../../../../agent/thread/types.js";
 import type { AgentDynamicToolSpec } from "../../../../agent/tools/types.js";
-import { unityPipelineAgentTool } from "../../../tools/index.js";
 import type { ScoutDomainDynamicToolCall } from "../../../types.js";
 
 export const RbtAgentDynamicToolImplementations = {
-  UnityPipeline: "unity-pipeline",
   JarvisWebSocket: "jarvis-websocket",
   JarvisBehaviorExecute: "jarvis-behavior-execute",
   JarvisBehaviorReview: "jarvis-behavior-review",
@@ -91,11 +89,6 @@ export const jarvisWebSocketAgentTool: AgentDynamicToolSpec = {
 
 /** Single source of truth for RBT Phase tool visibility and runtime construction. */
 export const rbtAgentDynamicToolRegistrations: readonly RbtAgentDynamicToolRegistration[] = [
-  {
-    phase: "execute",
-    implementation: RbtAgentDynamicToolImplementations.UnityPipeline,
-    definition: unityPipelineAgentTool,
-  },
   {
     phase: "execute",
     implementation: RbtAgentDynamicToolImplementations.JarvisBehaviorExecute,

@@ -1,5 +1,4 @@
 import type { DynamicToolCallResponse } from "../../../../agent-server/types.js";
-import { UnityPipelineTool } from "../../../tools/index.js";
 import type { ScoutDomainDynamicToolCall } from "../../../types.js";
 import {
   JarvisBehaviorTool,
@@ -11,7 +10,6 @@ import {
 import { JarvisWebSocketTool } from "../tools/index.js";
 
 export interface RbtAgentDynamicToolFactories {
-  unityPipeline?: () => RbtAgentDynamicTool;
   jarvisWebSocket?: () => JarvisWebSocketTool;
   jarvisBehavior?: (
     phase: "execute" | "review",
@@ -75,8 +73,6 @@ function createTool(
   websocket: JarvisWebSocketTool,
 ): RbtAgentDynamicTool {
   switch (implementation) {
-    case RbtAgentDynamicToolImplementations.UnityPipeline:
-      return factories.unityPipeline?.() ?? new UnityPipelineTool();
     case RbtAgentDynamicToolImplementations.JarvisWebSocket:
       return websocket;
     case RbtAgentDynamicToolImplementations.JarvisBehaviorExecute:

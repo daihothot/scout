@@ -11,10 +11,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ShellToolContract } from "../../src/asset-store/contracts/resources.js";
+import { attachments } from "../../src/agent/context/attachments.js";
+import { CoordinatorContextTags } from "../../src/agent/runner/coordinator/coordinator-attachments.js";
+import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
+import { Result } from "../../src/core/result.js";
 import { createGraphState, Scheduler } from "../../src/core/workflow/index.js";
 import {
   JarvisBehaviorTool,
+  JarvisWebSocketTool,
   RbtAgentDynamicToolBackend,
   RbtDomain,
   RbtEvents,
@@ -23,7 +28,7 @@ import { DomainEvents, UnityPipelineTool } from "../../src/domain/index.js";
 import type { RunEnvironment } from "../../src/run/types.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
-test("RBT Domain exposes platform and behavior dynamic tools by Phase", (t) => {
+test("RBT Domain exposes only behavior dynamic tools by Phase", (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
   installTestRunScope(t, {
@@ -37,7 +42,6 @@ test("RBT Domain exposes platform and behavior dynamic tools by Phase", (t) => {
     tool.name,
     tool.guidanceSkill,
   ]), [
-    ["UnityPipeline", "tool-unity-pipeline"],
     ["JarvisBehavior", "tool-rbt-behavior"],
   ]);
   assert.deepEqual(domain.dynamicToolsForPhase("review").map((tool) => tool.name), [
@@ -46,9 +50,9 @@ test("RBT Domain exposes platform and behavior dynamic tools by Phase", (t) => {
   assert.deepEqual(domain.dynamicToolsForPhase("Synthesis"), []);
 });
 
-test("RBT Domain executes Unity Pipeline directly through the shared Domain tool", async (t) => {
+test("RBT hides UnityPipeline from Agents while retaining the shared Runtime tool", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const domain = rbtDomain({ unity: fakeUnityStatusTool() });
+  const domain = new RbtDomain();
   const scope = installTestRunScope(t, {
     runId: "run-rbt-unity-pipeline",
     scoutRoot: process.cwd(),
@@ -67,13 +71,19 @@ test("RBT Domain executes Unity Pipeline directly through the shared Domain tool
   await domain.start();
   t.after(() => domain.stop());
 
-  const response = await domain.handleDynamicToolCall(dynamicCall({
+  const call = dynamicCall({
     callId: "call-unity-status",
     namespace: "rbt_unity_pipeline",
     tool: "UnityPipeline",
     arguments: { operation: "status" },
     role: "executor",
-  }));
+  });
+
+  const denied = await domain.handleDynamicToolCall(call);
+  assert.equal(denied.success, false);
+  assert.match(denied.contentItems[0]?.text ?? "", /UnityPipeline is not registered for Phase execute/);
+
+  const response = await fakeUnityStatusTool().execute(call);
 
   assert.ok(response?.success);
   const output = JSON.parse(response.contentItems[0]?.text ?? "null") as {
@@ -131,8 +141,50 @@ test("JarvisBehavior prepares Play Mode without an Agent UnityPipeline call", as
     "status",
     "editor_status",
     "editor_play",
-    "editor_status",
   ]);
+});
+
+test("Jarvis WebSocket waits for a Runtime endpoint that is starting", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-rbt-websocket-startup-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const connectedPath = join(root, "connected");
+  const attemptsPath = join(root, "attempts");
+  const script = [
+    "const fs = require('node:fs');",
+    "const args = process.argv.slice(1);",
+    `const connectedPath = ${JSON.stringify(connectedPath)};`,
+    `const attemptsPath = ${JSON.stringify(attemptsPath)};`,
+    "if (args.includes('status')) {",
+    "  process.stdout.write(fs.existsSync(connectedPath)",
+    "    ? 'WS session test: connected url=ws://127.0.0.1:8083\\n'",
+    "    : 'WS session test: disconnected\\n');",
+    "} else if (args.includes('connect')) {",
+    "  const attempts = fs.existsSync(attemptsPath) ? Number(fs.readFileSync(attemptsPath, 'utf8')) : 0;",
+    "  fs.writeFileSync(attemptsPath, String(attempts + 1));",
+    "  if (attempts === 0) {",
+    "    process.stderr.write('[ERROR] connect ECONNREFUSED 127.0.0.1:8083\\n');",
+    "    process.exitCode = 1;",
+    "  } else {",
+    "    fs.writeFileSync(connectedPath, 'connected\\n');",
+    "    process.stdout.write('connected\\n');",
+    "  }",
+    "}",
+  ].join("\n");
+  const websocket = new JarvisWebSocketTool();
+
+  const result = await websocket.ensureSession({
+    agentId: "executor",
+    sessionId: "test",
+    endpoint: "ws://127.0.0.1:8083",
+    executable: process.execPath,
+    baseArgs: ["-e", script, "--"],
+    cwd: root,
+    timeoutMs: 2_000,
+  });
+
+  assert.equal(result.status, "connected");
+  assert.equal(readFileSync(attemptsPath, "utf8"), "2");
+  assert.equal(result.hostCommands.filter((command) => command.args.includes("connect")).length, 2);
 });
 
 test("JarvisBehavior reports an unavailable human-prepared Unity Editor", async (t) => {
@@ -333,19 +385,19 @@ test("RBT Agent tool-call recorder consumes the shared Domain event", async (t) 
 
   await eventBus.publishAndWait(DomainEvents.agentToolCall.observed, {
     domainId: "rbt",
-    callId: "call-unity-status",
+    callId: "call-behavior-nodes",
     threadId: "thread-executor",
     agentId: "executor",
     role: "executor",
     phase: "execute",
-    namespace: "rbt_unity_pipeline",
-    tool: "UnityPipeline",
-    arguments: { operation: "status" },
+    namespace: "rbt_behavior",
+    tool: "JarvisBehavior",
+    arguments: { command: "behavior.registry.nodes", payload: { domain: "Account" } },
     response: {
       success: true,
       contentItems: [{
         type: "inputText",
-        text: JSON.stringify({ status: "completed", result: { count: 1 } }),
+        text: JSON.stringify({ status: "completed", command: "behavior.registry.nodes", result: { nodes: [] } }),
       }],
     },
     startedAt: "2026-09-10T00:00:00.000Z",
@@ -354,14 +406,15 @@ test("RBT Agent tool-call recorder consumes the shared Domain event", async (t) 
 
   const log = readFileSync(join(roots.logsRoot, "rbt-agent-tool-call.log"), "utf8");
   assert.match(log, /domain\.shared\.agent_tool_call\.observed/);
-  assert.match(log, /call-unity-status/);
+  assert.match(log, /call-behavior-nodes/);
   assert.match(log, /status: "completed"/);
   assert.doesNotMatch(log, /contentItems/);
 });
 
-test("RBT Domain exposes only agent-facing Unity Pipeline result fields", async (t) => {
+test("Shared Unity Pipeline tool projects structured result fields for Runtime callers", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const domain = rbtDomain({ unity: fakeUnityResultsTool() });
+  const domain = new RbtDomain();
+  const unityPipeline = fakeUnityResultsTool();
   const scope = installTestRunScope(t, {
     runId: "run-rbt-unity-pipeline-results",
     scoutRoot: process.cwd(),
@@ -380,7 +433,7 @@ test("RBT Domain exposes only agent-facing Unity Pipeline result fields", async 
   await domain.start();
   t.after(() => domain.stop());
 
-  const listResponse = await domain.handleDynamicToolCall(dynamicCall({
+  const listResponse = await unityPipeline.execute(dynamicCall({
     callId: "call-unity-list",
     namespace: "rbt_unity_pipeline",
     tool: "UnityPipeline",
@@ -395,7 +448,7 @@ test("RBT Domain exposes only agent-facing Unity Pipeline result fields", async 
     commands: ["editor_play", "editor_status"],
   });
 
-  const statusResponse = await domain.handleDynamicToolCall(dynamicCall({
+  const statusResponse = await unityPipeline.execute(dynamicCall({
     callId: "call-unity-editor-status",
     namespace: "rbt_unity_pipeline",
     tool: "UnityPipeline",
@@ -433,6 +486,15 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
       shellTools: [],
     },
   }));
+  const coordinatorMessages: string[] = [];
+  scope.agentRegistry.registerAgent({
+    agentId: "coordinator",
+    role: "coordinator",
+    async sendMessage(input: { message: string }) {
+      coordinatorMessages.push(input.message);
+      return Result.ok(undefined);
+    },
+  } as unknown as ScoutAgent);
   const campaignEvents: string[] = [];
   eventBus.subscribe(RbtEvents.campaign, (event) => {
     campaignEvents.push(event.key.routeKey);
@@ -473,6 +535,8 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
   const history = JSON.parse(readFileSync(join(historyRoot, "001.json"), "utf8")) as {
     runtimeSequence: number;
     executeFileRef: string;
+    campaignId: string;
+    scenarioId: string;
     platform: { type: string; version: string };
     status: string;
     commands: Array<{
@@ -484,6 +548,8 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
   assert.equal(history.executeFileRef,
     "account-anon-restore-existing-account/26.7.0-rc.2/execute-file.json");
   assert.equal(history.runtimeSequence, 1);
+  assert.equal(history.campaignId, "account.restore.success/campaign/main");
+  assert.equal(history.scenarioId, "account.restore.success");
   assert.deepEqual(history.platform, {
     type: "unity_editor",
     version: "6000.0.80f1",
@@ -491,8 +557,6 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
   assert.equal(history.status, "completed");
   assert.equal("artifactType" in history, false);
   assert.equal("artifactVersion" in history, false);
-  assert.equal("campaignId" in history, false);
-  assert.equal("scenarioId" in history, false);
   assert.equal("runId" in history, false);
   assert.equal("agentId" in history, false);
   assert.equal("role" in history, false);
@@ -512,6 +576,18 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
     join(codebaseRoot, "gurusdk-framework", "contracts", "schemas"),
   );
   assert.match(history.commands[0]?.hostCommands.at(-1)?.result.stdout ?? "", /^\[RESULT\]/);
+
+  assert.equal(coordinatorMessages.length, 1);
+  const historyObservation = attachments.readTagBlock(
+    coordinatorMessages[0] ?? "",
+    CoordinatorContextTags.Observation,
+  )[0]?.body ?? "";
+  assert.match(historyObservation, /### RBT Execution History Ready/);
+  assert.match(historyObservation, /executor_history_ref: agents\/executor\/artifacts\/history\/001\.json/);
+  assert.match(historyObservation, /execute_file_ref: account-anon-restore-existing-account\/26\.7\.0-rc\.2\/execute-file\.json/);
+  assert.match(historyObservation, /campaign_id: account\.restore\.success\/campaign\/main/);
+  assert.match(historyObservation, /scenario_id: account\.restore\.success/);
+  assert.match(historyObservation, /status: completed/);
 
   assert.equal("journal" in domain, false);
 
@@ -790,6 +866,50 @@ test("RBT Domain rejects mutating behavior commands from a review role", async (
   assert.match(response?.contentItems[0]?.text ?? "", /not available in the current RBT Phase/);
 });
 
+test("RBT Reviewer queries a campaign using the Executor-bound schema without codebase access", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const domain = rbtDomain({ jarvis: fakeJarvisTool });
+  const scope = installTestRunScope(t, {
+    runId: "run-rbt-review-campaign",
+    scoutRoot: process.cwd(),
+    eventBus,
+    domain,
+    scheduler: rbtScheduler(eventBus),
+  });
+  const codebaseRoot = installBehaviorSchema(scope.runRoot);
+  scope.setEnvironment(rbtEnvironment(scope.runId, {
+    executor: {
+      ...roleRoots(scope.runRoot, "executor"),
+      readableRoots: [codebaseRoot],
+      shellTools: [],
+    },
+    reviewer: {
+      ...roleRoots(scope.runRoot, "reviewer"),
+      readableRoots: [],
+      shellTools: [],
+    },
+  }));
+  await domain.start();
+  t.after(() => domain.stop());
+
+  const payload = { campaignId: "campaign-review", scenarioId: "scenario-review", includeEvidence: true };
+  const response = await domain.handleDynamicToolCall(dynamicCall({
+    callId: "call-review-campaign",
+    namespace: "rbt_behavior",
+    tool: "JarvisBehavior",
+    arguments: { command: "behavior.campaign.query", payload },
+    role: "reviewer",
+  }));
+
+  assert.equal(response?.success, true);
+  assert.deepEqual(JSON.parse(response?.contentItems[0]?.text ?? "null"), {
+    status: "completed",
+    command: "behavior.campaign.query",
+    result: payload,
+  });
+  assert.deepEqual(scope.environment.agents.reviewer?.mount.readableRoots, []);
+});
+
 test("RBT Domain projects a Runtime error without exposing its result envelope", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain({ jarvis: fakeJarvisTool });
@@ -803,11 +923,12 @@ test("RBT Domain projects a Runtime error without exposing its result envelope",
   const roots = roleRoots(scope.runRoot, "reviewer");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
   scope.setEnvironment(rbtEnvironment(scope.runId, {
-    reviewer: {
-      ...roots,
+    executor: {
+      ...roleRoots(scope.runRoot, "executor"),
       readableRoots: [codebaseRoot],
       shellTools: [],
     },
+    reviewer: { ...roots, readableRoots: [], shellTools: [] },
   }));
   await domain.start();
   t.after(() => domain.stop());
@@ -994,13 +1115,9 @@ function dynamicCall(input: {
 }
 
 function rbtDomain(input: {
-  unity?: UnityPipelineTool;
   jarvis?: (phase: "execute" | "review") => JarvisBehaviorTool;
 } = {}): RbtDomain {
   return new RbtDomain(new RbtAgentDynamicToolBackend({
-    ...(input.unity ? {
-      unityPipeline: () => input.unity!,
-    } : {}),
     ...(input.jarvis ? { jarvisBehavior: input.jarvis } : {}),
   }));
 }
