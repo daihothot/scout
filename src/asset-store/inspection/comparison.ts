@@ -22,7 +22,7 @@ export function sameUnorderedStrings(actual: string[], expected: string[]): bool
   return true;
 }
 
-/** Compares profiles while treating only permission roots as unordered sets. */
+/** Compares mount-affecting profile fields while ignoring the runtime model. */
 export function sameAgentProfile(actual: AgentProfile, expected: AgentProfile): boolean {
   return sameValue(normalizeAgentProfile(actual), normalizeAgentProfile(expected));
 }
@@ -50,9 +50,10 @@ export function sameMcpServer(
     && sameValue(actual.smoke, expected.smoke);
 }
 
-function normalizeAgentProfile(profile: AgentProfile): AgentProfile {
+function normalizeAgentProfile(profile: AgentProfile): Omit<AgentProfile, "model"> {
+  const { model: _model, ...mountProfile } = profile;
   return {
-    ...profile,
+    ...mountProfile,
     readableRoots: [...(profile.readableRoots ?? [])].sort(),
     writableRoots: [...(profile.writableRoots ?? [])].sort(),
   };

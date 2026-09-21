@@ -10,8 +10,7 @@ export interface CreateCodexAppServerClientOptions {
   isolatedCodexHome: string;
   configToml: string;
   logPrefix: string;
-  providerName: string;
-  providerApiKey?: string;
+  providerEnvironment: NodeJS.ProcessEnv;
   stderrLogPath: string;
   transportLogPath?: string;
   mountRoots?: string[];
@@ -55,8 +54,7 @@ export function createCodexAppServerClient(options: CreateCodexAppServerClientOp
       // real home so third-party tools resolve ~/.guru and ~/.codegraph correctly.
       home: homedir(),
       codexHome: options.isolatedCodexHome,
-      providerName: options.providerName,
-      providerApiKey: options.providerApiKey,
+      providerEnvironment: options.providerEnvironment,
       codexPath,
       expectedCodexVersion: codexVersion,
       logPrefix: options.logPrefix,

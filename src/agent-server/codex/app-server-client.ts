@@ -6,9 +6,8 @@
  * a workspace; those decisions belong to run stages and the asset store.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
 import readline from "node:readline";
 import {
   AppServerEventStore,
@@ -92,8 +91,7 @@ export interface CodexAppServerOptions {
   expectedCodexVersion?: string;
   home: string;
   codexHome: string;
-  providerName?: string;
-  providerApiKey?: string;
+  providerEnvironment?: NodeJS.ProcessEnv;
   logPrefix?: string;
   stderrLogPath?: string;
   transportLogPath?: string;
@@ -283,20 +281,12 @@ export class CodexAppServerClient {
   private closing = false;
 
   constructor(options: CodexAppServerOptions) {
-    const provider = readProviderConfig(options.providerName ?? "GuruOpenAI");
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...options.providerEnvironment,
       HOME: options.home,
       CODEX_HOME: options.codexHome,
     };
-    if (options.providerApiKey) {
-      env.CODEX_API_KEY = options.providerApiKey;
-    } else if (provider.envKey && process.env[provider.envKey]) {
-      env.CODEX_API_KEY = process.env[provider.envKey];
-    }
-    if (provider.baseUrl) {
-      env.OPENAI_BASE_URL = provider.baseUrl;
-    }
 
     this.logPrefix = options.logPrefix ?? "scout app-server";
     this.codexHome = resolve(options.codexHome);
@@ -1219,32 +1209,4 @@ function cleanUndefined<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined),
   ) as T;
-}
-
-function readProviderConfig(providerName: string): { baseUrl?: string; envKey?: string } {
-  try {
-    const text = readFileSync(join(homedir(), ".codex", "config.toml"), "utf8");
-    const providerBlock = matchTomlBlock(text, `model_providers.${providerName}`);
-    return {
-      baseUrl: readTomlString(providerBlock, "base_url"),
-      envKey: readTomlString(providerBlock, "env_key"),
-    };
-  } catch {
-    return {};
-  }
-}
-
-function matchTomlBlock(text: string, blockName: string): string {
-  const escaped = blockName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const header = text.match(new RegExp(`^\\[${escaped}\\]\\r?\\n`, "m"));
-  if (!header || header.index === undefined) return "";
-  const contentStart = header.index + header[0].length;
-  const rest = text.slice(contentStart);
-  const nextHeader = rest.search(/\r?\n\[/);
-  return nextHeader === -1 ? rest : rest.slice(0, nextHeader);
-}
-
-function readTomlString(text: string, key: string): string | undefined {
-  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text.match(new RegExp(`^${escaped}\\s*=\\s*"([^"]*)"`, "m"))?.[1];
 }

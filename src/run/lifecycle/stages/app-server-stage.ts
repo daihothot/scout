@@ -4,11 +4,8 @@ import {
   createCodexAppServerClient,
   type CodexAppServerClientBundle,
 } from "../../../agent-server/codex/app-server-factory.js";
-import {
-  buildClientConfig,
-  readHomeProviderConfig,
-  rebindTargetCodexAuth,
-} from "../../../agent-server/codex/app-server-config.js";
+import { buildClientConfig } from "../../../agent-server/codex/app-server-config.js";
+import { resolveCodexModelProvider } from "../../../agent-server/codex/model-provider.js";
 import {
   AppServerRootConfigStage,
   type RunAppServerRootConfig,
@@ -75,20 +72,19 @@ export class RunAppServerStage implements RunStage {
     const isolatedHome = join(runRoot, "codex-home");
     const isolatedCodexHome = join(isolatedHome, ".codex");
     mkdirSync(isolatedCodexHome, { recursive: true });
-    const providerConfig = readHomeProviderConfig(defaultModel.provider);
-    rebindTargetCodexAuth(isolatedCodexHome, providerConfig.authPath);
+    const provider = resolveCodexModelProvider(defaultModel.provider);
+    provider.prepareAuth(isolatedCodexHome);
     const configToml = buildClientConfig({
       mountRoots: rootConfig.mountRoots,
       permissionProfiles: rootConfig.permissionProfiles,
       model: defaultModel,
-      providerConfig,
+      provider,
     });
     const clientOptions = {
       isolatedHome,
       isolatedCodexHome,
       configToml,
-      providerName: defaultModel.provider,
-      providerApiKey: providerConfig.experimentalBearerToken,
+      providerEnvironment: provider.launchEnvironment(),
       logPrefix: `scout ${scope.runId} app-server`,
       stderrLogPath: join(logsRoot, "app-server.log"),
       transportLogPath: process.env.SCOUT_APP_SERVER_TRACE === "1"

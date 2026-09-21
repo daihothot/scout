@@ -1,5 +1,6 @@
 import type {
   AssetCommit,
+  CodexMount,
   MaterializeOptions,
   MountManifest,
   MountMaterializationStep,
@@ -48,6 +49,11 @@ export interface EnvironmentRolePreparationInput {
 export interface EnvironmentRolePlan extends EnvironmentRolePreparationInput {
   readonly inspection: MountPreparationInspection;
 }
+
+/** Preflights a fully prepared mount batch and keys each result by its resolved mount root. */
+export type EnvironmentMountPreflightBatch = (
+  mounts: readonly CodexMount[],
+) => Promise<ReadonlyMap<string, AgentServerPreflightReport>>;
 
 /**
  * Observational callbacks around one role pipeline. Hook failures must not

@@ -1,12 +1,17 @@
 import { sha256Text, stableJson } from "../../core/fs.js";
 import type { AgentProfile } from "../contracts/profile.js";
 
-/** Returns the resource-bearing profile fields while excluding device root bindings. */
+/** Returns resource-bearing fields while excluding runtime model and device root bindings. */
 export function profileResourceProjection(profile: AgentProfile): Omit<
   AgentProfile,
-  "readableRoots" | "writableRoots"
+  "model" | "readableRoots" | "writableRoots"
 > {
-  const { readableRoots: _readableRoots, writableRoots: _writableRoots, ...resources } = profile;
+  const {
+    model: _model,
+    readableRoots: _readableRoots,
+    writableRoots: _writableRoots,
+    ...resources
+  } = profile;
   return resources;
 }
 

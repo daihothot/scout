@@ -1,4 +1,4 @@
-import { createCodexAppServerMountPreflight } from "../../../agent-server/codex/app-server-preflight.js";
+import { createCodexAppServerMountPreflightBatch } from "../../../agent-server/codex/app-server-preflight.js";
 import type { AgentServerPreflightReport } from "../../../agent-server/types.js";
 import { join, resolve } from "node:path";
 import { AssetStore, type CodexMount, type MaterializeOptions } from "../../../asset-store/index.js";
@@ -14,6 +14,7 @@ import {
   EnvironmentSnapshotLoader,
   EnvironmentSnapshotLoadError,
   RunEnvironmentBuilder,
+  createEnvironmentMountPreflightBatch,
   describeEnvironmentPreflightFailures,
   requireEnvironmentAgents,
   type EnvironmentRolePlan,
@@ -153,13 +154,14 @@ export class RestoreEnvironmentStage implements RunStage {
       new Map(plans.map((plan) => [plan.role, plan.inspection] as const)),
     );
     await publishProgress(progress);
-    const preflightMount = this.options.preflightMount
-      ?? createCodexAppServerMountPreflight(
+    const preflightMounts = this.options.preflightMount
+      ? createEnvironmentMountPreflightBatch(this.options.preflightMount)
+      : createCodexAppServerMountPreflightBatch(
         scope.appServer,
         plans.some((plan) => plan.inspection.decision === "rebuild") ? 4 : 1,
       );
 
-    const runner = new EnvironmentRoleRunner(assetStore, preflightMount, {
+    const runner = new EnvironmentRoleRunner(assetStore, preflightMounts, {
       onRoleStart: async (role) => {
         if (progress.phase === "failed") return;
         progress.activeRole = role;

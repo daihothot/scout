@@ -15,6 +15,7 @@ import { join } from "node:path";
 import {
   AssetStore,
   type AgentProfile,
+  type MountManifest,
   type WorkflowProfile,
 } from "../../src/asset-store/index.js";
 
@@ -126,6 +127,74 @@ test("AssetStore resolves a complete per-agent model override", () => {
     reasoningEffort: "low",
     reasoningSummary: "detailed",
   });
+});
+
+test("Agent model changes rebuild metadata without changing resource identity", () => {
+  const fixtureRoot = createCodexAssetFixture("scout-agent-model-runtime-");
+  const store = new AssetStore();
+  const runId = "run-agent-model-runtime";
+  const initial = store.materializeMount({
+    scoutRoot: fixtureRoot,
+    runId,
+    agentId: "coordinator",
+  });
+  const persistedManifest = JSON.parse(
+    readFileSync(initial.manifestPath, "utf8"),
+  ) as MountManifest;
+  const persistedIdentity = {
+    assetCommitId: initial.assetCommitId,
+    parentAssetCommitId: initial.parentAssetCommitId,
+    mountId: initial.mountId,
+    resourceHash: initial.resourceHash,
+  };
+  const initialHashes = new Map(
+    persistedManifest.assets.map((asset) => [asset.id, asset.hash] as const),
+  );
+
+  updateAgentProfile(fixtureRoot, "coordinator", {
+    model: {
+      id: "gpt-5.6-sol",
+      provider: "openai",
+      reasoningEffort: "medium",
+      reasoningSummary: "concise",
+    },
+  });
+
+  const inspection = store.inspectMount({
+    scoutRoot: fixtureRoot,
+    runId,
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedManifest,
+    persistedIdentity,
+  });
+  assert.equal(inspection.decision, "rebuild");
+  assert.equal(inspection.reason, "agent model changed");
+
+  const rebuilt = store.prepareMount({
+    scoutRoot: fixtureRoot,
+    runId,
+    agentId: "coordinator",
+    cleanRunRoot: false,
+    persistedManifest,
+    persistedIdentity,
+  });
+  assert.equal(rebuilt.mount.resourceHash, initial.resourceHash);
+  assert.equal(rebuilt.mount.assetCommitId, initial.assetCommitId);
+  assert.equal(rebuilt.mount.mountId, initial.mountId);
+  assert.deepEqual(rebuilt.mount.agentProfile.model, {
+    id: "gpt-5.6-sol",
+    provider: "openai",
+    reasoningEffort: "medium",
+    reasoningSummary: "concise",
+  });
+  const rebuiltManifest = JSON.parse(
+    readFileSync(rebuilt.mount.manifestPath, "utf8"),
+  ) as MountManifest;
+  assert.equal(
+    rebuiltManifest.assets.find((asset) => asset.id === "codex.agents.profile.coordinator")?.hash,
+    initialHashes.get("codex.agents.profile.coordinator"),
+  );
 });
 
 test("AssetStore rejects an incomplete per-agent model override", () => {

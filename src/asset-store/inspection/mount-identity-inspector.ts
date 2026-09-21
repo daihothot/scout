@@ -4,6 +4,7 @@ import type { MountContext } from "../contracts/mount-context.js";
 import {
   sameAgentProfileResources,
   sameUnorderedStrings,
+  sameValue,
 } from "./comparison.js";
 
 /** Verifies portable identity and profile-owned permission roots. */
@@ -36,6 +37,9 @@ export class MountIdentityInspector {
     }
     if (!sameAgentProfileResources(manifest.agentProfile, context.agentProfile)) {
       return "agent profile changed";
+    }
+    if (!sameValue(manifest.agentProfile.model, context.agentProfile.model)) {
+      return "agent model changed";
     }
 
     if (!Array.isArray(manifest.profileReadableRoots)

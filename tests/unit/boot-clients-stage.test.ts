@@ -27,18 +27,22 @@ import {
   type ScoutAgentPermissionProfile,
 } from "../../src/agent/thread/types.js";
 import { AssetStore } from "../../src/asset-store/index.js";
+import { buildClientConfig } from "../../src/agent-server/codex/app-server-config.js";
 import {
-  buildClientConfig,
-  readHomeProviderConfig,
-} from "../../src/agent-server/codex/app-server-config.js";
+  OpenAIProvider,
+  resolveCodexModelProvider,
+} from "../../src/agent-server/codex/model-provider.js";
 
 const scoutRoot = process.cwd();
 
 test("built-in OpenAI provider reuses Codex auth without redefining it", (t) => {
   const targetAuthPath = installTestCodexHome(t, false, "auth");
-  const providerConfig = readHomeProviderConfig("openai");
+  const provider = resolveCodexModelProvider("openai");
 
-  assert.deepEqual(providerConfig, { authPath: targetAuthPath });
+  assert.ok(provider instanceof OpenAIProvider);
+  const isolatedCodexHome = mkdtempSync(join(tmpdir(), "scout-openai-provider-"));
+  provider.prepareAuth(isolatedCodexHome);
+  assert.equal(readlinkSync(join(isolatedCodexHome, "auth.json")), targetAuthPath);
 
   const configToml = buildClientConfig({
     mountRoots: [],
@@ -49,7 +53,7 @@ test("built-in OpenAI provider reuses Codex auth without redefining it", (t) => 
       reasoningEffort: "high",
       reasoningSummary: "concise",
     },
-    providerConfig,
+    provider,
   });
   assert.match(configToml, /^model = "gpt-5\.6-sol"$/m);
   assert.match(configToml, /^model_provider = "openai"$/m);

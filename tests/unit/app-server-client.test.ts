@@ -33,7 +33,6 @@ test("CodexAppServerClient accepts the pinned version from supported app-server 
       expectedCodexVersion: "0.150.1",
       home: tmpdir(),
       codexHome: tmpdir(),
-      providerName: "missing-provider",
     });
 
     try {
@@ -65,7 +64,6 @@ test("CodexAppServerClient rejects an app-server version outside Scout's pinned 
     expectedCodexVersion: "0.150.1",
     home: tmpdir(),
     codexHome: tmpdir(),
-    providerName: "missing-provider",
   });
 
   try {
@@ -110,8 +108,7 @@ test("CodexAppServerClient sends explicit model and reasoning configuration", as
     codexPath: fakeServer,
     home: tmpdir(),
     codexHome: tmpdir(),
-    providerName: "missing-provider",
-    providerApiKey: "target-device-token",
+    providerEnvironment: { CODEX_API_KEY: "target-device-token" },
   });
 
   try {
@@ -206,7 +203,6 @@ test("CodexAppServerClient applies and confirms one named permission profile", a
     codexPath: fakeServer,
     home: tmpdir(),
     codexHome: tmpdir(),
-    providerName: "missing-provider",
   });
 
   try {
@@ -287,7 +283,6 @@ test("CodexAppServerClient rejects a mismatched permission selection", async () 
     codexPath: fakeServer,
     home: tmpdir(),
     codexHome: tmpdir(),
-    providerName: "missing-provider",
   });
 
   try {
@@ -347,7 +342,6 @@ test("CodexAppServerClient resumes a persisted thread without returning turn his
     codexPath: fakeServer,
     home: tmpdir(),
     codexHome: tmpdir(),
-    providerName: "missing-provider",
   });
 
   try {
@@ -428,7 +422,6 @@ test("CodexAppServerClient rejects a resume response from a different runtime wo
     codexPath: fakeServer,
     home: tmpdir(),
     codexHome: tmpdir(),
-    providerName: "missing-provider",
   });
 
   try {
@@ -465,7 +458,6 @@ test("CodexAppServerClient serializes shared plugin-manager operations", async (
     codexPath: fakeServer,
     home: tmpdir(),
     codexHome: tmpdir(),
-    providerName: "missing-provider",
   });
   const events: string[] = [];
   let releaseFirst!: () => void;
@@ -544,7 +536,6 @@ test("CodexAppServerClient publishes timeline after store state is reduced", asy
     codexPath: fakeServer,
     home: tmpdir(),
     codexHome: tmpdir(),
-    providerName: "missing-provider",
   });
   const timelineSnapshots: Array<{ kind: string; progressCount: number; planSteps: number }> = [];
   client.onTimeline((entry) => {
@@ -608,7 +599,6 @@ test("CodexAppServerClient exposes turn interrupt without coupling it to runTurn
     codexPath: fakeServer,
     home: tmpdir(),
     codexHome: tmpdir(),
-    providerName: "missing-provider",
   });
 
   try {
@@ -650,7 +640,6 @@ test("CodexAppServerClient steers an active turn with its expected turn id", asy
     codexPath: fakeServer,
     home: tmpdir(),
     codexHome: tmpdir(),
-    providerName: "missing-provider",
   });
 
   try {
@@ -693,7 +682,6 @@ test("CodexAppServerClient persists stderr diagnostics and optional NDJSON trans
     codexPath: fakeServer,
     home: root,
     codexHome: root,
-    providerName: "missing-provider",
     logPrefix: "test app-server",
     stderrLogPath,
     transportLogPath,
@@ -744,7 +732,6 @@ test("CodexAppServerClient keeps multiline diagnostics out of the TUI terminal",
     codexPath: fakeServer,
     home: root,
     codexHome: root,
-    providerName: "missing-provider",
     logPrefix: "tui app-server",
     stderrLogPath,
     writeDiagnosticsToStderr: false,
@@ -791,7 +778,6 @@ test("CodexAppServerClient does not report an intentional close as a disconnect"
     codexPath: fakeServer,
     home: root,
     codexHome: root,
-    providerName: "missing-provider",
     stderrLogPath,
   });
   const timelineKinds: string[] = [];

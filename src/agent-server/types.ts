@@ -1,15 +1,12 @@
+import type {
+  MountRootAccessReport,
+  MountShellSmokeResult,
+} from "../asset-store/mount/preflight.js";
+
 /** Portable diagnostics produced while checking one mounted Codex app-server. */
 export interface AgentServerPreflightReport {
   status: "passed" | "failed";
-  rootAccess?: {
-    status: "passed" | "failed";
-    roots: Array<{
-      path: string;
-      access: "readable" | "writable";
-      status: "passed" | "failed";
-      error?: string;
-    }>;
-  };
+  rootAccess?: MountRootAccessReport;
   configLayers?: unknown[];
   skillsList?: unknown;
   pluginList?: unknown;
@@ -28,14 +25,7 @@ export interface AgentServerPreflightReport {
     status: "passed" | "failed";
   };
   hooksList?: unknown;
-  shellSmoke?: Array<{
-    command: string;
-    status: "passed" | "failed";
-    durationMs: number;
-    stdout?: string;
-    stderr?: string;
-    error?: string;
-  }>;
+  shellSmoke?: MountShellSmokeResult[];
   error?: string;
 }
 

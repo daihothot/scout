@@ -24,12 +24,13 @@ export interface EnvironmentRoleBuildPlan {
 export class EnvironmentRoleBuilder {
   constructor(
     private readonly assetStore: Pick<AssetStore, "buildCommit">,
-    private readonly preflightMount: (mount: CodexMount) => Promise<AgentServerPreflightReport>,
   ) {}
 
-  async build(plan: EnvironmentRoleBuildPlan): Promise<RunAgentEnvironment> {
+  build(
+    plan: EnvironmentRoleBuildPlan,
+    preflight: AgentServerPreflightReport,
+  ): RunAgentEnvironment {
     const { mount } = plan;
-    const preflight = await this.preflightMount(mount);
     const preflightStatus = mount.issues.some((issue) => issue.severity === "error")
       ? "failed"
       : preflight.status;

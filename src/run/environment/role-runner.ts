@@ -15,48 +15,76 @@ import type {
   EnvironmentRoleRunnerHooks,
   EnvironmentRoleRunnerResult,
   EnvironmentRoleStep,
+  EnvironmentMountPreflightBatch,
 } from "./types.js";
 
 /**
- * Executes the common per-role environment pipeline. Lifecycle stages provide
- * the plan, preflight implementation, and observational hooks; this class has
- * no run scope, interaction port, or persistence policy of its own.
+ * Prepares every role mount before running the shared preflight batch, then
+ * assembles each role environment. Lifecycle stages retain progress and
+ * persistence policy.
  */
 export class EnvironmentRoleRunner {
   private readonly roleBuilder: EnvironmentRoleBuilder;
 
   constructor(
     private readonly assetStore: Pick<AssetStore, "prepareMount" | "buildCommit">,
-    private readonly preflightMount: (mount: CodexMount) => Promise<AgentServerPreflightReport>,
+    private readonly preflightMounts: EnvironmentMountPreflightBatch,
     private readonly hooks: EnvironmentRoleRunnerHooks = {},
   ) {
-    this.roleBuilder = new EnvironmentRoleBuilder(assetStore, preflightMount);
+    this.roleBuilder = new EnvironmentRoleBuilder(assetStore);
   }
 
   async runAll(
     plans: readonly EnvironmentRolePlan[],
   ): Promise<EnvironmentRoleRunnerResult> {
-    const settled = await Promise.allSettled(plans.map((plan) => this.run(plan)));
-    const rejectedRole = settled.find(
+    const preparedSettled = await Promise.allSettled(
+      plans.map((plan) => this.prepare(plan)),
+    );
+    const rejectedPreparation = preparedSettled.find(
       (result): result is PromiseRejectedResult => result.status === "rejected",
     );
-    if (rejectedRole) throw rejectedRole.reason;
+    if (rejectedPreparation) throw rejectedPreparation.reason;
+
+    const prepared = preparedSettled.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value] : []
+    );
+    let preflightByMount: ReadonlyMap<string, AgentServerPreflightReport>;
+    try {
+      preflightByMount = await this.preflightMounts(
+        prepared.map((entry) => entry.mount),
+      );
+    } catch (error) {
+      await Promise.allSettled(
+        prepared.map((entry) => this.reportFailure(entry.plan.role, "preflight", error)),
+      );
+      throw error;
+    }
+
+    const completedSettled = await Promise.allSettled(
+      prepared.map((entry) => this.complete(entry, preflightByMount)),
+    );
+    const rejectedCompletion = completedSettled.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (rejectedCompletion) throw rejectedCompletion.reason;
 
     const agents: EnvironmentRoleRunnerResult = {};
-    for (const [index, result] of settled.entries()) {
+    for (const [index, result] of completedSettled.entries()) {
       if (result.status === "fulfilled") {
-        agents[plans[index]!.role] = result.value;
+        agents[prepared[index]!.plan.role] = result.value;
       }
     }
     return agents;
   }
 
-  private async run(plan: EnvironmentRolePlan): Promise<RunAgentEnvironment> {
+  private async prepare(plan: EnvironmentRolePlan): Promise<{
+    plan: EnvironmentRolePlan;
+    mount: CodexMount;
+  }> {
     const role = plan.role;
     let step: EnvironmentRoleStep = plan.inspection.decision === "rebuild"
       ? "wipe"
       : "verify";
-    let failureReported = false;
 
     await this.hooks.onRoleStart?.(role, plan);
 
@@ -76,23 +104,36 @@ export class EnvironmentRoleRunner {
 
       step = "preflight";
       await this.hooks.onPreflightStart?.(role, plan);
-      const agent = await this.roleBuilder.build({
-        role,
-        mount: preparation.mount,
-        preflightPath: plan.preflightPath,
-        assetCommitPath: plan.assetCommitPath,
-      });
-      if (agent.assetCommit.status !== "preflight_passed") {
-        failureReported = true;
-        await this.reportFailure(role, "preflight", agent.preflight.error);
-      } else {
-        await this.hooks.onRoleComplete?.(role, plan, agent);
-      }
-      return agent;
+      return { plan, mount: preparation.mount };
     } catch (error) {
-      if (!failureReported) await this.reportFailure(role, step, error);
+      await this.reportFailure(role, step, error);
       throw error;
     }
+  }
+
+  private async complete(
+    prepared: { plan: EnvironmentRolePlan; mount: CodexMount },
+    preflightByMount: ReadonlyMap<string, AgentServerPreflightReport>,
+  ): Promise<RunAgentEnvironment> {
+    const { plan, mount } = prepared;
+    const preflight = preflightByMount.get(resolve(mount.mountRoot));
+    if (!preflight) {
+      const error = new Error(`Mount preflight did not return ${mount.mountRoot}.`);
+      await this.reportFailure(plan.role, "preflight", error);
+      throw error;
+    }
+    const agent = this.roleBuilder.build({
+      role: plan.role,
+      mount,
+      preflightPath: plan.preflightPath,
+      assetCommitPath: plan.assetCommitPath,
+    }, preflight);
+    if (agent.assetCommit.status !== "preflight_passed") {
+      await this.reportFailure(plan.role, "preflight", agent.preflight.error);
+    } else {
+      await this.hooks.onRoleComplete?.(plan.role, plan, agent);
+    }
+    return agent;
   }
 
   private async reportFailure(
@@ -106,6 +147,29 @@ export class EnvironmentRoleRunner {
       // Hooks are observational. Preserve the pipeline's original failure.
     }
   }
+}
+
+/** Adapts independent mount checks to the batch contract used by the environment runner. */
+export function createEnvironmentMountPreflightBatch(
+  preflightMount: (mount: CodexMount) => Promise<AgentServerPreflightReport>,
+): EnvironmentMountPreflightBatch {
+  return async (mounts) => {
+    const settled = await Promise.allSettled(mounts.map(preflightMount));
+    const rejected = settled.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (rejected) throw rejected.reason;
+    const reports = new Map<string, AgentServerPreflightReport>();
+    for (const [index, result] of settled.entries()) {
+      if (result.status !== "fulfilled") continue;
+      const mountRoot = resolve(mounts[index]!.mountRoot);
+      if (reports.has(mountRoot)) {
+        throw new Error(`Duplicate mount root in preflight batch: ${mountRoot}.`);
+      }
+      reports.set(mountRoot, result.value);
+    }
+    return reports;
+  };
 }
 
 /**

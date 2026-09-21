@@ -9,10 +9,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import {
+  createCodexAppServerMountPreflightBatch,
   createCodexAppServerMountPreflight,
   preflightCodexAppServerMount,
   summarizeAgentServerPreflight,
@@ -72,6 +73,92 @@ test("mount preflight accepts readable and writable roots", async (t) => {
 
   assert.equal(report.status, "passed");
   assert.equal(report.rootAccess?.status, "passed");
+});
+
+test("mount preflight batch reloads catalogs once and partitions them by cwd", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-catalog-batch-preflight-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const mounts = ["first", "second"].map((agentId) => {
+    const mountRoot = join(root, agentId, "mount");
+    const artifactRoot = join(root, agentId, "artifacts");
+    mkdirSync(mountRoot, { recursive: true });
+    mkdirSync(artifactRoot, { recursive: true });
+    return testMount({
+      root,
+      mountRoot,
+      artifactRoot,
+      readableRoots: [mountRoot],
+      writableRoots: [artifactRoot],
+    });
+  });
+  const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const appServer = {
+    request: async (method: string, params: Record<string, unknown>) => {
+      calls.push({ method, params });
+      if (method === "skills/list") {
+        const cwds = params.cwds as string[];
+        return {
+          data: cwds.map((cwd) => ({ cwd, skills: [{ name: `skill-${cwd}` }] })),
+          errors: [],
+        };
+      }
+      if (method === "hooks/list") {
+        const cwds = params.cwds as string[];
+        return {
+          data: cwds.map((cwd) => ({ cwd, hooks: [{ name: `hook-${cwd}` }] })),
+          errors: [],
+        };
+      }
+      return {};
+    },
+  } as unknown as CodexAppServerClient;
+
+  const reports = await createCodexAppServerMountPreflightBatch(appServer, 2)(mounts);
+
+  assert.equal(calls.filter((call) => call.method === "skills/list").length, 1);
+  assert.equal(calls.filter((call) => call.method === "hooks/list").length, 1);
+  const skillsCall = calls.find((call) => call.method === "skills/list");
+  assert.deepEqual(skillsCall?.params.cwds, mounts.map((mount) => resolve(mount.mountRoot)));
+  assert.equal(skillsCall?.params.forceReload, true);
+  for (const mount of mounts) {
+    const report = reports.get(resolve(mount.mountRoot));
+    assert.equal(report?.status, "passed");
+    const skills = report?.skillsList as { data: Array<{ cwd: string }> };
+    const hooks = report?.hooksList as { data: Array<{ cwd: string }> };
+    assert.deepEqual(skills.data.map((entry) => entry.cwd), [resolve(mount.mountRoot)]);
+    assert.deepEqual(hooks.data.map((entry) => entry.cwd), [resolve(mount.mountRoot)]);
+  }
+});
+
+test("mount preflight batch fails every report when catalog cwd coverage is incomplete", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-catalog-batch-missing-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const mounts = ["first", "second"].map((agentId) => {
+    const mountRoot = join(root, agentId, "mount");
+    const artifactRoot = join(root, agentId, "artifacts");
+    mkdirSync(mountRoot, { recursive: true });
+    mkdirSync(artifactRoot, { recursive: true });
+    return testMount({
+      root,
+      mountRoot,
+      artifactRoot,
+      readableRoots: [mountRoot],
+      writableRoots: [artifactRoot],
+    });
+  });
+  const appServer = {
+    request: async (method: string) => method === "skills/list"
+      ? { data: [{ cwd: mounts[0]!.mountRoot, skills: [] }] }
+      : { data: mounts.map((mount) => ({ cwd: mount.mountRoot, hooks: [] })) },
+  } as unknown as CodexAppServerClient;
+
+  const reports = await createCodexAppServerMountPreflightBatch(appServer, 2)(mounts);
+
+  for (const mount of mounts) {
+    const report = reports.get(resolve(mount.mountRoot));
+    assert.equal(report?.status, "failed");
+    assert.match(report?.error ?? "", /skills\/list did not return cwd/);
+  }
 });
 
 test("mount preflight checks a binding-only shell wrapper without executing it", async (t) => {

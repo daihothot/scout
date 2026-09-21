@@ -1,146 +1,85 @@
-import { execFile } from "node:child_process";
-import { accessSync, constants, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { resolve } from "node:path";
 import type { CodexMount } from "../../asset-store/contracts/mount.js";
 import {
-  buildMountShellEnvironment,
-  buildMountShellPath,
-} from "../../asset-store/mount/macros.js";
-import { isPathWithin } from "../../core/path.js";
-import type { CodexAppServerClient } from "./app-server-client.js";
+  createMountShellPreflight,
+  inspectMountRootAccess,
+} from "../../asset-store/mount/preflight.js";
 import type { AgentServerPreflightReport } from "../types.js";
+import type { CodexAppServerClient } from "./app-server-client.js";
+import {
+  discoverCodexMountCatalogs,
+  type CodexMountCatalog,
+} from "./preflight/app-server-catalog-preflight.js";
+import { preflightCodexMountPlugins } from "./preflight/app-server-plugin-preflight.js";
+import { readRedactedCodexConfigLayers } from "./preflight/preflight-summary.js";
 
-/**
- * Keep the runtime RPC responses available to the gate, but persist only a
- * portable diagnostic projection. Codex catalog responses contain descriptions,
- * interfaces, source paths, and other device-local payloads that are not facts
- * needed to resume a Scout run.
- */
-export function summarizeAgentServerPreflight(
-  report: AgentServerPreflightReport,
-  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
-): AgentServerPreflightReport {
-  const summary: AgentServerPreflightReport = {
-    status: report.status,
-  };
-  if (report.rootAccess) {
-    summary.rootAccess = {
-      status: report.rootAccess.status,
-      roots: report.rootAccess.roots.map((root) => ({
-        path: portablePreflightPath(root.path, mount),
-        access: root.access,
-        status: root.status,
-        ...(root.error ? { error: summarizeError(root.error) } : {}),
-      })),
-    };
-  }
-  if (report.configLayers) {
-    summary.configLayers = summarizeConfigLayers(report.configLayers, mount);
-  }
-  if (report.skillsList !== undefined) {
-    summary.skillsList = summarizeSkillsList(report.skillsList, mount);
-  }
-  if (report.pluginList !== undefined) {
-    summary.pluginList = summarizePluginList(report.pluginList);
-  }
-  if (report.pluginInstalled !== undefined) {
-    summary.pluginInstalled = summarizePluginStates(report.pluginInstalled);
-  }
-  if (report.pluginInstall !== undefined) {
-    summary.pluginInstall = summarizePluginInstall(report.pluginInstall);
-  }
-  if (report.pluginInstalledAfterInstall !== undefined) {
-    summary.pluginInstalledAfterInstall = summarizePluginStates(
-      report.pluginInstalledAfterInstall,
-    );
-  }
-  if (report.pluginGate) {
-    summary.pluginGate = {
-      marketplacePath: portablePreflightPath(report.pluginGate.marketplacePath, mount),
-      plugins: report.pluginGate.plugins.map((plugin) => ({ ...plugin })),
-      status: report.pluginGate.status,
-    };
-  }
-  if (report.hooksList !== undefined) {
-    summary.hooksList = summarizeHooksList(report.hooksList, mount);
-  }
-  if (report.shellSmoke) {
-    summary.shellSmoke = report.shellSmoke.map((item) => ({
-      command: item.command,
-      status: item.status,
-      durationMs: item.durationMs,
-      ...(item.status === "failed" && item.stdout ? { stdout: summarizeError(item.stdout) } : {}),
-      ...(item.status === "failed" && item.stderr ? { stderr: summarizeError(item.stderr) } : {}),
-      ...(item.error ? { error: summarizeError(item.error) } : {}),
-    }));
-  }
-  if (report.error) summary.error = summarizeError(report.error);
-  return summary;
-}
+export { summarizeAgentServerPreflight } from "./preflight/preflight-summary.js";
 
-type ShellSmokeResult = NonNullable<AgentServerPreflightReport["shellSmoke"]>[number];
-type ShellSmokeBatch = {
-  run: Map<string, Promise<ShellSmokeResult>>;
-  schedule(operation: () => Promise<ShellSmokeResult>): Promise<ShellSmokeResult>;
-};
+type MountShellPreflight = ReturnType<typeof createMountShellPreflight>;
 
-function createShellSmokeBatch(concurrency: number): ShellSmokeBatch {
-  if (!Number.isInteger(concurrency) || concurrency < 1) {
-    throw new Error(`Shell smoke concurrency must be a positive integer: ${concurrency}`);
-  }
-  const waiters: Array<() => void> = [];
-  let active = 0;
-  return {
-    run: new Map(),
-    schedule: async (operation) => {
-      if (active < concurrency) {
-        active += 1;
-      } else {
-        await new Promise<void>((resolveWaiter) => waiters.push(resolveWaiter));
-      }
-      try {
-        return await operation();
-      } finally {
-        const next = waiters.shift();
-        if (next) next();
-        else active -= 1;
-      }
-    },
-  };
-}
-
-/** Creates one mount preflight function whose run-scoped shell smokes are shared within the batch. */
+/** Creates one Codex mount preflight with run-scoped shell-smoke reuse. */
 export function createCodexAppServerMountPreflight(
   appServer: CodexAppServerClient,
   shellSmokeConcurrency: number,
 ): (mount: CodexMount) => Promise<AgentServerPreflightReport> {
-  const shellSmokeBatch = createShellSmokeBatch(shellSmokeConcurrency);
-  return (mount) => preflightCodexAppServerMountInternal({ mount, appServer }, shellSmokeBatch);
+  const shellPreflight = createMountShellPreflight(shellSmokeConcurrency);
+  return (mount) => preflightCodexAppServerMountInternal({ mount, appServer }, shellPreflight);
 }
 
-/** Runs root, Codex catalog, plugin, hook, and shell smoke checks for one mount. */
+/** Discovers Codex catalogs once, then preflights each prepared mount independently. */
+export function createCodexAppServerMountPreflightBatch(
+  appServer: CodexAppServerClient,
+  shellSmokeConcurrency: number,
+): (
+  mounts: readonly CodexMount[],
+) => Promise<ReadonlyMap<string, AgentServerPreflightReport>> {
+  const shellPreflight = createMountShellPreflight(shellSmokeConcurrency);
+  return async (mounts) => {
+    if (mounts.length === 0) return new Map();
+    let catalogs: ReadonlyMap<string, CodexMountCatalog>;
+    try {
+      catalogs = await discoverCodexMountCatalogs(appServer, mounts);
+    } catch (error) {
+      const message = error instanceof Error ? error.stack ?? error.message : String(error);
+      return new Map(mounts.map((mount) => [
+        resolve(mount.mountRoot),
+        {
+          status: "failed" as const,
+          rootAccess: inspectMountRootAccess(mount),
+          error: message,
+        },
+      ]));
+    }
+
+    const reports = await Promise.all(mounts.map(async (mount) => {
+      const mountRoot = resolve(mount.mountRoot);
+      const catalog = catalogs.get(mountRoot);
+      if (!catalog) throw new Error(`Catalog discovery did not return ${mountRoot}.`);
+      const report = await preflightCodexAppServerMountInternal(
+        { mount, appServer, catalog },
+        shellPreflight,
+      );
+      return [mountRoot, report] as const;
+    }));
+    return new Map(reports);
+  };
+}
+
+/** Runs Mount and Codex-native checks for one prepared mount. */
 export async function preflightCodexAppServerMount(input: {
   mount: CodexMount;
   appServer: CodexAppServerClient;
 }): Promise<AgentServerPreflightReport> {
-  return preflightCodexAppServerMountInternal(input, createShellSmokeBatch(4));
+  return preflightCodexAppServerMountInternal(input, createMountShellPreflight(4));
 }
 
 async function preflightCodexAppServerMountInternal(
   input: {
     mount: CodexMount;
     appServer: CodexAppServerClient;
+    catalog?: CodexMountCatalog;
   },
-  shellSmokeBatch: ShellSmokeBatch,
+  shellPreflight: MountShellPreflight,
 ): Promise<AgentServerPreflightReport> {
   const { mount, appServer } = input;
   const result: AgentServerPreflightReport = {
@@ -148,63 +87,25 @@ async function preflightCodexAppServerMountInternal(
   };
 
   try {
-    result.rootAccess = inspectRootAccess(mount);
+    result.rootAccess = inspectMountRootAccess(mount);
     const configRead = await appServer.request("config/read", {
       cwd: mount.mountRoot,
       includeLayers: true,
     });
-    result.configLayers = readConfigLayers(configRead).map(redactConfigLayer);
-    result.skillsList = await appServer.request("skills/list", {
-      cwds: [mount.mountRoot],
-      forceReload: true,
-    });
-    if (mount.plugins.length > 0) {
-      await appServer.withPluginManagerLock(async () => {
-        result.pluginList = await appServer.request("plugin/list", {
-          cwds: [mount.mountRoot],
-        });
-        result.pluginInstalled = await appServer.request("plugin/installed", {
-          cwds: [mount.mountRoot],
-          installSuggestionPluginNames: mount.plugins,
-        });
-        result.pluginGate = buildPluginGate({
-          pluginNames: mount.plugins,
-          marketplacePath: join(mount.mountRoot, ".agents", "plugins", "marketplace.json"),
-          installedResponse: result.pluginInstalled,
-        });
-        if (result.pluginGate.plugins.some((plugin) => !plugin.installedBefore || !plugin.enabledBefore)) {
-          const pluginInstallResults: unknown[] = [];
-          for (const pluginName of mount.plugins) {
-            pluginInstallResults.push(await appServer.request("plugin/install", {
-              marketplacePath: result.pluginGate?.marketplacePath
-                ?? join(mount.mountRoot, ".agents", "plugins", "marketplace.json"),
-              pluginName,
-            }).catch((error: unknown) => ({
-              pluginName,
-              error: error instanceof Error ? error.message : String(error),
-            })));
-          }
-          result.pluginInstall = pluginInstallResults;
-          result.pluginInstalledAfterInstall = await appServer.request("plugin/installed", {
-            cwds: [mount.mountRoot],
-            installSuggestionPluginNames: mount.plugins,
-          });
-          result.pluginGate = buildPluginGate({
-            pluginNames: mount.plugins,
-            marketplacePath: result.pluginGate.marketplacePath,
-            installedResponse: result.pluginInstalledAfterInstall,
-            before: result.pluginGate,
-          });
-        }
+    result.configLayers = readRedactedCodexConfigLayers(configRead);
+    result.skillsList = input.catalog?.skillsList
+      ?? await appServer.request("skills/list", {
+        cwds: [mount.mountRoot],
+        forceReload: true,
       });
-    }
-    result.hooksList = await appServer.request("hooks/list", {
-      cwds: [mount.mountRoot],
-    }).catch((error: unknown) => ({
-      warning: error instanceof Error ? error.message : String(error),
-    }));
-    result.shellSmoke = await smokeShellTools(mount, shellSmokeBatch);
-
+    Object.assign(result, await preflightCodexMountPlugins(appServer, mount));
+    result.hooksList = input.catalog?.hooksList
+      ?? await appServer.request("hooks/list", {
+        cwds: [mount.mountRoot],
+      }).catch((error: unknown) => ({
+        warning: error instanceof Error ? error.message : String(error),
+      }));
+    result.shellSmoke = await shellPreflight(mount);
     result.status = preflightPassed(result) ? "passed" : "failed";
   } catch (error) {
     result.error = error instanceof Error ? error.stack ?? error.message : String(error);
@@ -213,498 +114,9 @@ async function preflightCodexAppServerMountInternal(
   return result;
 }
 
-async function smokeShellTools(
-  mount: CodexMount,
-  shellSmokeBatch: ShellSmokeBatch,
-): Promise<AgentServerPreflightReport["shellSmoke"]> {
-  const mountRoot = mount.mountRoot;
-  const tools = mount.shellTools.filter((tool) => tool.required);
-  const environment = {
-    ...process.env,
-    PATH: buildMountShellPath(mountRoot),
-    ...buildMountShellEnvironment({
-      runRoot: mount.runRoot,
-      artifactRoot: mount.artifactRoot,
-      tempRoot: mount.tempRoot,
-      hostTempRoot: tmpdir(),
-      assetCommitId: mount.assetCommitId,
-    }),
-  };
-  return Promise.all(tools.map(async (tool): Promise<ShellSmokeResult> => {
-    const startedAt = Date.now();
-    const command = [tool.exposeAs, ...(tool.smoke?.args ?? [])].join(" ");
-    const executable = join(mountRoot, "bin", tool.exposeAs);
-
-    try {
-      accessSync(executable, constants.X_OK);
-    } catch (error) {
-      return {
-        command,
-        status: "failed",
-        durationMs: Date.now() - startedAt,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-
-    if (!tool.smoke) {
-      return {
-        command,
-        status: "passed",
-        durationMs: Date.now() - startedAt,
-      };
-    }
-    const smoke = tool.smoke;
-
-    const execute = () => new Promise<ShellSmokeResult>((resolveOutput) => {
-      const finish = (result: Omit<ShellSmokeResult, "durationMs">) => {
-        resolveOutput({
-          ...result,
-          durationMs: Date.now() - startedAt,
-        });
-      };
-      const runCodegraph = (codebasePath: string) => {
-        const args = [...smoke.args, codebasePath];
-        execFile(executable, args, {
-          cwd: mountRoot,
-          env: environment,
-          encoding: "utf8",
-        }, (error, stdout, stderr) => {
-          const normalizedStdout = String(stdout).trim();
-          const normalizedStderr = String(stderr).trim();
-          const markerPassed = smoke.marker
-            ? normalizedStdout.includes(smoke.marker)
-            : true;
-          const passed = !error && markerPassed;
-          finish({
-            command: [tool.exposeAs, ...args].join(" "),
-            status: passed ? "passed" : "failed",
-            stdout: normalizedStdout,
-            stderr: normalizedStderr,
-            ...(!passed ? {
-              error: error?.message ?? `Missing marker: ${smoke.marker}`,
-            } : {}),
-          });
-        });
-      };
-
-      if (!smoke.managedCodebase) {
-        execFile(executable, smoke.args, {
-          cwd: mountRoot,
-          env: environment,
-          encoding: "utf8",
-        }, (error, stdout, stderr) => {
-          const normalizedStdout = String(stdout).trim();
-          const normalizedStderr = String(stderr).trim();
-          const markerPassed = smoke.marker
-            ? normalizedStdout.includes(smoke.marker)
-            : true;
-          const passed = !error && markerPassed;
-          finish({
-            command,
-            status: passed ? "passed" : "failed",
-            stdout: normalizedStdout,
-            stderr: normalizedStderr,
-            ...(!passed ? {
-              error: error?.message ?? `Missing marker: ${smoke.marker}`,
-            } : {}),
-          });
-        });
-        return;
-      }
-
-      const jarvisTool = mount.shellTools.find((candidate) =>
-        candidate.id === "jarvis-codebase"
-      );
-      if (!jarvisTool) {
-        finish({
-          command,
-          status: "failed",
-          error: "Managed CodeGraph smoke requires the jarvis-codebase shell tool.",
-        });
-        return;
-      }
-      const jarvisExecutable = join(mountRoot, "bin", jarvisTool.exposeAs);
-      execFile(jarvisExecutable, [smoke.managedCodebase, "path"], {
-        cwd: mountRoot,
-        env: environment,
-        encoding: "utf8",
-      }, (error, stdout, stderr) => {
-        const normalizedStdout = String(stdout).trim();
-        const normalizedStderr = String(stderr).trim();
-        if (error) {
-          finish({
-            command,
-            status: "failed",
-            stdout: normalizedStdout,
-            stderr: normalizedStderr,
-            error: `Jarvis managed codebase path failed: ${error.message}`,
-          });
-          return;
-        }
-        const codebasePath = normalizedStdout.split(/\r?\n/).at(-1)?.trim() ?? "";
-        if (!isAbsolute(codebasePath)) {
-          finish({
-            command,
-            status: "failed",
-            stdout: normalizedStdout,
-            stderr: normalizedStderr,
-            error: `Jarvis returned a non-absolute managed codebase path: ${codebasePath}`,
-          });
-          return;
-        }
-        try {
-          if (!statSync(codebasePath).isDirectory()) {
-            throw new Error("path is not a directory");
-          }
-        } catch (pathError) {
-          finish({
-            command,
-            status: "failed",
-            stdout: normalizedStdout,
-            stderr: normalizedStderr,
-            error: `Jarvis returned an unusable managed codebase path: ${pathError instanceof Error ? pathError.message : String(pathError)}`,
-          });
-          return;
-        }
-        runCodegraph(codebasePath);
-      });
-    });
-
-    if (smoke.scope === "mount") return shellSmokeBatch.schedule(execute);
-
-    const cacheKey = JSON.stringify({
-      id: tool.id,
-      command: tool.command,
-      args: tool.args ?? [],
-      exposeAs: tool.exposeAs,
-      smoke,
-    });
-    const existing = shellSmokeBatch.run.get(cacheKey);
-    if (existing) return existing;
-    const execution = shellSmokeBatch.schedule(execute);
-    shellSmokeBatch.run.set(cacheKey, execution);
-    return execution;
-  }));
-}
-
 function preflightPassed(result: AgentServerPreflightReport): boolean {
   if (result.rootAccess?.status !== "passed") return false;
   if (result.shellSmoke?.some((item) => item.status !== "passed")) return false;
   if (result.pluginGate && result.pluginGate.status !== "passed") return false;
   return true;
-}
-
-function inspectRootAccess(mount: CodexMount): NonNullable<AgentServerPreflightReport["rootAccess"]> {
-  const writableRoots = new Set([
-    mount.artifactRoot,
-    mount.tempRoot,
-    ...mount.writableRoots,
-    ...mount.mcpServers.flatMap((server) => server.writableRoots),
-  ]);
-  const readableRoots = new Set([
-    mount.mountRoot,
-    ...mount.readableRoots,
-  ]);
-  const roots = [...new Set([
-    ...readableRoots,
-    ...writableRoots,
-  ])].map((path) => {
-    const access = writableRoots.has(path)
-      ? "writable" as const
-      : readableRoots.has(path)
-      ? "readable" as const
-      : "readable" as const;
-    try {
-      if (!statSync(path).isDirectory()) {
-        throw new Error("path is not a directory");
-      }
-      accessSync(
-        path,
-        constants.R_OK | (access === "writable" ? constants.W_OK : 0),
-      );
-      return { path, access, status: "passed" as const };
-    } catch (error) {
-      return {
-        path,
-        access,
-        status: "failed" as const,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
-  });
-  return {
-    status: roots.every((root) => root.status === "passed") ? "passed" : "failed",
-    roots,
-  };
-}
-
-function readConfigLayers(response: unknown): unknown[] {
-  const root = readObjectOrUndefined(response);
-  return readArrayOrUndefined(root?.layers) ?? [];
-}
-
-function redactConfigLayer(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(redactConfigLayer);
-  const object = readObjectOrUndefined(value);
-  if (!object) return value;
-  return Object.fromEntries(Object.entries(object).map(([key, entry]) => {
-    const normalized = key.toLowerCase();
-    const sensitive = normalized.includes("secret")
-      || normalized.includes("token")
-      || normalized.includes("password")
-      || normalized.includes("credential")
-      || normalized.includes("apikey")
-      || normalized.includes("api_key")
-      || normalized === "authorization";
-    return [key, sensitive ? "[redacted]" : redactConfigLayer(entry)];
-  }));
-}
-
-function buildPluginGate(input: {
-  pluginNames: string[];
-  marketplacePath: string;
-  installedResponse: unknown;
-  before?: AgentServerPreflightReport["pluginGate"];
-}): NonNullable<AgentServerPreflightReport["pluginGate"]> {
-  const plugins = input.pluginNames.map((pluginName) => {
-    const plugin = findPluginSummary(input.installedResponse, pluginName);
-    const before = input.before?.plugins.find((item) => item.pluginName === pluginName);
-    const installedAfter = readBoolean(plugin, "installed");
-    const enabledAfter = readBoolean(plugin, "enabled");
-    return {
-      pluginName,
-      installedBefore: before?.installedBefore ?? installedAfter,
-      enabledBefore: before?.enabledBefore ?? enabledAfter,
-      installedAfter,
-      enabledAfter,
-    };
-  });
-  return {
-    marketplacePath: input.marketplacePath,
-    plugins,
-    status: plugins.every((plugin) => plugin.installedAfter && plugin.enabledAfter) ? "passed" : "failed",
-  };
-}
-
-function findPluginSummary(response: unknown, pluginName: string): Record<string, unknown> | undefined {
-  const root = readObjectOrUndefined(response);
-  const marketplaces = readArrayOrUndefined(root?.marketplaces);
-  for (const marketplace of marketplaces ?? []) {
-    const marketplaceObject = readObjectOrUndefined(marketplace);
-    const plugins = readArrayOrUndefined(marketplaceObject?.plugins);
-    for (const plugin of plugins ?? []) {
-      const pluginObject = readObjectOrUndefined(plugin);
-      if (pluginObject?.name === pluginName) return pluginObject;
-    }
-  }
-  return undefined;
-}
-
-function readObjectOrUndefined(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
-function readArrayOrUndefined(value: unknown): unknown[] | undefined {
-  return Array.isArray(value) ? value : undefined;
-}
-
-function readBoolean(object: Record<string, unknown> | undefined, key: string): boolean {
-  return typeof object?.[key] === "boolean" ? object[key] : false;
-}
-
-function portablePreflightPath(
-  path: string,
-  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
-): string {
-  const normalizedPath = resolve(path);
-  const roots: Array<[string, string]> = [
-    [mount.mountRoot, "${SCOUT_MOUNT_ROOT}"],
-    [mount.artifactRoot, "${SCOUT_ARTIFACT_ROOT}"],
-    [mount.runRoot, "${SCOUT_RUN_ROOT}"],
-    [mount.scoutRoot, "${SCOUT_ROOT}"],
-  ];
-  roots.sort(([left], [right]) => right.length - left.length);
-  for (const [root, macro] of roots) {
-    if (!isPathWithin(root, normalizedPath)) continue;
-    const child = relative(resolve(root), normalizedPath);
-    return child.length === 0
-      ? macro
-      : `${macro}/${child.split(sep).join("/")}`;
-  }
-  // External profile roots are intentionally represented by a stable label,
-  // rather than carrying a source-device absolute path into the run artifact.
-  return basename(normalizedPath) || "<root>";
-}
-
-function summarizeConfigLayers(
-  layers: unknown[],
-  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
-): unknown[] {
-  return layers.map((layer) => {
-    const object = readObjectOrUndefined(layer);
-    if (!object) return { kind: typeof layer };
-    const name = readObjectOrUndefined(object.name);
-    const config = readObjectOrUndefined(object.config);
-    return {
-      ...(name ? {
-        name: {
-          ...(typeof name.type === "string" ? { type: name.type } : {}),
-          ...(typeof name.dotCodexFolder === "string"
-            ? { dotCodexFolder: portablePreflightPath(name.dotCodexFolder, mount) }
-            : {}),
-          ...(typeof name.file === "string"
-            ? { file: portablePreflightPath(name.file, mount) }
-            : {}),
-        },
-      } : {}),
-      ...(typeof object.version === "string" ? { version: object.version } : {}),
-      configKeys: config ? Object.keys(config).sort() : [],
-    };
-  });
-}
-
-function summarizeSkillsList(
-  response: unknown,
-  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
-): unknown {
-  const root = readObjectOrUndefined(response);
-  const data = readArrayOrUndefined(root?.data) ?? [];
-  let totalSkills = 0;
-  const entries = data.map((entry) => {
-    const object = readObjectOrUndefined(entry);
-    const skills = readArrayOrUndefined(object?.skills) ?? [];
-    totalSkills += skills.length;
-    return {
-      ...(typeof object?.cwd === "string"
-        ? { cwd: portablePreflightPath(object.cwd, mount) }
-        : {}),
-      skillCount: skills.length,
-      skills: skills.flatMap((skill) => {
-        const value = readObjectOrUndefined(skill);
-        return typeof value?.name === "string"
-          ? [{
-              name: value.name,
-              ...(typeof value.scope === "string" ? { scope: value.scope } : {}),
-              ...(typeof value.enabled === "boolean" ? { enabled: value.enabled } : {}),
-            }]
-          : [];
-      }),
-      errors: summarizeMessages(object?.errors),
-    };
-  });
-  return {
-    data: entries,
-    totalSkills,
-    errors: summarizeMessages(root?.errors),
-  };
-}
-
-function summarizePluginList(response: unknown): unknown {
-  const root = readObjectOrUndefined(response);
-  const marketplaces = readArrayOrUndefined(root?.marketplaces) ?? [];
-  const summaries = marketplaces.map((marketplace) => {
-    const value = readObjectOrUndefined(marketplace);
-    const plugins = readArrayOrUndefined(value?.plugins) ?? [];
-    return {
-      ...(typeof value?.name === "string" ? { name: value.name } : {}),
-      pluginCount: plugins.length,
-      plugins: plugins.flatMap((plugin) => summarizePluginEntry(plugin)),
-    };
-  });
-  const plugins = summaries.flatMap((marketplace) => marketplace.plugins);
-  return {
-    marketplaces: summaries,
-    marketplaceCount: summaries.length,
-    pluginCount: plugins.length,
-    installedCount: plugins.filter((plugin) => plugin.installed).length,
-    enabledCount: plugins.filter((plugin) => plugin.enabled).length,
-    marketplaceLoadErrors: summarizeMessages(root?.marketplaceLoadErrors),
-  };
-}
-
-function summarizePluginStates(response: unknown): unknown {
-  const root = readObjectOrUndefined(response);
-  const entries = [
-    ...(readArrayOrUndefined(root?.plugins) ?? []),
-    ...(readArrayOrUndefined(root?.data) ?? []),
-    ...(Array.isArray(response) ? response : []),
-  ].flatMap((entry) => summarizePluginEntry(entry));
-  return {
-    plugins: entries,
-    pluginCount: entries.length,
-    installedCount: entries.filter((plugin) => plugin.installed).length,
-    enabledCount: entries.filter((plugin) => plugin.enabled).length,
-    errors: summarizeMessages(root?.errors),
-  };
-}
-
-function summarizePluginInstall(response: unknown): unknown {
-  const entries = Array.isArray(response) ? response : [response];
-  return entries.flatMap((entry) => {
-    const value = readObjectOrUndefined(entry);
-    if (!value) return [];
-    return [{
-      ...(typeof value.pluginName === "string" ? { pluginName: value.pluginName } : {}),
-      ...(typeof value.status === "string" ? { status: value.status } : {}),
-      ...(typeof value.error === "string" ? { error: summarizeError(value.error) } : {}),
-    }];
-  });
-}
-
-function summarizePluginEntry(value: unknown): Array<{
-  id?: string;
-  name: string;
-  installed: boolean;
-  enabled: boolean;
-}> {
-  const object = readObjectOrUndefined(value);
-  if (!object || typeof object.name !== "string") return [];
-  return [{
-    ...(typeof object.id === "string" ? { id: object.id } : {}),
-    name: object.name,
-    installed: readBoolean(object, "installed"),
-    enabled: readBoolean(object, "enabled"),
-  }];
-}
-
-function summarizeHooksList(
-  response: unknown,
-  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
-): unknown {
-  const root = readObjectOrUndefined(response);
-  const data = readArrayOrUndefined(root?.data) ?? [];
-  return {
-    data: data.map((entry) => {
-      const object = readObjectOrUndefined(entry);
-      const hooks = readArrayOrUndefined(object?.hooks) ?? [];
-      return {
-        ...(typeof object?.cwd === "string"
-          ? { cwd: portablePreflightPath(object.cwd, mount) }
-          : {}),
-        hookCount: hooks.length,
-        warnings: summarizeMessages(object?.warnings),
-        errors: summarizeMessages(object?.errors),
-      };
-    }),
-    warnings: summarizeMessages(root?.warnings),
-    errors: summarizeMessages(root?.errors),
-  };
-}
-
-function summarizeMessages(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    if (typeof entry === "string") return [summarizeError(entry)];
-    const object = readObjectOrUndefined(entry);
-    if (!object) return [];
-    const message = object.message ?? object.error ?? object.code;
-    return typeof message === "string" ? [summarizeError(message)] : [];
-  });
-}
-
-function summarizeError(value: string): string {
-  const firstLine = value.split(/\r?\n/, 1)[0] ?? value;
-  return firstLine.length > 500 ? `${firstLine.slice(0, 497)}...` : firstLine;
 }

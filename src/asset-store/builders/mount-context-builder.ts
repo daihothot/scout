@@ -109,7 +109,7 @@ export class MountContextBuilder {
     });
     const assetCommitHash = sha256Text([
       `agent:${agentId}`,
-      `agentProfile:${JSON.stringify(agentProfile)}`,
+      `agentProfile:${profileResourceHash(agentProfile)}`,
       `resource:${computedResourceHash}`,
       `run:${runId}`,
     ].join("\n"));

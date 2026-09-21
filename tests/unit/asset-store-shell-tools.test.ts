@@ -1494,7 +1494,7 @@ test("AssetStore mounts RBT Executor guidance without exposing its host runtime 
     workflowProfileName: "rbt",
   });
   assert.ok(hasSkill(executorMount.skills, "domain-rbt-executor"));
-  assert.equal(hasSkill(executorMount.skills, "tool-unity-pipeline"), false);
+  assert.equal(hasSkill(executorMount.skills, "tool-execution-platform"), false);
   assert.ok(hasSkill(executorMount.skills, "tool-rbt-behavior"));
   assert.equal(executorMount.shellTools.some((tool) => tool.id === "unity"), false);
   assert.ok(executorMount.shellTools.some((tool) => tool.id === "jarvis-codebase"));
@@ -1535,7 +1535,7 @@ test("AssetStore mounts RBT Reviewer guidance without codebase access or host ru
   assert.ok(hasSkill(reviewerMount.skills, "domain-rbt-reviewer"));
   assert.equal(hasSkill(reviewerMount.skills, "domain-rbt-execution-pack"), false);
   assert.equal(hasSkill(reviewerMount.skills, "tool-jarvis-codebase"), false);
-  assert.equal(hasSkill(reviewerMount.skills, "tool-unity-pipeline"), false);
+  assert.ok(hasSkill(reviewerMount.skills, "tool-execution-platform"));
   assert.ok(hasSkill(reviewerMount.skills, "tool-rbt-behavior"));
   assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "unity"), false);
   assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "jarvis-codebase"), false);

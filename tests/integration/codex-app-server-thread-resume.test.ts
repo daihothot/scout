@@ -24,12 +24,12 @@ test("real Codex app-server restores thread memory across processes", {
   const codexHome = join(home, ".codex");
   mkdirSync(codexHome, { recursive: true });
   const providerName = "GuruOpenAI";
-  writeIsolatedConfig(codexHome, providerName);
+  const providerEnvironment = writeIsolatedConfig(codexHome, providerName);
   const clientOptions = {
     codexPath,
     home,
     codexHome,
-    providerName,
+    providerEnvironment,
     logPrefix: "scout thread resume integration",
   };
   const secret = `SCOUT_THREAD_MEMORY_${Date.now()}`;
@@ -96,7 +96,10 @@ test("real Codex app-server restores thread memory across processes", {
   }
 });
 
-function writeIsolatedConfig(codexHome: string, providerName: string): void {
+function writeIsolatedConfig(
+  codexHome: string,
+  providerName: string,
+): NodeJS.ProcessEnv {
   const homeConfig = readFileSync(join(homedir(), ".codex", "config.toml"), "utf8");
   const escaped = providerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const provider = homeConfig.match(new RegExp(
@@ -120,4 +123,8 @@ function writeIsolatedConfig(codexHome: string, providerName: string): void {
     'wire_api = "responses"',
     "",
   ].join("\n"), "utf8");
+  return {
+    CODEX_API_KEY: process.env[envKey],
+    OPENAI_BASE_URL: baseUrl,
+  };
 }
