@@ -1,5 +1,6 @@
 import type { DynamicToolCallResponse } from "../../../../agent-server/types.js";
 import type { ScoutDomainDynamicToolCall } from "../../../types.js";
+import { ExecutionPlatformTool } from "../../../tools/execution-platform-tool.js";
 import {
   JarvisBehaviorTool,
   RbtAgentDynamicToolImplementations,
@@ -77,10 +78,12 @@ function createTool(
       return websocket;
     case RbtAgentDynamicToolImplementations.JarvisBehaviorExecute:
       return factories.jarvisBehavior?.("execute", websocket)
-        ?? new JarvisBehaviorTool("execute", undefined, undefined, undefined, undefined, websocket);
+        ?? new JarvisBehaviorTool("execute", undefined, undefined, undefined, websocket);
     case RbtAgentDynamicToolImplementations.JarvisBehaviorReview:
       return factories.jarvisBehavior?.("review", websocket)
-        ?? new JarvisBehaviorTool("review", undefined, undefined, undefined, undefined, websocket);
+        ?? new JarvisBehaviorTool("review", undefined, undefined, undefined, websocket);
+    case RbtAgentDynamicToolImplementations.ExecutionPlatform:
+      return new ExecutionPlatformTool();
   }
 }
 

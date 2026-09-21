@@ -91,7 +91,7 @@ test("RBT roles receive only their Execution Pack and Signal responsibilities", 
   assert.ok(executor.includes("domain-rbt-execution-pack"));
   assert.equal(executor.includes("domain-rbt-reviewer"), false);
   assert.equal(executor.includes("signal-rbt-evidence-via-rbt-behavior"), false);
-  assert.equal(executor.includes("tool-unity-pipeline"), false);
+  assert.equal(executor.includes("tool-execution-platform"), false);
   assert.ok(executor.includes("tool-rbt-behavior"));
   assert.ok(reviewer.includes("domain-rbt-reviewer"));
   assert.ok(reviewer.includes("domain-rbt-review-pack"));
@@ -99,7 +99,7 @@ test("RBT roles receive only their Execution Pack and Signal responsibilities", 
   assert.equal(reviewer.includes("tool-jarvis-codebase"), false);
   assert.ok(reviewer.includes("signal-rbt-evidence-via-rbt-behavior"));
   assert.equal(reviewer.includes("domain-rbt-executor"), false);
-  assert.equal(reviewer.includes("tool-unity-pipeline"), false);
+  assert.ok(reviewer.includes("tool-execution-platform"));
   assert.ok(reviewer.includes("tool-rbt-behavior"));
 
   const reviewerDependencies = resolveSkillDependencyLoadOrder(catalog, ["domain-rbt-reviewer"])
@@ -108,6 +108,7 @@ test("RBT roles receive only their Execution Pack and Signal responsibilities", 
   assert.equal(reviewerDependencies.includes("tool-jarvis-codebase"), false);
   assert.ok(reviewerDependencies.includes("domain-rbt-review-pack"));
   assert.ok(reviewerDependencies.includes("signal-rbt-evidence-via-rbt-behavior"));
+  assert.ok(reviewerDependencies.includes("tool-execution-platform"));
 });
 
 test("Scout Skill resources retain resource-level required and optional metadata", () => {

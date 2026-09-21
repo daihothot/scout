@@ -3,12 +3,12 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import type { AgentJsonValue } from "../../../../agent/tools/types.js";
 import type { UnsubscribeEventHandler } from "../../../../core/events/index.js";
 import { currentRunScope } from "../../../../run/run-scope.js";
+import type { ExecutionPlatformIdentity } from "../../../../execution/index.js";
 import {
   RbtEvents,
   type RbtBehaviorRequest,
   type RbtBehaviorResult,
   type RbtCampaignCommandEvent,
-  type RbtExecutionPlatform,
   type RbtHostCommandExecution,
 } from "../../rbt-events.js";
 
@@ -29,7 +29,7 @@ interface CampaignExecutionHistory {
   executeFileRef: string;
   campaignId: string;
   scenarioId: string;
-  platform: RbtExecutionPlatform;
+  platform: ExecutionPlatformIdentity;
   startedAt: string;
   endedAt?: string;
   status: "recording" | "completed" | "failed";

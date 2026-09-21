@@ -2,11 +2,13 @@ import type { DynamicToolCallResponse } from "../../../../agent-server/types.js"
 import type { ScoutAgentPhase } from "../../../../agent/thread/types.js";
 import type { AgentDynamicToolSpec } from "../../../../agent/tools/types.js";
 import type { ScoutDomainDynamicToolCall } from "../../../types.js";
+import { executionPlatformAgentTool } from "../../../tools/agent-tools.js";
 
 export const RbtAgentDynamicToolImplementations = {
   JarvisWebSocket: "jarvis-websocket",
   JarvisBehaviorExecute: "jarvis-behavior-execute",
   JarvisBehaviorReview: "jarvis-behavior-review",
+  ExecutionPlatform: "execution-platform",
 } as const;
 
 export type RbtAgentDynamicToolImplementation =
@@ -98,6 +100,11 @@ export const rbtAgentDynamicToolRegistrations: readonly RbtAgentDynamicToolRegis
     phase: "review",
     implementation: RbtAgentDynamicToolImplementations.JarvisBehaviorReview,
     definition: jarvisBehaviorTool,
+  },
+  {
+    phase: "review",
+    implementation: RbtAgentDynamicToolImplementations.ExecutionPlatform,
+    definition: executionPlatformAgentTool,
   },
 ];
 

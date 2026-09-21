@@ -1,10 +1,10 @@
 import type { DynamicToolCallResponse } from "../../../agent-server/types.js";
 import type { AgentJsonValue } from "../../../agent/tools/types.js";
 import type { ScoutDomainDynamicToolCall } from "../../types.js";
+import type { ExecutionPlatformIdentity } from "../../../execution/index.js";
 import {
   RbtEvents,
   type RbtCampaignCommandEvent,
-  type RbtExecutionPlatform,
 } from "../rbt-events.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 import {
@@ -32,7 +32,7 @@ export class JarvisBehaviorExecuteFileRunner {
   async run(
     call: ScoutDomainDynamicToolCall,
     executeFile: ParsedExecuteFile,
-    platform: RbtExecutionPlatform,
+    platform: ExecutionPlatformIdentity,
   ): Promise<DynamicToolCallResponse> {
     const preflight = await this.commandRunner.run(call, "behavior.registry.manifest", {});
     if (preflight.status !== "completed") {
@@ -187,7 +187,7 @@ export class JarvisBehaviorExecuteFileRunner {
   private async publishCampaignCommand(
     call: ScoutDomainDynamicToolCall,
     executeFile: ParsedExecuteFile,
-    platform: RbtExecutionPlatform,
+    platform: ExecutionPlatformIdentity,
     sequence: number,
     agentInput: ExecuteFileCommand,
     command: BehaviorCommandExecution,

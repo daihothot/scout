@@ -1,6 +1,5 @@
 import type { DynamicToolCallResponse } from "../../../../../agent-server/types.js";
 import type { AgentJsonValue } from "../../../../../agent/tools/types.js";
-import { UnityPipelineTool } from "../../../../tools/index.js";
 import type { ScoutDomainDynamicToolCall } from "../../../../types.js";
 import type { RbtAgentDynamicTool } from "../agent-tools.js";
 import { JarvisWebSocketTool } from "../jarvis-websocket/index.js";
@@ -33,7 +32,6 @@ export class JarvisBehaviorTool implements RbtAgentDynamicTool {
     private readonly phase: JarvisBehaviorPhase,
     private readonly executable = "jarvis",
     private readonly baseArgs: readonly string[] = [],
-    private readonly unityPipeline = new UnityPipelineTool(),
     private readonly store = new JarvisBehaviorToolStore(),
     private readonly websocket = new JarvisWebSocketTool(),
   ) {
@@ -44,7 +42,7 @@ export class JarvisBehaviorTool implements RbtAgentDynamicTool {
       this.store,
       this.websocket,
     );
-    this.platformGate = new JarvisBehaviorPlatformGate(this.unityPipeline, this.store);
+    this.platformGate = new JarvisBehaviorPlatformGate();
     this.executeFileRunner = new JarvisBehaviorExecuteFileRunner(this.commandRunner, this.store);
   }
 
@@ -80,7 +78,7 @@ export class JarvisBehaviorTool implements RbtAgentDynamicTool {
         throw new Error("execute_file must be a non-empty path.");
       }
       const executeFile = readJarvisBehaviorExecuteFile(call, input.execute_file, this.store);
-      const platform = await this.platformGate.ensure(call);
+      const platform = await this.platformGate.ensure();
       if (!platform.ok) return failedToolResponse(platform.code, platform.message);
       return this.executeFileRunner.run(call, executeFile, platform.platform);
     }
@@ -93,7 +91,7 @@ export class JarvisBehaviorTool implements RbtAgentDynamicTool {
       return failedToolResponse("command_not_available", `Behavioral command ${input.command} is not available in the current RBT Phase.`);
     }
     const payload = toJsonObject(requireObject(input.payload, "Behavioral query payload"));
-    const platform = await this.platformGate.ensure(call);
+    const platform = await this.platformGate.ensure();
     if (!platform.ok) return failedToolResponse(platform.code, platform.message);
     const command = await this.commandRunner.run(call, input.command, payload);
     const output: AgentJsonValue = command.status === "completed"

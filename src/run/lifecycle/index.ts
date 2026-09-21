@@ -7,6 +7,7 @@ export * from "./stages/agents-stage.js";
 export * from "./stages/app-server-stage.js";
 export * from "./stages/app-server-root-config-stage.js";
 export * from "./stages/domain-stage.js";
+export * from "./stages/execution-stage.js";
 export * from "./stages/interaction-stage.js";
 export * from "./stages/orchestrator-stage.js";
 export * from "./stages/run-runtime-stage.js";

@@ -5,6 +5,7 @@ import type { Logger } from "../../src/core/logging/index.js";
 import type { ScoutDomain } from "../../src/domain/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
 import {
+  ExecutionStage,
   RunRuntimeStage,
   RunScopeStage,
   RunStageExecutor,
@@ -50,6 +51,7 @@ test("RunScopeStage creates the Run-owned stores and releases the installed scop
   assert.deepEqual(stage.scope.agentRegistry.listAgents(), []);
   assert.deepEqual(stage.scope.taskStore.listTasks(), []);
   assert.throws(() => stage.scope.appServer, /app-server is not available/);
+  assert.throws(() => stage.scope.executionSystem, /execution system is not available/);
   assert.throws(() => stage.scope.environment, /environment is not available/);
 
   await stage.scope.terminate("test_termination");
@@ -57,6 +59,39 @@ test("RunScopeStage creates the Run-owned stores and releases the installed scop
 
   await stage.stop();
   assert.throws(() => currentRunScope(), /No active Scout run scope/);
+});
+
+test("ExecutionStage installs and clears the run-scoped system without probing a platform", async (t) => {
+  const runId = "run-execution-stage";
+  const eventBus = new InMemoryEventBus();
+  const scope = new RunScope({
+    runId,
+    scoutRoot: "/repo",
+    logger: noopLogger(),
+    eventBus,
+    interactionPort: new NoopRuntimeInteractionPort(),
+    domain: {
+      domainId: "test",
+      name: "test",
+      dynamicToolsForPhase: () => [],
+    },
+    ...createTestRunPersistence(t, runId, "/repo", eventBus),
+    terminate: async () => undefined,
+  });
+  const scopeStage = new RunScopeStage(scope);
+  const executionStage = new ExecutionStage();
+
+  await scopeStage.start();
+  assert.throws(() => scope.executionSystem, /execution system is not available/);
+
+  await executionStage.start();
+  const system = scope.executionSystem;
+  assert.equal(typeof system.launch, "function");
+  assert.equal(typeof system.shutdown, "function");
+
+  await executionStage.stop();
+  assert.throws(() => scope.executionSystem, /execution system is not available/);
+  await scopeStage.stop();
 });
 
 test("RunScopeStage remains available until every dependent stage stops", async (t) => {

@@ -1,18 +1,46 @@
-import type { DynamicToolCallResponse } from "../../../agent-server/types.js";
-import type { AgentJsonValue } from "../../../agent/tools/types.js";
 import { HostCommandExecutor } from "../../../host/host-command-executor.js";
 import { currentRunScope } from "../../../run/run-scope.js";
-import type { ScoutDomainDynamicToolCall } from "../../types.js";
 
-interface ParsedUnityPipelineResult {
+type UnityPipelineJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | UnityPipelineJsonValue[]
+  | { [key: string]: UnityPipelineJsonValue };
+
+export type UnityPipelineOperation =
+  | "version"
+  | "status"
+  | "list"
+  | "editor_play"
+  | "editor_status"
+  | "editor_stop";
+
+export interface UnityPipelineRequest {
+  operation: UnityPipelineOperation;
+  timeoutSeconds?: number;
+}
+
+export interface UnityPipelineTransportResponse {
   success: boolean;
-  result?: AgentJsonValue;
-  errors?: AgentJsonValue[];
-  warnings?: AgentJsonValue[];
+  operation: UnityPipelineOperation;
+  status: "completed" | "failed" | "timed_out";
+  result?: UnityPipelineJsonValue;
+  errors?: UnityPipelineJsonValue[];
+  warnings?: UnityPipelineJsonValue[];
   error?: string;
 }
 
-/** Executes the UnityPipeline dynamic-tool contract through the host Unity CLI. */
+interface ParsedUnityPipelineResult {
+  success: boolean;
+  result?: UnityPipelineJsonValue;
+  errors?: UnityPipelineJsonValue[];
+  warnings?: UnityPipelineJsonValue[];
+  error?: string;
+}
+
+/** Sends one typed request through the host Unity Pipeline transport. */
 export class UnityPipelineTool {
   private readonly hostCommands = new HostCommandExecutor();
 
@@ -21,32 +49,10 @@ export class UnityPipelineTool {
     private readonly baseArgs: readonly string[] = [],
   ) {}
 
-  async execute(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
+  async execute(request: UnityPipelineRequest): Promise<UnityPipelineTransportResponse> {
+    const operation = request.operation;
     try {
-      const input = requireObject(call.input.arguments, "UnityPipeline arguments");
-      const operation = input.operation;
-      const supportedOperations = new Set([
-        "version",
-        "status",
-        "list",
-        "editor_play",
-        "editor_status",
-        "editor_stop",
-      ]);
-      if (typeof operation !== "string" || !supportedOperations.has(operation)) {
-        return failedResponse("Unsupported UnityPipeline operation.", {
-          operation: toJsonValue(operation),
-        });
-      }
-      const timeoutSeconds = positiveInteger(input.timeout_seconds, 30, 120, "timeout_seconds");
-      const unexpectedKeys = Object.keys(input).filter((key) =>
-        key !== "operation" && key !== "timeout_seconds"
-      );
-      if (unexpectedKeys.length > 0) {
-        return failedResponse("UnityPipeline arguments contain unsupported fields.", {
-          fields: unexpectedKeys,
-        });
-      }
+      const timeoutSeconds = positiveInteger(request.timeoutSeconds, 30, 120, "timeoutSeconds");
 
       const scope = currentRunScope();
       const operationArgs = operation === "version"
@@ -69,25 +75,32 @@ export class UnityPipelineTool {
         timeoutMs: (timeoutSeconds + 5) * 1_000,
       });
       if (result.status !== "completed") {
-        return dynamicResponse(false, {
+        return {
+          success: false,
           operation,
           status: result.status,
           ...(result.error ? { error: result.error } : {}),
-        });
+        };
       }
       const parsed = operation === "version"
         ? parseVersionResult(result.stdout)
         : parseJsonResult(operation, result.stdout);
-      return dynamicResponse(parsed.success, {
+      return {
+        success: parsed.success,
         operation,
         status: parsed.success ? "completed" : "failed",
         ...(parsed.result !== undefined ? { result: parsed.result } : {}),
         ...(parsed.errors && parsed.errors.length > 0 ? { errors: parsed.errors } : {}),
         ...(parsed.warnings && parsed.warnings.length > 0 ? { warnings: parsed.warnings } : {}),
         ...(parsed.error ? { error: parsed.error } : {}),
-      });
+      };
     } catch (error) {
-      return failedResponse(error instanceof Error ? error.message : String(error));
+      return {
+        success: false,
+        operation,
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 }
@@ -128,7 +141,7 @@ function parseJsonResult(operation: string, stdout: string): ParsedUnityPipeline
   const warnings = value.warnings.map(toJsonValue);
   const data = value.data;
   let parsedSuccess = value.success;
-  let result: AgentJsonValue;
+  let result: UnityPipelineJsonValue;
   if (!isRecord(data)) {
     return {
       success: false,
@@ -149,7 +162,7 @@ function parseJsonResult(operation: string, stdout: string): ParsedUnityPipeline
         error: "Unity Pipeline status data must contain count and instances.",
       };
     }
-    const instances: AgentJsonValue[] = [];
+    const instances: UnityPipelineJsonValue[] = [];
     for (const instance of data.instances) {
       if (!isRecord(instance)
         || typeof instance.version !== "string"
@@ -176,7 +189,7 @@ function parseJsonResult(operation: string, stdout: string): ParsedUnityPipeline
         error: "Unity Pipeline list data must contain count and tools.",
       };
     }
-    const commands: AgentJsonValue[] = [];
+    const commands: UnityPipelineJsonValue[] = [];
     for (const tool of data.tools) {
       if (!isRecord(tool) || typeof tool.name !== "string" || tool.name.length === 0) {
         return {
@@ -271,31 +284,7 @@ function positiveInteger(
   return value;
 }
 
-function requireObject(value: unknown, label: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new Error(`${label} must be an object.`);
-  return value;
-}
-
-function failedResponse(
-  message: string,
-  detail: Record<string, AgentJsonValue | undefined> = {},
-): DynamicToolCallResponse {
-  const output: AgentJsonValue = {
-    status: "failed",
-    message,
-    ...Object.fromEntries(Object.entries(detail).filter(([, value]) => value !== undefined)),
-  } as AgentJsonValue;
-  return dynamicResponse(false, output);
-}
-
-function dynamicResponse(success: boolean, output: AgentJsonValue): DynamicToolCallResponse {
-  return {
-    success,
-    contentItems: [{ type: "inputText", text: JSON.stringify(output, null, 2) }],
-  };
-}
-
-function toJsonValue(value: unknown): AgentJsonValue {
+function toJsonValue(value: unknown): UnityPipelineJsonValue {
   if (value === null || typeof value === "string" || typeof value === "boolean") return value;
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (Array.isArray(value)) return value.map(toJsonValue);

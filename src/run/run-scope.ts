@@ -8,6 +8,7 @@ import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
 import type { Scheduler } from "../core/workflow/index.js";
 import type { ScoutDomain } from "../domain/index.js";
+import type { ExecutionPlatformPort } from "../execution/index.js";
 import type { RuntimeInteractionPort } from "../interaction/protocol/port.js";
 import {
   defaultScoutConfig,
@@ -63,6 +64,7 @@ export class RunScope {
   readonly manifestStore: RunManifestStore;
   private readonly terminateRun: RunScopeOptions["terminate"];
   private activeAppServer?: CodexAppServerClient;
+  private activeExecutionSystem?: ExecutionPlatformPort;
   private preparedEnvironment?: RunEnvironment;
 
   constructor(options: RunScopeOptions) {
@@ -88,6 +90,13 @@ export class RunScope {
       throw new Error("Run app-server is not available.");
     }
     return this.activeAppServer;
+  }
+
+  get executionSystem(): ExecutionPlatformPort {
+    if (!this.activeExecutionSystem) {
+      throw new Error("Run execution system is not available.");
+    }
+    return this.activeExecutionSystem;
   }
 
   get environment(): RunEnvironment {
@@ -117,6 +126,20 @@ export class RunScope {
       throw new Error("Cannot clear an inactive run app-server.");
     }
     this.activeAppServer = undefined;
+  }
+
+  setExecutionSystem(executionSystem: ExecutionPlatformPort): void {
+    if (this.activeExecutionSystem) {
+      throw new Error("Run execution system is already available.");
+    }
+    this.activeExecutionSystem = executionSystem;
+  }
+
+  clearExecutionSystem(executionSystem: ExecutionPlatformPort): void {
+    if (this.activeExecutionSystem !== executionSystem) {
+      throw new Error("Cannot clear an inactive run execution system.");
+    }
+    this.activeExecutionSystem = undefined;
   }
 
   setEnvironment(environment: RunEnvironment): void {

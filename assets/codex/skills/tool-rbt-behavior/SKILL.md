@@ -58,9 +58,10 @@ summary: 规范 JarvisBehavior 的执行文件入口、只读查询入口和 Age
 - WebSocket endpoint 和 session ID；
 - command timeout；
 - schema path；
+- platform type、version、Adapter 或 transport 参数；
 - Jarvis CLI 与宿主 shell 输入输出。
 
-Runtime 在发送 Behavioral 命令前确认唯一可用的 Unity Editor、编译与 Domain Reload 状态，并准备 Play Mode。调用方直接使用本工具，消费执行结果或平台门禁错误。
+`JarvisBehavior` 在发送 Behavioral 命令前，通过当前 Run 的 Execution System 建立或复用执行平台会话，并等待平台达到可执行状态。调用方直接使用本工具；平台准备失败时，消费工具返回的 `error.code` 和 `error.message`。
 
 ## Read-only Commands
 
@@ -153,38 +154,74 @@ Runtime 在发送 Behavioral 命令前确认唯一可用的 Unity Editor、编�
 
 成功表示执行文件中的全部命令成功完成，包括 cleanup；不表示 BDD 或 Signal 已匹配。
 
-### Failure
+### Tool or Platform Failure
 
 ```json
 {
   "status": "failed",
-  "command": "<command>或省略",
   "error": {
-    "code": "<runtime-or-tool-code>",
+    "code": "<tool-or-platform-code>",
     "message": "<failure-message>"
   }
 }
 ```
 
-执行文件失败时还会返回 `operation: execute_file`、`executedCommands`，以及首个失败命令从 1 开始的执行序号和命令名。
+输入、Phase 或执行平台准备失败时使用该结构，此时尚未发送 Behavioral command。
 
-常见 code：
+### Query Failure
+
+```json
+{
+  "status": "failed",
+  "command": "<command>",
+  "error": {
+    "code": "<command-or-runtime-code>",
+    "message": "<failure-message>"
+  }
+}
+```
+
+### Execute-file Failure
+
+```json
+{
+  "status": "failed",
+  "operation": "execute_file",
+  "executedCommands": 0,
+  "error": {
+    "sequence": 0,
+    "command": "<command>",
+    "code": "<execution-code>",
+    "message": "<failure-message>"
+  }
+}
+```
+
+`sequence` 是首个失败位置。执行前 identity preflight 失败时为 `0`；命令执行失败时从 `1` 开始。`executedCommands` 是实际发送过的 execute-file command 数量。
+
+稳定 code：
 
 | code | 含义 |
 | --- | --- |
 | `invalid_dynamic_tool_input` | 输入形式、路径或 execute-file 内容不合法，尚未开始执行。 |
 | `command_not_available` | 当前 Phase 未注册该操作。 |
-| `unity_editor_unavailable` | 没有可连接的 Unity Editor；请求人工准备 Editor 后再继续。 |
-| `unity_editor_ambiguous` | 可连接的 Unity Editor 不唯一；请求人工保留唯一目标后再继续。 |
-| `unity_editor_status_failed` | 无法读取 Editor 可用状态或版本。 |
-| `unity_play_mode_status_failed` | 无法确认 Play Mode 状态。 |
-| `unity_play_mode_start_failed` | Editor 未能进入可执行的 Play Mode。 |
+| `execution_platform_unavailable` | 没有识别到可用于当前执行的平台。 |
+| `execution_platform_ambiguous` | 同时识别到多个执行平台，无法确定唯一目标。 |
+| `execution_platform_unsupported` | 当前执行适配器尚不支持该平台类型。 |
+| `execution_system_disposed` | 当前 Run 的 Execution System 已结束，不再接受平台操作。 |
+| `identity_preflight_failed` | execute-file 中的 Node、Variant、Evidence Source 或 Trigger identity 与当前 Runtime registry 不一致。 |
 | `behavior_schema_unavailable` | 当前挂载中找不到 Behavioral schema。 |
+| `websocket_endpoint_conflict` | Behavioral endpoint 已被其它 session 占用。 |
 | `websocket_connect_failed` | Runtime 无法建立 Behavioral session。 |
+| `websocket_status_unconfirmed` | 建立连接后无法确认 Behavioral session 状态。 |
 | `behavior_schema_config_failed` | session 无法配置 schema。 |
 | `host_command_failed` | Jarvis 宿主命令失败或超时。 |
 | `invalid_behavior_result` | 返回值不是当前 request 的唯一有效 result。 |
+| `campaign_history_write_failed` | command 已执行，但对应 campaign history 未能写入。 |
+| `behavior_command_failed` | Behavioral command 失败且没有提供更具体的 code。 |
 | 其它 Runtime code | Behavioral handler 返回的原始 `code`，结合 `message` 解读。 |
+
+当前 Execution Adapter 可以返回额外的平台专属 code。`JarvisBehavior` 不转换这类失败，直接将原始 `code` 和 `message` 放入 Tool or Platform Failure；调用方不得由 code 名称推断未返回的平台状态。
 
 ## Prohibited
 

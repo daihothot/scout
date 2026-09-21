@@ -19,6 +19,7 @@ import {
 } from "../../src/run/run-scope.js";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import type { RunEnvironment } from "../../src/run/types.js";
+import type { ExecutionPlatformPort } from "../../src/execution/index.js";
 import {
   createGraphState,
   Scheduler,
@@ -125,6 +126,7 @@ export function installTestRunScope(
     appServer?: CodexAppServerClient;
     environment?: RunEnvironment;
     scheduler?: Scheduler;
+    executionSystem?: ExecutionPlatformPort;
     terminate?(reason: string): Promise<void>;
   },
 ): RunScope {
@@ -157,6 +159,7 @@ export function installTestRunScope(
     scheduler: options.scheduler ?? persistence.scheduler,
     terminate: options.terminate ?? (async () => undefined),
   });
+  if (options.executionSystem) scope.setExecutionSystem(options.executionSystem);
   if (options.appServer) scope.setAppServer(options.appServer);
   if (options.environment) scope.setEnvironment(options.environment);
   const release = installRunScope(scope);

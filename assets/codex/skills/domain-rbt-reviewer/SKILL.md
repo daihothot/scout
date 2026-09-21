@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: domain-rbt-reviewer
 description: Scout Reviewer 消费有效 JR/SR，查询同次 campaign evidence，比较声明与实际记录并交付审查结果时使用。
 id: domain-rbt-reviewer
-version: 0.11.0
+version: 0.12.0
 type: domain
 domain: rbt
 phase: [review]
@@ -12,7 +12,7 @@ tags: [scout, rbt, bdd, review, evidence, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [domain-rbt-review-pack, signal-rbt-evidence, signal-rbt-evidence-via-rbt-behavior, tool-rbt-behavior, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**]
+    required: [domain-rbt-review-pack, signal-rbt-evidence, signal-rbt-evidence-via-rbt-behavior, tool-rbt-behavior, tool-execution-platform, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**]
 summary: 沿 JR → SR 比较 campaign evidence，覆盖全部声明并交付结果。
 ---
 
@@ -26,7 +26,7 @@ summary: 沿 JR → SR 比较 campaign evidence，覆盖全部声明并交付结
 
 - type: domain
 - layout: workflow
-- note: 本技能比较声明与 Runtime evidence，不重建预期、不校验 Execution Pack 格式，也不推进执行或 cleanup。
+- note: 本技能比较声明与 Runtime evidence，并在交付完成后关闭当前执行平台会话。
 
 ## Signal Collection
 
@@ -48,6 +48,7 @@ Interface 定义完整 Evidence expectation，Via 只使用 campaign 历史 meta
 - 覆盖全部 JR/SR，包括没有 JR 顺序位置的独立 absent SR。
 - 形成与 Runtime evidence 一致的独立结论。
 - 写入正式 Reviewer artifact 并提交 handoff。
+- 在正式交付完成后关闭当前执行平台会话。
 - 区分明确不匹配、证据不足和无法消费的声明输入。
 
 不使用本技能处理：
@@ -120,6 +121,10 @@ behavior.campaign.query
 
 本技能按 JR/SR 决定查询范围和比较目标；Dynamic Tool 输入、Agent 可见输出、失败和退出边界遵守该 Tool Skill。
 
+## Execution Tool Use
+
+正式审查交付完成后，通过 `tool-execution-platform` 调用一次 `ExecutionPlatform` 的 `shutdown`。该操作只结束当前 Scout Run 的执行平台会话，不参与 JR/SR 比较，也不改变已经形成的审查结论。
+
 ## Workflow Overview
 
 Phase 说明：
@@ -127,7 +132,7 @@ Phase 说明：
 - Phase 1：读取 JR/SR，并关联本次 Runtime execution identity。
 - Phase 2：按 JR 表和 SR 的定位条件查询 campaign，对完整 SR 逐字段比较，再核对 JR 的实际顺序。
 - Phase 3：汇总全部 JR/SR 的比较事实、差异和无法判断项。
-- Phase 4：写入正式审查交付并提交 handoff。
+- Phase 4：写入正式审查交付，关闭执行平台会话并提交 handoff。
 
 ## Review Output Boundary
 
@@ -213,17 +218,17 @@ Partial：
 ## Phase 4: Submit Review
 ---
 
-把本技能产生的业务事实按 `domain-rbt-review-pack` 的 `templates/review-result.md` 写入当前 Reviewer artifact root 下的 `review-pack/review-result.json`，再通过已挂载的 `rbt-review-report` 工具生成同目录 `review-report.html`，最后提交该 Pack 的正式 handoff。Via 的 `unresolved` 或证据不足应作为 `warning` 写入时间线；`match`、`not_match`、evidence insufficient 和 invalid execution 均作为完整审查结果正常提交。
+把本技能产生的业务事实按 `domain-rbt-review-pack` 的 `templates/review-result.md` 写入当前 Reviewer artifact root 下的 `review-pack/review-result.json`，再通过已挂载的 `rbt-review-report` 工具生成同目录 `review-report.html`。正式产物完成后调用 `ExecutionPlatform` 的 `shutdown`，成功关闭当前执行平台会话，再提交该 Pack 的正式 handoff。Via 的 `unresolved` 或证据不足应作为 `warning` 写入时间线；`match`、`not_match`、evidence insufficient 和 invalid execution 均作为完整审查结果正常提交。
 
 JR/SR 输入缺口确需 Executor 修正且无需新执行事实时，提交 correction request，指出无法消费的位置及原因；不要求 Reviewer 回读来源确认改法，也不允许重新运行平台或 Runtime。
 
 Exit：
 
-- `review-result.json` 和 `review-report.html` 已形成，时间线覆盖全部 JR/SR，且 JR 表中的 order 已按实际 Runtime sequence 核对或保留明确无法比较的原因；或者已形成无需新执行事实即可处理的明确 correction request。
+- `review-result.json` 和 `review-report.html` 已形成，时间线覆盖全部 JR/SR，JR 表中的 order 已按实际 Runtime sequence 核对或保留明确无法比较的原因，且当前执行平台会话已经关闭；或者已形成无需新执行事实即可处理的明确 correction request。
 
 Blocked：
 
-- `domain-rbt-review-pack` 或 `rbt-review-report` 不可见、输入校验失败或正式交付不可写时不得提交 handoff。Executor cleanup 未完成时如实引用该限制，不由 Reviewer 补做。
+- `domain-rbt-review-pack`、`rbt-review-report` 或 `ExecutionPlatform` 不可见，输入校验失败，正式交付不可写，或当前执行平台会话无法关闭时不得提交 handoff。Executor cleanup 未完成时如实引用该限制，不由 Reviewer 补做。
 
 Partial：
 
@@ -233,7 +238,7 @@ Partial：
 
 - XR-001：Phase 2 只能在 JR/SR 可消费且本次 Runtime execution identity 已关联后开始。
 - XR-002：只有 Phase 2 查询完成并保留实际结果后，才能形成预期与实际的比较结论。
-- XR-003：只有 `review-result.json` 已通过 `rbt-review-report` 生成 HTML，且 Review Pack contract 与查询结果一致时，才能提交当前 Reviewer task。
+- XR-003：只有 `review-result.json` 已通过 `rbt-review-report` 生成 HTML、Review Pack contract 与查询结果一致，且 `ExecutionPlatform shutdown` 已成功时，才能提交当前 Reviewer task。
 
 ## Evidence Rules (Enforcement)
 

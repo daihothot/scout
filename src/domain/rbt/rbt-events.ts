@@ -2,6 +2,7 @@ import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import type { AgentJsonValue } from "../../agent/tools/types.js";
 import { defineEventCatalog, event } from "../../core/events/index.js";
 import type { HostCommandExecution } from "../../host/host-command-executor.js";
+import type { ExecutionPlatformIdentity } from "../../execution/index.js";
 
 /** One host command executed while serving an RBT dynamic-tool call. */
 export type RbtHostCommandExecution = HostCommandExecution;
@@ -24,12 +25,6 @@ export interface RbtBehaviorResult {
   payload: AgentJsonValue;
 }
 
-/** Platform identity attached to one RBT execution history. */
-export interface RbtExecutionPlatform {
-  type: "unity_editor";
-  version: string;
-}
-
 /** One command fact belonging to an Executor campaign execution history. */
 export interface RbtCampaignCommandEvent {
   bddId: string;
@@ -43,7 +38,7 @@ export interface RbtCampaignCommandEvent {
   agentId: string;
   role: ScoutAgentRole;
   callId: string;
-  platform: RbtExecutionPlatform;
+  platform: ExecutionPlatformIdentity;
   agentInput: AgentJsonValue;
   request: RbtBehaviorRequest;
   result?: RbtBehaviorResult;

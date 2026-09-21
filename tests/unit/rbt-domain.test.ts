@@ -25,11 +25,27 @@ import {
   RbtDomain,
   RbtEvents,
 } from "../../src/domain/rbt/index.js";
-import { DomainEvents, UnityPipelineTool } from "../../src/domain/index.js";
+import {
+  DomainEvents,
+  ExecutionPlatformTool,
+} from "../../src/domain/index.js";
+import {
+  ScoutExecutionSystem,
+  type ExecutionPlatformIdentity,
+} from "../../src/execution/index.js";
+import { ExecutionAdapterRegistry } from "../../src/execution/execution-adapter-registry.js";
+import {
+  UnityPipelineEditorExecutor,
+  type UnityPipelineEditorExecutorOptions,
+} from "../../src/execution/transports/unity-pipeline/unity-pipeline-editor-executor.js";
+import { UnityPipelineExecutionAdapter } from "../../src/execution/transports/unity-pipeline/unity-pipeline-execution-adapter.js";
+import type { UnityPipelinePlatformExecutor } from "../../src/execution/transports/unity-pipeline/unity-pipeline-platform-executor.js";
+import { UnityPipelineTool } from "../../src/execution/transports/unity-pipeline/unity-pipeline-tool.js";
+import type { ScoutDomainDynamicToolCall } from "../../src/domain/types.js";
 import type { RunEnvironment } from "../../src/run/types.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
-test("RBT Domain exposes only behavior dynamic tools by Phase", (t) => {
+test("RBT Domain exposes behavior execution and final platform shutdown by Phase", (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
   installTestRunScope(t, {
@@ -47,11 +63,247 @@ test("RBT Domain exposes only behavior dynamic tools by Phase", (t) => {
   ]);
   assert.deepEqual(domain.dynamicToolsForPhase("review").map((tool) => tool.name), [
     "JarvisBehavior",
+    "ExecutionPlatform",
   ]);
   assert.deepEqual(domain.dynamicToolsForPhase("Synthesis"), []);
 });
 
-test("RBT hides UnityPipeline from Agents while retaining the shared Runtime tool", async (t) => {
+test("Unity Pipeline execution dispatches by the identified platform type", async () => {
+  const operations: string[] = [];
+  const identity: ExecutionPlatformIdentity = { type: "android", version: "34" };
+  const executor: UnityPipelinePlatformExecutor = {
+    platformType: "android",
+    async identify() {
+      operations.push("identify");
+      return { ok: true, identity };
+    },
+    async start(current) {
+      operations.push(`start:${current.type}`);
+      return { ok: true };
+    },
+    async stop(current) {
+      operations.push(`stop:${current.type}`);
+      return { ok: true };
+    },
+  };
+  const adapter = new UnityPipelineExecutionAdapter([executor]);
+  assert.deepEqual(await adapter.handshake(), { status: "connected", identity });
+  assert.deepEqual(await adapter.launch(identity), { ok: true });
+  assert.deepEqual(await adapter.shutdown(identity), { ok: true });
+  assert.deepEqual(operations, ["identify", "start:android", "stop:android"]);
+  assert.deepEqual(await adapter.launch({ type: "ios", version: "18" }), {
+    ok: false,
+    code: "execution_platform_unsupported",
+    message: "Execution platform ios is not supported.",
+  });
+});
+
+test("Execution adapter registry selects the first successful handshake after earlier failures", async () => {
+  const operations: string[] = [];
+  const identity: ExecutionPlatformIdentity = { type: "android", version: "34" };
+  const registry = new ExecutionAdapterRegistry([
+    {
+      async handshake() {
+        operations.push("first");
+        return {
+          status: "failed",
+          code: "first_adapter_failed",
+          message: "The first adapter failed.",
+        };
+      },
+      async launch() {
+        return { ok: true };
+      },
+      async shutdown() {
+        return { ok: true };
+      },
+    },
+    {
+      async handshake() {
+        operations.push("second");
+        return { status: "connected", identity };
+      },
+      async launch() {
+        return { ok: true };
+      },
+      async shutdown() {
+        return { ok: true };
+      },
+    },
+    {
+      async handshake() {
+        operations.push("third");
+        return { status: "connected", identity: { type: "ios", version: "18" } };
+      },
+      async launch() {
+        return { ok: true };
+      },
+      async shutdown() {
+        return { ok: true };
+      },
+    },
+  ]);
+
+  const selected = await registry.handshake();
+  assert.equal(selected.ok, true);
+  assert.deepEqual(selected.ok ? selected.identity : undefined, identity);
+  assert.deepEqual(operations, ["first", "second"]);
+
+  const failed = await new ExecutionAdapterRegistry([
+    {
+      async handshake() {
+        return {
+          status: "failed",
+          code: "first_adapter_failed",
+          message: "The first adapter failed.",
+        };
+      },
+      async launch() {
+        return { ok: true };
+      },
+      async shutdown() {
+        return { ok: true };
+      },
+    },
+    {
+      async handshake() {
+        return { status: "unavailable" };
+      },
+      async launch() {
+        return { ok: true };
+      },
+      async shutdown() {
+        return { ok: true };
+      },
+    },
+  ]).handshake();
+  assert.deepEqual(failed, {
+    ok: false,
+    code: "first_adapter_failed",
+    message: "The first adapter failed.",
+  });
+});
+
+test("ScoutExecutionSystem owns and reuses the connected transport session", async () => {
+  const operations: string[] = [];
+  const identity: ExecutionPlatformIdentity = { type: "android", version: "34" };
+  const executor: UnityPipelinePlatformExecutor = {
+    platformType: identity.type,
+    async identify() {
+      operations.push("identify");
+      return { ok: true, identity };
+    },
+    async start(current) {
+      operations.push(`start:${current.type}`);
+      return { ok: true };
+    },
+    async stop(current) {
+      operations.push(`stop:${current.type}`);
+      return { ok: true };
+    },
+  };
+  const system = new ScoutExecutionSystem(new ExecutionAdapterRegistry([
+    new UnityPipelineExecutionAdapter([executor]),
+  ]));
+
+  assert.deepEqual(await system.launch(), { ok: true, identity });
+  assert.deepEqual(await system.launch(), { ok: true, identity });
+  assert.deepEqual(operations, ["identify", "start:android", "start:android"]);
+
+  assert.deepEqual(await system.shutdown(), { ok: true, identity });
+  assert.deepEqual(operations, [
+    "identify",
+    "start:android",
+    "start:android",
+    "stop:android",
+  ]);
+
+  assert.deepEqual(await system.shutdown(), { ok: true, identity });
+  assert.deepEqual(operations.slice(-2), ["identify", "stop:android"]);
+});
+
+test("ScoutExecutionSystem serializes lifecycle operations and closes before disposal", async () => {
+  const operations: string[] = [];
+  const identity: ExecutionPlatformIdentity = { type: "android", version: "34" };
+  let activeOperations = 0;
+  let maximumActiveOperations = 0;
+  const adapter = {
+    async handshake() {
+      operations.push("handshake");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      return { status: "connected" as const, identity };
+    },
+    async launch() {
+      activeOperations += 1;
+      maximumActiveOperations = Math.max(maximumActiveOperations, activeOperations);
+      operations.push("launch");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      activeOperations -= 1;
+      return { ok: true as const };
+    },
+    async shutdown() {
+      activeOperations += 1;
+      maximumActiveOperations = Math.max(maximumActiveOperations, activeOperations);
+      operations.push("shutdown");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      activeOperations -= 1;
+      return { ok: true as const };
+    },
+  };
+  const system = new ScoutExecutionSystem(new ExecutionAdapterRegistry([adapter]));
+
+  const firstLaunch = system.launch();
+  const secondLaunch = system.launch();
+  const disposal = system.dispose();
+
+  assert.deepEqual(await system.launch(), {
+    ok: false,
+    code: "execution_system_disposed",
+    message: "The Scout execution system has been disposed.",
+  });
+  assert.deepEqual(await firstLaunch, { ok: true, identity });
+  assert.deepEqual(await secondLaunch, { ok: true, identity });
+  await disposal;
+
+  assert.deepEqual(operations, ["handshake", "launch", "launch", "shutdown"]);
+  assert.equal(maximumActiveOperations, 1);
+});
+
+test("ExecutionPlatform Agent tool delegates lifecycle work through RunScope", async (t) => {
+  const identity: ExecutionPlatformIdentity = { type: "android", version: "34" };
+  const operations: string[] = [];
+  installTestRunScope(t, {
+    runId: "run-execution-platform-tool",
+    executionSystem: {
+      async launch() {
+        operations.push("launch");
+        return { ok: true, identity };
+      },
+      async shutdown() {
+        operations.push("shutdown");
+        return { ok: true, identity };
+      },
+    },
+  });
+  const tool = new ExecutionPlatformTool();
+
+  const result = await tool.execute(dynamicCall({
+    callId: "call-execution-platform-launch",
+    namespace: "domain_execution",
+    tool: "ExecutionPlatform",
+    arguments: { operation: "launch" },
+    role: "executor",
+  }) as ScoutDomainDynamicToolCall);
+  assert.equal(result.success, true);
+  assert.deepEqual(JSON.parse(result.contentItems[0]?.text ?? "null"), {
+    operation: "launch",
+    status: "completed",
+    identity,
+  });
+  assert.deepEqual(operations, ["launch"]);
+});
+
+test("RBT hides ExecutionPlatform from Executor while retaining its internal transport", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
   const scope = installTestRunScope(t, {
@@ -73,29 +325,64 @@ test("RBT hides UnityPipeline from Agents while retaining the shared Runtime too
   t.after(() => domain.stop());
 
   const call = dynamicCall({
-    callId: "call-unity-status",
-    namespace: "rbt_unity_pipeline",
-    tool: "UnityPipeline",
-    arguments: { operation: "status" },
+    callId: "call-execution-platform",
+    namespace: "domain_execution",
+    tool: "ExecutionPlatform",
+    arguments: { operation: "launch" },
     role: "executor",
   });
 
   const denied = await domain.handleDynamicToolCall(call);
   assert.equal(denied.success, false);
-  assert.match(denied.contentItems[0]?.text ?? "", /UnityPipeline is not registered for Phase execute/);
+  assert.match(denied.contentItems[0]?.text ?? "", /ExecutionPlatform is not registered for Phase execute/);
 
-  const response = await fakeUnityStatusTool().execute(call);
+  const response = await fakeUnityStatusTool().execute({ operation: "status" });
 
-  assert.ok(response?.success);
-  const output = JSON.parse(response.contentItems[0]?.text ?? "null") as {
-    status: string;
-    result: { count: number; instances: Array<{ version: string; state: string }> };
-  };
-  assert.equal(output.status, "completed");
-  assert.deepEqual(output.result, {
+  assert.ok(response.success);
+  assert.equal(response.status, "completed");
+  assert.deepEqual(response.result, {
     count: 1,
     instances: [{ version: "6000.0.80f1", state: "ready" }],
   });
+});
+
+test("RBT Reviewer shuts down the run-scoped execution session", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const identity: ExecutionPlatformIdentity = { type: "unity_editor", version: "6000.0.80f1" };
+  const operations: string[] = [];
+  const domain = new RbtDomain();
+  installTestRunScope(t, {
+    runId: "run-rbt-review-shutdown",
+    eventBus,
+    domain,
+    scheduler: rbtScheduler(eventBus),
+    executionSystem: {
+      async launch() {
+        operations.push("launch");
+        return { ok: true, identity };
+      },
+      async shutdown() {
+        operations.push("shutdown");
+        return { ok: true, identity };
+      },
+    },
+  });
+
+  const response = await domain.handleDynamicToolCall(dynamicCall({
+    callId: "call-review-shutdown",
+    namespace: "domain_execution",
+    tool: "ExecutionPlatform",
+    arguments: { operation: "shutdown" },
+    role: "reviewer",
+  }));
+
+  assert.equal(response.success, true);
+  assert.deepEqual(JSON.parse(response.contentItems[0]?.text ?? "null"), {
+    operation: "shutdown",
+    status: "completed",
+    identity,
+  });
+  assert.deepEqual(operations, ["shutdown"]);
 });
 
 test("JarvisBehavior prepares Play Mode without an Agent UnityPipeline call", async (t) => {
@@ -103,13 +390,7 @@ test("JarvisBehavior prepares Play Mode without an Agent UnityPipeline call", as
   const root = mkdtempSync(join(tmpdir(), "scout-rbt-platform-gate-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const markerPath = join(root, "unity-operations.log");
-  const domain = rbtDomain({
-    jarvis: (phase) => fakeJarvisTool(
-      phase,
-      undefined,
-      fakeUnityStartingTool(markerPath),
-    ),
-  });
+  const domain = rbtDomain({ jarvis: fakeJarvisTool });
   const scope = installTestRunScope(t, {
     runId: "run-rbt-platform-gate",
     runRoot: join(root, "run"),
@@ -117,6 +398,7 @@ test("JarvisBehavior prepares Play Mode without an Agent UnityPipeline call", as
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(fakeUnityStartingTool(markerPath)),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -142,7 +424,59 @@ test("JarvisBehavior prepares Play Mode without an Agent UnityPipeline call", as
     "status",
     "editor_status",
     "editor_play",
+    "editor_status",
+    "editor_status",
   ]);
+});
+
+test("JarvisBehavior reports Play Mode readiness timeout before WebSocket connection", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const root = mkdtempSync(join(tmpdir(), "scout-rbt-platform-timeout-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const markerPath = join(root, "unity-operations.log");
+  const domain = rbtDomain({ jarvis: fakeJarvisTool });
+  const scope = installTestRunScope(t, {
+    runId: "run-rbt-platform-timeout",
+    runRoot: join(root, "run"),
+    scoutRoot: process.cwd(),
+    eventBus,
+    domain,
+    scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(
+      fakeUnityStartingTool(markerPath, Number.MAX_SAFE_INTEGER),
+      { readinessTimeoutMs: 50, pollIntervalMs: 1, commandTimeoutSeconds: 1 },
+    ),
+  });
+  const roots = roleRoots(scope.runRoot, "executor");
+  const codebaseRoot = installBehaviorSchema(scope.runRoot);
+  scope.setEnvironment(rbtEnvironment(scope.runId, {
+    executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
+  }));
+  await domain.start();
+  t.after(() => domain.stop());
+
+  const response = await domain.handleDynamicToolCall(dynamicCall({
+    callId: "call-variants-with-platform-timeout",
+    namespace: "rbt_behavior",
+    tool: "JarvisBehavior",
+    arguments: {
+      command: "behavior.node.variants",
+      payload: { id: "account.account_auth.restore" },
+    },
+    role: "executor",
+  }));
+
+  assert.equal(response?.success, false);
+  assert.deepEqual(JSON.parse(response?.contentItems[0]?.text ?? "null"), {
+    status: "failed",
+    error: {
+      code: "unity_play_mode_start_timeout",
+      message: "The Unity Editor did not become ready in Play Mode before the platform timeout.",
+    },
+  });
+  const operations = readFileSync(markerPath, "utf8").trim().split("\n");
+  assert.deepEqual(operations.slice(0, 3), ["status", "editor_status", "editor_play"]);
+  assert.equal(operations.filter((operation) => operation === "editor_play").length, 1);
 });
 
 test("Jarvis WebSocket waits for a Runtime endpoint that is starting", async (t) => {
@@ -190,15 +524,14 @@ test("Jarvis WebSocket waits for a Runtime endpoint that is starting", async (t)
 
 test("JarvisBehavior reports an unavailable human-prepared Unity Editor", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const domain = rbtDomain({
-    jarvis: (phase) => fakeJarvisTool(phase, undefined, fakeUnityUnavailableTool()),
-  });
+  const domain = rbtDomain({ jarvis: fakeJarvisTool });
   const scope = installTestRunScope(t, {
     runId: "run-rbt-platform-unavailable",
     scoutRoot: process.cwd(),
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(fakeUnityUnavailableTool()),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -223,23 +556,22 @@ test("JarvisBehavior reports an unavailable human-prepared Unity Editor", async 
   assert.deepEqual(JSON.parse(response?.contentItems[0]?.text ?? "null"), {
     status: "failed",
     error: {
-      code: "unity_editor_unavailable",
-      message: "No connected Unity Editor is available.",
+      code: "execution_platform_unavailable",
+      message: "No execution platform is available.",
     },
   });
 });
 
 test("JarvisBehavior blocks RBT while the Unity Editor is compiling", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const domain = rbtDomain({
-    jarvis: (phase) => fakeJarvisTool(phase, undefined, fakeUnityReadinessTool({ compiling: true })),
-  });
+  const domain = rbtDomain({ jarvis: fakeJarvisTool });
   const scope = installTestRunScope(t, {
     runId: "run-rbt-platform-compiling",
     scoutRoot: process.cwd(),
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(fakeUnityReadinessTool({ compiling: true })),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -265,7 +597,7 @@ test("JarvisBehavior blocks RBT while the Unity Editor is compiling", async (t) 
     status: "failed",
     error: {
       code: "unity_editor_compiling",
-      message: "The Unity Editor is compiling; RBT execution must stop until it is stable.",
+      message: "The Unity Editor is compiling; execution must stop until it is stable.",
     },
   });
 });
@@ -276,28 +608,27 @@ test("JarvisBehavior blocks RBT during Unity domain reload and version changes",
       runId: "run-rbt-platform-domain-reload",
       tool: fakeUnityReadinessTool({ domainReloadInProgress: true }),
       code: "unity_editor_domain_reload",
-      message: "The Unity Editor domain reload is in progress; RBT execution must stop until it is stable.",
+      message: "The Unity Editor domain reload is in progress; execution must stop until it is stable.",
     },
     {
       runId: "run-rbt-platform-version-changed",
       tool: fakeUnityReadinessTool({ editorVersion: "6000.0.81f1" }),
-      code: "unity_editor_version_changed",
-      message: "The connected Unity Editor version changed during the RBT execution.",
+      code: "execution_platform_changed",
+      message: "The identified execution platform changed during its lifecycle operation.",
     },
   ] as const;
 
   for (const item of cases) {
     await t.test(item.runId, async (testContext) => {
       const eventBus = new InMemoryEventBus();
-      const domain = rbtDomain({
-        jarvis: (phase) => fakeJarvisTool(phase, undefined, item.tool),
-      });
+      const domain = rbtDomain({ jarvis: fakeJarvisTool });
       const scope = installTestRunScope(testContext, {
         runId: item.runId,
         scoutRoot: process.cwd(),
         eventBus,
         domain,
         scheduler: rbtScheduler(eventBus),
+        executionSystem: fakeExecutionSystem(item.tool),
       });
       const roots = roleRoots(scope.runRoot, "executor");
       const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -329,15 +660,17 @@ test("JarvisBehavior blocks RBT during Unity domain reload and version changes",
 
 test("JarvisBehavior blocks an unavailable Unity Editor state", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const domain = rbtDomain({
-    jarvis: (phase) => fakeJarvisTool(phase, undefined, fakeUnityReadinessTool({ instanceState: "starting" })),
-  });
+  const domain = rbtDomain({ jarvis: fakeJarvisTool });
   const scope = installTestRunScope(t, {
     runId: "run-rbt-platform-starting",
     scoutRoot: process.cwd(),
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(fakeUnityReadinessTool({
+      instanceState: "starting",
+      editorStatus: "starting",
+    })),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -363,7 +696,7 @@ test("JarvisBehavior blocks an unavailable Unity Editor state", async (t) => {
     status: "failed",
     error: {
       code: "unity_editor_unavailable",
-      message: "The connected Unity Editor is not ready for RBT execution.",
+      message: "The connected Unity Editor is not ready for execution.",
     },
   });
 });
@@ -434,32 +767,14 @@ test("Shared Unity Pipeline tool projects structured result fields for Runtime c
   await domain.start();
   t.after(() => domain.stop());
 
-  const listResponse = await unityPipeline.execute(dynamicCall({
-    callId: "call-unity-list",
-    namespace: "rbt_unity_pipeline",
-    tool: "UnityPipeline",
-    arguments: { operation: "list" },
-    role: "executor",
-  }));
-  const listOutput = JSON.parse(listResponse?.contentItems[0]?.text ?? "null") as {
-    result: unknown;
-  };
-  assert.deepEqual(listOutput.result, {
+  const listResponse = await unityPipeline.execute({ operation: "list" });
+  assert.deepEqual(listResponse.result, {
     count: 2,
     commands: ["editor_play", "editor_status"],
   });
 
-  const statusResponse = await unityPipeline.execute(dynamicCall({
-    callId: "call-unity-editor-status",
-    namespace: "rbt_unity_pipeline",
-    tool: "UnityPipeline",
-    arguments: { operation: "editor_status" },
-    role: "executor",
-  }));
-  const statusOutput = JSON.parse(statusResponse?.contentItems[0]?.text ?? "null") as {
-    result: unknown;
-  };
-  assert.deepEqual(statusOutput.result, {
+  const statusResponse = await unityPipeline.execute({ operation: "editor_status" });
+  assert.deepEqual(statusResponse.result, {
     status: "ready",
     playMode: "playing",
     compiling: false,
@@ -477,6 +792,7 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -620,6 +936,7 @@ test("RBT execute-file rejects an array-shaped evidenceCapture before Runtime", 
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -664,6 +981,7 @@ test("RBT execute-file preflights every registry identity before campaign mutati
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -744,6 +1062,7 @@ test("RBT execute-file continues the sequence when campaign history publication 
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -808,6 +1127,7 @@ test("RBT campaign history continues after the greatest existing runtime sequenc
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -848,6 +1168,7 @@ test("RBT execute-file performs cleanup after a command failure and closes faile
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -956,6 +1277,7 @@ test("RBT Reviewer queries a campaign using the Executor-bound schema without co
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(),
   });
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
   scope.setEnvironment(rbtEnvironment(scope.runId, {
@@ -1000,6 +1322,7 @@ test("RBT Domain projects a Runtime error without exposing its result envelope",
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "reviewer");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -1057,6 +1380,7 @@ test("RBT Behavior reconnects and retries one read-only query after a disconnect
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -1336,15 +1660,25 @@ function fakeUnityUnavailableTool(): UnityPipelineTool {
   return new UnityPipelineTool(process.execPath, ["-e", script, "--"]);
 }
 
-function fakeUnityStartingTool(markerPath: string): UnityPipelineTool {
+function fakeUnityStartingTool(
+  markerPath: string,
+  readyAfterPolls = 1,
+): UnityPipelineTool {
   const script = [
     "const fs = require('node:fs');",
     "const args = process.argv.slice(1);",
     "const operation = args.includes('status') ? 'status' : args.includes('editor_status') ? 'editor_status' : args.includes('editor_play') ? 'editor_play' : '';",
     `const markerPath = ${JSON.stringify(markerPath)};`,
     `const statePath = ${JSON.stringify(`${markerPath}.playing`)};`,
+    `const readyAfterPolls = ${JSON.stringify(readyAfterPolls)};`,
     "fs.appendFileSync(markerPath, operation + '\\n');",
-    "if (operation === 'editor_play') fs.writeFileSync(statePath, 'playing\\n');",
+    "if (operation === 'editor_play') fs.writeFileSync(statePath, '0\\n');",
+    "let playMode = 'stopped';",
+    "if (operation === 'editor_status' && fs.existsSync(statePath)) {",
+    "  const polls = Number(fs.readFileSync(statePath, 'utf8'));",
+    "  playMode = polls >= readyAfterPolls ? 'playing' : 'stopped';",
+    "  fs.writeFileSync(statePath, String(polls + 1));",
+    "}",
     "const command = operation === 'status' ? 'status' : 'command ' + operation;",
     "const data = operation === 'status' ? {",
     "  count: 1,",
@@ -1356,7 +1690,7 @@ function fakeUnityStartingTool(markerPath: string): UnityPipelineTool {
     "    status: 'ready',",
     "    compiling: false,",
     "    domainReloadInProgress: false,",
-    "    playMode: fs.existsSync(statePath) ? 'playing' : 'stopped',",
+    "    playMode,",
     "    unityVersion: '6000.0.80f1'",
     "  }",
     "};",
@@ -1416,7 +1750,6 @@ function writeTestExecuteFile(artifactRoot: string): {
 function fakeJarvisTool(
   phase: "execute" | "review",
   failedCommand?: string,
-  unityPipeline = fakeUnityPlayingTool(),
 ): JarvisBehaviorTool {
   const script = [
     "const args = process.argv.slice(1);",
@@ -1456,8 +1789,21 @@ function fakeJarvisTool(
     phase,
     process.execPath,
     ["-e", script, "--"],
-    unityPipeline,
   );
+}
+
+function fakeExecutionSystem(
+  unityPipeline = fakeUnityPlayingTool(),
+  platformOptions: UnityPipelineEditorExecutorOptions = {
+    readinessTimeoutMs: 2_000,
+    pollIntervalMs: 1,
+  },
+): ScoutExecutionSystem {
+  return new ScoutExecutionSystem(new ExecutionAdapterRegistry([
+    new UnityPipelineExecutionAdapter([
+      new UnityPipelineEditorExecutor(unityPipeline, platformOptions),
+    ]),
+  ]));
 }
 
 function fakeJarvisReconnectTool(
@@ -1510,6 +1856,5 @@ function fakeJarvisReconnectTool(
     phase,
     process.execPath,
     ["-e", script, "--"],
-    fakeUnityPlayingTool(),
   );
 }

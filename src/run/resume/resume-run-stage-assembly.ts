@@ -2,6 +2,7 @@ import {
   AgentBackendStage,
   AgentTelemetryStage,
   DomainStage,
+  ExecutionStage,
   InteractionStage,
   OrchestratorStage,
   RunJournalWriterStage,
@@ -50,6 +51,7 @@ export class ResumeRunStageAssembly {
       new RestoreEnvironmentStage(),
       new RecordResumeInterruptionsStage(),
       new RunRuntimeStage("resume"),
+      new ExecutionStage(),
       new InteractionStage(),
     );
     executor.registerParallel(new DomainStage(), new AgentTelemetryStage());

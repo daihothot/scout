@@ -1,5 +1,3 @@
-import type { RbtExecutionPlatform } from "../rbt-events.js";
-
 export interface JarvisBehaviorExecutionState {
   executeFilePath: string;
   executeFileRef: string;
@@ -12,24 +10,10 @@ export interface JarvisBehaviorExecutionState {
 
 /** Owns one JarvisBehavior tool instance's mutable session and execution state. */
 export class JarvisBehaviorToolStore {
-  private readonly platforms = new Map<string, RbtExecutionPlatform>();
   private readonly activeExecutions = new Map<string, JarvisBehaviorExecutionState>();
   private readonly configuredSessions = new Set<string>();
   private readonly commandSequences = new Map<string, number>();
   private readonly runtimeSequences = new Map<string, number>();
-
-  platform(agentId: string): RbtExecutionPlatform | undefined {
-    const platform = this.platforms.get(agentId);
-    return platform ? structuredClone(platform) : undefined;
-  }
-
-  setPlatform(agentId: string, platform: RbtExecutionPlatform): void {
-    this.platforms.set(agentId, structuredClone(platform));
-  }
-
-  removePlatform(agentId: string): void {
-    this.platforms.delete(agentId);
-  }
 
   schemaConfigured(sessionId: string): boolean {
     return this.configuredSessions.has(sessionId);
@@ -76,7 +60,6 @@ export class JarvisBehaviorToolStore {
   }
 
   clear(): void {
-    this.platforms.clear();
     this.activeExecutions.clear();
     this.configuredSessions.clear();
     this.commandSequences.clear();
