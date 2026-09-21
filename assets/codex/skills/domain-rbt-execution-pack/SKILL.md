@@ -98,5 +98,5 @@ scout-rbt-artifact-check pack "<pack_ref>" --bdd-id "<bdd_id>" --target-version 
 ```
 
 - 正式执行前、handoff 前和 correction 后运行检查。
-- 工具只读核对模板结构、版本、ID、引用方向、目录允许项、execute-file 的 identity/命令顺序，以及计划中的 activation、capture、trigger 是否各有完整 SR/JR；退出码 `0` 表示格式通过，`1` 表示需修正，`2` 表示调用参数错误。
-- 工具不决定交付状态，不验证源码事实、业务映射或 Evidence 结论，不读取 Runtime 历史，也不生成额外 artifact。
+- 工具只读核对模板结构、版本、ID、引用方向、目录允许项、execute-file 的 identity/命令顺序，以及 root、activation、capture、trigger 的全部 ID 是否与 SR/JR 完整对应；退出码 `0` 表示格式通过，`1` 表示需修正，`2` 表示调用参数错误。
+- 工具不决定交付状态，不验证源码事实、业务映射、Evidence 结论或实时 registry，不读取 Runtime 历史，也不生成额外 artifact。Runtime 会在首条 mutation 前统一核验实时 registry identity；失败时不会执行 Campaign mutation。

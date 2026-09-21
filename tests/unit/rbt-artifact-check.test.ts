@@ -56,6 +56,14 @@ function fixture(t: TestContext): string {
   });
   mutate(pack, "signal-expected.md", text => text.replace(/^\| <实际.*$/m,
     "| kind | locate | response_payload | exact |\n| sourceId | locate | sample.trigger | exact |\n| data.value | assert | expected | exact |"));
+  appendSignal(pack, "SR-002", [
+    "| campaignId | locate | sample/campaign/main | exact |",
+    "| scenarioId | locate | sample | exact |",
+    "| kind | locate | behavior_trace | exact |",
+    "| id | locate | growth.remote_config.get_string | exact |",
+    "| result | assert | success | semantic |",
+  ].join("\n"));
+  appendJournal(pack, "| none | JR-002 | behavior_trace | growth.remote_config.get_string | none | none | none | SR-002 |");
   put("human-input-evidence.md", "human-input-evidence.md", {});
   mutate(pack, "human-input-evidence.md", text => text.replace(/## Human Input Records[\s\S]*?(?=## Evidence Boundary)/,
     "## Human Input Records\n\nnone\n\n"));
@@ -171,11 +179,11 @@ test("RBT checker rejects execute-file scope/order without invoking any command"
 test("RBT checker allows multiple present SRs per JR and standalone absence", t => {
   const pack = fixture(t);
   mutate(pack, "signal-expected.md", text => {
-    const sr = text.match(/## SR-001[\s\S]*?(?=## Rules)/)![0];
-    return text.replace("## Rules", sr.replace("SR-001", "SR-002") +
-      sr.replace("SR-001", "SR-003").replace("expected_presence: present", "expected_presence: absent") + "## Rules");
+    const sr = text.match(/## SR-001[\s\S]*?(?=## SR-|## Rules)/)![0];
+    return text.replace("## Rules", sr.replace("SR-001", "SR-003") +
+      sr.replace("SR-001", "SR-004").replace("expected_presence: present", "expected_presence: absent") + "## Rules");
   });
-  mutate(pack, "journal-expected.md", text => text.replace("| 1 | JR-001", "| none | JR-001").replace("| SR-001 |", "| SR-001, SR-002 |"));
+  mutate(pack, "journal-expected.md", text => text.replace("| 1 | JR-001", "| none | JR-001").replace("| SR-001 |", "| SR-001, SR-003 |"));
   const result = check(pack);
   assert.equal(result.status, 0, result.stderr);
 });
@@ -189,7 +197,7 @@ test("RBT checker rejects activation without matching behavior trace SR and JR",
   assert.equal(result.status, 1);
   assert.match(result.stderr, /\[UNCOVERED_ACTIVATION\]/);
 
-  appendSignal(pack, "SR-002", [
+  appendSignal(pack, "SR-003", [
     "| campaignId | locate | sample/campaign/main | exact |",
     "| scenarioId | locate | sample | exact |",
     "| kind | locate | behavior_trace | exact |",
@@ -207,7 +215,7 @@ test("RBT checker rejects activation without matching behavior trace SR and JR",
   assert.doesNotMatch(result.stderr, /\[UNCOVERED_ACTIVATION\]/);
   assert.match(result.stderr, /\[UNJOURNALED_PRESENT_SIGNAL\]/);
 
-  appendJournal(pack, "| 2 | JR-002 | behavior_trace | sample.default | mock_by_key | none | none | SR-002 |");
+  appendJournal(pack, "| none | JR-003 | behavior_trace | sample.default | mock_by_key | none | none | SR-003 |");
   assert.equal(check(pack).status, 0);
 });
 
@@ -228,7 +236,7 @@ test("RBT checker rejects capture without matching capture result SR and JR", t 
   let result = check(pack);
   assert.match(result.stderr, /\[UNCOVERED_CAPTURE\]/);
 
-  appendSignal(pack, "SR-002", [
+  appendSignal(pack, "SR-003", [
     "| campaignId | locate | sample/campaign/main | exact |",
     "| scenarioId | locate | sample | exact |",
     "| kind | locate | capture_result | exact |",
@@ -236,8 +244,45 @@ test("RBT checker rejects capture without matching capture result SR and JR", t 
     "| sourceId | locate | sample.source | exact |",
     "| captureId | locate | sample-before | exact |",
   ].join("\n"));
-  appendJournal(pack, "| 2 | JR-002 | capture_result | sample.node | none | sample.source | sample-before | SR-002 |");
+  appendJournal(pack, "| none | JR-003 | capture_result | sample.node | none | sample.source | sample-before | SR-003 |");
   assert.equal(check(pack).status, 0);
+});
+
+test("RBT checker rejects a rootId without a matching main behavior trace", t => {
+  const pack = fixture(t);
+  mutateExecute(pack, plan => {
+    plan.commands[1]!.payload.rootId = "growth.remote_config.wrong";
+  });
+  const result = check(pack);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /\[UNCOVERED_ROOT\]/);
+});
+
+test("RBT checker validates capture variant identity and unique captureId", t => {
+  const pack = fixture(t);
+  mutateExecute(pack, plan => {
+    plan.commands[1]!.payload.evidenceCapture = {
+      enabled: true,
+      captures: [
+        { captureId: "sample-before", nodeId: "sample.node", timing: "before", variantId: "expected", sourceId: "sample.source", kind: "state_snapshot" },
+        { captureId: "sample-before", nodeId: "sample.node", timing: "after", sourceId: "sample.source", kind: "state_snapshot" },
+      ],
+    };
+  });
+  appendSignal(pack, "SR-003", [
+    "| campaignId | locate | sample/campaign/main | exact |",
+    "| scenarioId | locate | sample | exact |",
+    "| kind | locate | capture_result | exact |",
+    "| id | locate | sample.node | exact |",
+    "| variantId | locate | other | exact |",
+    "| sourceId | locate | sample.source | exact |",
+    "| captureId | locate | sample-before | exact |",
+  ].join("\n"));
+  appendJournal(pack, "| none | JR-003 | capture_result | sample.node | other | sample.source | sample-before | SR-003 |");
+  const result = check(pack);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /\[UNCOVERED_CAPTURE\]/);
+  assert.match(result.stderr, /\[DUPLICATE_EXECUTE_IDENTITY\]/);
 });
 
 test("RBT checker rejects trigger without matching response payload SR and JR", t => {

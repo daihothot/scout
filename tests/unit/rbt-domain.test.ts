@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readdirSync,
@@ -564,9 +565,9 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
   assert.equal(history.commands.length, 5);
   assert.equal(history.commands[0]?.input.command, "behavior.campaign.start");
   assert.equal(history.commands[4]?.input.command, "behavior.campaign.stop");
-  assert.match(history.commands[0]?.request.correlationId ?? "", /^run-rbt-history\/cmd\/001-/);
+  assert.match(history.commands[0]?.request.correlationId ?? "", /^run-rbt-history\/cmd\/002-/);
   assert.equal("correlationId" in (history.commands[0]?.input ?? {}), false);
-  assert.ok((history.commands[0]?.hostCommands.length ?? 0) >= 3);
+  assert.ok((history.commands[0]?.hostCommands.length ?? 0) >= 1);
   assert.equal(history.commands[0]?.hostCommands[0]?.executable, process.execPath);
   const behaviorCall = history.commands[0]?.hostCommands.at(-1);
   const schemaFlag = behaviorCall?.args.indexOf("--schema") ?? -1;
@@ -652,6 +653,86 @@ test("RBT execute-file rejects an array-shaped evidenceCapture before Runtime", 
     response?.contentItems[0]?.text ?? "",
     /behavior\.scenario\.activate payload\.evidenceCapture must be an object\./,
   );
+});
+
+test("RBT execute-file preflights every registry identity before campaign mutation", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const domain = rbtDomain({ jarvis: fakeJarvisTool });
+  const scope = installTestRunScope(t, {
+    runId: "run-rbt-identity-preflight",
+    scoutRoot: process.cwd(),
+    eventBus,
+    domain,
+    scheduler: rbtScheduler(eventBus),
+  });
+  const roots = roleRoots(scope.runRoot, "executor");
+  const codebaseRoot = installBehaviorSchema(scope.runRoot);
+  scope.setEnvironment(rbtEnvironment(scope.runId, {
+    executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
+  }));
+  const campaignEvents: string[] = [];
+  eventBus.subscribe(RbtEvents.campaign, (event) => {
+    campaignEvents.push(event.key.routeKey);
+  });
+  const { executeFilePath } = writeTestExecuteFile(roots.artifactRoot);
+  const executeFile = JSON.parse(readFileSync(executeFilePath, "utf8")) as {
+    commands: Array<{ payload: Record<string, unknown> }>;
+  };
+  executeFile.commands[1]!.payload = {
+    scenarioId: "account.restore.success",
+    rootId: "missing.root",
+    activations: [{ id: "missing.activation", variantId: "missing.variant", params: {} }],
+    evidenceCapture: {
+      enabled: true,
+      sources: ["missing.filter.source"],
+      captures: [{
+        captureId: "capture-before",
+        nodeId: "missing.capture.node",
+        timing: "before",
+        variantId: "missing.capture.variant",
+        sourceId: "missing.capture.source",
+        kind: "state_snapshot",
+      }],
+    },
+  };
+  executeFile.commands[2]!.payload = {
+    scenarioId: "account.restore.success",
+    triggerCommandId: "missing.trigger",
+    params: {},
+  };
+  writeFileSync(executeFilePath, `${JSON.stringify(executeFile, null, 2)}\n`, "utf8");
+  await domain.start();
+  t.after(() => domain.stop());
+
+  const response = await domain.handleDynamicToolCall(dynamicCall({
+    callId: "call-identity-preflight",
+    namespace: "rbt_behavior",
+    tool: "JarvisBehavior",
+    arguments: { execute_file: executeFilePath },
+    role: "executor",
+  }));
+
+  assert.equal(response?.success, false);
+  const output = JSON.parse(response?.contentItems[0]?.text ?? "null") as {
+    executedCommands: number;
+    error: { sequence: number; command: string; code: string; message: string };
+  };
+  assert.equal(output.executedCommands, 0);
+  assert.equal(output.error.sequence, 0);
+  assert.equal(output.error.command, "behavior.registry.manifest");
+  assert.equal(output.error.code, "identity_preflight_failed");
+  for (const identity of [
+    "rootId missing.root",
+    "activation id missing.activation",
+    "variant missing.activation/missing.variant",
+    "sourceId missing.filter.source",
+    "capture nodeId missing.capture.node",
+    "capture sourceId missing.capture.source",
+    "capture variant missing.capture.node/missing.capture.variant",
+    "triggerCommandId missing.trigger",
+  ]) assert.match(output.error.message, new RegExp(identity.replaceAll(".", "\\.")));
+  assert.deepEqual(campaignEvents, []);
+  assert.equal(existsSync(join(roots.artifactRoot, "history")), false);
 });
 
 test("RBT execute-file continues the sequence when campaign history publication fails", async (t) => {
@@ -1347,6 +1428,14 @@ function fakeJarvisTool(
     "  const index = args.indexOf('--params-json');",
     "  const request = JSON.parse(args[index + 1]);",
     "  const payload = request.payload;",
+    "  const manifest = {",
+    "    schemaVersion: 2,",
+    "    registryHash: 'test-registry',",
+    "    nodes: [{ id: 'account.account_auth.restore' }, { id: 'account.account_auth.load_account' }],",
+    "    variants: [{ id: 'account.account_auth.load_account', variantId: 'existing_local_user_with_anonymous_credential' }],",
+    "    sources: [{ sourceId: 'account.restore.source' }],",
+    "    triggerCommands: [{ triggerCommandId: 'account.restore.trigger', relatedBehaviorId: 'account.account_auth.restore' }]",
+    "  };",
     "  const debugRequired = payload.sourceId === '<source-id>';",
     `  const forcedFailure = request.type === ${JSON.stringify(failedCommand ?? "")};`,
     "  const failed = debugRequired || forcedFailure;",
@@ -1356,7 +1445,7 @@ function fakeJarvisTool(
     "    correlationId: request.correlationId,",
     "    status: failed ? 'error' : 'ok',",
     "    code: debugRequired ? 'debug_required' : forcedFailure ? 'forced_failure' : 'ok',",
-    "    payload: debugRequired ? { message: 'DebugMode is required.' } : forcedFailure ? { message: 'Forced failure.' } : payload",
+    "    payload: debugRequired ? { message: 'DebugMode is required.' } : forcedFailure ? { message: 'Forced failure.' } : request.type === 'behavior.registry.manifest' ? { manifest } : payload",
     "  };",
     "  process.stdout.write('[RESULT] ' + JSON.stringify(result) + '\\n');",
     "} else {",

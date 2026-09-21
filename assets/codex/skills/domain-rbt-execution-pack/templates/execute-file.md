@@ -116,6 +116,6 @@ ${SCOUT_ARTIFACT_ROOT}/<bdd-id>/<version>/execute-file.json
 
 - 文件是单个合法 JSON object，路径符合 `<bdd-id>/<version>/execute-file.json`。
 - `commands` 首尾和唯一命令数量正确。
-- 参数与同版本 Pack 的 Behavioral identity、Hook mapping 和执行预期一致。
+- `campaignId`、`scenarioId`、`rootId`、activation `id/variantId`、capture `nodeId/sourceId/captureId/variantId` 与 `triggerCommandId` 都与同版本 Pack 的 JR/SR identity 一致。
 - 每个 capture 的 `nodeId`、`timing` 和可选 `variantId` 与同版本源码声明及 Runtime descriptor 一致。
 - 文件中只有 `commands` 及其 `command + payload`，没有 session、shell 或实际执行结果。

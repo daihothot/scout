@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// RBT artifact structure only. Runtime validates commands; agents own claims and conclusions.
+// Validates RBT artifact structure and planned identity coherence; Runtime validates live registry identities.
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -223,27 +223,59 @@ function checkPack(pack, bddId, version) {
       for (const key of i === 0 ? ["campaignId", "scenarioId"] : i === 4 ? ["campaignId"] : ["scenarioId"]) if (entry.payload[key] !== scope[key]) issue(execute, "EXECUTE_SCOPE", `${i}.${key} disagrees with Journal scope`);
     });
     const activate = plan.commands[1].payload;
+    const nonEmptyId = (value, label) => {
+      if (typeof value !== "string" || value.length === 0) issue(execute, "EXECUTE_IDENTITY", `${label} must be a non-empty string`);
+      return typeof value === "string" ? value : "";
+    };
+    const rootId = nonEmptyId(activate.rootId, "rootId");
+    const rootCovered = [...signals.values()].some(sr =>
+      sr.expected_presence === "present"
+      && sr.fields.get("kind")?.expected_value === "behavior_trace"
+      && sr.fields.get("id")?.expected_value === rootId
+      && sr.fields.get("result")?.role === "assert"
+    );
+    if (!rootCovered) issue(execute, "UNCOVERED_ROOT", rootId || "missing rootId");
+    const activationIdentities = new Set();
     for (const activation of activate.activations || []) {
+      const id = nonEmptyId(activation?.id, "activation.id");
+      const variantId = nonEmptyId(activation?.variantId, "activation.variantId");
+      const identity = `${id}\u0000${variantId}`;
+      if (activationIdentities.has(identity)) issue(execute, "DUPLICATE_EXECUTE_IDENTITY", `${id}/${variantId}`);
+      activationIdentities.add(identity);
       const covered = [...signals.values()].some(sr =>
         sr.expected_presence === "present"
         && sr.fields.get("kind")?.expected_value === "behavior_trace"
-        && sr.fields.get("id")?.expected_value === activation.id
-        && sr.fields.get("variantId")?.expected_value === activation.variantId
+        && sr.fields.get("id")?.expected_value === id
+        && sr.fields.get("variantId")?.expected_value === variantId
         && sr.fields.get("result")?.role === "assert"
       );
-      if (!covered) issue(execute, "UNCOVERED_ACTIVATION", `${activation.id}/${activation.variantId}`);
+      if (!covered) issue(execute, "UNCOVERED_ACTIVATION", `${id}/${variantId}`);
+    }
+    const captureIds = new Set();
+    const sourceIds = new Set();
+    for (const sourceId of activate.evidenceCapture?.sources || []) {
+      const id = nonEmptyId(sourceId, "evidenceCapture.sources[]");
+      if (sourceIds.has(id)) issue(execute, "DUPLICATE_EXECUTE_IDENTITY", `sourceId ${id}`);
+      sourceIds.add(id);
     }
     for (const capture of activate.evidenceCapture?.captures || []) {
+      const nodeId = nonEmptyId(capture?.nodeId, "capture.nodeId");
+      const sourceId = nonEmptyId(capture?.sourceId, "capture.sourceId");
+      const captureId = nonEmptyId(capture?.captureId, "capture.captureId");
+      const variantId = capture?.variantId === undefined ? undefined : nonEmptyId(capture.variantId, "capture.variantId");
+      if (captureIds.has(captureId)) issue(execute, "DUPLICATE_EXECUTE_IDENTITY", `captureId ${captureId}`);
+      captureIds.add(captureId);
       const covered = [...signals.values()].some(sr =>
         sr.expected_presence === "present"
         && sr.fields.get("kind")?.expected_value === "capture_result"
-        && sr.fields.get("id")?.expected_value === capture.nodeId
-        && sr.fields.get("sourceId")?.expected_value === capture.sourceId
-        && sr.fields.get("captureId")?.expected_value === capture.captureId
+        && sr.fields.get("id")?.expected_value === nodeId
+        && sr.fields.get("sourceId")?.expected_value === sourceId
+        && sr.fields.get("captureId")?.expected_value === captureId
+        && (variantId === undefined || sr.fields.get("variantId")?.expected_value === variantId)
       );
-      if (!covered) issue(execute, "UNCOVERED_CAPTURE", `${capture.nodeId}/${capture.sourceId}/${capture.captureId}`);
+      if (!covered) issue(execute, "UNCOVERED_CAPTURE", `${nodeId}/${sourceId}/${captureId}${variantId ? `/${variantId}` : ""}`);
     }
-    const triggerCommandId = plan.commands[2].payload.triggerCommandId;
+    const triggerCommandId = nonEmptyId(plan.commands[2].payload.triggerCommandId, "triggerCommandId");
     const triggerCovered = [...signals.values()].some(sr =>
       sr.expected_presence === "present"
       && sr.fields.get("kind")?.expected_value === "response_payload"

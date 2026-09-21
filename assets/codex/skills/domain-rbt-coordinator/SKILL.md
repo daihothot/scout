@@ -1,9 +1,9 @@
 ---
 assetKind: scout.skill
 name: domain-rbt-coordinator
-description: Scout Coordinator 在 RBT Domain 中将人的测试意图收敛为唯一 BDD，并把当前 Phase 的工作交给对应 Worker。
+description: Scout Coordinator 在 RBT 中确认唯一 BDD，依次派发执行与审查任务，根据正式状态决定等待、退回或结束。
 id: domain-rbt-coordinator
-version: 0.7.0
+version: 0.8.0
 type: domain
 domain: rbt
 phase: [Synthesis]
@@ -13,310 +13,304 @@ devices: [any]
 dependencies:
   skills:
     required: [tool-guru-knowledge, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.coordinator.**]
-summary: 定位唯一 BDD，转交 Execute/Review 输入，消费正式 handoff 并协调无需重跑的交付修正。
+summary: 按五个线性阶段协调 BDD 验证并交付结果。
 ---
 
 # Domain RBT Coordinator
 
-当 Coordinator 在 Runtime Behavioral Test（RBT）Domain 中收到人的测试意图，需要定位 BDD、指派当前 Phase 的工作并消费 Worker handoff 时使用本技能。后续 `RBT` 均表示 Runtime Behavioral Test。
+在 Runtime Behavioral Test（RBT）中，将用户的测试目标交给 Executor 执行，再交给 Reviewer 审查。
 
-本技能只定义 RBT 的编排边界：
-
-- BDD identity 和 BDD source ref 的收敛；
-- 当前 Phase 的 task assignment；
-- Worker formal handoff 的消费和 Phase outcome 提交。
-
-BDD 的读取方法由 `tool-guru-knowledge` 所有；执行、artifact 和审查方法由对应 Worker Domain Skill 所有。
+Coordinator 负责确认目标、派发任务、消费正式状态和交付结果。
 
 ## Skill Type
 
 - type: domain
 - layout: workflow
-- note: 不执行 Behavioral 操作，不读取或修改 Execution Pack，不替 Worker 做领域判断。
+- note: 按执行与审查的先后顺序，决定分配、等待、退回或结束。
 
-## Coordination Rules
+## Core Use
 
-- 人的自然语言意图不是 BDD fact；只有 Knowledge 中唯一且可定位的 Behavior 才能作为当前输入。
-- `tool-guru-knowledge` 只用于定位和完整读取 Behavior，Coordinator 核对结果是否唯一、一致。
-- Coordinator 使用 `AssignTask`，不自行选择 role、Worker 或 phase，不制定 Executor 执行计划。
-- Coordinator 只把目标、已确认输入、稳定 refs、边界和用户限制交给 Worker；交付要求引用该 Worker 的领域契约，不重定义格式、字段或状态。
-- `status: assigned` 只表示 task 已创建；不能表示 Worker 已开始或完成。
-- 普通消息、progress、工具活动和 Coordinator 摘要不能替代 formal handoff。
-- `execution_only: true` 时，消费 Executor handoff 后交付本轮结果，不创建 Reviewer task，也不推进 review。
+- 确认唯一 BDD。
+- 分别派发 Executor 和 Reviewer 任务。
+- 根据正式状态处理两类任务的结果。
+- 向用户交付结论、限制和正式 refs。
+
+## Workflow Exits
+
+- RBT Workflow 的阶段是 `execute` 和 `review`，每个阶段都有 `completed`、`error` 两个出口。
+- Coordinator 通过 `SubmitPhaseOutcome`（`tool-scout-submit-phase-outcome`）选择出口，Runtime 按 Workflow 的 edge 决定去向。
+- “停止”表示不提交 outcome，结束当前 response，保持当前 Workflow 阶段。它不是第三种 outcome 值。
 
 ## Inputs
 
-### I-001: Human Test Intent
+### I-001: Test Request
+---
 
 Required：
 
-- `test_intent`：人的功能、场景、前置状态、触发动作或预期行为。
+- 测试目标：用户提供的 BDD identity、source ref 或场景描述。
 
 Optional：
 
-- `bdd_identity`：人已明确提供的 canonical Behavior `id`；没有时为 `none`。
-- `bdd_source_ref`：人已明确提供的 Knowledge source ref；没有时为 `none`。
-- `human_constraints`：人已确认的执行限制，包括明确的环境限制；没有时为 `none`。
-- `execution_only`：人明确要求只执行当前 execute 时为 `true`；没有时为 `false`。
+- 用户限制：用户明确提出的范围和执行要求；没有时为 `none`。
+- `execution_only`：用户明确要求只执行时为 `true`；否则为 `false`。
 
 Missing：
 
-- 缺少 `test_intent`：请求能够定位 BDD 的最小场景描述。
-- 缺少 `bdd_identity` 或 `bdd_source_ref`：使用 `tool-guru-knowledge` 定位和核对；无法唯一闭合时请求最小澄清。
-- 其它 optional 缺失时使用 `none`，不推断额外限制。
+- 测试目标缺失、为空或无法辨认时，请求最小澄清。
+- 未提供用户限制时按 `none` 处理。
+- 未指定 `execution_only` 时按上述缺省语义处理。
 
 Confirmation：
 
-- `bdd_identity` 和 `bdd_source_ref` 指向同一个 Behavior；
-- Behavior 的 `Given`、`When`、`Then` 与 `test_intent` 一致；
-- 已确认限制与 Behavior 边界没有未解决冲突。
+- 测试目标及已有的限制均来自用户，且彼此没有未解决冲突。
 
-### I-002: Current Work
+### I-002: Workflow Context
+---
 
 Required：
 
-- `current_phase`：只来自 `<workflow_phase>` attachment。
+- `current_phase`：Runtime 当前 `<workflow_phase>` attachment 中的 `execute` 或 `review`。
 
 Optional：
 
-- 当前 Phase 的 active task；没有时为 `none`；
-- 当前 task 的 formal handoff；尚未提交时为 `none`；
-- 已有 Execute 正式交付及 Runtime 提供的执行定位引用；尚未产生时为 `none`；
-- Reviewer 正式提出的 correction request 及对应原 Executor task；没有时为 `none`。
+- 本轮 task、formal handoff 和 Runtime 执行结果：使用 Runtime 提供的上下文；尚未到达的项为 `none`。
 
-Rules：
+Missing：
 
-- 缺少 `current_phase` 时不创建 task、不判断 handoff、不提交 Phase outcome；
-- 已有 task 时继续原 task，不创建新 task 绕过原交付；
-- handoff 必须来自当前 task，普通消息不能补齐 handoff。
+- `current_phase` 缺失或无效时，等待 Runtime 明确阶段。
+- task 缺失时在相应派单阶段处理；handoff 或结果尚未到达时在相应结果协调阶段等待。
+
+Confirmation：
+
+- 当前阶段来自有效 attachment；已有任务和消息属于本轮工作。
+
+## Workflow Overview
+
+以下五个 Phase 是 Coordinator 的线性处理步骤；Phase 1–3 服务 `execute`，Phase 4–5 服务 `review`。首次按顺序推进，等待后的新消息从当前步骤继续。
+
+Phase 说明：
+
+- Phase 1：Resolve One BDD — 找到唯一 BDD，否则退回用户澄清。
+- Phase 2：Submit Task to Executor — 决定是否分配执行任务。
+- Phase 3：Coordinate Executor Outcome — 根据执行状态决定等待、退回或进入审查。
+- Phase 4：Submit Task to Reviewer — 决定是否分配审查任务。
+- Phase 5：Coordinate Reviewer Outcome — 根据审查交接决定等待、退回修正或结束。
 
 ## Coordinator Output
 
-本技能不创建 canonical artifact。
+- 任务输入：确认后的目标、用户限制和正式 refs。
+- 阶段结果：当前正式状态支持的 `completed` 或 `error`。
+- 用户交付：正式结论、限制和结果 refs。
 
-- BDD result：唯一 `bdd_identity`、`bdd_source_ref`、已核对的场景摘要和限制；
-- Worker task：当前 Phase 的目标、已确认输入、正式 refs、边界和用户限制；要求按该 Worker 的领域契约交付；
-- Phase outcome：只提交当前 Phase formal handoff 支持的 `completed` 或 `error`；
-- 面向用户的综合：只引用正式 handoff、稳定 refs、Runtime 状态和用户确认。
+## Phase 1: Resolve One BDD
+---
 
-Coordinator 不复制完整 BDD、执行计划、命令回包、campaign journal、evidence 正文或 Worker artifact。
-
-## Workflow
-
-主干流程：
-
-```mermaid
-flowchart TD
-  A["读取 workflow_phase 与用户意图"] --> B["定位并核对唯一 BDD"]
-  B --> C{"BDD 已确认？"}
-  C -- "否" --> X["Blocked / 请求最小澄清"]
-  C -- "是" --> D["按 current_phase 形成 task"]
-  D --> E["AssignTask"]
-  E --> F{"已分配？"}
-  F -- "否" --> G["等待 Worker 或继续原 task"]
-  F -- "是" --> H["结束当前 response，等待 formal handoff"]
-  G --> H
-  H --> I["消费 handoff并提交或交付当前 Phase"]
-```
-
-### Phase 1: Resolve One BDD
+Main Flow：
 
 Knowledge：
 
-- `tool-guru-knowledge` 返回 Behavior identity、完整场景和可重放 source ref；
-- Coordinator 只核对唯一性和与用户意图的一致性。
+- 通过 `tool-guru-knowledge` 定位并完整读取 BDD，核对 identity、source ref、场景与用户目标。
+- 本轮确认后的 BDD 和用户限制供后续阶段复用。
 
 Flow：
 
 ```mermaid
 flowchart TD
-  A["读取 Behavior target"] --> B["完整读取 Behavior"]
-  B --> C["核对 identity 与 Given/When/Then"]
-  C --> D{"唯一且一致？"}
-  D -- "是" --> E["BDD confirmed"]
-  D -- "否" --> F["Blocked / 澄清"]
+  A["定位并完整读取 BDD"] --> B{"唯一且与用户目标一致？"}
+  B -- "是" --> C["保留 BDD 与用户限制，进入 Phase 2"]
+  B -- "否" --> D["退回用户澄清，Blocked"]
 ```
-
-Constraints：
-
-- 已提供 canonical Behavior ID 时，仍必须核对来源中的 identity 和场景；
-- 不从 Knowledge 文档推断代码、Runtime 或验证结果；
-- 不替用户在多个候选中臆选唯一 Behavior。
 
 Blocked：
 
-- Knowledge source 不可读；
-- 没有候选或存在无法区分的候选；
-- source ref 与 identity 不一致；
-- `Given`、`When`、`Then` 与用户意图冲突。
+- BDD 来源不可读。
+- BDD 无法唯一确定。
+- BDD identity 与 source ref 不一致。
+- BDD 场景与用户目标或限制冲突。
 
 Partial：
 
-- 已有候选但尚未唯一闭合；
-- 已确认的部分限制和未解决问题。
-
-Returns To Main Flow：
-
-- `BDD confirmed`：继续形成当前 Phase task；
-- `Blocked`：不创建 task，保留澄清问题。
-
-### Phase 2: Coordinate Current Phase
-
-Knowledge：
-
-- `current_phase` 只来自 `<workflow_phase>`；
-- Execute 和 Review 的工作及交付分别由 `domain-rbt-executor`、`domain-rbt-reviewer` 及各自 Pack Skill 定义；
-- Coordinator 只引用这些职责边界，不读取或复制 Worker Skill/模板，也不检查其私有 mount；
-- Skill 按角色和 phase 提供；Coordinator 自己未挂载 Reviewer Skill，不表示 Review 能力缺失。真实资源问题由 Reviewer 或 Runtime 报告。
-
-Flow：
-
-```mermaid
-flowchart TD
-  A["读取 current_phase"] --> B{"已有当前 task？"}
-  B -- "否" --> C["形成完整 task prompt"]
-  C --> D["AssignTask"]
-  D --> E{"status: assigned？"}
-  E -- "是" --> F["task assigned"]
-  E -- "否" --> G["waiting"]
-  B -- "是" --> H["有正式补充则传给原 task，否则等待 handoff"]
-  F --> I["返回主干"]
-  G --> I
-  H --> I
-```
-
-Task Inputs：
-
-| 当前 Phase / 工作 | 转交输入 | 任务目标 |
-| --- | --- | --- |
-| Execute 首次执行 | 已确认的 BDD identity、BDD source ref、场景边界和用户限制 | 按 Executor 契约完成本次执行及正式交付 |
-| Review | Execute 正式交付的 BDD identity、目标版本、Pack 与 execute-file 定位引用，以及 Runtime 提供的精确 `executor_history_ref` | 按 Reviewer 契约从 history 取得执行 identity，比较 JR/SR 与本次 campaign evidence，形成审查交付 |
-| Execute correction | Reviewer 正式指出的输入缺口、相关 refs，以及原 Executor task identity | 仅修正无需新增执行事实的交付问题 |
-
-Constraints：
-
-- task 的交付要求仅说明按当前 Worker 的领域契约生成正式产物并提交 handoff；不列出另一套 artifact 格式、字段清单或状态枚举；
-- 不传 `phase`、`role` 或 Agent；Runtime 根据当前 Phase 路由；
-- 正式 refs 和 Runtime 提供的 `executor_history_ref` 原样转交；缺失或冲突时向来源方追问，不从 Pack 正文、私有日志、命名或普通消息猜测补齐；
-- 当前 phase 已有 task 时向原 task 传递正式补充，不重复分配。
-
-Blocked：
-
-- `current_phase` 缺失或不属于当前 Workflow Profile；
-- task 必需输入不完整；
-- `AssignTask` 返回错误或非 `assigned` 且没有可等待的原 task。
-
-Partial：
-
-- task 已创建但 Worker 尚未提交 formal handoff；
-- `not_assigned` 且需要等待 Worker 可用；
-- handoff 已到达但字段仍不完整。
-
-Returns To Main Flow：
-
-- `task assigned`：结束当前 response，等待 Runtime 触发后续 response；
-- `waiting`：不重复调用 AssignTask，等待状态变化；
-- `handoff ready`：进入 Phase outcome 判断；
-- `blocked`：保留阻断原因，不伪造 task 或 handoff。
-
-Review：
-
-- 进入 review 且交接输入齐备时，派发 Reviewer task；Review Pack 是 Reviewer 生成的输出，不是派单前要求 Executor 提供的输入。
-- Coordinator 只转交定位和关联信息；JR/SR 的消费、证据比较、输入缺口判断及报告生成由 Reviewer 负责。
-
-Correction：
-
-- 只接受 Reviewer formal handoff 中明确指出的交付输入缺口；必须能用已有依据修正，且无需新执行事实。
-- 按 Phase outcome 规则返回 execute 后，用 `SendMessage` 将原缺口和 refs 交给原 Executor task；不新建执行任务，不替 Executor 规定修改内容或格式。
-- 等待原 Executor 的更正 handoff，再按当前 phase 推进；回到 review 后，将更正的正式 refs 交给原 Reviewer task 继续审查。
-- 需要新 trigger、capture 或其它新执行事实的缺口不进入 correction；保留 Reviewer 的证据不足或执行无效结论，不请求重跑。
-
-### Phase 3: Deliver Current Phase
-
-Knowledge：
-
-- 只消费当前 task 的 formal handoff；
-- `execution_only` 为 `true` 时，Executor handoff 是本轮交付边界；
-- 非 `execution_only` 时，按 Workflow Profile 和实际 handoff contract 提交 Phase outcome。
-
-Execution Pack 只在完整时交付；审查结论由 Reviewer 形成，Phase outcome 由 Coordinator 根据当前任务的交付决定。
-
-| 当前正式交付 | Coordinator 的流转处理 |
-| --- | --- |
-| Execute 已完成本轮工作，正式交付与 Runtime 的精确 `executor_history_ref` 均满足 Review 输入 | 提交 `completed`；`execution_only` 时直接交付并结束 |
-| Review 已形成完整审查交付，包括不匹配、证据不足或执行无效结论 | 提交 `completed`，原样保留结论与限制 |
-| Review 正式提出符合上述边界的 correction request | 提交 `error`，由 Runtime 按 Workflow Profile 返回 execute；下个 response 再向原 Executor task 转交修正 |
-| handoff 尚未到达、缺少交接输入或仍有未解决 Human Input | 保留原 task，等待或追问具体缺口；不凭状态名称猜测流转 |
-
-实际任务失败按正式事实和 Workflow Profile 处理；`review:error` 会返回 execute，不能用它表示业务预期不匹配或一般证据不足，也不能据此启动新的执行。
-
-Flow：
-
-```mermaid
-flowchart TD
-  A["收到当前 task formal handoff"] --> B{"handoff 可消费？"}
-  B -- "否" --> X["waiting / blocked"]
-  B -- "是" --> C{"execution_only？"}
-  C -- "是" --> D["交付 Execute handoff并结束"]
-  C -- "否" --> E["SubmitPhaseOutcome"]
-  E --> F["结束当前 response"]
-```
-
-Constraints：
-
-- `status: assigned` 不得当作 Worker 完成；
-- 没有完整 Executor handoff 时不得推进 Review；
-- `SubmitPhaseOutcome` 接受后立即结束当前 response，不在同一 response 中处理下一 Phase。
-
-Blocked：
-
-- handoff 缺失、来源不是当前 task 或 contract 无法解析；
-- 当前 task 存在未解决的正式 Human Input request；
-- 必须提交 outcome 但 `SubmitPhaseOutcome` 未接受。
-
-Partial：
-
-- handoff 已到达但仍有 contract 字段缺口；
-- Worker 已请求人工信息，当前 task 仍在等待。
+- `none`
 
 Exit：
 
-- `execution_only`：已交付 Execute handoff，未创建 Reviewer task；
-- 其它情况：Phase outcome 已被 Runtime 接受，当前 response 已结束。
+- 唯一 BDD 已确认，source ref 与用户限制已保留。
 
-## Workflow Exit Rules
+## Phase 2: Submit Task to Executor
+---
 
-- XR-001：没有唯一 BDD identity 和可读 source ref，不得创建 Worker task。
-- XR-002：`AssignTask` 只提交当前 Phase 的任务描述，不传 phase、role 或 Agent。
-- XR-003：task assigned、waiting 或 handoff 提交后立即结束当前 response。
-- XR-004：`execution_only` 不创建 Reviewer task，不推进 review。
-- XR-005：只有当前 task 的 formal handoff 才能支持 Phase outcome。
+Main Flow：
 
-## Evidence Rules
+Knowledge：
 
-- ER-001：BDD 来源只能来自用户明确提供的 BDD 或 `tool-guru-knowledge` 返回的可定位 source ref。
-- ER-002：Coordinator 不把 Knowledge 文档、Tool success 或 Executor handoff 改写成 BDD coverage 结论。
-- ER-003：普通消息、progress 和工具活动不能替代 formal handoff。
+- 本阶段要求 Runtime 的 `current_phase` 为 `execute`。
+- 首次任务输入是已确认的 BDD identity、source ref 和用户限制；目标是完成执行并正式交接。
+- 使用 `AssignTask`（`tool-scout-assign-task`）派发新任务。
+- 退回修正时，用 `SendMessage`（`tool-scout-send-message`）向原 Executor task 转交 Reviewer 的正式修正请求和 refs。
 
-## Failure Rules
+Flow：
 
-- FR-001：BDD 定位失败、task assignment 失败和 Worker handoff 失败分别报告，不统一改写成 BDD 不成立。
-- FR-002：Tool 错误、缺失输入或状态不确定时，保留实际错误和影响范围，不猜测继续。
+```mermaid
+flowchart TD
+  A{"已有本轮 Executor task？"}
+  A -- "是" --> B["沿用原 task，有正式补充则转交"]
+  A -- "否" --> C{"首次执行输入齐备？"}
+  C -- "否" --> W["保留缺口，Blocked"]
+  C -- "是" --> D["AssignTask"]
+  B --> E["进入 Phase 3 等待执行结果"]
+  D --> E
+```
 
-## Prohibited Rules
+Blocked：
 
-- PR-001：禁止 Coordinator 使用 Behavioral WebSocket 执行、复现或审查测试。
-- PR-002：禁止 Coordinator 读取、创建、补写、解释或修改 Execution Pack、Review Pack 或 Worker artifact。
-- PR-004：禁止通过新 task 绕过原 task 的人工确认或 handoff。
+- Runtime 尚未处于 `execute`。
+- 首次派单输入不齐。
+- 修正请求无法关联原 Executor task。
+- 派单或补充投递未成功。
+
+Partial：
+
+- `none`
+
+Exit：
+
+- 本轮 Executor task 已存在，或 `AssignTask` 返回 `assigned`。
+- 本次需要转交的正式补充已投递，或没有补充。
+
+## Phase 3: Coordinate Executor Outcome
+---
+
+Main Flow：
+
+Knowledge：
+
+- `RBT Execution History Ready` 的 `status` 是本次 Runtime 执行结果；通知中的 `executor_history_ref` 留给 Phase 4 转交。
+- Executor 正式交接表示交付已返回；其 refs 原样保留。handoff 不替代 Runtime 执行结果。
+- “成功交接”表示 Runtime 为 `completed`、Executor 已正式交接且没有待处理 Human Input。
+- `execution_only` 成功交接后，交付执行结果并选择停止。
+- 已有交付的修正沿用原 Runtime 执行结果。
+
+Flow：
+
+```mermaid
+flowchart TD
+  A{"当前执行状态"}
+  A -- "Runtime failed" --> B["报告失败，选择 error"]
+  A -- "成功交接，需要审查" --> C["选择 completed"]
+  A -- "其余情况" --> D["停止"]
+```
+
+Blocked：
+
+- 没有可确认的本轮 Runtime 执行状态。
+- 执行成功，但 Executor 尚未正式交接。
+- 执行成功，但仍有未解决的正式 Human Input。
+- 阶段提交未被 Runtime 接受。
+
+Partial：
+
+- 已收到的状态与 refs，保留在当前协调上下文中。
+
+Exit：
+
+- 适用的阶段结果已被接受，或 `execution_only` 执行结果已交付。
+
+## Phase 4: Submit Task to Reviewer
+---
+
+Main Flow：
+
+Knowledge：
+
+- 本阶段要求 Runtime 的 `current_phase` 为 `review`。
+- 审查目标是完成本轮审查并正式交付结果；输入引用按下表原样转交。
+- 首次审查使用 `AssignTask`（`tool-scout-assign-task`）；修正后继续审查使用 `SendMessage`（`tool-scout-send-message`），向原 Reviewer task 转交更正后的 refs。
+
+| 输入来源 | 转交内容 |
+| --- | --- |
+| Executor formal handoff | `bdd_id`、`target_version`、`pack_ref`、`execute_file_ref`。 |
+| 本轮 Runtime 执行通知 | 精确 `executor_history_ref`。 |
+
+Flow：
+
+```mermaid
+flowchart TD
+  A{"审查输入已收到？"}
+  A -- "否" --> W["等待缺失输入，Blocked"]
+  A -- "是" --> B{"已有本轮 Reviewer task？"}
+  B -- "否" --> C["AssignTask"]
+  B -- "是" --> D["沿用原 task，有更正引用则转交"]
+  C --> E["进入 Phase 5 等待审查结果"]
+  D --> E
+```
+
+Blocked：
+
+- Runtime 尚未处于 `review`。
+- 正式审查输入未收到。
+- 派单或更正引用投递未成功。
+
+Partial：
+
+- `none`
+
+Exit：
+
+- 本轮 Reviewer task 已存在，或 `AssignTask` 返回 `assigned`。
+- 本次需要转交的更正引用已投递，或没有更正。
+
+## Phase 5: Coordinate Reviewer Outcome
+---
+
+Main Flow：
+
+Knowledge：
+
+- 只根据 Reviewer formal handoff 区分审查完成和退回修正。审查不通过、证据不足或执行无效也属于完整审查结果。
+- 退回依据是 Reviewer 正式提出、明确无需重新执行的交付修正请求；原请求与 refs 保留给 Phase 2。
+- 有待处理的正式 Human Input 时，选择停止；完整审查结论及 refs 原样交付用户。
+
+Flow：
+
+```mermaid
+flowchart TD
+  A{"Reviewer 当前正式状态"}
+  A -- "审查完成" --> B["选择 completed"]
+  A -- "正式请求交付修正" --> C["选择 error"]
+  A -- "未完成或等待 Human Input" --> D["停止"]
+```
+
+Blocked：
+
+- Reviewer 尚未形成正式交接。
+- Reviewer 的交接未明确完成结论或修正请求。
+- 仍有未解决的正式 Human Input。
+- 阶段提交未被 Runtime 接受。
+
+Partial：
+
+- 已收到的审查状态与 refs，保留在当前协调上下文中。
+
+Exit：
+
+- 本轮审查的阶段结果已被 Runtime 接受。
+
+## Workflow Exit Rules (Enforcement)
+
+- XR-001：前一阶段未通过时，不进入依赖它的下一阶段。
+- XR-002：派单或补充投递成功后结束当前 response，等待正式结果。
+- XR-003：阶段结果被接受后立即结束当前 response；新 Runtime response 再处理后续阶段。
+- XR-004：Phase 5 退回修正后，从 Phase 2 继续原任务；修正不产生新的执行。
+- XR-005：本轮结束后的迟到交接仅补充交付，不重新启动流程。
+
+## Prohibited Rules (Enforcement)
+
+- PR-001：禁止 Coordinator 打开 artifact 正文检查格式、内容或证据；artifact 校验由 Runtime 负责，Coordinator 只消费正式状态和交接 refs。
 
 ## Checklist
 
-- 当前 `workflow_phase` 的 domain 和 phase 已确认。
-- BDD identity 唯一，source ref 可读且与 Behavior identity 一致。
-- Worker task 包含当前 Phase 所需的已确认输入、正式 refs、边界和用户限制，交付要求引用 Worker 契约。
-- `AssignTask` 没有传 phase、role 或 Agent。
-- assigned、waiting、handoff ready 和 blocked 没有混用。
-- 当前 response 在 assignment、handoff 或 Phase outcome 后结束。
-- execution-only 没有创建 Reviewer task。
-- Review 正常结论与 correction 已区分；修正只使用原 task 和已有执行事实。
-- 没有复制 Tool contract 或 Worker artifact contract。
+- 任务对应唯一且已确认的 BDD。
+- Executor 与 Reviewer 的派单和结果协调各在自己的阶段处理。
+- 退回修正沿用原任务，审查不通过没有被当作重跑理由。
+- 用户已收到正式结果、限制和 refs。

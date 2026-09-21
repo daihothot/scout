@@ -147,10 +147,15 @@ function validateActivations(payload: Record<string, AgentJsonValue>, command: s
   const activations = payload.activations;
   if (activations === undefined) return;
   if (!Array.isArray(activations)) throw new Error(`${command} payload.activations must be an array.`);
+  const identities = new Set<string>();
   activations.forEach((activation, index) => {
     if (!isRecord(activation)) throw new Error(`${command} payload.activations[${index}] must be an object.`);
-    requiredPayloadString(activation as Record<string, AgentJsonValue>, command, "id");
-    requiredPayloadString(activation as Record<string, AgentJsonValue>, command, "variantId");
+    const record = activation as Record<string, AgentJsonValue>;
+    const id = requiredPayloadString(record, command, "id");
+    const variantId = requiredPayloadString(record, command, "variantId");
+    const identity = `${id}\u0000${variantId}`;
+    if (identities.has(identity)) throw new Error(`${command} payload.activations contains duplicate identity ${id}/${variantId}.`);
+    identities.add(identity);
   });
 }
 
@@ -168,22 +173,39 @@ function validateEvidenceCapture(payload: Record<string, AgentJsonValue>, comman
   if (evidenceCapture.enabled !== undefined && typeof evidenceCapture.enabled !== "boolean") {
     throw new Error(`${command} payload.evidenceCapture.enabled must be a boolean.`);
   }
+  for (const field of ["kinds", "sources"]) {
+    const values = evidenceCapture[field];
+    if (values === undefined) continue;
+    if (!Array.isArray(values) || values.some((value) => typeof value !== "string" || value.length === 0)) {
+      throw new Error(`${command} payload.evidenceCapture.${field} must be an array of non-empty strings.`);
+    }
+    if (new Set(values).size !== values.length) {
+      throw new Error(`${command} payload.evidenceCapture.${field} must not contain duplicates.`);
+    }
+  }
   const captures = evidenceCapture.captures;
   if (captures === undefined) return;
   if (!Array.isArray(captures)) {
     throw new Error(`${command} payload.evidenceCapture.captures must be an array.`);
   }
+  const captureIds = new Set<string>();
   captures.forEach((capture, index) => {
     if (!isRecord(capture)) {
       throw new Error(`${command} payload.evidenceCapture.captures[${index}] must be an object.`);
     }
     const captureRecord = capture as Record<string, AgentJsonValue>;
-    for (const field of ["captureId", "sourceId", "kind"]) {
+    for (const field of ["captureId", "nodeId", "timing", "sourceId", "kind"]) {
       const value = captureRecord[field];
       if (typeof value !== "string" || value.length === 0) {
         throw new Error(`${command} payload.evidenceCapture.captures[${index}].${field} must be a non-empty string.`);
       }
     }
+    const captureId = captureRecord.captureId as string;
+    if (captureIds.has(captureId)) {
+      throw new Error(`${command} payload.evidenceCapture.captures contains duplicate captureId ${captureId}.`);
+    }
+    captureIds.add(captureId);
+    optionalPayloadString(captureRecord, command, "variantId");
   });
 }
 

@@ -27,6 +27,7 @@ const BEHAVIOR_SCHEMA_ROOT_RELATIVE_PATH = join(
 );
 const EXECUTE_QUERY_COMMANDS = new Set([
   "behavior.registry.nodes",
+  "behavior.registry.manifest",
   "behavior.node.variants",
   "behavior.evidence.sources",
   "behavior.trigger.commands",

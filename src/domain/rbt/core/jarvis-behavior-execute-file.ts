@@ -34,6 +34,99 @@ export class JarvisBehaviorExecuteFileRunner {
     executeFile: ParsedExecuteFile,
     platform: RbtExecutionPlatform,
   ): Promise<DynamicToolCallResponse> {
+    const preflight = await this.commandRunner.run(call, "behavior.registry.manifest", {});
+    if (preflight.status !== "completed") {
+      return dynamicResponse(false, {
+        status: "failed",
+        operation: "execute_file",
+        executedCommands: 0,
+        error: {
+          sequence: 0,
+          command: "behavior.registry.manifest",
+          code: "identity_preflight_failed",
+          message: preflight.error ?? "Behavior registry manifest is unavailable.",
+        },
+      });
+    }
+    const asRecord = (value: AgentJsonValue | undefined): Record<string, AgentJsonValue> | undefined =>
+      typeof value === "object" && value !== null && !Array.isArray(value)
+        ? value as Record<string, AgentJsonValue>
+        : undefined;
+    const asRecords = (value: AgentJsonValue | undefined): Array<Record<string, AgentJsonValue>> | undefined =>
+      Array.isArray(value) && value.every((entry) => asRecord(entry) !== undefined)
+        ? value as Array<Record<string, AgentJsonValue>>
+        : undefined;
+    const manifest = asRecord(asRecord(preflight.result?.payload)?.manifest);
+    const nodes = asRecords(manifest?.nodes);
+    const variants = asRecords(manifest?.variants);
+    const sources = asRecords(manifest?.sources);
+    const triggers = asRecords(manifest?.triggerCommands);
+    if (!manifest || !nodes || !variants || !sources || !triggers) {
+      return dynamicResponse(false, {
+        status: "failed",
+        operation: "execute_file",
+        executedCommands: 0,
+        error: {
+          sequence: 0,
+          command: "behavior.registry.manifest",
+          code: "identity_preflight_failed",
+          message: "Behavior registry manifest has an invalid shape.",
+        },
+      });
+    }
+    const nodeIds = new Set(nodes.map((node) => node.id).filter((id): id is string => typeof id === "string"));
+    const variantIds = new Set(variants
+      .filter((variant) => typeof variant.id === "string" && typeof variant.variantId === "string")
+      .map((variant) => `${variant.id}\u0000${variant.variantId}`));
+    const sourceIds = new Set(sources.map((source) => source.sourceId).filter((id): id is string => typeof id === "string"));
+    const triggerById = new Map(triggers
+      .filter((trigger) => typeof trigger.triggerCommandId === "string")
+      .map((trigger) => [trigger.triggerCommandId as string, trigger]));
+    const activate = executeFile.commands.find((entry) => entry.command === "behavior.scenario.activate")?.payload;
+    const trigger = executeFile.commands.find((entry) => entry.command === "behavior.trigger.invoke")?.payload;
+    const problems: string[] = [];
+    const rootId = typeof activate?.rootId === "string" ? activate.rootId : "";
+    if (!nodeIds.has(rootId)) problems.push(`rootId ${rootId} is not registered`);
+    for (const activation of Array.isArray(activate?.activations) ? activate.activations : []) {
+      const value = asRecord(activation);
+      const id = typeof value?.id === "string" ? value.id : "";
+      const variantId = typeof value?.variantId === "string" ? value.variantId : "";
+      if (!nodeIds.has(id)) problems.push(`activation id ${id} is not registered`);
+      if (!variantIds.has(`${id}\u0000${variantId}`)) problems.push(`variant ${id}/${variantId} is not registered`);
+    }
+    const capture = asRecord(activate?.evidenceCapture);
+    for (const sourceId of Array.isArray(capture?.sources) ? capture.sources : []) {
+      if (typeof sourceId === "string" && !sourceIds.has(sourceId)) problems.push(`sourceId ${sourceId} is not registered`);
+    }
+    for (const request of Array.isArray(capture?.captures) ? capture.captures : []) {
+      const value = asRecord(request);
+      const nodeId = typeof value?.nodeId === "string" ? value.nodeId : "";
+      const sourceId = typeof value?.sourceId === "string" ? value.sourceId : "";
+      if (!nodeIds.has(nodeId)) problems.push(`capture nodeId ${nodeId} is not registered`);
+      if (!sourceIds.has(sourceId)) problems.push(`capture sourceId ${sourceId} is not registered`);
+      if (typeof value?.variantId === "string" && !variantIds.has(`${nodeId}\u0000${value.variantId}`)) {
+        problems.push(`capture variant ${nodeId}/${value.variantId} is not registered`);
+      }
+    }
+    const triggerCommandId = typeof trigger?.triggerCommandId === "string" ? trigger.triggerCommandId : "";
+    const triggerDescriptor = triggerById.get(triggerCommandId);
+    if (!triggerDescriptor) problems.push(`triggerCommandId ${triggerCommandId} is not registered`);
+    else if (triggerDescriptor.relatedBehaviorId !== rootId) {
+      problems.push(`triggerCommandId ${triggerCommandId} belongs to ${String(triggerDescriptor.relatedBehaviorId)}, not rootId ${rootId}`);
+    }
+    if (problems.length > 0) {
+      return dynamicResponse(false, {
+        status: "failed",
+        operation: "execute_file",
+        executedCommands: 0,
+        error: {
+          sequence: 0,
+          command: "behavior.registry.manifest",
+          code: "identity_preflight_failed",
+          message: problems.join("; "),
+        },
+      });
+    }
     this.store.startExecution(call.caller.agentId, executeFile);
     let campaignStarted = false;
     let scenarioActive = false;

@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: signal-rbt-evidence
 description: 声明一条可由 RBT campaign 历史 evidence 整体定位和比较的完整预期，或解释其原始字段时使用。
 id: signal-rbt-evidence
-version: 0.5.0
+version: 0.5.1
 type: signal
 family: [signal, local, unity, rbt, general]
 tags: [signal, unity, rbt, evidence, campaign-journal]
@@ -62,6 +62,21 @@ summary: 定义完整 Evidence expectation；所有实际比较值都来自 camp
 | `fallback` | Variant 返回 `ContinueDefault` 或 `FallbackToDefault`。 |
 
 Executor 声明 `behavior_trace` 的 `result` 时必须使用表中的原始值，不得缩写、改名或按自然语言自行概括。其它 `kind` 不套用这组取值；其 `result` 保留 campaign evidence 返回的原始值。
+
+### Capture Timing 与 Journal 顺序
+
+`capture_result.data.timing` 表示相对于目标 Node 的采集边界。采集声明中的 `nodeId` 对应 evidence 的 `id`；`sourceId`、`captureId` 标识采集来源与请求。以下先后关系仅适用于同一次 Node 调用。
+
+| timing | 采集时机 | 对 JR 顺序的影响 |
+| --- | --- | --- |
+| `before` | 执行目标 Node 的 Variant 或默认业务方法之前。 | 采集完成先于目标业务路径及其内部子 Node 的 trace。 |
+| `after` | 整个目标 Node 成功完成之后，包含它同步执行或等待完成的子调用。 | 采集晚于该执行路径已经产生的 trace；不代表每个 Node 都必然产生 trace。 |
+| `error` | 目标 Node 以异常结束并写入错误证据之后。 | Node 的错误证据先于本次采集；该时机不表示采集本身失败。 |
+
+- 一次成功采集先写入采到的 evidence records，最后写入 `capture_result`；零条也有回执。采集失败写入 `error`，不能当作成功空结果。
+- Scenario activation 只安装规则，不执行 Node，也不产生 `behavior_trace`；activation 列表顺序不能作为 JR 顺序。
+- `behavior_trace` 不统一表示 Node 开始或结束：Variant trace 记录实际执行后的分支结果；`default` trace 在默认业务方法成功返回后产生，因此内部子 Node 的 trace 可以先于父 Node 的 `default` trace。
+- JR 预期顺序依据当前业务调用关系与上述边界声明，不按 Given 的书写顺序排序；机制上的先后不自动构成 BDD 的业务时序要求。
 
 ## Complete Expectation
 
