@@ -12,6 +12,7 @@ import { AgentEvents } from "../../src/agent/events/index.js";
 import type { AgentStepState } from "../../src/agent/step/types.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
+import { isActiveTaskStatus } from "../../src/interaction/tui/selectors/index.js";
 import { TuiStore } from "../../src/interaction/tui/tui-store.js";
 import type { RunLifecycleSnapshot } from "../../src/run/lifecycle/index.js";
 
@@ -377,6 +378,42 @@ test("TuiStore restores every task status already supported by the drawer", () =
     store.restoreTaskSnapshot(taskState({ status }));
     assert.equal(store.snapshot().tasks[0]?.status, status);
   }
+});
+
+test("TuiStore does not regress a completed task when older running events arrive later", () => {
+  const store = createStore();
+  const bus = new InMemoryEventBus();
+  store.addTaskEvent(bus.publish(AgentEvents.task.assigned, taskState({
+    status: "queued",
+  })));
+  const done = taskState({
+    status: "done",
+    updatedAt: "2026-07-10T00:00:03.000Z",
+    stepIds: ["researcher-task-0001-step-0001"],
+  });
+  store.addTaskEvent(bus.publish(AgentEvents.task.outcomeSubmitted, {
+    task: done,
+    stepId: "researcher-task-0001-step-0001",
+    turnId: "turn-1",
+    callId: "call-1",
+    outcome: "complete",
+    submittedAt: done.updatedAt,
+  }));
+  store.addTaskEvent(bus.publish(AgentEvents.task.stepCompleted, taskState({
+    status: "running",
+    updatedAt: "2026-07-10T00:00:02.000Z",
+    stepIds: ["researcher-task-0001-step-0001"],
+  })));
+  store.addTaskEvent(bus.publish(AgentEvents.task.stepCompleted, taskState({
+    status: "running",
+    updatedAt: done.updatedAt,
+    stepIds: ["researcher-task-0001-step-0001"],
+  })));
+
+  const projected = store.snapshot().tasks[0];
+  assert.equal(projected?.status, "done");
+  assert.equal(projected?.updatedAt, done.updatedAt);
+  assert.equal(isActiveTaskStatus(projected?.status), false);
 });
 
 test("TuiStore keeps plans separated by turn and retains them after archive", () => {

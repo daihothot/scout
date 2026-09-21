@@ -268,7 +268,9 @@ export class TuiStore {
     }
     const task = AgentEvents.task.dispositionRecorded.is(event)
       ? event.payload.task
-      : event.payload as AgentTaskState;
+      : AgentEvents.task.outcomeSubmitted.is(event)
+        ? event.payload.task
+        : event.payload as AgentTaskState;
     let systemText: string | undefined;
     const archived = AgentEvents.task.archived.is(event);
     const existing = this.taskMap.get(task.taskId);
@@ -277,11 +279,26 @@ export class TuiStore {
       && !AgentEvents.task.assigned.is(event)
       && !archived
     ) return;
+    const status = archived ? "archived" : task.status;
+    const updatedAt = archived ? event.occurredAt : task.updatedAt;
+    if (existing) {
+      const staleSnapshot = updatedAt < existing.updatedAt;
+      const sameTimeActiveRegression = updatedAt === existing.updatedAt
+        && (existing.status === "done"
+          || existing.status === "failed"
+          || existing.status === "stopped"
+          || existing.status === "archived")
+        && (status === "queued" || status === "running");
+      const sameTimeArchiveRegression = updatedAt === existing.updatedAt
+        && existing.status === "archived"
+        && status !== "archived";
+      if (staleSnapshot || sameTimeActiveRegression || sameTimeArchiveRegression) return;
+    }
     this.taskMap.set(task.taskId, projectTaskSummary(
       task,
       existing,
-      archived ? "archived" : task.status,
-      archived ? event.occurredAt : task.updatedAt,
+      status,
+      updatedAt,
       task.stepIds.flatMap((stepId) => {
         const step = this.stepMap.get(stepId);
         return step ? [step] : [];
