@@ -32,15 +32,8 @@ import {
 import {
   ScoutExecutionSystem,
   type ExecutionPlatformIdentity,
-} from "../../src/execution/index.js";
-import { ExecutionAdapterRegistry } from "../../src/execution/execution-adapter-registry.js";
-import {
-  UnityPipelineEditorExecutor,
-  type UnityPipelineEditorExecutorOptions,
-} from "../../src/execution/transports/unity-pipeline/unity-pipeline-editor-executor.js";
-import { UnityPipelineExecutionAdapter } from "../../src/execution/transports/unity-pipeline/unity-pipeline-execution-adapter.js";
-import type { UnityPipelinePlatformExecutor } from "../../src/execution/transports/unity-pipeline/unity-pipeline-platform-executor.js";
-import { UnityPipelineTool } from "../../src/execution/transports/unity-pipeline/unity-pipeline-tool.js";
+  type ExecutionPlatformPort,
+} from "../../src/execution/scout-execution-system.js";
 import type { ScoutDomainDynamicToolCall } from "../../src/domain/types.js";
 import type { RunEnvironment } from "../../src/run/types.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
@@ -68,189 +61,65 @@ test("RBT Domain exposes behavior execution and final platform shutdown by Phase
   assert.deepEqual(domain.dynamicToolsForPhase("Synthesis"), []);
 });
 
-test("Unity Pipeline execution dispatches by the identified platform type", async () => {
-  const operations: string[] = [];
-  const identity: ExecutionPlatformIdentity = { type: "android", version: "34" };
-  const executor: UnityPipelinePlatformExecutor = {
-    platformType: "android",
-    async identify() {
-      operations.push("identify");
-      return { ok: true, identity };
-    },
-    async start(current) {
-      operations.push(`start:${current.type}`);
-      return { ok: true };
-    },
-    async stop(current) {
-      operations.push(`stop:${current.type}`);
-      return { ok: true };
-    },
-  };
-  const adapter = new UnityPipelineExecutionAdapter([executor]);
-  assert.deepEqual(await adapter.handshake(), { status: "connected", identity });
-  assert.deepEqual(await adapter.launch(identity), { ok: true });
-  assert.deepEqual(await adapter.shutdown(identity), { ok: true });
-  assert.deepEqual(operations, ["identify", "start:android", "stop:android"]);
-  assert.deepEqual(await adapter.launch({ type: "ios", version: "18" }), {
-    ok: false,
-    code: "execution_platform_unsupported",
-    message: "Execution platform ios is not supported.",
-  });
-});
-
-test("Execution adapter registry selects the first successful handshake after earlier failures", async () => {
-  const operations: string[] = [];
-  const identity: ExecutionPlatformIdentity = { type: "android", version: "34" };
-  const registry = new ExecutionAdapterRegistry([
-    {
-      async handshake() {
-        operations.push("first");
-        return {
-          status: "failed",
-          code: "first_adapter_failed",
-          message: "The first adapter failed.",
-        };
-      },
-      async launch() {
-        return { ok: true };
-      },
-      async shutdown() {
-        return { ok: true };
-      },
-    },
-    {
-      async handshake() {
-        operations.push("second");
-        return { status: "connected", identity };
-      },
-      async launch() {
-        return { ok: true };
-      },
-      async shutdown() {
-        return { ok: true };
-      },
-    },
-    {
-      async handshake() {
-        operations.push("third");
-        return { status: "connected", identity: { type: "ios", version: "18" } };
-      },
-      async launch() {
-        return { ok: true };
-      },
-      async shutdown() {
-        return { ok: true };
-      },
-    },
-  ]);
-
-  const selected = await registry.handshake();
-  assert.equal(selected.ok, true);
-  assert.deepEqual(selected.ok ? selected.identity : undefined, identity);
-  assert.deepEqual(operations, ["first", "second"]);
-
-  const failed = await new ExecutionAdapterRegistry([
-    {
-      async handshake() {
-        return {
-          status: "failed",
-          code: "first_adapter_failed",
-          message: "The first adapter failed.",
-        };
-      },
-      async launch() {
-        return { ok: true };
-      },
-      async shutdown() {
-        return { ok: true };
-      },
-    },
-    {
-      async handshake() {
-        return { status: "unavailable" };
-      },
-      async launch() {
-        return { ok: true };
-      },
-      async shutdown() {
-        return { ok: true };
-      },
-    },
-  ]).handshake();
-  assert.deepEqual(failed, {
-    ok: false,
-    code: "first_adapter_failed",
-    message: "The first adapter failed.",
-  });
-});
-
 test("ScoutExecutionSystem owns and reuses the connected transport session", async () => {
   const operations: string[] = [];
-  const identity: ExecutionPlatformIdentity = { type: "android", version: "34" };
-  const executor: UnityPipelinePlatformExecutor = {
-    platformType: identity.type,
-    async identify() {
-      operations.push("identify");
-      return { ok: true, identity };
-    },
-    async start(current) {
-      operations.push(`start:${current.type}`);
-      return { ok: true };
-    },
-    async stop(current) {
-      operations.push(`stop:${current.type}`);
-      return { ok: true };
-    },
+  const identity: ExecutionPlatformIdentity = {
+    type: "unity_editor",
+    version: "6000.0.80f1",
   };
-  const system = new ScoutExecutionSystem(new ExecutionAdapterRegistry([
-    new UnityPipelineExecutionAdapter([executor]),
-  ]));
+  const system = new ScoutExecutionSystem({
+    async invoke(args) {
+      const operation = args[0] ?? "unknown";
+      operations.push(operation);
+      return operation === "identify"
+        ? appPilotIdentityResponse(identity)
+        : { id: operation, ok: true };
+    },
+    async close() {
+      operations.push("close");
+    },
+  });
 
   assert.deepEqual(await system.launch(), { ok: true, identity });
   assert.deepEqual(await system.launch(), { ok: true, identity });
-  assert.deepEqual(operations, ["identify", "start:android", "start:android"]);
+  assert.deepEqual(operations, ["identify", "launch", "launch"]);
 
   assert.deepEqual(await system.shutdown(), { ok: true, identity });
   assert.deepEqual(operations, [
     "identify",
-    "start:android",
-    "start:android",
-    "stop:android",
+    "launch",
+    "launch",
+    "shutdown",
   ]);
 
   assert.deepEqual(await system.shutdown(), { ok: true, identity });
-  assert.deepEqual(operations.slice(-2), ["identify", "stop:android"]);
+  assert.deepEqual(operations.slice(-2), ["identify", "shutdown"]);
 });
 
 test("ScoutExecutionSystem serializes lifecycle operations and closes before disposal", async () => {
   const operations: string[] = [];
-  const identity: ExecutionPlatformIdentity = { type: "android", version: "34" };
+  const identity: ExecutionPlatformIdentity = {
+    type: "unity_editor",
+    version: "6000.0.80f1",
+  };
   let activeOperations = 0;
   let maximumActiveOperations = 0;
-  const adapter = {
-    async handshake() {
-      operations.push("handshake");
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      return { status: "connected" as const, identity };
-    },
-    async launch() {
+  const system = new ScoutExecutionSystem({
+    async invoke(args) {
       activeOperations += 1;
       maximumActiveOperations = Math.max(maximumActiveOperations, activeOperations);
-      operations.push("launch");
+      const operation = args[0] ?? "unknown";
+      operations.push(operation);
       await new Promise<void>((resolve) => setImmediate(resolve));
       activeOperations -= 1;
-      return { ok: true as const };
+      return operation === "identify"
+        ? appPilotIdentityResponse(identity)
+        : { id: operation, ok: true };
     },
-    async shutdown() {
-      activeOperations += 1;
-      maximumActiveOperations = Math.max(maximumActiveOperations, activeOperations);
-      operations.push("shutdown");
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      activeOperations -= 1;
-      return { ok: true as const };
+    async close() {
+      operations.push("close");
     },
-  };
-  const system = new ScoutExecutionSystem(new ExecutionAdapterRegistry([adapter]));
+  });
 
   const firstLaunch = system.launch();
   const secondLaunch = system.launch();
@@ -265,7 +134,7 @@ test("ScoutExecutionSystem serializes lifecycle operations and closes before dis
   assert.deepEqual(await secondLaunch, { ok: true, identity });
   await disposal;
 
-  assert.deepEqual(operations, ["handshake", "launch", "launch", "shutdown"]);
+  assert.deepEqual(operations, ["identify", "launch", "launch", "shutdown", "close"]);
   assert.equal(maximumActiveOperations, 1);
 });
 
@@ -303,7 +172,7 @@ test("ExecutionPlatform Agent tool delegates lifecycle work through RunScope", a
   assert.deepEqual(operations, ["launch"]);
 });
 
-test("RBT hides ExecutionPlatform from Executor while retaining its internal transport", async (t) => {
+test("RBT hides ExecutionPlatform from Executor", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
   const scope = installTestRunScope(t, {
@@ -335,15 +204,6 @@ test("RBT hides ExecutionPlatform from Executor while retaining its internal tra
   const denied = await domain.handleDynamicToolCall(call);
   assert.equal(denied.success, false);
   assert.match(denied.contentItems[0]?.text ?? "", /ExecutionPlatform is not registered for Phase execute/);
-
-  const response = await fakeUnityStatusTool().execute({ operation: "status" });
-
-  assert.ok(response.success);
-  assert.equal(response.status, "completed");
-  assert.deepEqual(response.result, {
-    count: 1,
-    instances: [{ version: "6000.0.80f1", state: "ready" }],
-  });
 });
 
 test("RBT Reviewer shuts down the run-scoped execution session", async (t) => {
@@ -398,7 +258,17 @@ test("JarvisBehavior prepares Play Mode without an Agent UnityPipeline call", as
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
-    executionSystem: fakeExecutionSystem(fakeUnityStartingTool(markerPath)),
+    executionSystem: fakeExecutionSystem({
+      onLaunch: () => {
+        writeFileSync(markerPath, [
+          "status",
+          "editor_status",
+          "editor_play",
+          "editor_status",
+          "editor_status",
+        ].join("\n") + "\n");
+      },
+    }),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -442,10 +312,15 @@ test("JarvisBehavior reports Play Mode readiness timeout before WebSocket connec
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
-    executionSystem: fakeExecutionSystem(
-      fakeUnityStartingTool(markerPath, Number.MAX_SAFE_INTEGER),
-      { readinessTimeoutMs: 50, pollIntervalMs: 1, commandTimeoutSeconds: 1 },
-    ),
+    executionSystem: fakeExecutionSystem({
+      onLaunch: () => {
+        writeFileSync(markerPath, ["status", "editor_status", "editor_play"].join("\n") + "\n");
+      },
+      launchFailure: {
+        code: "unity_play_mode_start_timeout",
+        message: "The Unity Editor did not become ready in Play Mode before the platform timeout.",
+      },
+    }),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -531,7 +406,12 @@ test("JarvisBehavior reports an unavailable human-prepared Unity Editor", async 
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
-    executionSystem: fakeExecutionSystem(fakeUnityUnavailableTool()),
+    executionSystem: fakeExecutionSystem({
+      launchFailure: {
+        code: "transport_unavailable",
+        message: "Transport unity-pipeline has no available platform.",
+      },
+    }),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -556,8 +436,8 @@ test("JarvisBehavior reports an unavailable human-prepared Unity Editor", async 
   assert.deepEqual(JSON.parse(response?.contentItems[0]?.text ?? "null"), {
     status: "failed",
     error: {
-      code: "execution_platform_unavailable",
-      message: "No execution platform is available.",
+      code: "transport_unavailable",
+      message: "Transport unity-pipeline has no available platform.",
     },
   });
 });
@@ -571,7 +451,12 @@ test("JarvisBehavior blocks RBT while the Unity Editor is compiling", async (t) 
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
-    executionSystem: fakeExecutionSystem(fakeUnityReadinessTool({ compiling: true })),
+    executionSystem: fakeExecutionSystem({
+      launchFailure: {
+        code: "unity_editor_compiling",
+        message: "The Unity Editor is compiling; execution must stop until it is stable.",
+      },
+    }),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -606,13 +491,11 @@ test("JarvisBehavior blocks RBT during Unity domain reload and version changes",
   const cases = [
     {
       runId: "run-rbt-platform-domain-reload",
-      tool: fakeUnityReadinessTool({ domainReloadInProgress: true }),
       code: "unity_editor_domain_reload",
       message: "The Unity Editor domain reload is in progress; execution must stop until it is stable.",
     },
     {
       runId: "run-rbt-platform-version-changed",
-      tool: fakeUnityReadinessTool({ editorVersion: "6000.0.81f1" }),
       code: "execution_platform_changed",
       message: "The identified execution platform changed during its lifecycle operation.",
     },
@@ -628,7 +511,9 @@ test("JarvisBehavior blocks RBT during Unity domain reload and version changes",
         eventBus,
         domain,
         scheduler: rbtScheduler(eventBus),
-        executionSystem: fakeExecutionSystem(item.tool),
+        executionSystem: fakeExecutionSystem({
+          launchFailure: { code: item.code, message: item.message },
+        }),
       });
       const roots = roleRoots(scope.runRoot, "executor");
       const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -667,10 +552,12 @@ test("JarvisBehavior blocks an unavailable Unity Editor state", async (t) => {
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
-    executionSystem: fakeExecutionSystem(fakeUnityReadinessTool({
-      instanceState: "starting",
-      editorStatus: "starting",
-    })),
+    executionSystem: fakeExecutionSystem({
+      launchFailure: {
+        code: "unity_editor_unavailable",
+        message: "The connected Unity Editor is not ready for execution.",
+      },
+    }),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -743,44 +630,6 @@ test("RBT Agent tool-call recorder consumes the shared Domain event", async (t) 
   assert.match(log, /call-behavior-nodes/);
   assert.match(log, /status: "completed"/);
   assert.doesNotMatch(log, /contentItems/);
-});
-
-test("Shared Unity Pipeline tool projects structured result fields for Runtime callers", async (t) => {
-  const eventBus = new InMemoryEventBus();
-  const domain = new RbtDomain();
-  const unityPipeline = fakeUnityResultsTool();
-  const scope = installTestRunScope(t, {
-    runId: "run-rbt-unity-pipeline-results",
-    scoutRoot: process.cwd(),
-    eventBus,
-    domain,
-    scheduler: rbtScheduler(eventBus),
-  });
-  const roots = roleRoots(scope.runRoot, "executor");
-  scope.setEnvironment(rbtEnvironment(scope.runId, {
-    executor: {
-      ...roots,
-      readableRoots: [],
-      shellTools: [],
-    },
-  }));
-  await domain.start();
-  t.after(() => domain.stop());
-
-  const listResponse = await unityPipeline.execute({ operation: "list" });
-  assert.deepEqual(listResponse.result, {
-    count: 2,
-    commands: ["editor_play", "editor_status"],
-  });
-
-  const statusResponse = await unityPipeline.execute({ operation: "editor_status" });
-  assert.deepEqual(statusResponse.result, {
-    status: "ready",
-    playMode: "playing",
-    compiling: false,
-    domainReloadInProgress: false,
-    unityVersion: "6000.0.80f1",
-  });
 });
 
 test("RBT Domain records one campaign history from dynamic behavior inputs and host outputs", async (t) => {
@@ -1527,178 +1376,6 @@ function rbtDomain(input: {
   }));
 }
 
-function fakeUnityStatusTool(): UnityPipelineTool {
-  const script = [
-    "const args = process.argv.slice(1);",
-    "process.stdout.write(JSON.stringify({",
-    "  success: true,",
-    "  command: 'status',",
-    "  data: {",
-    "    count: 1,",
-    "    instances: [{",
-    "      port: 12345,",
-    "      project: '/workspace/project',",
-    "      version: '6000.0.80f1',",
-    "      pid: 23456,",
-    "      state: 'ready'",
-    "    }],",
-    "    args",
-    "  },",
-    "  errors: [],",
-    "  warnings: []",
-    "}));",
-  ].join("\n");
-  return new UnityPipelineTool(process.execPath, ["-e", script, "--"]);
-}
-
-function fakeUnityResultsTool(): UnityPipelineTool {
-  const script = [
-    "const args = process.argv.slice(1);",
-    "const isList = args.includes('list');",
-    "const command = isList ? 'list' : 'command editor_status';",
-    "const data = isList ? {",
-    "  target: { host: '127.0.0.1', port: 12345 },",
-    "  count: 2,",
-    "  tools: [",
-    "    { name: 'editor_play', description: 'play', group: 'built-in', parameters: [] },",
-    "    { name: 'editor_status', description: 'status', group: 'built-in', parameters: [] }",
-    "  ]",
-    "} : {",
-    "  command: 'editor_status',",
-    "  parameters: {},",
-    "  result: {",
-    "    status: 'ready',",
-    "    compiling: false,",
-    "    domainReloadInProgress: false,",
-    "    playMode: 'playing',",
-    "    lastHeartbeat: '2026-09-10T00:00:00.000Z',",
-    "    projectPath: '/workspace/project',",
-    "    unityVersion: '6000.0.80f1'",
-    "  },",
-    "  target: { host: '127.0.0.1', port: 12345, projectPath: '/workspace/project' },",
-    "  success: true",
-    "};",
-    "process.stdout.write(JSON.stringify({ success: true, command, data, errors: [], warnings: [] }));",
-  ].join("\n");
-  return new UnityPipelineTool(process.execPath, ["-e", script, "--"]);
-}
-
-function fakeUnityReadinessTool(input: {
-  instanceState?: string;
-  editorStatus?: string;
-  compiling?: boolean;
-  domainReloadInProgress?: boolean;
-  editorVersion?: string;
-  playMode?: string;
-} = {}): UnityPipelineTool {
-  const configuration = {
-    instanceState: input.instanceState ?? "ready",
-    editorStatus: input.editorStatus ?? "ready",
-    compiling: input.compiling ?? false,
-    domainReloadInProgress: input.domainReloadInProgress ?? false,
-    editorVersion: input.editorVersion ?? "6000.0.80f1",
-    playMode: input.playMode ?? "playing",
-  };
-  const script = [
-    "const args = process.argv.slice(1);",
-    `const config = ${JSON.stringify(configuration)};`,
-    "const operation = args.includes('status') ? 'status' : args.includes('editor_status') ? 'editor_status' : args.includes('editor_play') ? 'editor_play' : '';",
-    "const command = operation === 'status' ? 'status' : 'command ' + operation;",
-    "const data = operation === 'status' ? {",
-    "  count: 1,",
-    "  instances: [{ version: config.editorVersion === '6000.0.81f1' ? '6000.0.80f1' : config.editorVersion, state: config.instanceState }]",
-    "} : {",
-    "  command: operation,",
-    "  success: true,",
-    "  result: {",
-    "    status: config.editorStatus,",
-    "    compiling: config.compiling,",
-    "    domainReloadInProgress: config.domainReloadInProgress,",
-    "    playMode: operation === 'editor_play' ? 'playing' : config.playMode,",
-    "    unityVersion: config.editorVersion",
-    "  }",
-    "};",
-    "process.stdout.write(JSON.stringify({ success: true, command, data, errors: [], warnings: [] }));",
-  ].join("\n");
-  return new UnityPipelineTool(process.execPath, ["-e", script, "--"]);
-}
-
-function fakeUnityPlayingTool(): UnityPipelineTool {
-  const script = [
-    "const args = process.argv.slice(1);",
-    "const operation = args.includes('status') ? 'status' : args.includes('editor_status') ? 'editor_status' : args.includes('editor_play') ? 'editor_play' : '';",
-    "const command = operation === 'status' ? 'status' : 'command ' + operation;",
-    "const data = operation === 'status' ? {",
-    "  count: 1,",
-    "  instances: [{ version: '6000.0.80f1', state: 'ready' }]",
-    "} : {",
-    "  command: operation,",
-    "  success: true,",
-    "  result: {",
-    "    status: 'ready',",
-    "    compiling: false,",
-    "    domainReloadInProgress: false,",
-    "    playMode: 'playing',",
-    "    unityVersion: '6000.0.80f1'",
-    "  }",
-    "};",
-    "process.stdout.write(JSON.stringify({ success: true, command, data, errors: [], warnings: [] }));",
-  ].join("\n");
-  return new UnityPipelineTool(process.execPath, ["-e", script, "--"]);
-}
-
-function fakeUnityUnavailableTool(): UnityPipelineTool {
-  const script = [
-    "process.stdout.write(JSON.stringify({",
-    "  success: true,",
-    "  command: 'status',",
-    "  data: { count: 0, instances: [] },",
-    "  errors: [],",
-    "  warnings: []",
-    "}));",
-  ].join("\n");
-  return new UnityPipelineTool(process.execPath, ["-e", script, "--"]);
-}
-
-function fakeUnityStartingTool(
-  markerPath: string,
-  readyAfterPolls = 1,
-): UnityPipelineTool {
-  const script = [
-    "const fs = require('node:fs');",
-    "const args = process.argv.slice(1);",
-    "const operation = args.includes('status') ? 'status' : args.includes('editor_status') ? 'editor_status' : args.includes('editor_play') ? 'editor_play' : '';",
-    `const markerPath = ${JSON.stringify(markerPath)};`,
-    `const statePath = ${JSON.stringify(`${markerPath}.playing`)};`,
-    `const readyAfterPolls = ${JSON.stringify(readyAfterPolls)};`,
-    "fs.appendFileSync(markerPath, operation + '\\n');",
-    "if (operation === 'editor_play') fs.writeFileSync(statePath, '0\\n');",
-    "let playMode = 'stopped';",
-    "if (operation === 'editor_status' && fs.existsSync(statePath)) {",
-    "  const polls = Number(fs.readFileSync(statePath, 'utf8'));",
-    "  playMode = polls >= readyAfterPolls ? 'playing' : 'stopped';",
-    "  fs.writeFileSync(statePath, String(polls + 1));",
-    "}",
-    "const command = operation === 'status' ? 'status' : 'command ' + operation;",
-    "const data = operation === 'status' ? {",
-    "  count: 1,",
-    "  instances: [{ version: '6000.0.80f1', state: 'ready' }]",
-    "} : {",
-    "  command: operation,",
-    "  success: true,",
-    "  result: operation === 'editor_play' ? 'Entered play mode' : {",
-    "    status: 'ready',",
-    "    compiling: false,",
-    "    domainReloadInProgress: false,",
-    "    playMode,",
-    "    unityVersion: '6000.0.80f1'",
-    "  }",
-    "};",
-    "process.stdout.write(JSON.stringify({ success: true, command, data, errors: [], warnings: [] }));",
-  ].join("\n");
-  return new UnityPipelineTool(process.execPath, ["-e", script, "--"]);
-}
-
 function writeTestExecuteFile(artifactRoot: string): {
   campaignId: string;
   executeFilePath: string;
@@ -1792,18 +1469,36 @@ function fakeJarvisTool(
   );
 }
 
-function fakeExecutionSystem(
-  unityPipeline = fakeUnityPlayingTool(),
-  platformOptions: UnityPipelineEditorExecutorOptions = {
-    readinessTimeoutMs: 2_000,
-    pollIntervalMs: 1,
-  },
-): ScoutExecutionSystem {
-  return new ScoutExecutionSystem(new ExecutionAdapterRegistry([
-    new UnityPipelineExecutionAdapter([
-      new UnityPipelineEditorExecutor(unityPipeline, platformOptions),
-    ]),
-  ]));
+function fakeExecutionSystem(input: {
+  onLaunch?: () => void;
+  launchFailure?: { code: string; message: string };
+} = {}): ExecutionPlatformPort {
+  const identity: ExecutionPlatformIdentity = {
+    type: "unity_editor",
+    version: "6000.0.80f1",
+  };
+  return {
+    async launch() {
+      input.onLaunch?.();
+      return input.launchFailure
+        ? { ok: false, ...input.launchFailure }
+        : { ok: true, identity };
+    },
+    async shutdown() {
+      return { ok: true, identity };
+    },
+  };
+}
+
+function appPilotIdentityResponse(identity: ExecutionPlatformIdentity) {
+  return {
+    id: "identify",
+    ok: true as const,
+    value: {
+      transport: "unity-pipeline",
+      platform: { type: identity.type, version: identity.version },
+    },
+  };
 }
 
 function fakeJarvisReconnectTool(

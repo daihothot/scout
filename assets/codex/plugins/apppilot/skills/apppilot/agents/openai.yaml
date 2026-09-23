@@ -1,0 +1,4 @@
+interface:
+  display_name: "AppPilot"
+  short_description: "Run physical app operations through discovered transports"
+  default_prompt: "Use AppPilot to discover and cache a physical execution target in the current process, then build or operate it with complete explicit inputs."

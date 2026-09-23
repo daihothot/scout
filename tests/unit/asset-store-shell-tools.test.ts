@@ -1483,46 +1483,6 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
   assert.equal(researcherMount.shellTools.some((tool) => tool.id === "unity"), false);
 });
 
-test("AssetStore mounts RBT Executor guidance without exposing its host runtime commands", () => {
-  const fixtureRoot = createCodexAssetFixture("scout-asset-store-rbt-platform-");
-  const store = new AssetStore();
-
-  const executorMount = store.materializeMount({
-    scoutRoot: fixtureRoot,
-    runId: "run-rbt-platform-executor-test",
-    agentId: "executor",
-    workflowProfileName: "rbt",
-  });
-  assert.ok(hasSkill(executorMount.skills, "domain-rbt-executor"));
-  assert.equal(hasSkill(executorMount.skills, "tool-execution-platform"), false);
-  assert.ok(hasSkill(executorMount.skills, "tool-rbt-behavior"));
-  assert.equal(executorMount.shellTools.some((tool) => tool.id === "unity"), false);
-  assert.ok(executorMount.shellTools.some((tool) => tool.id === "jarvis-codebase"));
-  assert.ok(executorMount.shellTools.some((tool) => tool.id === "codegraph"));
-  assert.ok(executorMount.shellTools.some((tool) => tool.id === "scoutRbtArtifactCheck"));
-  assert.equal(executorMount.readableRoots.includes(fixtureRoot), false);
-  assert.ok(executorMount.readableRoots.includes(join(
-    homedir(),
-    ".guru",
-    "codebase",
-    "gurusdk-unity",
-  )));
-  assert.ok(executorMount.writableRoots.includes(join(
-    homedir(),
-    ".guru",
-    "codebase",
-    "gurusdk-unity",
-    ".codegraph",
-  )));
-  assert.equal(executorMount.writableRoots.includes(join(
-    homedir(),
-    ".guru",
-    "codebase",
-  )), false);
-  assert.equal(executorMount.readableRoots.some((root) => root.includes("UnityHub")), false);
-  assert.equal(executorMount.writableRoots.some((root) => root.includes("UnityHub")), false);
-});
-
 test("AssetStore mounts RBT Reviewer guidance without codebase access or host runtime commands", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-rbt-reviewer-");
   const store = new AssetStore();

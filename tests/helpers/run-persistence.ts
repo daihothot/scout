@@ -19,7 +19,7 @@ import {
 } from "../../src/run/run-scope.js";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import type { RunEnvironment } from "../../src/run/types.js";
-import type { ExecutionPlatformPort } from "../../src/execution/index.js";
+import type { ExecutionPlatformPort } from "../../src/execution/scout-execution-system.js";
 import {
   createGraphState,
   Scheduler,

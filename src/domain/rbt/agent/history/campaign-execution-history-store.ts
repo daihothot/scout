@@ -3,7 +3,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import type { AgentJsonValue } from "../../../../agent/tools/types.js";
 import type { UnsubscribeEventHandler } from "../../../../core/events/index.js";
 import { currentRunScope } from "../../../../run/run-scope.js";
-import type { ExecutionPlatformIdentity } from "../../../../execution/index.js";
+import type { ExecutionPlatformIdentity } from "../../../../execution/scout-execution-system.js";
 import {
   RbtEvents,
   type RbtBehaviorRequest,

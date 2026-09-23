@@ -1,7 +1,7 @@
 import type { DynamicToolCallResponse } from "../../../agent-server/types.js";
 import type { AgentJsonValue } from "../../../agent/tools/types.js";
 import type { ScoutDomainDynamicToolCall } from "../../types.js";
-import type { ExecutionPlatformIdentity } from "../../../execution/index.js";
+import type { ExecutionPlatformIdentity } from "../../../execution/scout-execution-system.js";
 import {
   RbtEvents,
   type RbtCampaignCommandEvent,

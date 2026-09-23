@@ -2,7 +2,7 @@ import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import type { AgentJsonValue } from "../../agent/tools/types.js";
 import { defineEventCatalog, event } from "../../core/events/index.js";
 import type { HostCommandExecution } from "../../host/host-command-executor.js";
-import type { ExecutionPlatformIdentity } from "../../execution/index.js";
+import type { ExecutionPlatformIdentity } from "../../execution/scout-execution-system.js";
 
 /** One host command executed while serving an RBT dynamic-tool call. */
 export type RbtHostCommandExecution = HostCommandExecution;

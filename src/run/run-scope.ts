@@ -8,7 +8,7 @@ import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
 import type { Scheduler } from "../core/workflow/index.js";
 import type { ScoutDomain } from "../domain/index.js";
-import type { ExecutionPlatformPort } from "../execution/index.js";
+import type { ExecutionPlatformPort } from "../execution/scout-execution-system.js";
 import type { RuntimeInteractionPort } from "../interaction/protocol/port.js";
 import {
   defaultScoutConfig,

@@ -1,6 +1,6 @@
 import type {
   ExecutionPlatformIdentity,
-} from "../../../execution/index.js";
+} from "../../../execution/scout-execution-system.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 
 export type PlatformRunResult =

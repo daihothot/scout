@@ -16,6 +16,7 @@ import {
   RunScope,
 } from "../../src/run/run-scope.js";
 import { RunEvents } from "../../src/run/events/index.js";
+import { ScoutExecutionSystem } from "../../src/execution/scout-execution-system.js";
 import { createTestRunPersistence } from "../helpers/run-persistence.js";
 
 test("RunScopeStage creates the Run-owned stores and releases the installed scope", async (t) => {
@@ -79,7 +80,12 @@ test("ExecutionStage installs and clears the run-scoped system without probing a
     terminate: async () => undefined,
   });
   const scopeStage = new RunScopeStage(scope);
-  const executionStage = new ExecutionStage();
+  const executionStage = new ExecutionStage(async () => new ScoutExecutionSystem({
+    async invoke() {
+      throw new Error("ExecutionStage must not probe a platform during startup.");
+    },
+    async close() {},
+  }));
 
   await scopeStage.start();
   assert.throws(() => scope.executionSystem, /execution system is not available/);

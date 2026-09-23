@@ -1,0 +1,24 @@
+{
+  "name": "apppilot",
+  "version": "0.1.0",
+  "description": "Physical app operations through discovered transports and platform executors.",
+  "author": { "name": "DAI", "email": "cheng.dai@castbox.fm" },
+  "license": "Proprietary",
+  "keywords": ["apppilot", "unity", "android", "ios", "physical-execution"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AppPilot",
+    "shortDescription": "Build and operate apps through physical execution transports",
+    "longDescription": "AppPilot discovers an available physical execution transport and platform executor, then performs build, install, lifecycle, input, and log operations through its CLI.",
+    "developerName": "DAI",
+    "category": "Developer Tools",
+    "capabilities": ["Build", "App Lifecycle", "Physical Input", "Logs"],
+    "defaultPrompt": [
+      "Discover an execution target and launch the app.",
+      "Build and install an app for a selected platform.",
+      "Collect logs from the current execution target."
+    ],
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}
