@@ -1,5 +1,6 @@
 import { resumeRun, startRun } from "./index.js";
 import { startScoutTui } from "../interaction/tui/run-tui.js";
+import { AssetStore } from "../asset-store/index.js";
 import { readWorkflowProfile } from "../asset-store/assets/workflow-profiles.js";
 import { loadScoutConfig } from "../system/config/index.js";
 
@@ -8,7 +9,7 @@ export async function runScoutTui(input: {
   cwd: string;
   resume?: string;
 }): Promise<void> {
-  const scoutConfig = loadScoutConfig(input.cwd);
+  const scoutConfig = loadScoutConfig(new AssetStore().config(input.cwd));
   const defaultModel = readWorkflowProfile(
     input.cwd,
     scoutConfig.workflow.profile,

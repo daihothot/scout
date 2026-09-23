@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
+import { AssetStore, type AssetConfig } from "../../src/asset-store/index.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import type { ScoutDomain } from "../../src/domain/index.js";
@@ -51,6 +52,7 @@ export function createTestRunPersistence(
   domainJournal?: RunJournal;
   manifestStore: RunManifestStore;
   scheduler: Scheduler;
+  config: AssetConfig;
 } {
   const root = runRootOverride === undefined
     ? mkdtempSync(join(tmpdir(), "scout-run-test-"))
@@ -67,6 +69,7 @@ export function createTestRunPersistence(
     : undefined;
   const manifestStore = new RunManifestStore(runRoot);
   const scheduler = createTestScheduler(eventBus);
+  const config = new AssetStore().config(scoutRoot);
   const scope = new RunScope({
     runId,
     scoutRoot,
@@ -76,6 +79,7 @@ export function createTestRunPersistence(
     scheduler,
     interactionPort: new NoopRuntimeInteractionPort(),
     domain,
+    config,
     journal,
     domainJournal,
     manifestStore,
@@ -107,7 +111,7 @@ export function createTestRunPersistence(
     if (domainJournal && domainJournal !== journal) domainJournal.close();
     if (root !== undefined) rmSync(root, { recursive: true, force: true });
   });
-  return { runRoot, journal, domainJournal, manifestStore, scheduler };
+  return { runRoot, journal, domainJournal, manifestStore, scheduler, config };
 }
 
 export function installTestRunScope(
@@ -139,6 +143,7 @@ export function installTestRunScope(
       domainJournal: options.domainJournal,
       manifestStore: options.manifestStore,
       scheduler: options.scheduler ?? createTestScheduler(eventBus),
+      config: new AssetStore().config(scoutRoot),
     }
     : createTestRunPersistence(
       t,

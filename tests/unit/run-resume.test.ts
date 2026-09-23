@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { attachments } from "../../src/agent/context/attachments.js";
 import { agent } from "../../src/agent/context/agent-attachments.js";
+import { AssetStore } from "../../src/asset-store/index.js";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import { CoordinatorRunner } from "../../src/agent/runner/coordinator/coordinator-runner.js";
@@ -1812,6 +1813,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   const initialScope = new RunScope({
     runId,
     scoutRoot: fixtureRoot,
+    config: new AssetStore().config(fixtureRoot),
     runRoot,
     logger: noopLogger(),
     eventBus: initialEventBus,
@@ -2110,6 +2112,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   const scope = new RunScope({
     runId,
     scoutRoot: fixtureRoot,
+    config: new AssetStore().config(fixtureRoot),
     runRoot,
     logger: noopLogger(),
     eventBus: resumedEventBus,
@@ -2293,6 +2296,7 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
   const scope = new RunScope({
     runId,
     scoutRoot: fixtureRoot,
+    config: new AssetStore().config(fixtureRoot),
     runRoot,
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),

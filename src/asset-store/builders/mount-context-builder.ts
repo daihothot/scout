@@ -25,6 +25,7 @@ import {
   skillNameFromPath,
 } from "../files/asset-paths.js";
 import { AssetJsonReader } from "../files/asset-json-reader.js";
+import { AssetConfig } from "../config/asset-config.js";
 import {
   createMountMacroValues,
   resolveMountMacros,
@@ -61,9 +62,10 @@ export class MountContextBuilder {
     const runRoot = join(scoutRoot, "run", runId);
     const agentId = sanitizeAgentId(options.agentId);
     const assetJson = new AssetJsonReader(scoutAssetsRoot);
+    const config = new AssetConfig(join(scoutAssetsRoot, ScoutAssetLayout.configRoot));
     const workflowProfileName = options.workflowProfileName ?? (() => {
       if (existsSync(scoutConfigPath(scoutRoot))) {
-        return loadScoutConfig(scoutRoot).workflow.profile;
+        return loadScoutConfig(config).workflow.profile;
       }
       const workflowRoot = join(scoutAssetsRoot, ScoutAssetLayout.workflowsRoot);
       const names = readdirSync(workflowRoot, { withFileTypes: true })

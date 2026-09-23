@@ -17,7 +17,9 @@ import {
   collectMountReadableRoots,
   collectMountWritableRoots,
 } from "./mount/preflight.js";
+import { ScoutAssetLayout } from "./assets/asset-layout.js";
 import { AssetJsonReader } from "./files/asset-json-reader.js";
+import { AssetConfig } from "./config/asset-config.js";
 
 /**
  * Public asset-store facade used by run stages. It delegates resource reading,
@@ -30,6 +32,16 @@ export class AssetStore {
   /** Returns a JSON reader rooted at all Scout-owned assets for one checkout. */
   json(scoutRoot: string): AssetJsonReader {
     return new AssetJsonReader(join(resolve(scoutRoot), "assets", "scout"));
+  }
+
+  /** Returns the suffix-aware facade for free-form Scout configuration files. */
+  config(scoutRoot: string): AssetConfig {
+    return new AssetConfig(join(
+      resolve(scoutRoot),
+      "assets",
+      "scout",
+      ScoutAssetLayout.configRoot,
+    ));
   }
 
   /** Materializes a role mount from the current repository assets. */

@@ -3,6 +3,7 @@ export const ScoutAssetLayout = {
   agentsMd: "agents/AGENTS.md",
   coordinatorAgentsMd: "agents/coordinator.AGENTS.md",
   workerAgentsMd: "agents/worker.AGENTS.md",
+  configRoot: "config",
   mcpServers: "mcp/servers.json",
   shellTools: "tools/shell-tools.json",
   skillsRoot: "skills",

@@ -10,7 +10,7 @@ import {
 } from "../../core/workflow/index.js";
 import { createDomainRuntime } from "../../domain/index.js";
 import type { ScoutDomain } from "../../domain/index.js";
-import { readWorkflowProfile } from "../../asset-store/index.js";
+import { AssetStore, readWorkflowProfile } from "../../asset-store/index.js";
 import {
   NoopRuntimeInteractionPort,
   type RuntimeDisclosureEvent,
@@ -57,7 +57,9 @@ export async function resumeRun(
     );
   }
   const scoutRoot = dirname(runDirectory);
-  const scoutConfig = loadScoutConfig(scoutRoot);
+  const assetStore = new AssetStore();
+  const config = assetStore.config(scoutRoot);
+  const scoutConfig = loadScoutConfig(config);
   const eventBus = new InMemoryEventBus();
   const journal = RunJournal.open({ runId: manifest.runId, runRoot });
   let domainJournal: RunJournal | undefined;
@@ -130,6 +132,7 @@ export async function resumeRun(
     scheduler,
     interactionPort,
     domain,
+    config,
     scoutConfig,
     journal,
     domainJournal,

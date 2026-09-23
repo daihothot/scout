@@ -1,4 +1,5 @@
 import type { CodexAppServerClient } from "../agent-server/codex/app-server-client.js";
+import type { AssetConfig } from "../asset-store/config/asset-config.js";
 import { AgentRegistry } from "../agent/core/agent-registry.js";
 import { AgentHumanInputStore } from "../agent/human-input/index.js";
 import { AgentTaskStore } from "../agent/task/agent-task-store.js";
@@ -31,6 +32,7 @@ export interface RunScopeOptions {
   scheduler: Scheduler;
   interactionPort: RuntimeInteractionPort;
   domain: ScoutDomain;
+  config: AssetConfig;
   scoutConfig?: ScoutConfig;
   journal: RunJournal;
   domainJournal?: RunJournal;
@@ -57,6 +59,7 @@ export class RunScope {
   readonly humanInputStore: AgentHumanInputStore;
   readonly stepStore: AgentStepStore;
   readonly domain: ScoutDomain;
+  readonly config: AssetConfig;
   readonly scoutConfig: ScoutConfig;
   readonly journal: RunJournal;
   /** Domain-owned journal. Tests may omit it and use the run journal as an in-memory fallback. */
@@ -78,6 +81,7 @@ export class RunScope {
     this.humanInputStore = new AgentHumanInputStore();
     this.stepStore = new AgentStepStore();
     this.domain = options.domain;
+    this.config = options.config;
     this.scoutConfig = options.scoutConfig ?? defaultScoutConfig;
     this.journal = options.journal;
     this.domainJournal = options.domainJournal ?? options.journal;

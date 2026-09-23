@@ -1,5 +1,7 @@
 import { join, resolve } from "node:path";
-import { readJsonFile } from "../../core/fs.js";
+import type { AssetConfig } from "../../asset-store/config/asset-config.js";
+
+const SCOUT_CONFIG_FILE = "scout.config.json";
 
 /** The global Scout configuration consumed by lifecycle services. */
 export interface ScoutConfig {
@@ -26,10 +28,10 @@ export function scoutConfigPath(scoutRoot: string): string {
   return join(resolve(scoutRoot), "assets", "scout", "config", "scout.config.json");
 }
 
-/** Loads and validates the global Scout configuration for one checkout. */
-export function loadScoutConfig(scoutRoot: string): ScoutConfig {
-  const path = scoutConfigPath(scoutRoot);
-  return parseScoutConfig(readJsonFile<unknown>(path), path);
+/** Loads and validates the global Scout configuration through its Asset reader. */
+export function loadScoutConfig(config: AssetConfig): ScoutConfig {
+  const path = join(config.root, SCOUT_CONFIG_FILE);
+  return parseScoutConfig(config.read(SCOUT_CONFIG_FILE), path);
 }
 
 function parseScoutConfig(value: unknown, path: string): ScoutConfig {

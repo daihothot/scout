@@ -4,6 +4,7 @@ export * from "./assets/agent-profile.js";
 export * from "./assets/asset-layout.js";
 export * from "./assets/skill-catalog.js";
 export * from "./assets/workflow-profiles.js";
+export * from "./config/asset-config.js";
 export type * from "./contracts/asset-commit.js";
 export type * from "./contracts/identity.js";
 export type * from "./contracts/manifest.js";

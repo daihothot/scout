@@ -49,6 +49,7 @@ test("RunScopeStage creates the Run-owned stores and releases the installed scop
   assert.equal(currentRunScope(), stage.scope);
   assert.equal(stage.scope.runId, runId);
   assert.equal(stage.scope.domain, domain);
+  assert.equal(stage.scope.config.root, "/repo/assets/scout/config");
   assert.deepEqual(stage.scope.agentRegistry.listAgents(), []);
   assert.deepEqual(stage.scope.taskStore.listTasks(), []);
   assert.throws(() => stage.scope.appServer, /app-server is not available/);

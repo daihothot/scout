@@ -45,7 +45,11 @@ import type {
   CodexAppServerClient,
   ThreadStartOptions,
 } from "../../src/agent-server/codex/app-server-client.js";
-import type { AssetCommit, CodexMount } from "../../src/asset-store/index.js";
+import {
+  AssetStore,
+  type AssetCommit,
+  type CodexMount,
+} from "../../src/asset-store/index.js";
 import {
   DomainEvents,
   type DomainAgentToolCallObservedEvent,
@@ -2471,6 +2475,7 @@ function createAgentFixture(
   const scope = new RunScope({
     runId,
     scoutRoot: root,
+    config: new AssetStore().config(root),
     runRoot,
     logger,
     eventBus,

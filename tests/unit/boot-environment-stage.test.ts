@@ -974,6 +974,7 @@ function installExistingEnvironmentScope(
   const scope = new RunScope({
     runId,
     scoutRoot,
+    config: new AssetStore().config(scoutRoot),
     runRoot: join(scoutRoot, "run", runId),
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),

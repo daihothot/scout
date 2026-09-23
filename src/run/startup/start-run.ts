@@ -40,9 +40,11 @@ export async function startRun(
   const interactionPort = options.interactionPort ?? new NoopRuntimeInteractionPort();
   const runId = buildRunId();
   const scoutRoot = resolve(options.cwd);
-  const scoutConfig = loadScoutConfig(scoutRoot);
+  const assetStore = new AssetStore();
+  const config = assetStore.config(scoutRoot);
+  const scoutConfig = loadScoutConfig(config);
   const eventBus = new InMemoryEventBus();
-  const graphState = new AssetStore().buildWorkflow(scoutRoot, scoutConfig.workflow.profile);
+  const graphState = assetStore.buildWorkflow(scoutRoot, scoutConfig.workflow.profile);
   const scheduler = new Scheduler(
     graphState,
     eventBus,
@@ -89,6 +91,7 @@ export async function startRun(
     scheduler,
     interactionPort,
     domain,
+    config,
     scoutConfig,
     journal,
     domainJournal,
