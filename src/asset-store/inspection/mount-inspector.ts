@@ -50,7 +50,7 @@ export class MountInspector {
     ) {
       const sourceReason = runInspectionCheck(
         "mount source inventory verification",
-        this.context.assetsRoot,
+        join(this.context.scoutRoot, "assets"),
         () => new MountSourceInventoryInspector(
           this.context,
           this.existingManifest!,
@@ -118,7 +118,7 @@ export class MountInspector {
 
     const sourceReason = runInspectionCheck(
       "mount source inventory verification",
-      this.context.assetsRoot,
+      join(this.context.scoutRoot, "assets"),
       () => new MountSourceInventoryInspector(this.context, manifest).inspect(),
     );
     if (sourceReason) return { reusable: false, reason: sourceReason };
@@ -128,12 +128,12 @@ export class MountInspector {
   private inspectRuntime(manifest: MountManifest): string | undefined {
     const shellTools = new ShellToolBuilder(
       this.context.mountRoot,
-      this.context.assetsRoot,
+      this.context.scoutAssetsRoot,
       this.context.tempRoot,
     ).build(this.context.profiledShellTools).tools;
     const mcpServers = new McpServerBuilder({
       mountRoot: this.context.mountRoot,
-      assetsRoot: this.context.assetsRoot,
+      assetsRoot: this.context.scoutAssetsRoot,
       tempRoot: this.context.tempRoot,
       dynamicValues: createMountMacroValues({
         scoutRoot: this.context.scoutRoot,
@@ -148,7 +148,7 @@ export class MountInspector {
     const generatedFiles = new MountGeneratedFilesBuilder(
       this.context,
       readFileSync(
-        join(this.context.assetsRoot, this.context.agentProfile.config),
+        join(this.context.agentRuntimeAssetsRoot, this.context.agentProfile.config),
         "utf8",
       ),
       mcpServers.map(({ server }) => server),

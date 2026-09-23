@@ -4,7 +4,7 @@ import type {
   CodexReasoningEffort,
   CodexReasoningSummary,
 } from "../../agent-server/codex/model-config.js";
-import { readJsonFile, sha256File } from "../../core/fs.js";
+import { sha256File } from "../../core/fs.js";
 import {
   InternalPhase,
   SynthesisPhase,
@@ -18,7 +18,8 @@ import type {
   WorkflowWorkerPhaseDefinition,
 } from "../contracts/workflow-profile.js";
 import { assertMountPathSegment } from "../files/asset-paths.js";
-import { CodexAssetLayout } from "./asset-layout.js";
+import { AssetJsonReader } from "../files/asset-json-reader.js";
+import { ScoutAssetLayout } from "./asset-layout.js";
 
 const reasoningEfforts = new Set<CodexReasoningEffort>([
   "none",
@@ -38,14 +39,14 @@ const reasoningSummaries = new Set<CodexReasoningSummary>([
 ]);
 const DOMAIN_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
-/** Returns the selected Workflow Profile path under `assets/codex/workflows`. */
+/** Returns the selected Workflow Profile path under `assets/scout/workflows`. */
 export function workflowProfilePath(scoutRoot: string, name: string): string {
   assertMountPathSegment(name, "Workflow Profile name");
   return join(
     resolve(scoutRoot),
     "assets",
-    "codex",
-    CodexAssetLayout.workflowsRoot,
+    "scout",
+    ScoutAssetLayout.workflowsRoot,
     `${name}.json`,
   );
 }
@@ -56,10 +57,14 @@ export function readWorkflowProfile(
   name: string,
 ): WorkflowProfileAsset {
   const path = workflowProfilePath(scoutRoot, name);
-  const profile = parseWorkflowProfile(readJsonFile<unknown>(path), path);
+  const workflowRoot = join(resolve(scoutRoot), "assets", "scout", ScoutAssetLayout.workflowsRoot);
+  const profile = parseWorkflowProfile(
+    new AssetJsonReader(workflowRoot).readJson(`${name}.json`),
+    path,
+  );
   return {
     name,
-    sourcePath: `${CodexAssetLayout.workflowsRoot}/${name}.json`,
+    sourcePath: `${ScoutAssetLayout.workflowsRoot}/${name}.json`,
     hash: sha256File(path),
     profile,
   };

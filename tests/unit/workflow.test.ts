@@ -28,7 +28,7 @@ const scoutRoot = process.cwd();
 const profilePath = join(
   scoutRoot,
   "assets",
-  "codex",
+  "scout",
   "workflows",
   "rbt.json",
 );
@@ -97,7 +97,7 @@ test("GraphState recovery rejects a Run without Workflow initialization", (t) =>
 
 test("Workflow Profile validation rejects entry fields and invalid graph references", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-workflow-profile-"));
-  const workflowRoot = join(fixtureRoot, "assets", "codex", "workflows");
+  const workflowRoot = join(fixtureRoot, "assets", "scout", "workflows");
   const targetPath = join(workflowRoot, "invalid.json");
   mkdirSync(workflowRoot, { recursive: true });
   const original = JSON.parse(readFileSync(profilePath, "utf8")) as Record<string, unknown>;
@@ -191,7 +191,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
 
 test("WorkflowBuilder inherits the default Resource Park when its Phase scope allows it", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-workflow-default-resource-"));
-  const workflowRoot = join(fixtureRoot, "assets", "codex", "workflows");
+  const workflowRoot = join(fixtureRoot, "assets", "scout", "workflows");
   const targetPath = join(workflowRoot, "fallback.json");
   mkdirSync(workflowRoot, { recursive: true });
   const profile = JSON.parse(readFileSync(profilePath, "utf8")) as {
@@ -228,7 +228,7 @@ test("WorkflowBuilder inherits the default Resource Park when its Phase scope al
 
 test("WorkflowBuilder rejects a role Phase with no projected Resource Park", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-workflow-missing-resource-"));
-  const workflowRoot = join(fixtureRoot, "assets", "codex", "workflows");
+  const workflowRoot = join(fixtureRoot, "assets", "scout", "workflows");
   const targetPath = join(workflowRoot, "missing-resource.json");
   mkdirSync(workflowRoot, { recursive: true });
   const profile = JSON.parse(readFileSync(profilePath, "utf8")) as {

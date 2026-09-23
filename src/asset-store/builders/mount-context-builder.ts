@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   hashDirectory,
-  readJsonFile,
   sha256File,
   sha256Text,
 } from "../../core/fs.js";
@@ -14,7 +13,10 @@ import type {
   McpServersFile,
   ShellToolContract,
 } from "../contracts/resources.js";
-import { CodexAssetLayout } from "../assets/asset-layout.js";
+import {
+  CodexAgentRuntimeAssetLayout,
+  ScoutAssetLayout,
+} from "../assets/asset-layout.js";
 import {
   assertAssetFileExists,
   assertMountPathSegment,
@@ -22,6 +24,7 @@ import {
   resolveRequiredAssetFile,
   skillNameFromPath,
 } from "../files/asset-paths.js";
+import { AssetJsonReader } from "../files/asset-json-reader.js";
 import {
   createMountMacroValues,
   resolveMountMacros,
@@ -48,15 +51,21 @@ export class MountContextBuilder {
   build(): MountContext {
     const options = this.options;
     const scoutRoot = resolve(options.scoutRoot);
-    const assetsRoot = join(scoutRoot, "assets", "codex");
+    const scoutAssetsRoot = join(scoutRoot, "assets", "scout");
+    const agentRuntimeAssetsRoot = join(
+      scoutRoot,
+      "assets",
+      CodexAgentRuntimeAssetLayout.root,
+    );
     const runId = normalizeRunId(options.runId);
     const runRoot = join(scoutRoot, "run", runId);
     const agentId = sanitizeAgentId(options.agentId);
+    const assetJson = new AssetJsonReader(scoutAssetsRoot);
     const workflowProfileName = options.workflowProfileName ?? (() => {
       if (existsSync(scoutConfigPath(scoutRoot))) {
         return loadScoutConfig(scoutRoot).workflow.profile;
       }
-      const workflowRoot = join(assetsRoot, CodexAssetLayout.workflowsRoot);
+      const workflowRoot = join(scoutAssetsRoot, ScoutAssetLayout.workflowsRoot);
       const names = readdirSync(workflowRoot, { withFileTypes: true })
         .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
         .map((entry) => entry.name.slice(0, -".json".length))
@@ -75,19 +84,23 @@ export class MountContextBuilder {
     const tempRoot = join(agentRoot, "tmp");
     const mountRoot = join(agentRoot, "mount");
     const agentProfile = new WorkflowBuilder(workflowProfileAsset).buildAgentProfile(agentId);
-    const mcpServers = readJsonFile<McpServersFile>(join(assetsRoot, CodexAssetLayout.mcpServers));
-    const shellTools = readJsonFile<{ tools: ShellToolContract[] }>(
-      join(assetsRoot, CodexAssetLayout.shellTools),
+    const mcpServers = assetJson.readJson(ScoutAssetLayout.mcpServers) as McpServersFile;
+    const shellTools = assetJson.readJson(ScoutAssetLayout.shellTools) as {
+      tools: ShellToolContract[];
+    };
+    assertAssetFileExists(
+      agentRuntimeAssetsRoot,
+      agentProfile.config,
+      `Codex Runtime config for agent ${agentId}`,
     );
-    assertAssetFileExists(assetsRoot, agentProfile.config, `config for agent ${agentId}`);
     const profiledMcpServers = filterMcpServers(mcpServers, agentProfile.mcpServers);
     const profiledShellTools = filterShellTools(shellTools.tools, agentProfile.shellTools ?? []);
     const profiledCustomAgentPaths = filterCustomAgents(
-      listCustomAgentPaths(assetsRoot),
+      listCustomAgentPaths(agentRuntimeAssetsRoot),
       agentProfile.customAgents,
     );
-    const skillPaths = listScoutSkillPaths(assetsRoot);
-    const fullSkillCatalog = buildScoutSkillCatalog({ assetsRoot, skillPaths });
+    const skillPaths = listScoutSkillPaths(scoutAssetsRoot);
+    const fullSkillCatalog = buildScoutSkillCatalog({ assetsRoot: scoutAssetsRoot, skillPaths });
     const skillCatalog = resolveScoutSkillsForPhases(fullSkillCatalog, {
       domain: workflowProfileAsset.profile.domain,
       phases: agentProfile.phases,
@@ -96,9 +109,13 @@ export class MountContextBuilder {
       skillPaths,
       skillCatalog.map((skill) => skill.name),
     );
-    const profiledPluginPaths = filterPlugins(listPluginPaths(assetsRoot), agentProfile.plugins);
+    const profiledPluginPaths = filterPlugins(
+      listPluginPaths(scoutAssetsRoot),
+      agentProfile.plugins,
+    );
     const computedResourceHash = computeResourceHash({
-      assetsRoot,
+      scoutAssetsRoot,
+      agentRuntimeAssetsRoot,
       agentId,
       agentProfile,
       mcpServers: profiledMcpServers,
@@ -138,7 +155,8 @@ export class MountContextBuilder {
     });
     return {
       scoutRoot,
-      assetsRoot,
+      scoutAssetsRoot,
+      agentRuntimeAssetsRoot,
       runId,
       runRoot,
       agentId,
@@ -272,16 +290,16 @@ function filterPlugins(pluginPaths: string[], names: string[]): string[] {
 }
 
 function listCustomAgentPaths(assetsRoot: string): string[] {
-  const customAgentsRoot = join(assetsRoot, CodexAssetLayout.customAgentsRoot);
+  const customAgentsRoot = join(assetsRoot, CodexAgentRuntimeAssetLayout.customAgentsRoot);
   if (!existsSync(customAgentsRoot)) return [];
   return readdirSync(customAgentsRoot, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".toml"))
-    .map((entry) => join(CodexAssetLayout.customAgentsRoot, entry.name))
+    .map((entry) => join(CodexAgentRuntimeAssetLayout.customAgentsRoot, entry.name))
     .sort();
 }
 
 function listPluginPaths(assetsRoot: string): string[] {
-  const pluginsRoot = join(assetsRoot, CodexAssetLayout.pluginsRoot);
+  const pluginsRoot = join(assetsRoot, ScoutAssetLayout.pluginsRoot);
   if (!existsSync(pluginsRoot)) return [];
   return listPluginDirectories(pluginsRoot)
     .map((path) => relative(assetsRoot, path))
@@ -293,7 +311,12 @@ function listPluginDirectories(root: string): string[] {
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const child = join(root, entry.name);
-    if (existsSync(join(child, ".codex-plugin", "plugin.json"))) {
+    if (existsSync(join(
+      child,
+      CodexAgentRuntimeAssetLayout.pluginOverlay,
+      ".codex-plugin",
+      "plugin.json",
+    ))) {
       results.push(child);
       continue;
     }
@@ -349,7 +372,8 @@ function uniqueStrings(values: string[]): string[] {
  * authoritative asset identity.
  */
 export function computeResourceHash(input: {
-  assetsRoot: string;
+  scoutAssetsRoot: string;
+  agentRuntimeAssetsRoot: string;
   agentId: string;
   agentProfile: AgentProfile;
   mcpServers: McpServersFile;
@@ -362,32 +386,42 @@ export function computeResourceHash(input: {
   const parts = [
     `agent:${input.agentId}`,
     `agentProfile:${profileResourceHash(input.agentProfile)}`,
-    `agents:${sha256File(join(input.assetsRoot, CodexAssetLayout.agentsMd))}`,
+    `agents:${sha256File(join(input.scoutAssetsRoot, ScoutAssetLayout.agentsMd))}`,
     ...(isSynthesisRole
       ? [`coordinatorAgents:${sha256File(
-        join(input.assetsRoot, CodexAssetLayout.coordinatorAgentsMd),
+        join(input.scoutAssetsRoot, ScoutAssetLayout.coordinatorAgentsMd),
       )}`]
-      : [`workerAgents:${sha256File(join(input.assetsRoot, CodexAssetLayout.workerAgentsMd))}`]),
-    `config:${input.agentProfile.config}:${sha256File(join(input.assetsRoot, input.agentProfile.config))}`,
-    `mcpServers:${sha256File(join(input.assetsRoot, CodexAssetLayout.mcpServers))}`,
-    ...computeMcpServerResourceHashParts(input.assetsRoot, input.mcpServers),
-    ...computeShellToolResourceHashParts(input.assetsRoot, input.shellTools),
-    ...input.customAgentPaths.map((path) => `customAgent:${path}:${sha256File(join(input.assetsRoot, path))}`),
-    ...hashVendorDirectories(input.assetsRoot),
+      : [`workerAgents:${sha256File(join(input.scoutAssetsRoot, ScoutAssetLayout.workerAgentsMd))}`]),
+    `config:${input.agentProfile.config}:${sha256File(
+      join(input.agentRuntimeAssetsRoot, input.agentProfile.config),
+    )}`,
+    `mcpServers:${sha256File(join(input.scoutAssetsRoot, ScoutAssetLayout.mcpServers))}`,
+    ...computeMcpServerResourceHashParts(input.scoutAssetsRoot, input.mcpServers),
+    ...computeShellToolResourceHashParts(input.scoutAssetsRoot, input.shellTools),
+    ...input.customAgentPaths.map((path) => `customAgent:${path}:${sha256File(
+      join(input.agentRuntimeAssetsRoot, path),
+    )}`),
+    ...hashVendorDirectories(input.scoutAssetsRoot),
     ...input.skillPaths.map((skill) =>
-      `skill:${skill}:${hashDirectory(dirname(join(input.assetsRoot, skill)))}`
+      `skill:${skill}:${hashDirectory(dirname(join(input.scoutAssetsRoot, skill)))}`
     ),
-    ...input.pluginPaths.map((plugin) => `plugin:${plugin}:${hashDirectory(join(input.assetsRoot, plugin))}`),
+    ...input.pluginPaths.map((plugin) =>
+      `plugin:${plugin}:${hashDirectory(join(
+        input.scoutAssetsRoot,
+        plugin,
+        CodexAgentRuntimeAssetLayout.pluginOverlay,
+      ))}`
+    ),
   ];
   return sha256Text(parts.sort().join("\n"));
 }
 
 function hashVendorDirectories(assetsRoot: string): string[] {
-  const vendorsRoot = join(assetsRoot, CodexAssetLayout.vendorsRoot);
+  const vendorsRoot = join(assetsRoot, ScoutAssetLayout.vendorsRoot);
   if (!existsSync(vendorsRoot)) return [];
   return readdirSync(vendorsRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => join(CodexAssetLayout.vendorsRoot, entry.name))
+    .map((entry) => join(ScoutAssetLayout.vendorsRoot, entry.name))
     .map((vendor) => `vendor:${vendor}:${hashDirectory(join(assetsRoot, vendor))}`);
 }
 

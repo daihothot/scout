@@ -31,12 +31,16 @@ type Mutable<T> = {
 test("AssetStore materializes read and write roots from agent profile", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-asset-store-permissions-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
-    recursive: true,
-  });
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  cpSync(
+    join(scoutRoot, "assets", "agent-runtimes"),
+    join(fixtureRoot, "assets", "agent-runtimes"),
+    {
+      recursive: true,
+    },
+  );
   setFixtureWorkflowProfile(fixtureRoot, "validation");
 
   const runId = "run-permission-test";
@@ -192,8 +196,8 @@ test("Agent model changes rebuild metadata without changing resource identity", 
     readFileSync(rebuilt.mount.manifestPath, "utf8"),
   ) as MountManifest;
   assert.equal(
-    rebuiltManifest.assets.find((asset) => asset.id === "codex.agents.profile.coordinator")?.hash,
-    initialHashes.get("codex.agents.profile.coordinator"),
+    rebuiltManifest.assets.find((asset) => asset.id === "scout.agents.profile.coordinator")?.hash,
+    initialHashes.get("scout.agents.profile.coordinator"),
   );
 });
 
@@ -216,12 +220,14 @@ test("AssetStore rejects an incomplete per-agent model override", () => {
 test("AssetStore exposes effective permission roots", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-asset-store-permissions-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
-    recursive: true,
-  });
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  cpSync(
+    join(scoutRoot, "assets", "agent-runtimes"),
+    join(fixtureRoot, "assets", "agent-runtimes"),
+    { recursive: true },
+  );
   setFixtureWorkflowProfile(fixtureRoot, "validation");
   const store = new AssetStore();
   const mount = store.materializeMount({
@@ -293,8 +299,8 @@ test("AssetStore mounts the matching shared instructions for each role category"
         .filter((asset) => asset.type.endsWith("agents_md"))
         .map((asset) => asset.id),
       isCoordinator
-        ? ["codex.agents.default", "codex.agents.coordinator"]
-        : ["codex.agents.default", "codex.agents.worker"],
+        ? ["scout.agents.default", "scout.agents.coordinator"]
+        : ["scout.agents.default", "scout.agents.worker"],
     );
     assert.deepEqual(
       manifest.linkedFiles
@@ -322,7 +328,7 @@ test("Coordinator resource hash includes Coordinator instructions only", () => {
   });
 
   writeFileSync(
-    join(fixtureRoot, "assets", "codex", "agents", "coordinator.AGENTS.md"),
+    join(fixtureRoot, "assets", "scout", "agents", "coordinator.AGENTS.md"),
     "updated coordinator instructions\n",
     "utf8",
   );
@@ -360,7 +366,7 @@ test("AssetStore mounts scout-helper only for Worker profiles", () => {
   assert.deepEqual(coordinatorManifest.customAgents, []);
   assert.equal(existsSync(join(coordinator.mountRoot, ".codex", "agents", "scout-helper.toml")), false);
   assert.equal(
-    coordinatorManifest.assets.some((asset) => asset.id === "codex.custom_agent.scout-helper"),
+    coordinatorManifest.assets.some((asset) => asset.id === "agent_runtime.codex.custom_agent.scout-helper"),
     false,
   );
   assert.equal(
@@ -388,7 +394,7 @@ test("AssetStore mounts scout-helper only for Worker profiles", () => {
     assert.match(helperConfig, /^model = "gpt-5\.5"$/m);
     assert.match(helperConfig, /^model_reasoning_effort = "high"$/m);
     assert.equal(
-      workerManifest.assets.some((asset) => asset.id === "codex.custom_agent.scout-helper"),
+      workerManifest.assets.some((asset) => asset.id === "agent_runtime.codex.custom_agent.scout-helper"),
       true,
     );
     assert.equal(
@@ -413,7 +419,7 @@ test("Only Worker resource hashes depend on shared Worker instructions", () => {
   });
 
   writeFileSync(
-    join(fixtureRoot, "assets", "codex", "agents", "worker.AGENTS.md"),
+    join(fixtureRoot, "assets", "scout", "agents", "worker.AGENTS.md"),
     "updated worker instructions\n",
     "utf8",
   );
@@ -448,7 +454,14 @@ test("Coordinator resource hash does not depend on an unmounted custom agent", (
   });
 
   writeFileSync(
-    join(fixtureRoot, "assets", "codex", "agents", "scout-helper.toml"),
+    join(
+      fixtureRoot,
+      "assets",
+      "agent-runtimes",
+      "codex",
+      "agents",
+      "scout-helper.toml",
+    ),
     "name = \"scout-helper\"\ndescription = \"updated\"\ndeveloper_instructions = \"updated\"\n",
     "utf8",
   );
@@ -471,9 +484,13 @@ test("Coordinator resource hash does not depend on an unmounted custom agent", (
 function createCodexAssetFixture(prefix: string): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
-    recursive: true,
-  });
+  cpSync(
+    join(scoutRoot, "assets", "agent-runtimes"),
+    join(fixtureRoot, "assets", "agent-runtimes"),
+    {
+      recursive: true,
+    },
+  );
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
@@ -512,7 +529,7 @@ function updateAgentProfile(
   agentId: string,
   patch: Partial<AgentProfile>,
 ): void {
-  const path = join(fixtureRoot, "assets", "codex", "workflows", "validation.json");
+  const path = join(fixtureRoot, "assets", "scout", "workflows", "validation.json");
   const workflow = JSON.parse(readFileSync(path, "utf8")) as Mutable<WorkflowProfile>;
   const role = workflow.roles[agentId];
   if (!role) throw new Error(`Missing Workflow role ${agentId}.`);

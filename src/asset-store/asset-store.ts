@@ -1,4 +1,5 @@
 import { buildAssetCommit, type BuildAssetCommitOptions } from "./builders/asset-commit-builder.js";
+import { join, resolve } from "node:path";
 import type { AssetCommit } from "./contracts/asset-commit.js";
 import type { MountManifest } from "./contracts/manifest.js";
 import type {
@@ -16,6 +17,7 @@ import {
   collectMountReadableRoots,
   collectMountWritableRoots,
 } from "./mount/preflight.js";
+import { AssetJsonReader } from "./files/asset-json-reader.js";
 
 /**
  * Public asset-store facade used by run stages. It delegates resource reading,
@@ -24,6 +26,11 @@ import {
  */
 export class AssetStore {
   private readonly mountPreparation = new MountPreparation();
+
+  /** Returns a JSON reader rooted at all Scout-owned assets for one checkout. */
+  json(scoutRoot: string): AssetJsonReader {
+    return new AssetJsonReader(join(resolve(scoutRoot), "assets", "scout"));
+  }
 
   /** Materializes a role mount from the current repository assets. */
   materializeMount(options: MaterializeOptions): CodexMount {

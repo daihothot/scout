@@ -10,7 +10,8 @@ import type { WorkflowProfileAsset } from "./workflow-profile.js";
 /** Complete mount construction context derived before the mount root is touched. */
 export interface MountContext {
   scoutRoot: string;
-  assetsRoot: string;
+  scoutAssetsRoot: string;
+  agentRuntimeAssetsRoot: string;
   runId: string;
   runRoot: string;
   agentId: string;

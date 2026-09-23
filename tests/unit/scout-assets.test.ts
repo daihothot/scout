@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-const scoutAssetsPath = resolve("assets/codex/tools/scout-assets.cjs");
+const scoutAssetsPath = resolve("assets/scout/tools/scout-assets.cjs");
 const fixtureRoots: string[] = [];
 
 afterEach(() => {
@@ -315,7 +315,7 @@ function createFixture(): {
       resourceId: "optional-tool",
     }],
     assets: [],
-    linkedFiles: [{ path: "AGENTS.md", sourcePath: "assets/codex/agents/AGENTS.md", hash: "hash" }],
+    linkedFiles: [{ path: "AGENTS.md", sourcePath: "assets/scout/agents/AGENTS.md", hash: "hash" }],
     generatedFiles: [{ path: "bin/scout-assets", hash: "hash" }],
     shellTools: [{
       id: "scoutAssets",
@@ -333,7 +333,7 @@ function createFixture(): {
       id: "rg",
       exposeAs: "rg",
       wrapperPath: "bin/rg",
-      command: "assets/codex/tools/ripgrep/rg",
+      command: "assets/scout/tools/ripgrep/rg",
       required: true,
     }],
     mcpServers: [{

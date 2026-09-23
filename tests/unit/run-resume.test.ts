@@ -1794,9 +1794,14 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-run-resume-flow-"));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(process.cwd(), "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(process.cwd(), "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  cpSync(
+    join(process.cwd(), "assets", "agent-runtimes"),
+    join(fixtureRoot, "assets", "agent-runtimes"),
+    { recursive: true },
+  );
   makeFixtureShellToolsResolvable(fixtureRoot);
 
   const runId = "run-resume-flow";
@@ -2365,9 +2370,14 @@ async function assertThreadRestoreFailure(
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-thread-restore-failure-"));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(process.cwd(), "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(process.cwd(), "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  cpSync(
+    join(process.cwd(), "assets", "agent-runtimes"),
+    join(fixtureRoot, "assets", "agent-runtimes"),
+    { recursive: true },
+  );
   makeFixtureShellToolsResolvable(fixtureRoot);
   const eventBus = new InMemoryEventBus();
   const startedRoles: string[] = [];
@@ -2493,9 +2503,14 @@ async function installRolloutLocatorFixture(
   const fixtureRoot = mkdtempSync(join(tmpdir(), `scout-rollout-${suffix}-`));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(process.cwd(), "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(process.cwd(), "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  cpSync(
+    join(process.cwd(), "assets", "agent-runtimes"),
+    join(fixtureRoot, "assets", "agent-runtimes"),
+    { recursive: true },
+  );
   makeFixtureShellToolsResolvable(fixtureRoot);
   const eventBus = new InMemoryEventBus();
   const scope = installTestRunScope(t, {
@@ -2540,7 +2555,7 @@ async function installRolloutLocatorFixture(
 }
 
 function makeFixtureShellToolsResolvable(scoutRoot: string): void {
-  const path = join(scoutRoot, "assets", "codex", "tools", "shell-tools.json");
+  const path = join(scoutRoot, "assets", "scout", "tools", "shell-tools.json");
   const registry = JSON.parse(readFileSync(path, "utf8")) as {
     tools: Array<{ id: string; command: string }>;
   };

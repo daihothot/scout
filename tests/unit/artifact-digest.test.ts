@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const scoutRoot = process.cwd();
-const digestTool = join(scoutRoot, "assets", "codex", "tools", "scout-artifact-digest.cjs");
+const digestTool = join(scoutRoot, "assets", "scout", "tools", "scout-artifact-digest.cjs");
 
 test("scout-artifact-digest help succeeds without a target", () => {
   for (const helpFlag of ["--help", "-h"]) {

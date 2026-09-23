@@ -693,7 +693,7 @@ test("RestoreEnvironmentStage follows current GraphState roles and retains remov
   const workflowPath = join(
     fixtureRoot,
     "assets",
-    "codex",
+    "scout",
     "workflows",
     "validation.json",
   );
@@ -869,9 +869,14 @@ test("RestoreEnvironmentStage self-heals a partial mount without rebuilding comp
 function createFixture(prefix: string): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
+  cpSync(
+    join(scoutRoot, "assets", "agent-runtimes"),
+    join(fixtureRoot, "assets", "agent-runtimes"),
+    { recursive: true },
+  );
   return fixtureRoot;
 }
 

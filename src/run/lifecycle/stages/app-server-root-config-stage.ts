@@ -11,9 +11,13 @@ import {
   listScoutSkillPaths,
   resolveScoutSkillsForPhases,
 } from "../../../asset-store/assets/skill-catalog.js";
+import { AssetStore } from "../../../asset-store/asset-store.js";
 import { readWorkflowProfile } from "../../../asset-store/assets/workflow-profiles.js";
 import { WorkflowBuilder } from "../../../asset-store/builders/workflow-builder.js";
-import { CodexAssetLayout } from "../../../asset-store/assets/asset-layout.js";
+import {
+  CodexAgentRuntimeAssetLayout,
+  ScoutAssetLayout,
+} from "../../../asset-store/assets/asset-layout.js";
 import { resolveAssetArg } from "../../../asset-store/files/asset-paths.js";
 import { resolveShellToolCommand } from "../../../asset-store/files/command-resolution.js";
 import {
@@ -30,7 +34,6 @@ import {
   scoutAgentPermissionProfile,
   type ScoutAgentRole,
 } from "../../../agent/thread/types.js";
-import { readJsonFile } from "../../../core/fs.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunEnvironment } from "../../types.js";
 import { SynthesisPhase } from "../../../core/workflow/index.js";
@@ -107,13 +110,19 @@ export function createClientRootConfig(options: {
 }): RunAppServerRootConfig {
   const scoutRoot = resolve(options.scoutRoot);
   const runRoot = resolve(options.runRoot);
-  const assetsRoot = join(scoutRoot, "assets", "codex");
+  const scoutAssetsRoot = join(scoutRoot, "assets", "scout");
+  const agentRuntimeAssetsRoot = join(
+    scoutRoot,
+    "assets",
+    CodexAgentRuntimeAssetLayout.root,
+  );
+  const assetJson = new AssetStore().json(scoutRoot);
   const workflow = readWorkflowProfile(scoutRoot, options.workflowProfileName);
   const workflowBuilder = new WorkflowBuilder(workflow);
   const graphState = workflowBuilder.build();
   const workflowDomain = graphState.domain;
-  const mcpServers = readJsonFile<McpServersFile>(join(assetsRoot, CodexAssetLayout.mcpServers));
-  const shellTools = readJsonFile<ShellToolsFile>(join(assetsRoot, CodexAssetLayout.shellTools));
+  const mcpServers = assetJson.readJson(ScoutAssetLayout.mcpServers) as McpServersFile;
+  const shellTools = assetJson.readJson(ScoutAssetLayout.shellTools) as ShellToolsFile;
   const agentRoles = options.agentRoles ?? graphState.roles.map((role) => role.name);
   const mountRoots: string[] = [];
   const readableRoots: string[] = [];
@@ -147,7 +156,8 @@ export function createClientRootConfig(options: {
       tempRoot,
     });
     const runtimeReadableRoots = resolveRoleRuntimeReadableRoots({
-      assetsRoot,
+      scoutAssetsRoot,
+      agentRuntimeAssetsRoot,
       profile,
       workflowDomain,
       shellTools: shellTools.tools,
@@ -195,9 +205,15 @@ export function createPreparedClientRootConfig(
   const agents = Object.values(environment.agents);
   const mountRoots = uniqueResolved(environment.rootAccess.mountRoots);
   const scoutRoot = resolve(currentScoutRoot);
-  const assetsRoot = join(scoutRoot, "assets", "codex");
+  const scoutAssetsRoot = join(scoutRoot, "assets", "scout");
+  const agentRuntimeAssetsRoot = join(
+    scoutRoot,
+    "assets",
+    CodexAgentRuntimeAssetLayout.root,
+  );
   const workflowDomain = currentRunScope().scheduler.snapshot().domain;
-  const shellTools = readJsonFile<ShellToolsFile>(join(assetsRoot, CodexAssetLayout.shellTools));
+  const shellTools = new AssetStore().json(scoutRoot)
+    .readJson(ScoutAssetLayout.shellTools) as ShellToolsFile;
   const roleRoots = agents.map((agent) => ({
     role: agent.role,
     mountRoot: agent.mount.mountRoot,
@@ -206,7 +222,8 @@ export function createPreparedClientRootConfig(
     readableRoots: [
       ...agent.mount.readableRoots,
       ...resolveRoleRuntimeReadableRoots({
-        assetsRoot,
+        scoutAssetsRoot,
+        agentRuntimeAssetsRoot,
         profile: agent.mount.agentProfile,
         workflowDomain,
         shellTools: shellTools.tools,
@@ -245,7 +262,7 @@ function createPermissionProfiles(input: {
 }): RunAppServerRootConfig["permissionProfiles"] {
   const scoutRoot = resolve(input.scoutRoot);
   const runsRoot = join(scoutRoot, "run");
-  const logicalSkillRoot = join(scoutRoot, "assets", "codex", "skills");
+  const logicalSkillRoot = join(scoutRoot, "assets", "scout", "skills");
   const canonicalSkillRoot = realpathSync(logicalSkillRoot);
   const artifactRoots = input.roleRoots.map((role) => role.artifactRoot);
   const macosRuntimeReadableRoots = process.platform === "darwin"
@@ -282,54 +299,68 @@ function createPermissionProfiles(input: {
 }
 
 function resolveRoleRuntimeReadableRoots(input: {
-  assetsRoot: string;
+  scoutAssetsRoot: string;
+  agentRuntimeAssetsRoot: string;
   profile: AgentProfile;
   workflowDomain: string;
   shellTools: ShellToolContract[];
 }): string[] {
   const roots = [
-    ...readablePathVariants(join(input.assetsRoot, CodexAssetLayout.agentsMd)),
+    ...readablePathVariants(join(input.scoutAssetsRoot, ScoutAssetLayout.agentsMd)),
   ];
   if (input.profile.phases.includes(SynthesisPhase)) {
     roots.push(...readablePathVariants(
-      join(input.assetsRoot, CodexAssetLayout.coordinatorAgentsMd),
+      join(input.scoutAssetsRoot, ScoutAssetLayout.coordinatorAgentsMd),
     ));
   } else {
-    roots.push(...readablePathVariants(join(input.assetsRoot, CodexAssetLayout.workerAgentsMd)));
+    roots.push(...readablePathVariants(
+      join(input.scoutAssetsRoot, ScoutAssetLayout.workerAgentsMd),
+    ));
   }
   const skillCatalog = buildScoutSkillCatalog({
-    assetsRoot: input.assetsRoot,
-    skillPaths: listScoutSkillPaths(input.assetsRoot),
+    assetsRoot: input.scoutAssetsRoot,
+    skillPaths: listScoutSkillPaths(input.scoutAssetsRoot),
   });
   for (const skill of resolveScoutSkillsForPhases(skillCatalog, {
     domain: input.workflowDomain,
     phases: input.profile.phases,
   })) {
     roots.push(...readablePathVariants(
-      join(input.assetsRoot, CodexAssetLayout.skillsRoot, skill.name),
+      join(input.scoutAssetsRoot, ScoutAssetLayout.skillsRoot, skill.name),
     ));
   }
   for (const name of input.profile.customAgents) {
     roots.push(...readablePathVariants(
-      join(input.assetsRoot, CodexAssetLayout.customAgentsRoot, `${name}.toml`),
+      join(
+        input.agentRuntimeAssetsRoot,
+        CodexAgentRuntimeAssetLayout.customAgentsRoot,
+        `${name}.toml`,
+      ),
     ));
   }
-  const pluginPaths = listPluginSourcePaths(join(input.assetsRoot, CodexAssetLayout.pluginsRoot));
+  const pluginPaths = listPluginSourcePaths(
+    join(input.scoutAssetsRoot, ScoutAssetLayout.pluginsRoot),
+  );
   const pluginsByName = new Map(pluginPaths.map((path) => [basename(path), path] as const));
   for (const name of input.profile.plugins) {
     const path = pluginsByName.get(name);
     if (!path) throw new Error(`Agent profile references unknown plugin: ${name}`);
-    roots.push(...readablePathVariants(path));
+    roots.push(...readablePathVariants(
+      join(path, CodexAgentRuntimeAssetLayout.pluginOverlay),
+    ));
   }
   const toolsById = new Map(input.shellTools.map((tool) => [tool.id, tool] as const));
   for (const id of input.profile.shellTools ?? []) {
     const tool = toolsById.get(id);
     if (!tool) throw new Error(`Agent profile references unknown shell tool: ${id}`);
-    const command = resolveShellToolCommand(tool, input.assetsRoot);
+    const command = resolveShellToolCommand(tool, input.scoutAssetsRoot);
     if (command) roots.push(...readableExecutableRoots(command));
     for (const argument of tool.args ?? []) {
       if (!argument.startsWith("assets/")) continue;
-      roots.push(...readablePathVariants(resolveAssetArg(argument, input.assetsRoot), true));
+      roots.push(...readablePathVariants(
+        resolveAssetArg(argument, input.scoutAssetsRoot),
+        true,
+      ));
     }
   }
   return uniqueResolved(roots);
@@ -376,7 +407,12 @@ function listPluginSourcePaths(root: string): string[] {
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
     const path = join(root, entry.name);
-    if (existsSync(join(path, ".codex-plugin", "plugin.json"))) paths.push(path);
+    if (existsSync(join(
+      path,
+      CodexAgentRuntimeAssetLayout.pluginOverlay,
+      ".codex-plugin",
+      "plugin.json",
+    ))) paths.push(path);
     else paths.push(...listPluginSourcePaths(path));
   }
   return paths;

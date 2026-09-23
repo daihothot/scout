@@ -24,7 +24,7 @@ import {
 } from "../../src/asset-store/index.js";
 
 const scoutRoot = process.cwd();
-const assetsRoot = join(scoutRoot, "assets", "codex");
+const assetsRoot = join(scoutRoot, "assets", "scout");
 
 test("every Scout Skill projects the runtime metadata needed by its mount", () => {
   const catalog = buildScoutSkillCatalog({

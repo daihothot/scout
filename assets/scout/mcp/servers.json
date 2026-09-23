@@ -3,7 +3,7 @@
     "scout_local_capability": {
       "command": "node",
       "args": [
-        "assets/codex/plugins/mock/scout-local-capability-plugin/mcp/scout-local-capability.cjs"
+        "assets/scout/plugins/mock/scout-local-capability-plugin/.codex/mcp/scout-local-capability.cjs"
       ],
       "smoke": {
         "tool": "scout_capability_echo",
@@ -15,7 +15,7 @@
     "codegraph": {
       "command": "node",
       "args": [
-        "assets/codex/mcp/codegraph/wrapper.cjs"
+        "assets/scout/mcp/codegraph/wrapper.cjs"
       ],
       "cwd": "${SCOUT_ROOT}",
       "env": {

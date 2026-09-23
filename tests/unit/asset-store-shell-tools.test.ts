@@ -43,7 +43,7 @@ type Mutable<T> = {
 
 test("AssetStore reports unresolved shell tools as issues and excludes them from mount outputs", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-shell-tools-");
-  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const assetsRoot = join(fixtureRoot, "assets", "scout");
   writeShellTools(assetsRoot, {
     tools: [
       {
@@ -101,13 +101,13 @@ test("AssetStore reports unresolved shell tools as issues and excludes them from
 
 test("AssetStore rejects asset-local paths that escape the assets root", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-asset-path-boundary-");
-  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const assetsRoot = join(fixtureRoot, "assets", "scout");
   writeShellTools(assetsRoot, {
     tools: [{
       id: "escapingAsset",
       name: "escaping-asset",
       command: "node",
-      args: ["assets/codex/../../outside.cjs"],
+      args: ["assets/scout/../../outside.cjs"],
       exposeAs: "escaping-asset",
       required: true,
     }],
@@ -126,7 +126,7 @@ test("AssetStore rejects asset-local paths that escape the assets root", () => {
 
 test("AssetStore rejects removed flat shell smoke fields", () => {
   const fixtureRoot = createCodexAssetFixture("scout-shell-smoke-contract-");
-  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const assetsRoot = join(fixtureRoot, "assets", "scout");
   writeFileSync(join(assetsRoot, "tools", "shell-tools.json"), JSON.stringify({
     tools: [{
       id: "legacySmoke",
@@ -152,7 +152,7 @@ test("AssetStore rejects removed flat shell smoke fields", () => {
 
 test("AssetStore rejects shell and MCP names that are not single path segments", () => {
   const shellFixture = createCodexAssetFixture("scout-asset-store-shell-name-boundary-");
-  const shellAssetsRoot = join(shellFixture, "assets", "codex");
+  const shellAssetsRoot = join(shellFixture, "assets", "scout");
   writeShellTools(shellAssetsRoot, {
     tools: [{
       id: "escapingName",
@@ -173,7 +173,7 @@ test("AssetStore rejects shell and MCP names that are not single path segments",
   );
 
   const mcpFixture = createCodexAssetFixture("scout-asset-store-mcp-name-boundary-");
-  const mcpAssetsRoot = join(mcpFixture, "assets", "codex");
+  const mcpAssetsRoot = join(mcpFixture, "assets", "scout");
   writeMcpServers(mcpAssetsRoot, {
     servers: {
       "../escaping-server": { command: "node" },
@@ -439,7 +439,7 @@ test("AssetStore rechecks cached inspection when the Scout assets link changes",
 
 test("AssetStore rechecks cached inspection when current-device command binding changes", () => {
   const fixtureRoot = createCodexAssetFixture("scout-runtime-binding-cache-");
-  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const assetsRoot = join(fixtureRoot, "assets", "scout");
   const firstBin = join(fixtureRoot, "first-bin");
   const secondBin = join(fixtureRoot, "second-bin");
   const command = "scout-runtime-binding-probe";
@@ -883,7 +883,7 @@ for (const mutation of [
       agentId: "coordinator",
     });
     const manifest = JSON.parse(readFileSync(initial.manifestPath, "utf8")) as MountManifest;
-    const asset = manifest.assets.find((candidate) => candidate.id !== "codex.shell_tools");
+    const asset = manifest.assets.find((candidate) => candidate.id !== "scout.shell_tools");
     assert.ok(asset);
     mutation.apply(asset);
     writeManifest(initial.manifestPath, manifest);
@@ -915,7 +915,7 @@ test("AssetStore ignores only the shell-tools registry hash when reusing a mount
     agentId: "coordinator",
   });
   const manifest = JSON.parse(readFileSync(initial.manifestPath, "utf8")) as MountManifest;
-  const registry = manifest.assets.find((asset) => asset.id === "codex.shell_tools");
+  const registry = manifest.assets.find((asset) => asset.id === "scout.shell_tools");
   assert.ok(registry);
   registry.hash = "device-specific-registry-hash";
   writeManifest(initial.manifestPath, manifest);
@@ -1003,7 +1003,7 @@ test("AssetStore persists only each materialized Skill identity and filesystem p
   for (const skill of mount.skills) {
     assert.equal(
       realpathSync(dirname(join(mount.mountRoot, skill.path))),
-      realpathSync(join(fixtureRoot, "assets", "codex", "skills", skill.name)),
+      realpathSync(join(fixtureRoot, "assets", "scout", "skills", skill.name)),
     );
   }
 
@@ -1025,7 +1025,7 @@ test("AssetStore persists family path declarations and their resolved Skill iden
   const skillPath = join(
     fixtureRoot,
     "assets",
-    "codex",
+    "scout",
     "skills",
     "domain-rbt-executor",
     "SKILL.md",
@@ -1070,7 +1070,7 @@ test("AssetStore persists family path declarations and their resolved Skill iden
   const addedSkillRoot = join(
     fixtureRoot,
     "assets",
-    "codex",
+    "scout",
     "skills",
     "signal-selector-added",
   );
@@ -1117,7 +1117,7 @@ test("Skill resource hashes cover the complete profiled Skill directory", () => 
   const skillRoot = join(
     fixtureRoot,
     "assets",
-    "codex",
+    "scout",
     "skills",
     "domain-rbt-executor",
   );
@@ -1130,12 +1130,12 @@ test("Skill resource hashes cover the complete profiled Skill directory", () => 
     workflowProfileName: "rbt",
   });
   const beforeManifest = JSON.parse(readFileSync(before.manifestPath, "utf8")) as MountManifest;
-  const skillId = "codex.skill.domain-rbt-executor";
+  const skillId = "scout.skill.domain-rbt-executor";
   const beforeAsset = beforeManifest.assets.find((asset) => asset.id === skillId);
   assert.ok(beforeAsset);
   assert.equal(
     beforeAsset.sourcePath,
-    "assets/codex/skills/domain-rbt-executor",
+    "assets/scout/skills/domain-rbt-executor",
   );
 
   writeFileSync(probePath, "after\n", "utf8");
@@ -1165,7 +1165,7 @@ test("AssetStore allows explicit source-resource drift only with fresh mount ide
   const persistedManifest = JSON.parse(
     readFileSync(initial.manifestPath, "utf8"),
   ) as MountManifest;
-  const sourceAsset = persistedManifest.assets.find((asset) => asset.id !== "codex.shell_tools");
+  const sourceAsset = persistedManifest.assets.find((asset) => asset.id !== "scout.shell_tools");
   assert.ok(sourceAsset);
   writeFileSync(resolve(fixtureRoot, sourceAsset.sourcePath), "changed source resource\n", "utf8");
 
@@ -1229,12 +1229,12 @@ test("Coordinator mount records Workflow provenance without treating edge change
     readFileSync(initial.manifestPath, "utf8"),
   ) as MountManifest;
   const workflowAsset = persistedManifest.assets.find(
-    (asset) => asset.id === "codex.workflow.validation",
+    (asset) => asset.id === "scout.workflow.validation",
   );
   assert.ok(workflowAsset);
   assert.equal(
     workflowAsset.sourcePath,
-    "assets/codex/workflows/validation.json",
+    "assets/scout/workflows/validation.json",
   );
 
   const workflowPath = resolve(fixtureRoot, workflowAsset.sourcePath);
@@ -1268,7 +1268,7 @@ test("AssetStore does not allow resource drift to change an agent profile", () =
   const persistedManifest = JSON.parse(
     readFileSync(initial.manifestPath, "utf8"),
   ) as MountManifest;
-  const profilesPath = join(fixtureRoot, "assets", "codex", "workflows", "validation.json");
+  const profilesPath = join(fixtureRoot, "assets", "scout", "workflows", "validation.json");
   const profiles = JSON.parse(readFileSync(profilesPath, "utf8")) as Mutable<WorkflowProfile>;
   profiles.defaults.maxThreads += 1;
   writeFileSync(profilesPath, JSON.stringify(profiles, null, 2) + "\n", "utf8");
@@ -1299,7 +1299,7 @@ test("AssetStore rebuilds when only profile roots change and preserves resource 
   const persistedManifest = JSON.parse(
     readFileSync(initial.manifestPath, "utf8"),
   ) as MountManifest;
-  const profilesPath = join(fixtureRoot, "assets", "codex", "workflows", "validation.json");
+  const profilesPath = join(fixtureRoot, "assets", "scout", "workflows", "validation.json");
   const profiles = JSON.parse(readFileSync(profilesPath, "utf8")) as Mutable<WorkflowProfile>;
   const repositoryAccess = profiles.resources["repository-access"]!;
   repositoryAccess.readableRoots = [
@@ -1352,7 +1352,7 @@ test("AssetStore does not let resource drift bypass a persisted mount identity m
   const persistedManifest = JSON.parse(
     readFileSync(initial.manifestPath, "utf8"),
   ) as MountManifest;
-  const sourceAsset = persistedManifest.assets.find((asset) => asset.id !== "codex.shell_tools");
+  const sourceAsset = persistedManifest.assets.find((asset) => asset.id !== "scout.shell_tools");
   assert.ok(sourceAsset);
   writeFileSync(resolve(fixtureRoot, sourceAsset.sourcePath), "changed source resource\n", "utf8");
 
@@ -1522,7 +1522,7 @@ test("AssetStore mounts RBT Reviewer guidance without codebase access or host ru
 
 test("AssetStore resolves asset-local shell tool commands against the Scout root", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-shell-tools-");
-  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const assetsRoot = join(fixtureRoot, "assets", "scout");
   const toolPath = join(assetsRoot, "tools", "asset-local-tool");
   writeExecutable(toolPath, "ASSET_LOCAL_TOOL_OK");
   writeShellTools(assetsRoot, {
@@ -1530,7 +1530,7 @@ test("AssetStore resolves asset-local shell tool commands against the Scout root
       {
         id: "assetLocalTool",
         name: "asset-local-tool",
-        command: "assets/codex/tools/asset-local-tool",
+        command: "assets/scout/tools/asset-local-tool",
         exposeAs: "asset-local-tool",
         required: true,
       },
@@ -1562,7 +1562,7 @@ test("AssetStore resolves asset-local shell tool commands against the Scout root
 
 test("Shell tool registry changes do not change new asset identity", () => {
   const fixtureRoot = createCodexAssetFixture("scout-shell-tool-registry-hash-");
-  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const assetsRoot = join(fixtureRoot, "assets", "scout");
   const firstToolPath = join(fixtureRoot, "device-tools", "first-tool");
   const secondToolPath = join(fixtureRoot, "device-tools", "second-tool");
   mkdirSync(join(fixtureRoot, "device-tools"), { recursive: true });
@@ -1611,7 +1611,7 @@ test("Shell tool registry changes do not change new asset identity", () => {
 
 test("AssetStore rebuilds a reused mount when a shell contract binding changes", () => {
   const fixtureRoot = createCodexAssetFixture("scout-shell-tool-reuse-binding-");
-  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const assetsRoot = join(fixtureRoot, "assets", "scout");
   const firstToolPath = join(fixtureRoot, "device-tools", "first-tool");
   const secondToolPath = join(fixtureRoot, "device-tools", "second-tool");
   mkdirSync(join(fixtureRoot, "device-tools"), { recursive: true });
@@ -1667,14 +1667,14 @@ test("AssetStore rebuilds a reused mount when a shell contract binding changes",
 
 test("Asset-local shell tool scripts remain part of the resource hash", () => {
   const fixtureRoot = createCodexAssetFixture("scout-shell-tool-script-hash-");
-  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const assetsRoot = join(fixtureRoot, "assets", "scout");
   const toolPath = join(assetsRoot, "tools", "asset-local-hashed-tool");
   writeExecutable(toolPath, "BEFORE_TOOL_OK");
   writeShellTools(assetsRoot, {
     tools: [{
       id: "assetLocalHashedTool",
       name: "asset-local-hashed-tool",
-      command: "assets/codex/tools/asset-local-hashed-tool",
+      command: "assets/scout/tools/asset-local-hashed-tool",
       exposeAs: "asset-local-hashed-tool",
       required: true,
     }],
@@ -1699,9 +1699,9 @@ test("Asset-local shell tool scripts remain part of the resource hash", () => {
   assert.notEqual(after.mountId, before.mountId);
   const manifest = JSON.parse(readFileSync(after.manifestPath, "utf8")) as MountManifest;
   assert.ok(manifest.assets.some((asset) =>
-    asset.id === "codex.shell_tool.assetLocalHashedTool.command"
+    asset.id === "scout.shell_tool.assetLocalHashedTool.command"
     && asset.type === "shell_tool_resource"
-    && asset.sourcePath === "assets/codex/tools/asset-local-hashed-tool"
+    && asset.sourcePath === "assets/scout/tools/asset-local-hashed-tool"
     && asset.hash === sha256FileForTest(toolPath)
   ));
 });
@@ -1749,7 +1749,7 @@ test("AssetStore rematerializes current paths while preserving portable persiste
   assert.equal(config.includes(sourceRoot), false);
   assert.equal(
     realpathSync(join(target.mountRoot, "AGENTS.md")),
-    realpathSync(join(targetRoot, "assets", "codex", "agents", "AGENTS.md")),
+    realpathSync(join(targetRoot, "assets", "scout", "agents", "AGENTS.md")),
   );
 });
 
@@ -1809,7 +1809,7 @@ test("AssetStore rebuilds a copied run once, then reuses the current mount", () 
 
 test("AssetStore resolves asset-local MCP commands against the Scout root", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-mcp-command-");
-  const assetsRoot = join(fixtureRoot, "assets", "codex");
+  const assetsRoot = join(fixtureRoot, "assets", "scout");
   const commandPath = join(assetsRoot, "tools", "asset-local-mcp");
   const vendorPath = join(assetsRoot, "tools", "vendor", "dependency.cjs");
   mkdirSync(join(assetsRoot, "tools", "vendor"), { recursive: true });
@@ -1818,7 +1818,7 @@ test("AssetStore resolves asset-local MCP commands against the Scout root", () =
   writeMcpServers(assetsRoot, {
     servers: {
       assetLocal: {
-        command: "assets/codex/tools/asset-local-mcp",
+        command: "assets/scout/tools/asset-local-mcp",
       },
     },
   });
@@ -1843,15 +1843,15 @@ test("AssetStore resolves asset-local MCP commands against the Scout root", () =
   }).trim(), "ASSET_LOCAL_MCP_OK");
   const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
   assert.ok(manifest.assets.some((asset) =>
-    asset.id === "codex.mcp_server.assetLocal.command"
+    asset.id === "scout.mcp_server.assetLocal.command"
     && asset.type === "mcp_server_resource"
-    && asset.sourcePath === "assets/codex/tools/asset-local-mcp"
+    && asset.sourcePath === "assets/scout/tools/asset-local-mcp"
     && asset.hash === sha256FileForTest(commandPath)
   ));
   assert.ok(manifest.assets.some((asset) =>
-    asset.id === "codex.mcp_server.assetLocal.command.vendor"
+    asset.id === "scout.mcp_server.assetLocal.command.vendor"
     && asset.type === "mcp_server_vendor"
-    && asset.sourcePath === "assets/codex/tools/vendor"
+    && asset.sourcePath === "assets/scout/tools/vendor"
   ));
 
   writeExecutable(commandPath, "ASSET_LOCAL_MCP_CHANGED");
@@ -1891,12 +1891,12 @@ test("AssetStore resolves asset-local MCP commands against the Scout root", () =
 
 test("Asset-local shell and MCP references fail closed when missing", () => {
   const shellFixtureRoot = createCodexAssetFixture("scout-missing-shell-resource-");
-  const shellAssetsRoot = join(shellFixtureRoot, "assets", "codex");
+  const shellAssetsRoot = join(shellFixtureRoot, "assets", "scout");
   writeShellTools(shellAssetsRoot, {
     tools: [{
       id: "missingAssetTool",
       name: "missing-asset-tool",
-      command: "assets/codex/tools/missing-asset-tool",
+      command: "assets/scout/tools/missing-asset-tool",
       exposeAs: "missing-asset-tool",
       required: true,
     }],
@@ -1906,15 +1906,15 @@ test("Asset-local shell and MCP references fail closed when missing", () => {
     scoutRoot: shellFixtureRoot,
     runId: "run-missing-shell-resource",
     agentId: "coordinator",
-  }), /Asset-local resource is missing: assets\/codex\/tools\/missing-asset-tool/);
+  }), /Asset-local resource is missing: assets\/scout\/tools\/missing-asset-tool/);
 
   const mcpFixtureRoot = createCodexAssetFixture("scout-missing-mcp-resource-");
-  const mcpAssetsRoot = join(mcpFixtureRoot, "assets", "codex");
+  const mcpAssetsRoot = join(mcpFixtureRoot, "assets", "scout");
   writeMcpServers(mcpAssetsRoot, {
     servers: {
       missingAsset: {
         command: "node",
-        args: ["assets/codex/mcp/missing-server.cjs"],
+        args: ["assets/scout/mcp/missing-server.cjs"],
       },
     },
   });
@@ -1923,7 +1923,7 @@ test("Asset-local shell and MCP references fail closed when missing", () => {
     scoutRoot: mcpFixtureRoot,
     runId: "run-missing-mcp-resource",
     agentId: "coordinator",
-  }), /Asset-local resource is missing: assets\/codex\/mcp\/missing-server\.cjs/);
+  }), /Asset-local resource is missing: assets\/scout\/mcp\/missing-server\.cjs/);
 });
 
 test("scout-memory reports run-level codex memory files without reading sqlite content", () => {
@@ -1940,7 +1940,7 @@ test("scout-memory reports run-level codex memory files without reading sqlite c
   writeFileSync(join(codexHome, "state_5.sqlite-wal"), "state-wal-placeholder", "utf8");
   writeFileSync(join(codexHome, "ignored.txt"), "not memory", "utf8");
 
-  const scriptPath = join(scoutRoot, "assets", "codex", "tools", "scout-memory.cjs");
+  const scriptPath = join(scoutRoot, "assets", "scout", "tools", "scout-memory.cjs");
   const smoke = execFileSync(process.execPath, [scriptPath, "--smoke"], {
     cwd: mount.mountRoot,
     encoding: "utf8",
@@ -1978,7 +1978,7 @@ test("Scout shell tools expose side-effect-free help without runtime context", (
     join("scout-research-artifact-check", "cli.cjs"),
   ];
   for (const script of scripts) {
-    const scriptPath = join(scoutRoot, "assets", "codex", "tools", script);
+    const scriptPath = join(scoutRoot, "assets", "scout", "tools", script);
     for (const helpFlag of ["--help", "-h"]) {
       const output = execFileSync(process.execPath, [scriptPath, helpFlag], {
         encoding: "utf8",
@@ -2022,9 +2022,11 @@ function reverseObjectKeys<T>(value: T): T {
 function createCodexAssetFixture(prefix: string): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
-    recursive: true,
-  });
+  cpSync(
+    join(scoutRoot, "assets", "agent-runtimes"),
+    join(fixtureRoot, "assets", "agent-runtimes"),
+    { recursive: true },
+  );
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });

@@ -19,7 +19,7 @@ summary: 规范 Scout Skill 的作者分类、正文布局、文件系统投影�
 
 # Internal Skill Creator
 
-当任务要求创建、修改、评审或规范化 `assets/codex/skills/**/SKILL.md` 时使用本技能。
+当任务要求创建、修改、评审或规范化 `assets/scout/skills/**/SKILL.md` 时使用本技能。
 
 本技能拥有 Scout Skill 资产格式和职责治理。它不定义 Scout Runtime 事件、领域业务事实、具体工具实现或当前 `run` 状态。
 
@@ -77,7 +77,7 @@ type 与 layout 相互独立。同一种 type 可以根据自己的 contract 选
 Skill 源目录固定为：
 
 ```text
-assets/codex/skills/<skill-name>/SKILL.md
+assets/scout/skills/<skill-name>/SKILL.md
 ```
 
 Scout Runtime 将 Skill 源目录投影到 role 的 mount，并将 Skill 入口物化为：
@@ -108,7 +108,7 @@ Scout Runtime 将 Skill 源目录投影到 role 的 mount，并将 Skill 入口�
 新建 Skill 时，目录名、`name` 和 `id` 必须完全一致：
 
 ```text
-assets/codex/skills/<skill-name>/
+assets/scout/skills/<skill-name>/
   SKILL.md
   templates/                 # 可选
   references/                # 可选
@@ -192,8 +192,8 @@ family 表达文件系统分类和归属，不表达依赖、执行顺序或 lay
 只有真实依赖存在时才写 `dependencies`：
 
 - `skills` 使用真实 Skill identity 或带 wildcard 的 family-path。
-- `shellTools` 使用 `assets/codex/tools/shell-tools.json` 中的 tool id。
-- `mcpServers` 使用 `assets/codex/mcp/servers.json` 中的 server id。
+- `shellTools` 使用 `assets/scout/tools/shell-tools.json` 中的 tool id。
+- `mcpServers` 使用 `assets/scout/mcp/servers.json` 中的 server id。
 - `plugins` 使用 plugin manifest 中的 name。
 - `required` 表示缺失时 contract 无法完整执行；`optional` 只表示条件能力或增强能力。
 - required Skill 缺失时当前 contract 不完整；optional Skill 是可供当前工作选择的候选能力，当前环境没有该候选时不阻塞基础 contract。存在的依赖必须无环。
@@ -471,8 +471,8 @@ Testing Boundary：
 源码资产检查命令：
 
 ```sh
-find assets/codex/skills -maxdepth 2 -name SKILL.md -print
-sed -n '1,40p' assets/codex/skills/<skill-name>/SKILL.md
+find assets/scout/skills -maxdepth 2 -name SKILL.md -print
+sed -n '1,40p' assets/scout/skills/<skill-name>/SKILL.md
 ```
 
 物化结果检查命令：

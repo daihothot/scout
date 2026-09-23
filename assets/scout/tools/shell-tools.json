@@ -5,7 +5,7 @@
       "name": "scout-assets",
       "command": "node",
       "args": [
-        "assets/codex/tools/scout-assets.cjs"
+        "assets/scout/tools/scout-assets.cjs"
       ],
       "exposeAs": "scout-assets",
       "required": true,
@@ -22,7 +22,7 @@
       "name": "scout-memory",
       "command": "node",
       "args": [
-        "assets/codex/tools/scout-memory.cjs"
+        "assets/scout/tools/scout-memory.cjs"
       ],
       "exposeAs": "scout-memory",
       "required": true,
@@ -39,7 +39,7 @@
       "name": "scout-json-write",
       "command": "node",
       "args": [
-        "assets/codex/tools/scout-json-write.cjs"
+        "assets/scout/tools/scout-json-write.cjs"
       ],
       "exposeAs": "scout-json-write",
       "required": true,
@@ -56,7 +56,7 @@
       "name": "scout-rbt-artifact-check",
       "command": "node",
       "args": [
-        "assets/codex/tools/scout-rbt-artifact-check/cli.cjs"
+        "assets/scout/tools/scout-rbt-artifact-check/cli.cjs"
       ],
       "exposeAs": "scout-rbt-artifact-check",
       "required": true,
@@ -73,7 +73,7 @@
       "name": "scout-research-artifact-check",
       "command": "node",
       "args": [
-        "assets/codex/tools/scout-research-artifact-check/cli.cjs"
+        "assets/scout/tools/scout-research-artifact-check/cli.cjs"
       ],
       "exposeAs": "scout-research-artifact-check",
       "required": true,
@@ -90,7 +90,7 @@
       "name": "scout-artifact-digest",
       "command": "node",
       "args": [
-        "assets/codex/tools/scout-artifact-digest.cjs"
+        "assets/scout/tools/scout-artifact-digest.cjs"
       ],
       "exposeAs": "scout-artifact-digest",
       "required": true,
@@ -107,7 +107,7 @@
       "name": "rbt-review-report",
       "command": "node",
       "args": [
-        "assets/codex/skills/domain-rbt-review-pack/scripts/render-review-report.mjs"
+        "assets/scout/skills/domain-rbt-review-pack/scripts/render-review-report.mjs"
       ],
       "exposeAs": "rbt-review-report",
       "required": true,
@@ -166,7 +166,7 @@
     {
       "id": "rg",
       "name": "rg",
-      "command": "assets/codex/tools/ripgrep/15.1.0/darwin-arm64/rg",
+      "command": "assets/scout/tools/ripgrep/15.1.0/darwin-arm64/rg",
       "exposeAs": "rg",
       "required": true,
       "smoke": {

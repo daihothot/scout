@@ -12,10 +12,14 @@ import type { MountManifest } from "../contracts/manifest.js";
 import type { MountMaterializationIssue } from "../contracts/mount.js";
 import type { MaterializedSkill } from "../contracts/skill.js";
 import type { WorkflowProfileAsset } from "../contracts/workflow-profile.js";
-import { CodexAssetLayout } from "../assets/asset-layout.js";
+import {
+  CodexAgentRuntimeAssetLayout,
+  ScoutAssetLayout,
+} from "../assets/asset-layout.js";
 import {
   assertMountPathSegment,
   assetSourcePath,
+  codexAgentRuntimeAssetSourcePath,
   customAgentNameFromPath,
   resolveAssetRelativePath,
   resolveRequiredAssetFile,
@@ -28,7 +32,8 @@ import { SynthesisPhase } from "../../core/workflow/index.js";
 export interface AssetInventoryInput {
   agentId: string;
   agentProfile: AgentProfile;
-  assetsRoot: string;
+  scoutAssetsRoot: string;
+  agentRuntimeAssetsRoot: string;
   mcpServerContracts: McpServersFile;
   shellToolContracts: ShellToolContract[];
   customAgentPaths: string[];
@@ -79,9 +84,9 @@ function buildAssetInventoryInternal(input: AssetInventoryInput): MountManifest[
     const assets: MountManifest["assets"] = [];
     const appendAsset = (kind: "command" | "arg", assetPath: string, index?: number) => {
       if (!assetPath.startsWith("assets/")) return;
-      const sourcePath = resolveRequiredAssetFile(assetPath, input.assetsRoot);
+      const sourcePath = resolveRequiredAssetFile(assetPath, input.scoutAssetsRoot);
       assets.push({
-        id: `codex.shell_tool.${tool.id}.${kind}${index === undefined ? "" : `.${index}`}`,
+        id: `scout.shell_tool.${tool.id}.${kind}${index === undefined ? "" : `.${index}`}`,
         type: "shell_tool_resource",
         sourcePath: assetPath,
         hash: sha256File(sourcePath),
@@ -98,10 +103,10 @@ function buildAssetInventoryInternal(input: AssetInventoryInput): MountManifest[
       const assets: MountManifest["assets"] = [];
       const appendAsset = (kind: "command" | "arg", assetPath: string, index?: number) => {
         if (!assetPath.startsWith("assets/")) return;
-        const sourcePath = resolveRequiredAssetFile(assetPath, input.assetsRoot);
+        const sourcePath = resolveRequiredAssetFile(assetPath, input.scoutAssetsRoot);
         const idSuffix = `${kind}${index === undefined ? "" : `.${index}`}`;
         assets.push({
-          id: `codex.mcp_server.${name}.${idSuffix}`,
+          id: `scout.mcp_server.${name}.${idSuffix}`,
           type: "mcp_server_resource",
           sourcePath: assetPath,
           hash: sha256File(sourcePath),
@@ -109,9 +114,9 @@ function buildAssetInventoryInternal(input: AssetInventoryInput): MountManifest[
         const vendorRoot = join(dirname(sourcePath), "vendor");
         if (existsSync(vendorRoot)) {
           assets.push({
-            id: `codex.mcp_server.${name}.${idSuffix}.vendor`,
+            id: `scout.mcp_server.${name}.${idSuffix}.vendor`,
             type: "mcp_server_vendor",
-            sourcePath: relative(resolve(input.assetsRoot, "..", ".."), vendorRoot),
+            sourcePath: relative(resolve(input.scoutAssetsRoot, "..", ".."), vendorRoot),
             hash: hashDirectory(vendorRoot),
           });
         }
@@ -124,79 +129,97 @@ function buildAssetInventoryInternal(input: AssetInventoryInput): MountManifest[
 
   return [
     {
-      id: "codex.agents.default",
+      id: "scout.agents.default",
       type: "agents_md",
-      sourcePath: assetSourcePath(CodexAssetLayout.agentsMd),
-      hash: sha256File(resolveAssetRelativePath(CodexAssetLayout.agentsMd, input.assetsRoot)),
+      sourcePath: assetSourcePath(ScoutAssetLayout.agentsMd),
+      hash: sha256File(
+        resolveAssetRelativePath(ScoutAssetLayout.agentsMd, input.scoutAssetsRoot),
+      ),
     },
     ...(isSynthesisRole
       ? [{
-        id: "codex.agents.coordinator",
+        id: "scout.agents.coordinator",
         type: "coordinator_agents_md",
-        sourcePath: assetSourcePath(CodexAssetLayout.coordinatorAgentsMd),
+        sourcePath: assetSourcePath(ScoutAssetLayout.coordinatorAgentsMd),
         hash: sha256File(
-          resolveAssetRelativePath(CodexAssetLayout.coordinatorAgentsMd, input.assetsRoot),
+          resolveAssetRelativePath(
+            ScoutAssetLayout.coordinatorAgentsMd,
+            input.scoutAssetsRoot,
+          ),
         ),
       }]
       : [{
-        id: "codex.agents.worker",
+        id: "scout.agents.worker",
         type: "worker_agents_md",
-        sourcePath: assetSourcePath(CodexAssetLayout.workerAgentsMd),
+        sourcePath: assetSourcePath(ScoutAssetLayout.workerAgentsMd),
         hash: sha256File(
-          resolveAssetRelativePath(CodexAssetLayout.workerAgentsMd, input.assetsRoot),
+          resolveAssetRelativePath(ScoutAssetLayout.workerAgentsMd, input.scoutAssetsRoot),
         ),
       }]),
     {
-      id: `codex.agents.profile.${input.agentId}`,
+      id: `scout.agents.profile.${input.agentId}`,
       type: "workflow_role_profile",
       sourcePath: assetSourcePath(input.workflowProfileAsset.sourcePath),
       hash: profileResourceHash(input.agentProfile),
     },
     {
-      id: `codex.config.${input.agentId}`,
+      id: `agent_runtime.codex.config.${input.agentId}`,
       type: "config",
-      sourcePath: assetSourcePath(input.agentProfile.config),
-      hash: sha256File(resolveAssetRelativePath(input.agentProfile.config, input.assetsRoot)),
+      sourcePath: codexAgentRuntimeAssetSourcePath(input.agentProfile.config),
+      hash: sha256File(resolveAssetRelativePath(
+        input.agentProfile.config,
+        input.agentRuntimeAssetsRoot,
+      )),
     },
     ...(isSynthesisRole
       ? [{
-        id: `codex.workflow.${input.workflowProfileAsset.name}`,
+        id: `scout.workflow.${input.workflowProfileAsset.name}`,
         type: "workflow_profile",
         sourcePath: assetSourcePath(input.workflowProfileAsset.sourcePath),
         hash: input.workflowProfileAsset.hash,
       }]
       : []),
     ...input.customAgentPaths.map((path) => ({
-      id: `codex.custom_agent.${customAgentNameFromPath(path)}`,
+      id: `agent_runtime.codex.custom_agent.${customAgentNameFromPath(path)}`,
       type: "custom_agent",
-      sourcePath: assetSourcePath(path),
-      hash: sha256File(resolveAssetRelativePath(path, input.assetsRoot)),
+      sourcePath: codexAgentRuntimeAssetSourcePath(path),
+      hash: sha256File(resolveAssetRelativePath(path, input.agentRuntimeAssetsRoot)),
     })),
     {
-      id: "mcp.servers",
+      id: "scout.mcp_servers",
       type: "mcp_server_config",
-      sourcePath: assetSourcePath(CodexAssetLayout.mcpServers),
-      hash: sha256File(resolveAssetRelativePath(CodexAssetLayout.mcpServers, input.assetsRoot)),
+      sourcePath: assetSourcePath(ScoutAssetLayout.mcpServers),
+      hash: sha256File(
+        resolveAssetRelativePath(ScoutAssetLayout.mcpServers, input.scoutAssetsRoot),
+      ),
     },
     {
-      id: "codex.shell_tools",
+      id: "scout.shell_tools",
       type: "shell_tool_contract",
-      sourcePath: assetSourcePath(CodexAssetLayout.shellTools),
+      sourcePath: assetSourcePath(ScoutAssetLayout.shellTools),
       hash: input.shellToolsRegistryHash,
     },
     ...shellToolAssets,
     ...mcpServerAssets,
     ...input.skillPaths.map((skillPath) => ({
-      id: `codex.skill.${skillNameFromPath(skillPath)}`,
+      id: `scout.skill.${skillNameFromPath(skillPath)}`,
       type: "skill",
       sourcePath: assetSourcePath(dirname(skillPath)),
-      hash: hashDirectory(resolveAssetRelativePath(dirname(skillPath), input.assetsRoot)),
+      hash: hashDirectory(
+        resolveAssetRelativePath(dirname(skillPath), input.scoutAssetsRoot),
+      ),
     })),
     ...input.pluginPaths.map((pluginPath) => ({
-      id: `codex.plugin.${basename(pluginPath)}`,
+      id: `scout.plugin.${basename(pluginPath)}`,
       type: "plugin",
-      sourcePath: assetSourcePath(pluginPath),
-      hash: hashDirectory(resolveAssetRelativePath(pluginPath, input.assetsRoot)),
+      sourcePath: assetSourcePath(join(
+        pluginPath,
+        CodexAgentRuntimeAssetLayout.pluginOverlay,
+      )),
+      hash: hashDirectory(resolveAssetRelativePath(
+        join(pluginPath, CodexAgentRuntimeAssetLayout.pluginOverlay),
+        input.scoutAssetsRoot,
+      )),
     })),
   ];
 }
@@ -206,24 +229,24 @@ function buildMountManifestInternal(input: MountManifestInput): MountManifest {
   const linkedFiles = [
     {
       path: "AGENTS.md",
-      sourcePath: assetSourcePath(CodexAssetLayout.agentsMd),
-      hash: sha256File(join(input.assetsRoot, CodexAssetLayout.agentsMd)),
+      sourcePath: assetSourcePath(ScoutAssetLayout.agentsMd),
+      hash: sha256File(join(input.scoutAssetsRoot, ScoutAssetLayout.agentsMd)),
     },
     ...(isSynthesisRole
       ? [{
         path: join("agents", "coordinator.AGENTS.md"),
-        sourcePath: assetSourcePath(CodexAssetLayout.coordinatorAgentsMd),
-        hash: sha256File(join(input.assetsRoot, CodexAssetLayout.coordinatorAgentsMd)),
+        sourcePath: assetSourcePath(ScoutAssetLayout.coordinatorAgentsMd),
+        hash: sha256File(join(input.scoutAssetsRoot, ScoutAssetLayout.coordinatorAgentsMd)),
       }]
       : [{
         path: join("agents", "worker.AGENTS.md"),
-        sourcePath: assetSourcePath(CodexAssetLayout.workerAgentsMd),
-        hash: sha256File(join(input.assetsRoot, CodexAssetLayout.workerAgentsMd)),
+        sourcePath: assetSourcePath(ScoutAssetLayout.workerAgentsMd),
+        hash: sha256File(join(input.scoutAssetsRoot, ScoutAssetLayout.workerAgentsMd)),
       }]),
     ...input.customAgentPaths.map((path) => ({
       path: join(".codex", "agents", `${customAgentNameFromPath(path)}.toml`),
-      sourcePath: assetSourcePath(path),
-      hash: sha256File(join(input.assetsRoot, path)),
+      sourcePath: codexAgentRuntimeAssetSourcePath(path),
+      hash: sha256File(join(input.agentRuntimeAssetsRoot, path)),
     })),
   ];
 

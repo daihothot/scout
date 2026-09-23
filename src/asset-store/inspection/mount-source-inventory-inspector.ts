@@ -1,6 +1,7 @@
 import { sha256File } from "../../core/fs.js";
+import { join } from "node:path";
 import type { MountManifest } from "../contracts/manifest.js";
-import { CodexAssetLayout } from "../assets/asset-layout.js";
+import { ScoutAssetLayout } from "../assets/asset-layout.js";
 import {
   resolveAssetRelativePath,
 } from "../files/asset-paths.js";
@@ -19,7 +20,7 @@ export class MountSourceInventoryInspector {
   inspect(): string | undefined {
     return runInspectionCheck(
       "source inventory verification",
-      this.context.assetsRoot,
+      join(this.context.scoutRoot, "assets"),
       () => {
         const expected = this.buildExpectedInventory();
         const actual = this.manifest.assets;
@@ -45,7 +46,7 @@ export class MountSourceInventoryInspector {
           // Device-owned tool registries and the graph source are provenance,
           // not effective mount resources. Their selected projections are
           // validated through the concrete tool and Agent Profile entries.
-          if (expectedAsset.id !== "codex.shell_tools"
+          if (expectedAsset.id !== "scout.shell_tools"
             && expectedAsset.type !== "workflow_profile"
             && actualAsset.hash !== expectedAsset.hash) {
             return `asset hash changed: ${expectedAsset.id}`;
@@ -61,7 +62,8 @@ export class MountSourceInventoryInspector {
     return new MountManifestBuilder({
       agentId: context.agentId,
       agentProfile: context.agentProfile,
-      assetsRoot: context.assetsRoot,
+      scoutAssetsRoot: context.scoutAssetsRoot,
+      agentRuntimeAssetsRoot: context.agentRuntimeAssetsRoot,
       mcpServerContracts: context.profiledMcpServers,
       shellToolContracts: context.profiledShellTools,
       customAgentPaths: context.profiledCustomAgentPaths,
@@ -69,7 +71,7 @@ export class MountSourceInventoryInspector {
       pluginPaths: context.profiledPluginPaths,
       workflowProfileAsset: context.workflowProfileAsset,
       shellToolsRegistryHash: sha256File(
-        resolveAssetRelativePath(CodexAssetLayout.shellTools, context.assetsRoot),
+        resolveAssetRelativePath(ScoutAssetLayout.shellTools, context.scoutAssetsRoot),
       ),
     }).buildAssetInventory();
   }

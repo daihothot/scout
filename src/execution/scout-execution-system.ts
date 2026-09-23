@@ -217,9 +217,10 @@ class AppPilotProcess implements AppPilotProcessHandle {
     const executable = options.executable ?? join(
       options.cwd,
       "assets",
-      "codex",
+      "scout",
       "plugins",
       "apppilot",
+      ".codex",
       "runtime",
       "apppilot",
     );

@@ -29,9 +29,14 @@ const scoutRoot = process.cwd();
 test("AgentsStage starts all role threads in parallel on the installed RunScope", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-boot-agents-"));
   mkdirSync(join(root, "assets"), { recursive: true });
-  cpSync(join(scoutRoot, "assets", "codex"), join(root, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "scout"), join(root, "assets", "scout"), {
     recursive: true,
   });
+  cpSync(
+    join(scoutRoot, "assets", "agent-runtimes"),
+    join(root, "assets", "agent-runtimes"),
+    { recursive: true },
+  );
   const runId = "boot-agents-test";
   const startedThreads: string[] = [];
   const appServer = createAppServer((options) => {
@@ -101,9 +106,14 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
 test("AgentsStage closes started threads when another Agent fails to start", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-boot-agents-failure-"));
   mkdirSync(join(root, "assets"), { recursive: true });
-  cpSync(join(scoutRoot, "assets", "codex"), join(root, "assets", "codex"), {
+  cpSync(join(scoutRoot, "assets", "scout"), join(root, "assets", "scout"), {
     recursive: true,
   });
+  cpSync(
+    join(scoutRoot, "assets", "agent-runtimes"),
+    join(root, "assets", "agent-runtimes"),
+    { recursive: true },
+  );
   const runId = "boot-agents-failure-test";
   const appServer = createAppServer((options) => {
     const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>

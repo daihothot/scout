@@ -7,8 +7,8 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { sha256File } from "../../core/fs.js";
 import { isPathWithin } from "../../core/path.js";
 import type { MountManifest } from "../contracts/manifest.js";
+import { CodexAgentRuntimeAssetLayout } from "../assets/asset-layout.js";
 import {
-  resolveAssetLocalPath,
   resolveAssetRelativePath,
 } from "../files/asset-paths.js";
 import type { MountContext } from "../contracts/mount-context.js";
@@ -25,7 +25,11 @@ export class MountFilesystemInspector {
   /** Runs filesystem checks in increasing cost order. */
   inspect(): string | undefined {
     return this.check("mount layout", this.context.mountRoot, () => this.checkLayout())
-      ?? this.check("asset source", this.context.assetsRoot, () => this.checkAssetSources())
+      ?? this.check(
+        "asset source",
+        join(this.context.scoutRoot, "assets"),
+        () => this.checkAssetSources(),
+      )
       ?? this.check("linked files", this.context.mountRoot, () => this.checkLinkedFiles())
       ?? this.check("Skill links", join(this.context.mountRoot, ".scout", "skill"), () => this.checkSkillLinks())
       ?? this.check("plugin links", join(this.context.mountRoot, "plugins"), () => this.checkPluginLinks());
@@ -74,9 +78,9 @@ export class MountFilesystemInspector {
   private checkAssetSources(): string | undefined {
     if (!Array.isArray(this.manifest.assets)) return "asset inventory is not an array";
     for (const asset of this.manifest.assets) {
-      if (asset.id === "codex.shell_tools" && asset.type === "shell_tool_contract") continue;
-      const source = resolveAssetLocalPath(asset.sourcePath, this.context.assetsRoot);
-      if (!isPathWithin(this.context.assetsRoot, source)) {
+      if (asset.id === "scout.shell_tools" && asset.type === "shell_tool_contract") continue;
+      const source = resolve(this.context.scoutRoot, asset.sourcePath);
+      if (!this.isKnownAssetSource(source)) {
         return `asset source escapes assets root: ${asset.sourcePath}`;
       }
       lstatSync(source);
@@ -94,7 +98,7 @@ export class MountFilesystemInspector {
       const stat = lstatSync(target);
       if (!stat.isSymbolicLink()) return `linked file is not a symlink: ${linked.path}`;
       const expected = resolve(this.context.scoutRoot, linked.sourcePath);
-      if (!isPathWithin(this.context.assetsRoot, expected)) {
+      if (!this.isKnownAssetSource(expected)) {
         return `linked source escapes assets root: ${linked.sourcePath}`;
       }
       const actualTarget = resolve(dirname(target), readlinkSync(target));
@@ -137,7 +141,10 @@ export class MountFilesystemInspector {
       const skillPath = sourcePathsByName.get(skill.name);
       if (!skillPath) return `Skill source path is missing: ${skill.name}`;
       const linkPath = join(this.context.mountRoot, dirname(skill.path));
-      const expectedTarget = resolveAssetRelativePath(dirname(skillPath), this.context.assetsRoot);
+      const expectedTarget = resolveAssetRelativePath(
+        dirname(skillPath),
+        this.context.scoutAssetsRoot,
+      );
       if (!isCurrentSymlink(linkPath, expectedTarget)) return `Skill link changed: ${skill.path}`;
     }
     return undefined;
@@ -152,10 +159,18 @@ export class MountFilesystemInspector {
     for (const pluginPath of this.context.profiledPluginPaths) {
       const name = basename(pluginPath);
       const linkPath = join(directory, name);
-      const expectedTarget = resolveAssetRelativePath(pluginPath, this.context.assetsRoot);
+      const expectedTarget = resolveAssetRelativePath(
+        join(pluginPath, CodexAgentRuntimeAssetLayout.pluginOverlay),
+        this.context.scoutAssetsRoot,
+      );
       if (!isCurrentSymlink(linkPath, expectedTarget)) return `plugin link changed: ${name}`;
     }
     return undefined;
+  }
+
+  private isKnownAssetSource(path: string): boolean {
+    return isPathWithin(this.context.scoutAssetsRoot, path)
+      || isPathWithin(this.context.agentRuntimeAssetsRoot, path);
   }
 }
 

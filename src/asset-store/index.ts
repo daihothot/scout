@@ -16,6 +16,7 @@ export { ScoutSkillTypes } from "./contracts/skill.js";
 export type * from "./contracts/skill.js";
 export type * from "./contracts/workflow-profile.js";
 export { resolveAssetLocalPath } from "./files/asset-paths.js";
+export * from "./files/asset-json-reader.js";
 export * from "./materialize.js";
 export * from "./mount/macros.js";
 export * from "./mount/preflight.js";

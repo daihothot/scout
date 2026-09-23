@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-const script = join(process.cwd(), "assets/codex/skills/domain-rbt-review-pack/scripts/render-review-report.mjs");
+const script = join(process.cwd(), "assets/scout/skills/domain-rbt-review-pack/scripts/render-review-report.mjs");
 
 test("RBT review report help succeeds without input files", () => {
   for (const helpFlag of ["--help", "-h"]) {

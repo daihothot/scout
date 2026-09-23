@@ -16,7 +16,10 @@ import type { MaterializeOptions } from "../contracts/materialization.js";
 import type { MountContext } from "../contracts/mount-context.js";
 import type { ShellToolContract } from "../contracts/resources.js";
 import type { MaterializedSkill, ResolvedScoutSkillCatalogEntry } from "../contracts/skill.js";
-import { CodexAssetLayout } from "../assets/asset-layout.js";
+import {
+  CodexAgentRuntimeAssetLayout,
+  ScoutAssetLayout,
+} from "../assets/asset-layout.js";
 import { SynthesisPhase } from "../../core/workflow/index.js";
 import { McpServerBuilder } from "../builders/mcp-server-builder.js";
 import { MountGeneratedFilesBuilder } from "../builders/mount-generated-files-builder.js";
@@ -81,7 +84,8 @@ export class MountMaterializer {
     const context = this.context;
     const {
       scoutRoot,
-      assetsRoot,
+      scoutAssetsRoot,
+      agentRuntimeAssetsRoot,
       runId,
       runRoot,
       agentId,
@@ -105,7 +109,9 @@ export class MountMaterializer {
       readableRoots,
       writableRoots,
     } = context;
-    const shellToolsRegistryHash = sha256File(join(assetsRoot, CodexAssetLayout.shellTools));
+    const shellToolsRegistryHash = sha256File(
+      join(scoutAssetsRoot, ScoutAssetLayout.shellTools),
+    );
     if (
       options.persistedIdentity
       && options.persistedIdentity.resourceHash !== computedResourceHash
@@ -139,7 +145,7 @@ export class MountMaterializer {
 
     const builtMcpServers = new McpServerBuilder({
       mountRoot,
-      assetsRoot,
+      assetsRoot: scoutAssetsRoot,
       tempRoot,
       dynamicValues: createMountMacroValues({
         scoutRoot,
@@ -155,15 +161,18 @@ export class MountMaterializer {
       chmodSync(builtServer.server.wrapperPath, 0o755);
     }
     const materializedMcpServers = builtMcpServers.map(({ server }) => server);
-    safeSymlink(join(assetsRoot, CodexAssetLayout.agentsMd), join(mountRoot, "AGENTS.md"));
+    safeSymlink(
+      join(scoutAssetsRoot, ScoutAssetLayout.agentsMd),
+      join(mountRoot, "AGENTS.md"),
+    );
     if (agentProfile.phases.includes(SynthesisPhase)) {
       safeSymlink(
-        join(assetsRoot, CodexAssetLayout.coordinatorAgentsMd),
+        join(scoutAssetsRoot, ScoutAssetLayout.coordinatorAgentsMd),
         join(mountRoot, "agents", "coordinator.AGENTS.md"),
       );
     } else {
       safeSymlink(
-        join(assetsRoot, CodexAssetLayout.workerAgentsMd),
+        join(scoutAssetsRoot, ScoutAssetLayout.workerAgentsMd),
         join(mountRoot, "agents", "worker.AGENTS.md"),
       );
     }
@@ -171,7 +180,7 @@ export class MountMaterializer {
 
     const generatedFiles = new MountGeneratedFilesBuilder(
       context,
-      readFileSync(join(assetsRoot, agentProfile.config), "utf8"),
+      readFileSync(join(agentRuntimeAssetsRoot, agentProfile.config), "utf8"),
       materializedMcpServers,
     ).build();
     const generatedContent = (path: string): string => {
@@ -189,17 +198,25 @@ export class MountMaterializer {
     );
     options.onMaterializationStep?.("config");
 
-    const customAgentNames = materializeCustomAgents(assetsRoot, mountRoot, profiledCustomAgentPaths);
+    const customAgentNames = materializeCustomAgents(
+      agentRuntimeAssetsRoot,
+      mountRoot,
+      profiledCustomAgentPaths,
+    );
     const materializedSkills = materializeSkills(
-      assetsRoot,
+      scoutAssetsRoot,
       mountRoot,
       profiledSkillPaths,
       skillCatalog,
     );
     options.onMaterializationStep?.("skills");
-    const pluginNames = materializePlugins(assetsRoot, mountRoot, profiledPluginPaths);
+    const pluginNames = materializePlugins(scoutAssetsRoot, mountRoot, profiledPluginPaths);
     options.onMaterializationStep?.("plugins");
-    const shellBuild = new ShellToolBuilder(mountRoot, assetsRoot, tempRoot).build(profiledShellTools);
+    const shellBuild = new ShellToolBuilder(
+      mountRoot,
+      scoutAssetsRoot,
+      tempRoot,
+    ).build(profiledShellTools);
     for (const builtTool of shellBuild.tools) {
       writeTextFile(builtTool.wrapperPath, builtTool.wrapperContent);
       chmodSync(builtTool.wrapperPath, 0o755);
@@ -213,7 +230,8 @@ export class MountMaterializer {
     const manifestBuilder = new MountManifestBuilder({
       agentId,
       agentProfile,
-      assetsRoot,
+      scoutAssetsRoot,
+      agentRuntimeAssetsRoot,
       mcpServerContracts: profiledMcpServers,
       shellToolContracts: profiledShellTools,
       customAgentPaths: profiledCustomAgentPaths,
@@ -332,7 +350,10 @@ function materializePlugins(assetsRoot: string, mountRoot: string, plugins: stri
   return plugins.map((pluginPath) => {
     const source = resolveAssetRelativePath(pluginPath, assetsRoot);
     const name = basename(source);
-    safeSymlink(source, join(mountRoot, "plugins", name));
+    safeSymlink(
+      join(source, CodexAgentRuntimeAssetLayout.pluginOverlay),
+      join(mountRoot, "plugins", name),
+    );
     return name;
   });
 }

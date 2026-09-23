@@ -64,9 +64,11 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   installTestCodexHome(t, true, "bearer");
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-boot-clients-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
-    recursive: true,
-  });
+  cpSync(
+    join(scoutRoot, "assets", "agent-runtimes"),
+    join(fixtureRoot, "assets", "agent-runtimes"),
+    { recursive: true },
+  );
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
@@ -123,7 +125,7 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   const coordinatorArtifact = resolve(runRoot, "agents", "coordinator", "artifacts");
   const researcherArtifact = resolve(runRoot, "agents", "researcher", "artifacts");
   const researcherTemp = resolve(runRoot, "agents", "researcher", "tmp");
-  const logicalSkillRoot = resolve(fixtureRoot, "assets", "codex", "skills");
+  const logicalSkillRoot = resolve(fixtureRoot, "assets", "scout", "skills");
   const researcherSkillRoot = join(logicalSkillRoot, "domain-validation-researcher");
   const coordinatorSkillRoot = join(logicalSkillRoot, "domain-validation-coordinator");
   const coordinatorPermissions = stage.rootConfig.permissionProfiles.coordinator;
@@ -147,10 +149,10 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   assert.ok(researcherPermissions?.readableRoots.includes(realpathSync(researcherSkillRoot)));
   assert.equal(researcherPermissions?.readableRoots.includes(coordinatorSkillRoot), false);
   assert.ok(coordinatorPermissions?.readableRoots.includes(
-    realpathSync(join(fixtureRoot, "assets", "codex", "agents", "AGENTS.md")),
+    realpathSync(join(fixtureRoot, "assets", "scout", "agents", "AGENTS.md")),
   ));
   assert.ok(coordinatorPermissions?.readableRoots.includes(
-    realpathSync(join(fixtureRoot, "assets", "codex", "tools")),
+    realpathSync(join(fixtureRoot, "assets", "scout", "tools")),
   ));
   assert.ok(coordinatorPermissions?.readableRoots.includes(
     resolve(process.execPath, "..", ".."),
@@ -291,9 +293,11 @@ test("RunAppServerStage preserves its owned client when a second start cannot in
   installTestCodexHome(t);
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-boot-clients-failure-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
-    recursive: true,
-  });
+  cpSync(
+    join(scoutRoot, "assets", "agent-runtimes"),
+    join(fixtureRoot, "assets", "agent-runtimes"),
+    { recursive: true },
+  );
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
@@ -330,9 +334,11 @@ test("RunAppServerStage rejects a missing target model provider without falling 
   installTestCodexHome(t, false);
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-boot-clients-provider-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
-    recursive: true,
-  });
+  cpSync(
+    join(scoutRoot, "assets", "agent-runtimes"),
+    join(fixtureRoot, "assets", "agent-runtimes"),
+    { recursive: true },
+  );
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });
@@ -371,9 +377,11 @@ test("RunAppServerStage rebinds target Codex auth without retaining copied crede
   const targetAuthPath = installTestCodexHome(t, true, "auth");
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-boot-clients-auth-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
-  cpSync(join(scoutRoot, "assets", "codex"), join(fixtureRoot, "assets", "codex"), {
-    recursive: true,
-  });
+  cpSync(
+    join(scoutRoot, "assets", "agent-runtimes"),
+    join(fixtureRoot, "assets", "agent-runtimes"),
+    { recursive: true },
+  );
   cpSync(join(scoutRoot, "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
   });

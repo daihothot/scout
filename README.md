@@ -107,7 +107,7 @@ The repository-level configuration selects one workflow profile:
 }
 ```
 
-Workflow profiles live in `assets/codex/workflows/`. A profile declares roles,
+Workflow profiles live in `assets/scout/workflows/`. A profile declares roles,
 phase transitions, resources, filesystem access, network access, and model
 settings. The selected domain supplies its lifecycle and Dynamic Tools. Scout
 materializes the resolved Agent resources into each run-local mount before that

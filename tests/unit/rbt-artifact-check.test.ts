@@ -5,8 +5,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-const tool = join(process.cwd(), "assets/codex/tools/scout-rbt-artifact-check/cli.cjs");
-const templates = join(process.cwd(), "assets/codex/skills/domain-rbt-execution-pack/templates");
+const tool = join(process.cwd(), "assets/scout/tools/scout-rbt-artifact-check/cli.cjs");
+const templates = join(process.cwd(), "assets/scout/skills/domain-rbt-execution-pack/templates");
 
 test("scout-rbt-artifact-check help succeeds without a pack", () => {
   for (const helpFlag of ["--help", "-h"]) {

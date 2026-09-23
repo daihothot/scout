@@ -53,7 +53,12 @@ export function assertMountPathSegment(value: string, label: string): void {
 
 /** Converts an asset-relative path into the portable source path recorded in manifests. */
 export function assetSourcePath(assetPath: string): string {
-  return join("assets", "codex", assetPath);
+  return join("assets", "scout", assetPath);
+}
+
+/** Converts a Codex Runtime-relative path into portable repository identity. */
+export function codexAgentRuntimeAssetSourcePath(assetPath: string): string {
+  return join("assets", "agent-runtimes", "codex", assetPath);
 }
 
 /** Extracts the Codex custom-agent name represented by a TOML asset path. */

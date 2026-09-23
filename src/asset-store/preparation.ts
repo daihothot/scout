@@ -30,7 +30,8 @@ interface CachedMountInspection {
   manifestFileFingerprint: string;
   runtimeBindingFingerprint: string;
   assetsLinkFingerprint: string;
-  assetsFingerprint: string;
+  scoutAssetsFingerprint: string;
+  agentRuntimeAssetsFingerprint: string;
   mountFingerprint: string;
   artifactFingerprint: string;
   logsFingerprint: string;
@@ -61,7 +62,10 @@ export class MountPreparation {
       ({ existingManifest, inspection } = inspectMountState(context, options));
     } else if (captureAssetsLinkFingerprint(cached.context.scoutRoot)
       !== cached.assetsLinkFingerprint
-      || capturePathFingerprint(cached.context.assetsRoot) !== cached.assetsFingerprint) {
+      || capturePathFingerprint(cached.context.scoutAssetsRoot)
+        !== cached.scoutAssetsFingerprint
+      || capturePathFingerprint(cached.context.agentRuntimeAssetsRoot)
+        !== cached.agentRuntimeAssetsFingerprint) {
       context = new MountContextBuilder(options).build();
       ({ existingManifest, inspection } = inspectMountState(context, options));
     } else {
@@ -136,7 +140,8 @@ export class MountPreparation {
       manifestFileFingerprint: mountManifestFileFingerprint(manifestFile),
       runtimeBindingFingerprint: runtimeBindingFingerprint(context),
       assetsLinkFingerprint: captureAssetsLinkFingerprint(context.scoutRoot),
-      assetsFingerprint: capturePathFingerprint(context.assetsRoot),
+      scoutAssetsFingerprint: capturePathFingerprint(context.scoutAssetsRoot),
+      agentRuntimeAssetsFingerprint: capturePathFingerprint(context.agentRuntimeAssetsRoot),
       mountFingerprint: capturePathFingerprint(context.mountRoot),
       artifactFingerprint: captureRootFingerprint(context.artifactRoot),
       logsFingerprint: captureRootFingerprint(context.logsRoot),
