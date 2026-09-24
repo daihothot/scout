@@ -11,12 +11,12 @@
 ## Why Scout
 
 General Agent loops are good at exploring a task, but high-quality delivery also
-requires stable responsibilities, bounded tools, explicit quality gates, and
+requires stable responsibilities, bounded tools, explicit completion rules, and
 artifacts that another participant can inspect. Scout provides that execution
 framework for domain-specific work.
 
 - **Domain-first** — each domain owns its workflow, terminology, tools, evidence,
-  gates, and definition of a complete delivery.
+  and definition of a complete delivery.
 - **End-to-end** — Scout carries one request from intent through specialist work,
   runtime execution, review, correction, and final outcome.
 - **Role-isolated** — every Agent receives its own mount, artifact root, log root,
@@ -30,18 +30,17 @@ framework for domain-specific work.
 
 ## How Scout works
 
-Scout keeps the framework generic and lets each domain define what high-quality
-delivery means.
+Scout executes a domain-defined workflow to turn a request into a durable,
+runtime-backed, high-quality deliverable.
 
 ```mermaid
-flowchart LR
-    I[Domain request] --> W[Workflow contract]
-    W --> A[Specialist Agents]
-    A --> T[Domain tools]
-    T --> D[Delivery artifacts]
-    D --> G[Quality gates]
-    G --> O[Final outcome]
-    G -. Correction .-> A
+flowchart TB
+    I["Domain request"]
+    W["Domain-defined workflow<br/>Custom roles · phases · transitions"]
+    E["Controlled execution<br/>Isolated Agents · runtime tools"]
+    D["High-quality deliverable<br/>Durable artifacts · runtime evidence"]
+
+    I --> W --> E --> D
 ```
 
 The core model is intentionally small:
@@ -49,12 +48,12 @@ The core model is intentionally small:
 | Contract | Responsibility |
 | --- | --- |
 | Workflow profile | Declares roles, phases, transitions, resources, and model settings. |
-| Domain | Owns domain lifecycle, Dynamic Tools, gates, and delivery semantics. |
+| Domain | Owns domain lifecycle, Dynamic Tools, journal projection, and delivery semantics. |
 | Role | Owns one bounded responsibility and its artifacts. |
 | Skill | Teaches an Agent how to perform and hand off that responsibility. |
 | Tool | Performs a concrete operation through an explicit runtime boundary. |
 | Artifact | Preserves the work product exchanged between roles or inspected by people. |
-| Gate | Decides whether the workflow advances, requests correction, or stops. |
+| Phase outcome | Reports `completed` or `error`; workflow transitions select the next phase or finish the cycle. |
 
 ### Current reference domain
 
@@ -69,7 +68,8 @@ report.
 ### Prerequisites
 
 - Node.js and npm
-- A working Codex configuration and authentication under `~/.codex`
+- Codex configuration under `~/.codex` and the credentials required by the
+  selected model provider
 - Any external runtime required by the selected domain workflow
 
 ### Start a workflow
@@ -131,4 +131,4 @@ Scout is under active development. The framework currently proves its
 domain-specific delivery model through a real local RBT implementation. New
 domains can reuse the same orchestration, isolation, interaction, persistence,
 telemetry, and resume infrastructure while defining their own roles, tools,
-artifacts, gates, and completion contract.
+artifacts, and completion contract.
