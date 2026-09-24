@@ -1,11 +1,34 @@
 import type { DynamicToolCallResponse } from "../../agent-server/types.js";
-import { currentRunScope } from "../../run/run-scope.js";
+import type {
+  ExecutionPlatformIdentity,
+  ExecutionPlatformRequest,
+} from "../../execution/index.js";
 import type { ScoutDomainDynamicToolCall } from "../types.js";
 
 type ExecutionPlatformOperation = "launch" | "shutdown";
+type ExecutionTargetResult =
+  | { ok: true; identity: ExecutionPlatformIdentity; started: boolean }
+  | { ok: false; code: string; message: string };
+
+interface ExecutionTargetGate {
+  resolve(request: ExecutionPlatformRequest): Promise<ExecutionTargetResult>;
+  ensureStarted(
+    request: ExecutionPlatformRequest,
+    identity: ExecutionPlatformIdentity,
+  ): Promise<ExecutionTargetResult>;
+  ensureStopped(
+    request: ExecutionPlatformRequest,
+    identity: ExecutionPlatformIdentity,
+  ): Promise<ExecutionTargetResult>;
+}
 
 /** Adapts the Agent-facing execution contract to the shared platform Port. */
 export class ExecutionPlatformTool {
+  constructor(
+    private readonly executionRequest: () => ExecutionPlatformRequest,
+    private readonly executionTargetGate: ExecutionTargetGate,
+  ) {}
+
   async execute(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
     const input = call.input.arguments;
     if (!isRecord(input)) {
@@ -34,10 +57,12 @@ export class ExecutionPlatformTool {
       });
     }
 
-    const platform = currentRunScope().executionSystem;
+    const request = this.executionRequest();
+    const identified = await this.executionTargetGate.resolve(request);
+    if (!identified.ok) return failure(operation, identified.code, identified.message);
     const result = operation === "launch"
-      ? await platform.launch()
-      : await platform.shutdown();
+      ? await this.executionTargetGate.ensureStarted(request, identified.identity)
+      : await this.executionTargetGate.ensureStopped(request, identified.identity);
     return result.ok
       ? response(true, {
         operation,

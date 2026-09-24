@@ -67,6 +67,7 @@ export async function createDomainRuntime(domainId: string): Promise<ScoutDomain
         && typeof (eventType as { is?: unknown }).is === "function"
       ))
       || typeof journal.project !== "function"
+      || (journal.aggregate !== undefined && typeof journal.aggregate !== "function")
     )
   ) {
     throw new Error(`Workflow domain ${domainId} returned an invalid Domain journal.`);

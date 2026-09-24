@@ -24,6 +24,7 @@ import {
   RbtAgentDynamicToolBackend,
   RbtDomain,
   RbtEvents,
+  JarvisBehaviorExecutionTargetGate,
 } from "../../src/domain/rbt/index.js";
 import {
   DomainEvents,
@@ -33,15 +34,20 @@ import {
   ScoutExecutionSystem,
   type ExecutionPlatformIdentity,
   type ExecutionPlatformPort,
+  type ExecutionPlatformRequest,
 } from "../../src/execution/scout-execution-system.js";
+import { AppPilotExecutionHandler } from "../../src/execution/handlers/apppilot/index.js";
+import { ExecutionEvents } from "../../src/execution/execution-events.js";
+import type { ExecutionHandlerValue } from "../../src/execution/execution-handler.js";
 import type { ScoutDomainDynamicToolCall } from "../../src/domain/types.js";
 import type { RunEnvironment } from "../../src/run/types.js";
+import { currentRunScope } from "../../src/run/run-scope.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
 test("RBT Domain exposes behavior execution and final platform shutdown by Phase", (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
-  installTestRunScope(t, {
+  const scope = installTestRunScope(t, {
     runId: "run-rbt-tools",
     eventBus,
     domain,
@@ -61,39 +67,148 @@ test("RBT Domain exposes behavior execution and final platform shutdown by Phase
   assert.deepEqual(domain.dynamicToolsForPhase("Synthesis"), []);
 });
 
-test("ScoutExecutionSystem owns and reuses the connected transport session", async () => {
+test("ScoutExecutionSystem routes caller-owned identities through one run Handler", async () => {
   const operations: string[] = [];
   const identity: ExecutionPlatformIdentity = {
     type: "unity_editor",
     version: "6000.0.80f1",
   };
-  const system = new ScoutExecutionSystem({
-    async invoke(args) {
-      const operation = args[0] ?? "unknown";
+  const selection = { transport: "unity-pipeline", platform: identity };
+  const system = await ScoutExecutionSystem.start({
+    async start() {
+      operations.push("start");
+    },
+    async invoke(invocation) {
+      const operation = invocation.operation;
       operations.push(operation);
       return operation === "identify"
         ? appPilotIdentityResponse(identity)
-        : { id: operation, ok: true };
+        : { ok: true };
     },
     async close() {
       operations.push("close");
     },
   });
 
-  assert.deepEqual(await system.launch(), { ok: true, identity });
-  assert.deepEqual(await system.launch(), { ok: true, identity });
-  assert.deepEqual(operations, ["identify", "launch", "launch"]);
+  assert.deepEqual(await system.identify(), { ok: true, identity });
+  assert.deepEqual(await system.launch({ identity: selection }), { ok: true, identity });
+  assert.deepEqual(await system.launch({ identity: selection }), { ok: true, identity });
+  assert.deepEqual(operations, ["start", "identify", "launch", "launch"]);
 
-  assert.deepEqual(await system.shutdown(), { ok: true, identity });
+  assert.deepEqual(await system.shutdown({ identity: selection }), { ok: true, identity });
   assert.deepEqual(operations, [
+    "start",
     "identify",
     "launch",
     "launch",
     "shutdown",
   ]);
 
-  assert.deepEqual(await system.shutdown(), { ok: true, identity });
-  assert.deepEqual(operations.slice(-2), ["identify", "shutdown"]);
+  assert.deepEqual(await system.shutdown({ identity: selection }), { ok: true, identity });
+  assert.deepEqual(operations.slice(-2), ["shutdown", "shutdown"]);
+});
+
+test("AppPilot Handler passes one explicit identity to each independent CLI process", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-apppilot-handler-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const scriptPath = join(root, "fake-apppilot.mjs");
+  const callsPath = join(root, "calls.jsonl");
+  writeFileSync(scriptPath, [
+    'import { appendFileSync } from "node:fs";',
+    "const args = process.argv.slice(2);",
+    `appendFileSync(${JSON.stringify(callsPath)}, JSON.stringify(args) + "\\n");`,
+    'const idIndex = args.indexOf("--id");',
+    'process.stdout.write(JSON.stringify({ id: args[idIndex + 1], ok: true }) + "\\n");',
+  ].join("\n"), "utf8");
+  const handler = new AppPilotExecutionHandler({
+    cwd: root,
+    executable: process.execPath,
+    baseArgs: [scriptPath],
+  });
+  const identity = {
+    transport: "adb",
+    platform: { type: "android", version: "17" },
+  };
+
+  await handler.start();
+  assert.deepEqual(await handler.invoke({
+    operation: "launch",
+    identity,
+    parameters: { appId: "com.example.app" },
+  }), { ok: true });
+  assert.deepEqual(await handler.invoke({
+    operation: "shutdown",
+    identity,
+    parameters: { appId: "com.example.app" },
+  }), { ok: true });
+  await handler.close();
+
+  const calls = readFileSync(callsPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.deepEqual(calls.map((args) => args[0]), ["launch", "shutdown"]);
+  for (const args of calls) {
+    const identityIndex = args.indexOf("--identity");
+    assert.deepEqual(JSON.parse(args[identityIndex + 1]), identity);
+  }
+});
+
+test("Execution Commands validate Android parameters when the semantic is invoked", async () => {
+  const calls: Array<{ operation: string; parameters: Readonly<Record<string, ExecutionHandlerValue>> }> = [];
+  const identity: ExecutionPlatformIdentity = { type: "android", version: "16" };
+  const selection = { transport: "adb", platform: identity };
+  const system = await ScoutExecutionSystem.start({
+    async start() {},
+    async invoke(invocation) {
+      calls.push(invocation);
+      return invocation.operation === "identify"
+        ? {
+          ok: true,
+          value: {
+            transport: "adb",
+            platform: { type: identity.type, version: identity.version },
+          },
+        }
+        : { ok: true };
+    },
+    async close() {},
+  });
+
+  assert.deepEqual(await system.launch({ identity: selection }), {
+    ok: false,
+    code: "execution_launch_invalid_input",
+    message: "Android launch requires appId.",
+  });
+  assert.deepEqual(await system.identify({ transport: "adb", platform: "android" }), {
+    ok: true,
+    identity,
+  });
+  assert.deepEqual(await system.launch({ identity: selection }), {
+    ok: false,
+    code: "execution_launch_invalid_input",
+    message: "Android launch requires appId.",
+  });
+  assert.deepEqual(await system.launch({
+    identity: selection,
+    appId: "com.example.app",
+    parameters: {
+      guru_debug: "true",
+      guru_ws_client_ip_port: "127.0.0.1:18083",
+    },
+  }), { ok: true, identity });
+  assert.deepEqual(calls, [
+    { operation: "identify", parameters: { transport: "adb" } },
+    {
+      operation: "launch",
+      identity: selection,
+      parameters: {
+        appId: "com.example.app",
+        launchParameters: {
+          guru_debug: "true",
+          guru_ws_client_ip_port: "127.0.0.1:18083",
+        },
+      },
+    },
+  ]);
+  await system.dispose();
 });
 
 test("ScoutExecutionSystem serializes lifecycle operations and closes before disposal", async () => {
@@ -102,30 +217,35 @@ test("ScoutExecutionSystem serializes lifecycle operations and closes before dis
     type: "unity_editor",
     version: "6000.0.80f1",
   };
+  const selection = { transport: "unity-pipeline", platform: identity };
   let activeOperations = 0;
   let maximumActiveOperations = 0;
-  const system = new ScoutExecutionSystem({
-    async invoke(args) {
+  const system = await ScoutExecutionSystem.start({
+    async start() {
+      operations.push("start");
+    },
+    async invoke(invocation) {
       activeOperations += 1;
       maximumActiveOperations = Math.max(maximumActiveOperations, activeOperations);
-      const operation = args[0] ?? "unknown";
+      const operation = invocation.operation;
       operations.push(operation);
       await new Promise<void>((resolve) => setImmediate(resolve));
       activeOperations -= 1;
       return operation === "identify"
         ? appPilotIdentityResponse(identity)
-        : { id: operation, ok: true };
+        : { ok: true };
     },
     async close() {
       operations.push("close");
     },
   });
 
-  const firstLaunch = system.launch();
-  const secondLaunch = system.launch();
+  assert.deepEqual(await system.identify(), { ok: true, identity });
+  const firstLaunch = system.launch({ identity: selection });
+  const secondLaunch = system.launch({ identity: selection });
   const disposal = system.dispose();
 
-  assert.deepEqual(await system.launch(), {
+  assert.deepEqual(await system.launch({ identity: selection }), {
     ok: false,
     code: "execution_system_disposed",
     message: "The Scout execution system has been disposed.",
@@ -134,27 +254,34 @@ test("ScoutExecutionSystem serializes lifecycle operations and closes before dis
   assert.deepEqual(await secondLaunch, { ok: true, identity });
   await disposal;
 
-  assert.deepEqual(operations, ["identify", "launch", "launch", "shutdown", "close"]);
+  assert.deepEqual(operations, [
+    "start",
+    "identify",
+    "launch",
+    "launch",
+    "close",
+  ]);
   assert.equal(maximumActiveOperations, 1);
 });
 
 test("ExecutionPlatform Agent tool delegates lifecycle work through RunScope", async (t) => {
   const identity: ExecutionPlatformIdentity = { type: "android", version: "34" };
   const operations: string[] = [];
+  const eventBus = new InMemoryEventBus();
   installTestRunScope(t, {
     runId: "run-execution-platform-tool",
-    executionSystem: {
-      async launch() {
-        operations.push("launch");
-        return { ok: true, identity };
-      },
-      async shutdown() {
-        operations.push("shutdown");
-        return { ok: true, identity };
-      },
-    },
+    eventBus,
+    executionSystem: fakeExecutionSystem({
+      identity,
+      onIdentify: () => operations.push("identify"),
+      onLaunch: () => operations.push("launch"),
+      onShutdown: () => operations.push("shutdown"),
+    }),
   });
-  const tool = new ExecutionPlatformTool();
+  const tool = new ExecutionPlatformTool(
+    () => ({}),
+    new JarvisBehaviorExecutionTargetGate(),
+  );
 
   const result = await tool.execute(dynamicCall({
     callId: "call-execution-platform-launch",
@@ -169,7 +296,7 @@ test("ExecutionPlatform Agent tool delegates lifecycle work through RunScope", a
     status: "completed",
     identity,
   });
-  assert.deepEqual(operations, ["launch"]);
+  assert.deepEqual(operations, ["identify", "launch"]);
 });
 
 test("RBT hides ExecutionPlatform from Executor", async (t) => {
@@ -206,27 +333,54 @@ test("RBT hides ExecutionPlatform from Executor", async (t) => {
   assert.match(denied.contentItems[0]?.text ?? "", /ExecutionPlatform is not registered for Phase execute/);
 });
 
-test("RBT Reviewer shuts down the run-scoped execution session", async (t) => {
+test("RBT Reviewer invokes the run-scoped shutdown semantic", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const identity: ExecutionPlatformIdentity = { type: "unity_editor", version: "6000.0.80f1" };
-  const operations: string[] = [];
+  const identity: ExecutionPlatformIdentity = { type: "android", version: "34" };
+  const requests: Array<{ operation: string; request: ExecutionPlatformRequest }> = [];
+  const root = mkdtempSync(join(tmpdir(), "scout-rbt-review-shutdown-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const configRoot = join(root, "assets", "scout", "config");
+  mkdirSync(configRoot, { recursive: true });
+  writeFileSync(join(configRoot, "rbt.config.json"), JSON.stringify({
+    execution: {
+      transport: "adb",
+      platform: "android",
+      appId: "com.example.app",
+    },
+  }), "utf8");
   const domain = new RbtDomain();
-  installTestRunScope(t, {
+  const scope = installTestRunScope(t, {
     runId: "run-rbt-review-shutdown",
+    scoutRoot: root,
+    runRoot: join(root, "run"),
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
-    executionSystem: {
-      async launch() {
-        operations.push("launch");
-        return { ok: true, identity };
+    executionSystem: fakeExecutionSystem({
+      identity,
+      onIdentify: (request) => requests.push({ operation: "identify", request: request ?? {} }),
+      onLaunch: (request) => requests.push({ operation: "launch", request: request ?? {} }),
+      onShutdown: (request) => requests.push({ operation: "shutdown", request: request ?? {} }),
+    }),
+  });
+  scope.domainJournal.append(eventBus.publish(
+    ExecutionEvents.execution.launchCompleted,
+    {
+      correlationId: "restored-launch",
+      request: {
+        identity: { transport: "adb", platform: identity },
+        appId: "com.example.app",
       },
-      async shutdown() {
-        operations.push("shutdown");
-        return { ok: true, identity };
+      result: {
+        ok: true,
+        selection: { transport: "adb", platform: identity },
       },
     },
-  });
+    { occurredAt: "2026-09-24T00:00:00.000Z" },
+  ));
+  await domain.start();
+  domain.restore();
+  t.after(() => domain.stop());
 
   const response = await domain.handleDynamicToolCall(dynamicCall({
     callId: "call-review-shutdown",
@@ -242,7 +396,18 @@ test("RBT Reviewer shuts down the run-scoped execution session", async (t) => {
     status: "completed",
     identity,
   });
-  assert.deepEqual(operations, ["shutdown"]);
+  assert.deepEqual(requests, [
+    {
+      operation: "shutdown",
+      request: {
+        identity: {
+          transport: "adb",
+          platform: identity,
+        },
+        appId: "com.example.app",
+      },
+    },
+  ]);
 });
 
 test("JarvisBehavior prepares Play Mode without an Agent UnityPipeline call", async (t) => {
@@ -352,6 +517,243 @@ test("JarvisBehavior reports Play Mode readiness timeout before WebSocket connec
   const operations = readFileSync(markerPath, "utf8").trim().split("\n");
   assert.deepEqual(operations.slice(0, 3), ["status", "editor_status", "editor_play"]);
   assert.equal(operations.filter((operation) => operation === "editor_play").length, 1);
+});
+
+test("RBT Domain derives Android launch parameters from the identified target", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const root = mkdtempSync(join(tmpdir(), "scout-rbt-android-launch-test-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const configRoot = join(root, "assets", "scout", "config");
+  mkdirSync(configRoot, { recursive: true });
+  writeFileSync(join(configRoot, "rbt.config.json"), JSON.stringify({
+    execution: {
+      transport: "adb",
+      platform: "android",
+      appId: "com.example.app",
+    },
+  }), "utf8");
+
+  const requests: ExecutionPlatformRequest[] = [];
+  let domain!: RbtDomain;
+  const backend = new RbtAgentDynamicToolBackend({
+    executionRequest: () => {
+      const { transport, platform, appId } = domain.config.execution;
+      return {
+        ...(transport ? { transport } : {}),
+        ...(platform ? { platform } : {}),
+        ...(appId ? { appId } : {}),
+      };
+    },
+    jarvisWebSocket: () => new JarvisWebSocketTool(undefined, (linkInput) => ({
+      identity: linkInput.identity,
+      async prepare() {
+        return {
+          ok: true,
+          launchParameters: {
+            guru_debug: "true",
+            guru_ws_client_ip_port: "127.0.0.1:18083",
+          },
+          hostCommands: [],
+        };
+      },
+      async connect() {
+        return {
+          ok: true,
+          endpoint: "ws://127.0.0.1:8083",
+          hostCommands: [],
+        };
+      },
+      async close() {},
+    })),
+  });
+  domain = new RbtDomain(backend);
+  installTestRunScope(t, {
+    runId: "run-rbt-android-launch",
+    scoutRoot: root,
+    runRoot: join(root, "run"),
+    eventBus,
+    domain,
+    scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem({
+      identity: { type: "android", version: "16" },
+      onLaunch: (request) => requests.push(request ?? {}),
+      launchFailure: {
+        code: "expected_test_stop",
+        message: "Stop after observing the launch request.",
+      },
+    }),
+  });
+  await domain.start();
+  t.after(() => domain.stop());
+
+  await domain.handleDynamicToolCall(dynamicCall({
+    callId: "call-android-launch-request",
+    namespace: "rbt_behavior",
+    tool: "JarvisBehavior",
+    arguments: {
+      command: "behavior.registry.nodes",
+      payload: { domain: "Growth", category: "RemoteConfig" },
+    },
+    role: "executor",
+  }));
+
+  assert.deepEqual(requests, [{
+    identity: {
+      transport: "adb",
+      platform: { type: "android", version: "16" },
+    },
+    appId: "com.example.app",
+    parameters: {
+      guru_debug: "true",
+      guru_ws_client_ip_port: "127.0.0.1:18083",
+    },
+  }]);
+});
+
+test("RBT refreshes an already launched target before the first command of each Phase", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const launches: ExecutionPlatformRequest[] = [];
+  const root = mkdtempSync(join(tmpdir(), "scout-rbt-phase-target-refresh-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const gate = new JarvisBehaviorExecutionTargetGate();
+  const websocket = new JarvisWebSocketTool(undefined, (input) => ({
+    identity: input.identity,
+    async prepare() {
+      return { ok: true, launchParameters: {}, hostCommands: [] };
+    },
+    async connect() {
+      return { ok: true, endpoint: "ws://127.0.0.1:8083", hostCommands: [] };
+    },
+    async close() {},
+  }));
+  const request = () => ({
+    transport: "adb",
+    platform: "android",
+    appId: "com.example.app",
+  });
+  const execute = fakeJarvisTool("execute", undefined, {
+    websocket,
+    executionRequest: request,
+    executionTargetGate: gate,
+  });
+  const review = fakeJarvisTool("review", undefined, {
+    websocket,
+    executionRequest: request,
+    executionTargetGate: gate,
+  });
+  const scope = installTestRunScope(t, {
+    runId: "run-rbt-phase-target-refresh",
+    runRoot: join(root, "run"),
+    scoutRoot: root,
+    eventBus,
+    executionSystem: fakeExecutionSystem({
+      identity: { type: "android", version: "17" },
+      onLaunch: (launchRequest) => launches.push(launchRequest ?? {}),
+    }),
+  });
+  const roots = roleRoots(scope.runRoot, "executor");
+  const codebaseRoot = installBehaviorSchema(scope.runRoot);
+  scope.setEnvironment(rbtEnvironment(scope.runId, {
+    executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
+  }));
+  t.after(async () => {
+    await execute.stop();
+    await review.stop();
+  });
+
+  const executeResult = await execute.execute(dynamicCall({
+    callId: "call-phase-refresh-execute",
+    namespace: "rbt_behavior",
+    tool: "JarvisBehavior",
+    arguments: {
+      command: "behavior.registry.nodes",
+      payload: { domain: "Growth", category: "RemoteConfig" },
+    },
+    role: "executor",
+  }) as ScoutDomainDynamicToolCall);
+  const reviewResult = await review.execute(dynamicCall({
+    callId: "call-phase-refresh-review",
+    namespace: "rbt_behavior",
+    tool: "JarvisBehavior",
+    arguments: {
+      command: "behavior.campaign.query",
+      payload: { campaignId: "campaign", scenarioId: "scenario", includeEvidence: true },
+    },
+    role: "reviewer",
+  }) as ScoutDomainDynamicToolCall);
+
+  assert.equal(executeResult.success, true);
+  assert.equal(reviewResult.success, true);
+  assert.equal(launches.length, 2);
+});
+
+test("RBT Domain stops a target after link failure so the next attempt relaunches it", async (t) => {
+  const eventBus = new InMemoryEventBus();
+  const lifecycle: string[] = [];
+  const backend = new RbtAgentDynamicToolBackend({
+    executionRequest: () => ({
+      transport: "adb",
+      platform: "android",
+      appId: "com.example.app",
+    }),
+    jarvisWebSocket: () => new JarvisWebSocketTool(undefined, (linkInput) => ({
+      identity: linkInput.identity,
+      async prepare() {
+        return {
+          ok: true,
+          launchParameters: {
+            guru_debug: "true",
+            guru_ws_client_ip_port: "127.0.0.1:18083",
+          },
+          hostCommands: [],
+        };
+      },
+      async connect() {
+        return {
+          ok: false,
+          code: "websocket_connect_failed",
+          message: "Runtime endpoint unavailable.",
+          hostCommands: [],
+        };
+      },
+      async close() {},
+    })),
+  });
+  const domain = new RbtDomain(backend);
+  installTestRunScope(t, {
+    runId: "run-rbt-link-retry",
+    scoutRoot: process.cwd(),
+    eventBus,
+    domain,
+    scheduler: rbtScheduler(eventBus),
+    executionSystem: fakeExecutionSystem({
+      identity: { type: "android", version: "16" },
+      onLaunch: () => lifecycle.push("launch"),
+      onShutdown: () => lifecycle.push("shutdown"),
+    }),
+  });
+  await domain.start();
+  t.after(() => domain.stop());
+
+  const call = dynamicCall({
+    callId: "call-link-retry",
+    namespace: "rbt_behavior",
+    tool: "JarvisBehavior",
+    arguments: {
+      command: "behavior.registry.nodes",
+      payload: { domain: "Growth", category: "RemoteConfig" },
+    },
+    role: "executor",
+  });
+  const first = await domain.handleDynamicToolCall(call);
+  const second = await domain.handleDynamicToolCall({
+    ...call,
+    input: { ...call.input, callId: "call-link-retry-second" },
+  });
+
+  assert.equal(first?.success, false);
+  assert.equal(second?.success, false);
+  assert.deepEqual(lifecycle, ["launch", "shutdown", "launch", "shutdown"]);
 });
 
 test("Jarvis WebSocket waits for a Runtime endpoint that is starting", async (t) => {
@@ -593,6 +995,7 @@ test("RBT Agent tool-call recorder consumes the shared Domain event", async (t) 
   const domain = new RbtDomain();
   const scope = installTestRunScope(t, {
     runId: "run-rbt-shared-tool-event",
+    scoutRoot: process.cwd(),
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
@@ -755,7 +1158,7 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
   assert.match(historyObservation, /scenario_id: account\.restore\.success/);
   assert.match(historyObservation, /status: completed/);
 
-  assert.equal("journal" in domain, false);
+  assert.equal("journal" in domain, true);
 
   const replay = await domain.handleDynamicToolCall(dynamicCall({
     callId: "call-execute-file-replay",
@@ -1091,6 +1494,7 @@ test("RBT Domain rejects mutating behavior commands from a review role", async (
   const domain = new RbtDomain();
   const scope = installTestRunScope(t, {
     runId: "run-rbt-review-boundary",
+    scoutRoot: process.cwd(),
     eventBus,
     domain,
     scheduler: rbtScheduler(eventBus),
@@ -1427,6 +1831,11 @@ function writeTestExecuteFile(artifactRoot: string): {
 function fakeJarvisTool(
   phase: "execute" | "review",
   failedCommand?: string,
+  options: {
+    websocket?: JarvisWebSocketTool;
+    executionRequest?: () => ExecutionPlatformRequest;
+    executionTargetGate?: JarvisBehaviorExecutionTargetGate;
+  } = {},
 ): JarvisBehaviorTool {
   const script = [
     "const args = process.argv.slice(1);",
@@ -1466,25 +1875,58 @@ function fakeJarvisTool(
     phase,
     process.execPath,
     ["-e", script, "--"],
+    undefined,
+    options.websocket,
+    options.executionRequest,
+    options.executionTargetGate,
   );
 }
 
 function fakeExecutionSystem(input: {
-  onLaunch?: () => void;
+  identity?: ExecutionPlatformIdentity;
+  onIdentify?: (request?: ExecutionPlatformRequest) => void;
+  onLaunch?: (request?: ExecutionPlatformRequest) => void;
+  onShutdown?: (request?: ExecutionPlatformRequest) => void;
   launchFailure?: { code: string; message: string };
 } = {}): ExecutionPlatformPort {
-  const identity: ExecutionPlatformIdentity = {
+  const identity: ExecutionPlatformIdentity = input.identity ?? {
     type: "unity_editor",
     version: "6000.0.80f1",
   };
+  const selection = {
+    transport: identity.type === "android" ? "adb" : "unity-pipeline",
+    platform: identity,
+  };
   return {
-    async launch() {
-      input.onLaunch?.();
-      return input.launchFailure
-        ? { ok: false, ...input.launchFailure }
-        : { ok: true, identity };
+    async identify(request = {}, options = {}) {
+      input.onIdentify?.(request);
+      const result = { ok: true as const, selection };
+      await currentRunScope().eventBus.publishAndWait(ExecutionEvents.execution.identifyCompleted, {
+        correlationId: options.correlationId ?? "fake-identify",
+        request,
+        result,
+      });
+      return { ok: true, identity };
     },
-    async shutdown() {
+    async launch(request = {}, options = {}) {
+      input.onLaunch?.(request);
+      const result = input.launchFailure
+        ? { ok: false as const, ...input.launchFailure }
+        : { ok: true as const, selection };
+      await currentRunScope().eventBus.publishAndWait(ExecutionEvents.execution.launchCompleted, {
+        correlationId: options.correlationId ?? "fake-launch",
+        request,
+        result,
+      });
+      return result.ok ? { ok: true, identity } : result;
+    },
+    async shutdown(request = {}, options = {}) {
+      input.onShutdown?.(request);
+      await currentRunScope().eventBus.publishAndWait(ExecutionEvents.execution.shutdownCompleted, {
+        correlationId: options.correlationId ?? "fake-shutdown",
+        request,
+        result: { ok: true, selection },
+      });
       return { ok: true, identity };
     },
   };
@@ -1492,7 +1934,6 @@ function fakeExecutionSystem(input: {
 
 function appPilotIdentityResponse(identity: ExecutionPlatformIdentity) {
   return {
-    id: "identify",
     ok: true as const,
     value: {
       transport: "unity-pipeline",

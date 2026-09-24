@@ -1,13 +1,15 @@
 import type { DynamicToolCallResponse } from "../../../../../agent-server/types.js";
 import type { AgentJsonValue } from "../../../../../agent/tools/types.js";
+import type { ExecutionPlatformRequest } from "../../../../../execution/execution-command.js";
 import type { ScoutDomainDynamicToolCall } from "../../../../types.js";
 import type { RbtAgentDynamicTool } from "../agent-tools.js";
 import { JarvisWebSocketTool } from "../jarvis-websocket/index.js";
 import { JarvisBehaviorCommandRunner } from "../../../core/jarvis-behavior-command-runner.js";
+import { JarvisBehaviorExecutionTargetGate } from "../../../core/jarvis-behavior-execution-target-gate.js";
 import { JarvisBehaviorExecuteFileRunner } from "../../../core/jarvis-behavior-execute-file.js";
-import { readJarvisBehaviorExecuteFile } from "../../../core/jarvis-behavior-execute-file-reader.js";
-import { JarvisBehaviorPlatformGate } from "../../../core/jarvis-behavior-platform-gate.js";
+import { JarvisBehaviorOrchestrator } from "../../../core/jarvis-behavior-orchestrator.js";
 import { JarvisBehaviorToolStore } from "../../../core/jarvis-behavior-tool-store.js";
+import { JarvisBehaviorWebSocketLinker } from "../../../core/jarvis-behavior-websocket-linker.js";
 
 const EXECUTE_QUERY_COMMANDS = new Set([
   "behavior.registry.nodes",
@@ -24,9 +26,7 @@ type JarvisBehaviorPhase = "execute" | "review";
 
 /** Owns the Agent-facing RBT Behavior input boundary and delegates core work. */
 export class JarvisBehaviorTool implements RbtAgentDynamicTool {
-  private readonly commandRunner: JarvisBehaviorCommandRunner;
-  private readonly platformGate: JarvisBehaviorPlatformGate;
-  private readonly executeFileRunner: JarvisBehaviorExecuteFileRunner;
+  private readonly orchestrator: JarvisBehaviorOrchestrator;
 
   constructor(
     private readonly phase: JarvisBehaviorPhase,
@@ -34,16 +34,28 @@ export class JarvisBehaviorTool implements RbtAgentDynamicTool {
     private readonly baseArgs: readonly string[] = [],
     private readonly store = new JarvisBehaviorToolStore(),
     private readonly websocket = new JarvisWebSocketTool(),
+    executionRequest: () => ExecutionPlatformRequest = () => ({}),
+    executionTargetGate = new JarvisBehaviorExecutionTargetGate(),
   ) {
-    this.commandRunner = new JarvisBehaviorCommandRunner(
+    const commandRunner = new JarvisBehaviorCommandRunner(
       this.phase,
       this.executable,
       this.baseArgs,
       this.store,
-      this.websocket,
     );
-    this.platformGate = new JarvisBehaviorPlatformGate();
-    this.executeFileRunner = new JarvisBehaviorExecuteFileRunner(this.commandRunner, this.store);
+    this.orchestrator = new JarvisBehaviorOrchestrator(
+      executionRequest,
+      executionTargetGate,
+      new JarvisBehaviorWebSocketLinker(
+        this.phase,
+        this.executable,
+        this.baseArgs,
+        this.websocket,
+      ),
+      commandRunner,
+      new JarvisBehaviorExecuteFileRunner(this.store),
+      this.store,
+    );
   }
 
   async execute(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
@@ -59,6 +71,7 @@ export class JarvisBehaviorTool implements RbtAgentDynamicTool {
 
   async stop(): Promise<void> {
     this.store.clear();
+    this.orchestrator.stop();
     await this.websocket.stop();
   }
 
@@ -77,10 +90,7 @@ export class JarvisBehaviorTool implements RbtAgentDynamicTool {
       if (typeof input.execute_file !== "string" || input.execute_file.trim().length === 0) {
         throw new Error("execute_file must be a non-empty path.");
       }
-      const executeFile = readJarvisBehaviorExecuteFile(call, input.execute_file, this.store);
-      const platform = await this.platformGate.ensure();
-      if (!platform.ok) return failedToolResponse(platform.code, platform.message);
-      return this.executeFileRunner.run(call, executeFile, platform.platform);
+      return this.orchestrator.executeFile(call, input.execute_file);
     }
 
     const unexpectedKeys = Object.keys(input).filter((key) => key !== "command" && key !== "payload");
@@ -91,25 +101,8 @@ export class JarvisBehaviorTool implements RbtAgentDynamicTool {
       return failedToolResponse("command_not_available", `Behavioral command ${input.command} is not available in the current RBT Phase.`);
     }
     const payload = toJsonObject(requireObject(input.payload, "Behavioral query payload"));
-    const platform = await this.platformGate.ensure();
-    if (!platform.ok) return failedToolResponse(platform.code, platform.message);
-    const command = await this.commandRunner.run(call, input.command, payload);
-    const output: AgentJsonValue = command.status === "completed"
-      ? { status: "completed", command: input.command, result: command.result?.payload ?? null }
-      : commandFailureOutput(input.command, command);
-    return dynamicResponse(command.status === "completed", output);
+    return this.orchestrator.executeCommand(call, input.command, payload);
   }
-}
-
-function commandFailureOutput(command: string, execution: { errorCode?: string; error?: string }): AgentJsonValue {
-  return {
-    status: "failed",
-    command,
-    error: {
-      code: execution.errorCode ?? "behavior_command_failed",
-      message: execution.error ?? "Behavioral command failed.",
-    },
-  };
 }
 
 function failedToolResponse(code: string, message: string): DynamicToolCallResponse {

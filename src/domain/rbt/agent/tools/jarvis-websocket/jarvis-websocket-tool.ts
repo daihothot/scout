@@ -6,6 +6,17 @@ import type { DynamicToolCallResponse } from "../../../../../agent-server/types.
 import type { AgentJsonValue } from "../../../../../agent/tools/types.js";
 import type { ScoutDomainDynamicToolCall } from "../../../../types.js";
 import type { RbtAgentDynamicTool } from "../agent-tools.js";
+import type { ExecutionPlatformIdentity } from "../../../../../execution/index.js";
+import {
+  JarvisBehaviorAndroidWebSocketLink,
+  JarvisBehaviorIosWebSocketLink,
+  JarvisBehaviorUnityEditorWebSocketLink,
+  type JarvisBehaviorWebSocketPlatformConnectResult,
+  type JarvisBehaviorWebSocketPlatformLink,
+  type JarvisBehaviorWebSocketPlatformLinkFactory,
+  type JarvisBehaviorWebSocketPlatformLinkInput,
+  type JarvisBehaviorWebSocketPlatformPrepareResult,
+} from "./links/index.js";
 
 export interface JarvisWebSocketSession {
   sessionId: string;
@@ -41,8 +52,54 @@ interface SessionObservation {
 /** Implements the RBT Domain-internal Jarvis WebSocket dynamic-tool contract. */
 export class JarvisWebSocketTool implements RbtAgentDynamicTool {
   private readonly sessions = new Map<string, JarvisWebSocketSession>();
+  private platformLink?: JarvisBehaviorWebSocketPlatformLink;
 
-  constructor(private readonly hostCommands = new HostCommandExecutor()) {}
+  constructor(
+    private readonly hostCommands = new HostCommandExecutor(),
+    private readonly createPlatformLink: JarvisBehaviorWebSocketPlatformLinkFactory = defaultPlatformLink,
+  ) {}
+
+  async preparePlatformLink(
+    input: JarvisBehaviorWebSocketPlatformLinkInput,
+    reset = false,
+  ): Promise<JarvisBehaviorWebSocketPlatformPrepareResult> {
+    if (reset || (this.platformLink && !sameIdentity(this.platformLink.identity, input.identity))) {
+      await this.closePlatformLink();
+    }
+    if (!this.platformLink) {
+      try {
+        this.platformLink = this.createPlatformLink(input);
+      } catch (error) {
+        return {
+          ok: false,
+          code: "rbt_websocket_platform_unsupported",
+          message: error instanceof Error ? error.message : String(error),
+          hostCommands: [],
+        };
+      }
+    }
+    return this.platformLink.prepare();
+  }
+
+  async connectPlatformLink(
+    identity: ExecutionPlatformIdentity,
+  ): Promise<JarvisBehaviorWebSocketPlatformConnectResult> {
+    if (!this.platformLink || !sameIdentity(this.platformLink.identity, identity)) {
+      return {
+        ok: false,
+        code: "rbt_websocket_platform_link_missing",
+        message: "The RBT WebSocket platform link was not prepared for the identified target.",
+        hostCommands: [],
+      };
+    }
+    return this.platformLink.connect();
+  }
+
+  async closePlatformLink(): Promise<void> {
+    const link = this.platformLink;
+    this.platformLink = undefined;
+    await link?.close();
+  }
 
   async execute(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
     try {
@@ -235,6 +292,7 @@ export class JarvisWebSocketTool implements RbtAgentDynamicTool {
       "--session",
       session.sessionId,
     ], 5_000)));
+    await this.closePlatformLink();
   }
 
   private saveSession(input: JarvisWebSocketConnectInput): JarvisWebSocketSession {
@@ -274,6 +332,25 @@ export class JarvisWebSocketTool implements RbtAgentDynamicTool {
       result,
     };
   }
+}
+
+function defaultPlatformLink(
+  input: JarvisBehaviorWebSocketPlatformLinkInput,
+): JarvisBehaviorWebSocketPlatformLink {
+  switch (input.identity.type) {
+    case "unity_editor":
+      return new JarvisBehaviorUnityEditorWebSocketLink(input);
+    case "android":
+      return new JarvisBehaviorAndroidWebSocketLink(input);
+    case "ios":
+      return new JarvisBehaviorIosWebSocketLink(input);
+    default:
+      throw new Error(`RBT WebSocket does not support platform ${input.identity.type}.`);
+  }
+}
+
+function sameIdentity(left: ExecutionPlatformIdentity, right: ExecutionPlatformIdentity): boolean {
+  return left.type === right.type && left.version === right.version;
 }
 
 function observeSessionStatus(stdout: string, stderr: string): SessionObservation {

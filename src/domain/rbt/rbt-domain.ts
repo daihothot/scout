@@ -4,6 +4,7 @@ import { CoordinatorContextTags } from "../../agent/runner/coordinator/coordinat
 import type { UnsubscribeEventHandler } from "../../core/events/index.js";
 import { resolveSynthesisRole } from "../../core/workflow/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
+import type { ExecutionPlatformRequest } from "../../execution/execution-command.js";
 import type { ScoutDomain, ScoutDomainDynamicToolCall } from "../types.js";
 import {
   RbtAgentDynamicToolBackend,
@@ -11,18 +12,35 @@ import {
   RbtCampaignExecutionHistoryStore,
   rbtAgentDynamicToolsForPhase,
 } from "./agent/index.js";
+import { loadRbtConfig, type RbtConfig } from "./config/index.js";
 import { RbtEvents, type RbtExecutionHistoryReadyEvent } from "./rbt-events.js";
+import { RbtJournal } from "./rbt-journal.js";
 
 /** Owns the RBT Domain lifecycle and delegates its Agent-facing operations. */
 export class RbtDomain implements ScoutDomain {
   readonly domainId = "rbt";
   readonly name = "Scout Runtime Behavioral Test Domain";
+  readonly journal = new RbtJournal();
   private readonly toolCallRecorder = new RbtAgentToolCallRecorder();
   private readonly campaignHistoryStore = new RbtCampaignExecutionHistoryStore();
   private unsubscribeHistoryReady?: UnsubscribeEventHandler;
+  private activeConfig?: RbtConfig;
   private started = false;
+  readonly dynamicTool: RbtAgentDynamicToolBackend;
 
-  constructor(readonly dynamicTool = new RbtAgentDynamicToolBackend()) {}
+  constructor(dynamicTool?: RbtAgentDynamicToolBackend) {
+    this.dynamicTool = dynamicTool ?? new RbtAgentDynamicToolBackend({
+      executionRequest: () => {
+        const { transport, platform, appId } = this.config.execution;
+        const request: ExecutionPlatformRequest = {
+          ...(transport ? { transport } : {}),
+          ...(platform ? { platform } : {}),
+          ...(appId ? { appId } : {}),
+        };
+        return request;
+      },
+    });
+  }
 
   dynamicToolsForPhase(phase: ScoutAgentPhase) {
     return rbtAgentDynamicToolsForPhase(phase);
@@ -34,9 +52,18 @@ export class RbtDomain implements ScoutDomain {
     return this.dynamicTool.handleDynamicToolCall(call);
   }
 
+  get config(): RbtConfig {
+    if (!this.activeConfig) {
+      throw new Error("RBT Domain config is not available before the Domain starts.");
+    }
+    return this.activeConfig;
+  }
+
   async start(): Promise<void> {
     if (this.started) return;
-    this.unsubscribeHistoryReady = currentRunScope().eventBus.subscribe<RbtExecutionHistoryReadyEvent>(
+    const scope = currentRunScope();
+    this.activeConfig = loadRbtConfig(scope.config);
+    this.unsubscribeHistoryReady = scope.eventBus.subscribe<RbtExecutionHistoryReadyEvent>(
       RbtEvents.history.ready,
       (event) => this.deliverHistoryRef(event.payload),
     );
@@ -45,13 +72,17 @@ export class RbtDomain implements ScoutDomain {
     this.started = true;
   }
 
-  restore(): void {}
+  restore(): void {
+    const fact = this.journal.aggregate(currentRunScope().domainJournal.readAll());
+    this.dynamicTool.restoreRuntimeFact(fact);
+  }
 
   async stop(): Promise<void> {
     if (!this.started) return;
     this.started = false;
     this.unsubscribeHistoryReady?.();
     this.unsubscribeHistoryReady = undefined;
+    this.activeConfig = undefined;
     this.campaignHistoryStore.stop();
     this.toolCallRecorder.stop();
     await this.dynamicTool.stop();

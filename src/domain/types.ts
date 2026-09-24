@@ -53,12 +53,29 @@ export type ScoutDomainJournalFact =
   | { kind: "artifact"; payload: ScoutDomainArtifactFact }
   | { kind: "gate"; payload: ScoutDomainGateFact };
 
+/** Stable fields shared by Domain runtime facts rebuilt from a Domain journal. */
+export interface ScoutDomainRuntimeFact {
+  domainId: string;
+  journalSeq: number;
+  updatedAt?: string;
+}
+
+/** Persisted Domain event shape accepted by a Domain-owned runtime projection. */
+export interface ScoutDomainJournalEvent extends ScoutEvent {
+  seq: number;
+  recordedAt: string;
+}
+
 /** Domain-owned event contract and read-model projection boundary. */
-export interface ScoutDomainJournalProjection {
+export interface ScoutDomainJournalProjection<
+  TRuntimeFact extends ScoutDomainRuntimeFact = ScoutDomainRuntimeFact,
+> {
   /** Event routes written to `<domain>-events.jsonl`, never to the Scout journal. */
   readonly eventTypes: readonly EventType[];
   /** Projects a Domain journal event into shared resume facts when needed. */
   project(event: ScoutEvent, journalSeq: number): ScoutDomainJournalFact | undefined;
+  /** Rebuilds the Domain's current runtime facts from its persisted event stream. */
+  aggregate?(events: readonly ScoutDomainJournalEvent[]): TRuntimeFact;
 }
 
 /** Lifecycle and tool surface owned by a Scout domain implementation. */

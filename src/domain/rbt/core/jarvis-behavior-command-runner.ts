@@ -8,17 +8,14 @@ import {
 import { currentRunScope } from "../../../run/run-scope.js";
 import type { ScoutDomainDynamicToolCall } from "../../types.js";
 import {
-  JarvisWebSocketTool,
-} from "../agent/tools/jarvis-websocket/index.js";
-import {
   JarvisBehaviorToolStore,
 } from "./jarvis-behavior-tool-store.js";
+import type { JarvisBehaviorLinkContext } from "./jarvis-behavior-websocket-linker.js";
 import type {
   RbtBehaviorRequest,
   RbtBehaviorResult,
 } from "../rbt-events.js";
 
-const BEHAVIOR_ENDPOINT = "ws://127.0.0.1:8083";
 const BEHAVIOR_TIMEOUT_SECONDS = 10;
 const BEHAVIOR_SCHEMA_ROOT_RELATIVE_PATH = join(
   "gurusdk-framework",
@@ -43,6 +40,7 @@ export interface BehaviorCommandExecution {
   status: "completed" | "failed";
   errorCode?: string;
   error?: string;
+  retryableTransportFailure?: boolean;
   hostCommands: HostCommandExecution[];
   startedAt: string;
   completedAt: string;
@@ -57,13 +55,13 @@ export class JarvisBehaviorCommandRunner {
     private readonly executable: string,
     private readonly baseArgs: readonly string[],
     private readonly store: JarvisBehaviorToolStore,
-    private readonly websocket: JarvisWebSocketTool,
   ) {}
 
   async run(
     call: ScoutDomainDynamicToolCall,
     command: string,
     payload: Record<string, AgentJsonValue>,
+    link: JarvisBehaviorLinkContext,
   ): Promise<BehaviorCommandExecution> {
     const scope = currentRunScope();
     const request: RbtBehaviorRequest = {
@@ -73,91 +71,83 @@ export class JarvisBehaviorCommandRunner {
       payload,
     };
     const startedAt = new Date().toISOString();
-    const hostCommands: HostCommandExecution[] = [];
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const session = await this.ensureSession(call, hostCommands);
-      if (session.error) {
-        return {
-          request,
-          status: "failed",
-          errorCode: session.code,
-          error: session.error,
-          hostCommands,
-          startedAt,
-          completedAt: new Date().toISOString(),
-        };
-      }
-      const callCommand = await this.runHostCommand({
-        args: [
-          ...this.baseArgs,
-          "ws",
-          "schema",
-          "call",
-          "behavior-control",
-          "--schema",
-          session.schemaPath,
-          "--session",
-          session.sessionId,
-          "--params-json",
-          JSON.stringify(request),
-          "--timeout-ms",
-          String(BEHAVIOR_TIMEOUT_SECONDS * 1_000),
-        ],
-        timeoutMs: (BEHAVIOR_TIMEOUT_SECONDS + 2) * 1_000,
-      });
-      hostCommands.push(callCommand);
-      const parsed = parseBehaviorResult(callCommand.result.stdout, request.correlationId);
-      const succeeded = callCommand.result.status === "completed"
-        && parsed.error === undefined
-        && parsed.result?.status === "ok"
-        && parsed.result.code === "ok";
-      if (succeeded) {
-        return {
-          request,
-          result: parsed.result,
-          status: "completed",
-          hostCommands,
-          startedAt,
-          completedAt: new Date().toISOString(),
-        };
-      }
-
-      const transportFailed = callCommand.result.status !== "completed"
-        || parsed.error !== undefined;
-      const mayRetry = attempt === 0
-        && transportFailed
-        && (isReadOnlyCommand(this.phase, command) || sessionWasDisconnected(callCommand));
-      if (transportFailed) await this.discardSession(session.sessionId, hostCommands);
-      if (mayRetry) continue;
-
-      const errorCode = callCommand.result.status !== "completed"
-        ? "host_command_failed"
-        : parsed.error
-          ? "invalid_behavior_result"
-          : parsed.result?.code;
-      const error = callCommand.result.status !== "completed"
-        ? callCommand.result.error ?? `Jarvis command ${callCommand.result.status}.`
-        : parsed.error ?? behaviorErrorMessage(parsed.result);
+    const hostCommands: HostCommandExecution[] = [...link.hostCommands];
+    const schema = await this.ensureSchema(link, hostCommands);
+    if (!schema.ok) {
       return {
         request,
-        ...(parsed.result ? { result: parsed.result } : {}),
         status: "failed",
-        ...(errorCode ? { errorCode } : {}),
-        ...(error ? { error } : {}),
+        errorCode: schema.code,
+        error: schema.message,
         hostCommands,
         startedAt,
         completedAt: new Date().toISOString(),
       };
     }
-    throw new Error("JarvisBehavior command retry loop ended without a result.");
+    const callCommand = await this.runHostCommand({
+      args: [
+        ...this.baseArgs,
+        "ws",
+        "schema",
+        "call",
+        "behavior-control",
+        "--schema",
+        schema.path,
+        "--session",
+        link.sessionId,
+        "--params-json",
+        JSON.stringify(request),
+        "--timeout-ms",
+        String(BEHAVIOR_TIMEOUT_SECONDS * 1_000),
+      ],
+      timeoutMs: (BEHAVIOR_TIMEOUT_SECONDS + 2) * 1_000,
+    });
+    hostCommands.push(callCommand);
+    const parsed = parseBehaviorResult(callCommand.result.stdout, request.correlationId);
+    const succeeded = callCommand.result.status === "completed"
+      && parsed.error === undefined
+      && parsed.result?.status === "ok"
+      && parsed.result.code === "ok";
+    if (succeeded) {
+      return {
+        request,
+        result: parsed.result,
+        status: "completed",
+        hostCommands,
+        startedAt,
+        completedAt: new Date().toISOString(),
+      };
+    }
+
+    const transportFailed = callCommand.result.status !== "completed"
+      || parsed.error !== undefined;
+    const errorCode = callCommand.result.status !== "completed"
+      ? "host_command_failed"
+      : parsed.error
+        ? "invalid_behavior_result"
+        : parsed.result?.code;
+    const error = callCommand.result.status !== "completed"
+      ? callCommand.result.error ?? `Jarvis command ${callCommand.result.status}.`
+      : parsed.error ?? behaviorErrorMessage(parsed.result);
+    return {
+      request,
+      ...(parsed.result ? { result: parsed.result } : {}),
+      status: "failed",
+      ...(errorCode ? { errorCode } : {}),
+      ...(error ? { error } : {}),
+      retryableTransportFailure: transportFailed
+        && (isReadOnlyCommand(this.phase, command) || sessionWasDisconnected(callCommand)),
+      hostCommands,
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
   }
 
-  private async ensureSession(
-    call: ScoutDomainDynamicToolCall,
+  private async ensureSchema(
+    link: JarvisBehaviorLinkContext,
     hostCommands: HostCommandExecution[],
-  ): Promise<{ sessionId: string; schemaPath: string; code?: string; error?: string }> {
+  ): Promise<{ ok: true; path: string } | { ok: false; code: string; message: string }> {
     const scope = currentRunScope();
-    // The host uses the run's execution target; Reviewer does not need source access.
     const environment = scope.environment.agents.executor;
     const schemaPath = environment?.mount.readableRoots
       .filter((root) => basename(root) === "gurusdk-unity")
@@ -165,40 +155,20 @@ export class JarvisBehaviorCommandRunner {
       .find((candidate) => existsSync(candidate));
     if (!schemaPath) {
       return {
-        sessionId: "",
-        schemaPath: "",
+        ok: false,
         code: "behavior_schema_unavailable",
-        error: "The Behavioral schema is unavailable under this run's Executor-bound gurusdk-unity codebase.",
+        message: "The Behavioral schema is unavailable under this run's Executor-bound gurusdk-unity codebase.",
       };
     }
-    const sessionId = behaviorSessionId(scope.runId, call.caller.agentId, this.phase);
-    const connection = await this.websocket.ensureSession({
-      agentId: call.caller.agentId,
-      sessionId,
-      endpoint: BEHAVIOR_ENDPOINT,
-      executable: this.executable,
-      baseArgs: this.baseArgs,
-      cwd: scope.scoutRoot,
-      timeoutMs: BEHAVIOR_TIMEOUT_SECONDS * 1_000,
-    });
-    hostCommands.push(...connection.hostCommands);
-    if (connection.status === "failed" || !connection.session) {
-      return {
-        sessionId,
-        schemaPath,
-        code: connection.code ?? "websocket_connect_failed",
-        error: connection.error ?? "Jarvis could not establish the Behavioral session.",
-      };
-    }
-
-    if (!this.store.schemaConfigured(sessionId)) {
+    if (link.freshSession) this.store.clearSchemaConfiguration(link.sessionId);
+    if (!this.store.schemaConfigured(link.sessionId)) {
       const configure = await this.runHostCommand({
         args: [
           ...this.baseArgs,
           "ws",
           "config.schema",
           "--session",
-          sessionId,
+          link.sessionId,
           "--schema",
           schemaPath,
         ],
@@ -206,33 +176,15 @@ export class JarvisBehaviorCommandRunner {
       });
       hostCommands.push(configure);
       if (configure.result.status !== "completed") {
-        await this.discardSession(sessionId, hostCommands);
         return {
-          sessionId,
-          schemaPath,
+          ok: false,
           code: "behavior_schema_config_failed",
-          error: "Jarvis could not configure the Behavioral schema.",
+          message: "Jarvis could not configure the Behavioral schema.",
         };
       }
-      this.store.markSchemaConfigured(sessionId);
+      this.store.markSchemaConfigured(link.sessionId);
     }
-    return { sessionId, schemaPath };
-  }
-
-  private async discardSession(
-    sessionId: string,
-    hostCommands: HostCommandExecution[],
-  ): Promise<void> {
-    this.store.clearSchemaConfiguration(sessionId);
-    const scope = currentRunScope();
-    const disconnect = await this.websocket.disconnect({
-      sessionId,
-      executable: this.executable,
-      baseArgs: this.baseArgs,
-      cwd: scope.scoutRoot,
-      timeoutMs: 5_000,
-    });
-    hostCommands.push(disconnect);
+    return { ok: true, path: schemaPath };
   }
 
   private async runHostCommand(input: {
@@ -313,10 +265,6 @@ function isReadOnlyCommand(phase: "execute" | "review", command: string): boolea
 function sessionWasDisconnected(command: HostCommandExecution): boolean {
   return `${command.result.stdout}\n${command.result.stderr}`
     .includes("is not connected. Run jarvis ws connect first.");
-}
-
-function behaviorSessionId(runId: string, agentId: string, phase: "execute" | "review"): string {
-  return `scout-${runId}-${agentId}-${phase}`.replaceAll(/[^A-Za-z0-9._-]/g, "-");
 }
 
 function toJsonValue(value: unknown): AgentJsonValue {

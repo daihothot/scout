@@ -11,7 +11,7 @@ import {
   JarvisBehaviorToolStore,
   type JarvisBehaviorExecutionState,
 } from "./jarvis-behavior-tool-store.js";
-import type { BehaviorCommandExecution, JarvisBehaviorCommandRunner } from "./jarvis-behavior-command-runner.js";
+import type { BehaviorCommandExecution } from "./jarvis-behavior-command-runner.js";
 
 export interface ExecuteFileCommand {
   command: string;
@@ -24,17 +24,18 @@ export interface ParsedExecuteFile extends JarvisBehaviorExecutionState {
 
 /** Owns execute-file sequencing, cleanup and campaign event publication. */
 export class JarvisBehaviorExecuteFileRunner {
-  constructor(
-    private readonly commandRunner: JarvisBehaviorCommandRunner,
-    private readonly store: JarvisBehaviorToolStore,
-  ) {}
+  constructor(private readonly store: JarvisBehaviorToolStore) {}
 
   async run(
     call: ScoutDomainDynamicToolCall,
     executeFile: ParsedExecuteFile,
     platform: ExecutionPlatformIdentity,
+    executeCommand: (
+      command: string,
+      payload: Record<string, AgentJsonValue>,
+    ) => Promise<BehaviorCommandExecution>,
   ): Promise<DynamicToolCallResponse> {
-    const preflight = await this.commandRunner.run(call, "behavior.registry.manifest", {});
+    const preflight = await executeCommand("behavior.registry.manifest", {});
     if (preflight.status !== "completed") {
       return dynamicResponse(false, {
         status: "failed",
@@ -141,7 +142,7 @@ export class JarvisBehaviorExecuteFileRunner {
           if (planned.command !== "behavior.scenario.deactivate" && planned.command !== "behavior.campaign.stop") continue;
         }
         const sequence = index + 1;
-        const command = await this.commandRunner.run(call, planned.command, planned.payload);
+        const command = await executeCommand(planned.command, planned.payload);
         executedCommands += 1;
         if (command.status === "completed") {
           if (planned.command === "behavior.campaign.start") campaignStarted = true;
