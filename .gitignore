@@ -1,5 +1,6 @@
 /node_modules/
 /dist/
 /run/
+/docs/session-handoff.md
 assets/scout/mcp/codegraph/vendor/
 npm-debug.log*
