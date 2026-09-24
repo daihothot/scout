@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/readme/scout-hero.png" alt="Scout delivers domain-specific workflows end to end" width="100%" />
+  <img src="./assets/readme/scout-hero.png?v=2" alt="Scout delivers domain-specific workflows end to end" width="100%" />
 </p>
 
 <p align="center">
