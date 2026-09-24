@@ -81,7 +81,8 @@ test("ExecutionStage installs and clears the run-scoped system without probing a
     terminate: async () => undefined,
   });
   const scopeStage = new RunScopeStage(scope);
-  const executionStage = new ExecutionStage(async () => new ScoutExecutionSystem({
+  const executionStage = new ExecutionStage(async () => ScoutExecutionSystem.start({
+    async start() {},
     async invoke() {
       throw new Error("ExecutionStage must not probe a platform during startup.");
     },

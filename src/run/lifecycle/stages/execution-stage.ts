@@ -1,7 +1,11 @@
 import {
   ScoutExecutionSystem,
-  type ScoutExecutionSystemStartOptions,
 } from "../../../execution/scout-execution-system.js";
+import type { EventBus } from "../../../core/events/index.js";
+import {
+  AppPilotExecutionHandler,
+  type AppPilotExecutionHandlerOptions,
+} from "../../../execution/handlers/apppilot/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
 
@@ -12,13 +16,17 @@ export class ExecutionStage implements RunStage {
 
   constructor(
     private readonly startExecutionSystem: (
-      options: ScoutExecutionSystemStartOptions,
-    ) => Promise<ScoutExecutionSystem> = ScoutExecutionSystem.start,
+      options: AppPilotExecutionHandlerOptions,
+      eventBus: EventBus,
+    ) => Promise<ScoutExecutionSystem> = (options, eventBus) => ScoutExecutionSystem.start(
+      new AppPilotExecutionHandler(options),
+      eventBus,
+    ),
   ) {}
 
   async start(): Promise<void> {
     const scope = currentRunScope();
-    const system = await this.startExecutionSystem({ cwd: scope.scoutRoot });
+    const system = await this.startExecutionSystem({ cwd: scope.scoutRoot }, scope.eventBus);
     try {
       scope.setExecutionSystem(system);
       this.system = system;

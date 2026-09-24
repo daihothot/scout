@@ -1,13 +1,15 @@
 # App lifecycle
 
-Call `identify` first in the current AppPilot process, then invoke lifecycle operations without passing its result:
+Call `identify`, persist its returned JSON identity, and pass it to each lifecycle operation:
 
 ```bash
-~/.apppilot/apppilot install --app-id com.example.app --artifact-path /absolute/app.apk
-~/.apppilot/apppilot launch --app-id com.example.app
-~/.apppilot/apppilot restart --app-id com.example.app
-~/.apppilot/apppilot shutdown --app-id com.example.app
-~/.apppilot/apppilot uninstall --app-id com.example.app
+~/.apppilot/apppilot install --identity '<IDENTITY_JSON>' --app-id com.example.app --artifact-path /absolute/app.apk
+~/.apppilot/apppilot launch --identity '<IDENTITY_JSON>' --app-id com.example.app
+~/.apppilot/apppilot restart --identity '<IDENTITY_JSON>' --app-id com.example.app
+~/.apppilot/apppilot shutdown --identity '<IDENTITY_JSON>' --app-id com.example.app
+~/.apppilot/apppilot uninstall --identity '<IDENTITY_JSON>' --app-id com.example.app
 ```
 
-The selected Adapter owns one transport. Its selected Executor implements the operation for one platform and silently invokes any required platform tool.
+Pass optional launch parameters by repeating `--parameter KEY=VALUE` on `launch` or `restart`. The selected platform Executor maps the dictionary to its native launch mechanism.
+
+The identity selects an Adapter by transport and an Executor by platform. The Executor validates that the physical target still matches that identity.
