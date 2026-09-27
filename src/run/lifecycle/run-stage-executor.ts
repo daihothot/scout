@@ -75,10 +75,14 @@ export class RunStageExecutor {
       const startedAt = Date.now();
       this.terminationStartedAt = startedAt;
       this.status = "terminating";
-      this.logTerminationStarted(reason, startedAt);
       this.terminationPromise = new Promise<void>((resolve) => {
         this.resolveStartupTermination = resolve;
       });
+      try {
+        this.logTerminationStarted(reason, startedAt);
+      } catch {
+        // Diagnostics must not prevent the active startup group from being released.
+      }
       void this.emitSnapshot();
       return this.terminationPromise;
     }
@@ -142,59 +146,67 @@ export class RunStageExecutor {
   private async runStartup(): Promise<void> {
     const startedAt = Date.now();
     this.status = "starting";
-    const progress = this.lifecycleProgress();
-    this.logger.info({
-      module: "run.lifecycle",
-      event: "run_startup_started",
-      message: `Run lifecycle startup began with ${progress.stageCount} registered stages.`,
-      data: {
-        stageCount: progress.stageCount,
-        completedStages: progress.completedStages,
-        remainingStages: progress.remainingStages,
-        elapsedMs: 0,
-      },
-    });
-    await this.emitSnapshot();
+    try {
+      const progress = this.lifecycleProgress();
+      this.logger.info({
+        module: "run.lifecycle",
+        event: "run_startup_started",
+        message: `Run lifecycle startup began with ${progress.stageCount} registered stages.`,
+        data: {
+          stageCount: progress.stageCount,
+          completedStages: progress.completedStages,
+          remainingStages: progress.remainingStages,
+          elapsedMs: 0,
+        },
+      });
+      await this.emitSnapshot();
 
-    for (const group of this.groups) {
-      if (this.terminationReason) {
-        await this.finishStartupTermination();
-        throw new Error(`Run startup terminated: ${this.terminationReason}`);
+      for (const group of this.groups) {
+        if (this.terminationReason) {
+          await this.finishStartupTermination();
+          throw new Error(`Run startup terminated: ${this.terminationReason}`);
+        }
+
+        const result = await this.startGroup(group, startedAt);
+        if (result.entered.length > 0) {
+          this.enteredGroups.push({
+            mode: group.mode,
+            stages: result.entered,
+          });
+        }
+        if (result.errors.length > 0) {
+          await this.failStartup(result.errors, startedAt);
+          throw stageGroupError(result.errors);
+        }
+        if (this.terminationReason) {
+          await this.finishStartupTermination();
+          throw new Error(`Run startup terminated: ${this.terminationReason}`);
+        }
       }
 
-      const result = await this.startGroup(group, startedAt);
-      if (result.entered.length > 0) {
-        this.enteredGroups.push({
-          mode: group.mode,
-          stages: result.entered,
-        });
+      this.status = "ready";
+      const durationMs = Math.max(0, Date.now() - startedAt);
+      const completedProgress = this.lifecycleProgress();
+      this.logger.info({
+        module: "run.lifecycle",
+        event: "run_startup_completed",
+        message: `Run lifecycle startup completed ${completedProgress.completedStages} stages in ${durationMs} ms.`,
+        data: {
+          durationMs,
+          stageCount: completedProgress.stageCount,
+          completedStages: completedProgress.completedStages,
+          remainingStages: completedProgress.remainingStages,
+          elapsedMs: durationMs,
+        },
+      });
+      await this.emitSnapshot();
+    } catch (error) {
+      const status = this.snapshot().status;
+      if (status !== "failed" && status !== "terminated") {
+        await this.failStartup([error], startedAt);
       }
-      if (result.errors.length > 0) {
-        await this.failStartup(result.errors, startedAt);
-        throw stageGroupError(result.errors);
-      }
-      if (this.terminationReason) {
-        await this.finishStartupTermination();
-        throw new Error(`Run startup terminated: ${this.terminationReason}`);
-      }
+      throw error;
     }
-
-    this.status = "ready";
-    const durationMs = Math.max(0, Date.now() - startedAt);
-    const completedProgress = this.lifecycleProgress();
-    this.logger.info({
-      module: "run.lifecycle",
-      event: "run_startup_completed",
-      message: `Run lifecycle startup completed ${completedProgress.completedStages} stages in ${durationMs} ms.`,
-      data: {
-        durationMs,
-        stageCount: completedProgress.stageCount,
-        completedStages: completedProgress.completedStages,
-        remainingStages: completedProgress.remainingStages,
-        elapsedMs: durationMs,
-      },
-    });
-    await this.emitSnapshot();
   }
 
   private async startGroup(
@@ -275,21 +287,25 @@ export class RunStageExecutor {
       this.updateStage(stage.id, { status: "failed", error: text });
       const durationMs = Math.max(0, Date.now() - startedAt);
       const failedProgress = this.lifecycleProgress();
-      this.logger.error({
-        module: "run.lifecycle",
-        event: "run_stage_failed",
-        message: `Stage ${stage.id} failed after ${durationMs} ms; ${failedProgress.remainingStages} stages remain.`,
-        data: {
-          stage: stage.id,
-          ...position,
-          groupMode,
-          durationMs,
-          completedStages: failedProgress.completedStages,
-          remainingStages: failedProgress.remainingStages,
-          elapsedMs: Math.max(0, Date.now() - lifecycleStartedAt),
-          error: text,
-        },
-      });
+      try {
+        this.logger.error({
+          module: "run.lifecycle",
+          event: "run_stage_failed",
+          message: `Stage ${stage.id} failed after ${durationMs} ms; ${failedProgress.remainingStages} stages remain.`,
+          data: {
+            stage: stage.id,
+            ...position,
+            groupMode,
+            durationMs,
+            completedStages: failedProgress.completedStages,
+            remainingStages: failedProgress.remainingStages,
+            elapsedMs: Math.max(0, Date.now() - lifecycleStartedAt),
+            error: text,
+          },
+        });
+      } catch {
+        // Retain the stage failure even if its diagnostic cannot be written.
+      }
       await this.emitSnapshot();
       throw error;
     }
@@ -305,23 +321,28 @@ export class RunStageExecutor {
       stopReason,
       this.terminationStartedAt ?? lifecycleStartedAt,
     );
-    if (this.terminationStartedAt !== undefined) {
-      this.logTerminationCompleted(stopReason, stopErrorCount, this.terminationStartedAt);
+    try {
+      if (this.terminationStartedAt !== undefined) {
+        this.logTerminationCompleted(stopReason, stopErrorCount, this.terminationStartedAt);
+      }
+      this.logger.error({
+        module: "run.lifecycle",
+        event: "run_startup_failed",
+        message: `Run lifecycle startup failed after ${elapsedMs} ms with ${errors.length} ${errors.length === 1 ? "error" : "errors"}.`,
+        data: {
+          errorCount: errors.length,
+          stageCount: failedProgress.stageCount,
+          completedStages: failedProgress.completedStages,
+          remainingStages: failedProgress.remainingStages,
+          elapsedMs,
+        },
+      });
+    } catch {
+      // Cleanup is complete; the original startup error remains authoritative.
+    } finally {
+      this.resolveStartupTermination?.();
+      this.resolveStartupTermination = undefined;
     }
-    this.logger.error({
-      module: "run.lifecycle",
-      event: "run_startup_failed",
-      message: `Run lifecycle startup failed after ${elapsedMs} ms with ${errors.length} ${errors.length === 1 ? "error" : "errors"}.`,
-      data: {
-        errorCount: errors.length,
-        stageCount: failedProgress.stageCount,
-        completedStages: failedProgress.completedStages,
-        remainingStages: failedProgress.remainingStages,
-        elapsedMs,
-      },
-    });
-    this.resolveStartupTermination?.();
-    this.resolveStartupTermination = undefined;
   }
 
   private async finishStartupTermination(): Promise<void> {
@@ -329,21 +350,34 @@ export class RunStageExecutor {
     const startedAt = this.terminationStartedAt ?? Date.now();
     const errorCount = await this.stopEnteredGroups(reason, startedAt);
     this.status = errorCount === 0 ? "terminated" : "failed";
-    this.logTerminationCompleted(reason, errorCount, startedAt);
-    await this.emitSnapshot();
-    this.resolveStartupTermination?.();
-    this.resolveStartupTermination = undefined;
+    try {
+      this.logTerminationCompleted(reason, errorCount, startedAt);
+    } catch {
+      // Termination completion cannot depend on the log filesystem.
+    } finally {
+      await this.emitSnapshot();
+      this.resolveStartupTermination?.();
+      this.resolveStartupTermination = undefined;
+    }
   }
 
   private async runTermination(reason: string): Promise<void> {
     const startedAt = Date.now();
     this.terminationStartedAt = startedAt;
     this.status = "terminating";
-    this.logTerminationStarted(reason, startedAt);
+    try {
+      this.logTerminationStarted(reason, startedAt);
+    } catch {
+      // Continue releasing owned resources when diagnostic writes fail.
+    }
     await this.emitSnapshot();
     const errorCount = await this.stopEnteredGroups(reason, startedAt);
     this.status = errorCount === 0 ? "terminated" : "failed";
-    this.logTerminationCompleted(reason, errorCount, startedAt);
+    try {
+      this.logTerminationCompleted(reason, errorCount, startedAt);
+    } catch {
+      // Resource termination has already completed.
+    }
     await this.emitSnapshot();
   }
 
@@ -403,20 +437,24 @@ export class RunStageExecutor {
       const text = errorText(error);
       this.updateStage(stage.id, { status: "failed", error: text });
       const durationMs = Math.max(0, Date.now() - startedAt);
-      this.logger.error({
-        module: "run.lifecycle",
-        event: "run_stage_stop_failed",
-        message: `Stage ${stage.id} failed to stop after ${durationMs} ms because ${reason}.`,
-        data: {
-          stage: stage.id,
-          reason,
-          ...position,
-          groupMode,
-          durationMs,
-          elapsedMs: Math.max(0, Date.now() - lifecycleStartedAt),
-          error: text,
-        },
-      });
+      try {
+        this.logger.error({
+          module: "run.lifecycle",
+          event: "run_stage_stop_failed",
+          message: `Stage ${stage.id} failed to stop after ${durationMs} ms because ${reason}.`,
+          data: {
+            stage: stage.id,
+            reason,
+            ...position,
+            groupMode,
+            durationMs,
+            elapsedMs: Math.max(0, Date.now() - lifecycleStartedAt),
+            error: text,
+          },
+        });
+      } catch {
+        // Report the stop failure to the group even if logging also fails.
+      }
       await this.emitSnapshot();
       throw error;
     }
@@ -440,12 +478,16 @@ export class RunStageExecutor {
     try {
       await this.onStateChange(this.snapshot());
     } catch (error) {
-      this.logger.warn({
-        module: "run.lifecycle",
-        event: "run_lifecycle_state_publish_failed",
-        message: `Failed to publish the ${this.status} run lifecycle snapshot.`,
-        data: { error: errorText(error) },
-      });
+      try {
+        this.logger.warn({
+          module: "run.lifecycle",
+          event: "run_lifecycle_state_publish_failed",
+          message: `Failed to publish the ${this.status} run lifecycle snapshot.`,
+          data: { error: errorText(error) },
+        });
+      } catch {
+        // Both observers are unavailable; lifecycle cleanup must still proceed.
+      }
     }
   }
 

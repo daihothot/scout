@@ -188,6 +188,89 @@ test("RunStageExecutor continues reverse termination after a stage fails to stop
   assert.equal(boot.snapshot().stages.find((entry) => entry.id === "first")?.status, "stopped");
 });
 
+test("RunStageExecutor releases every stage when the final startup log fails, even if cleanup observers also fail", async () => {
+  const activity: string[] = [];
+  const failure = new Error("ENOSPC at run_startup_completed");
+  const logger = noopLogger();
+  logger.info = (input) => {
+    if (input.event === "run_startup_completed") throw failure;
+    if (input.event === "run_stage_stopped") throw new Error("cleanup log unavailable");
+  };
+  logger.error = () => { throw new Error("error log unavailable"); };
+  logger.warn = () => { throw new Error("warning log unavailable"); };
+  const boot = new RunStageExecutor({
+    runId: "log-failure", logger,
+    onStateChange: () => { throw new Error("observer unavailable"); },
+  });
+  boot.registerSerial(stage("journal", activity), stage("clients", activity));
+
+  await assert.rejects(boot.startup(), (error) => error === failure);
+  await boot.terminate("test_cleanup");
+
+  assert.deepEqual(activity, [
+    "start:journal", "start:clients", "stop:clients:startup_failed", "stop:journal:startup_failed",
+  ]);
+  assert.equal(boot.snapshot().status, "failed");
+});
+
+test("RunStageExecutor preserves the stage error when failure diagnostics cannot be written", async () => {
+  const activity: string[] = [];
+  const failure = new Error("stage failed");
+  const logger = noopLogger();
+  logger.error = () => { throw new Error("error logger failed"); };
+  const boot = new RunStageExecutor({ runId: "stage-error", logger });
+  boot.registerSerial(stage("first", activity), {
+    id: "second",
+    async start() { throw failure; },
+    async stop() { activity.push("stop:second"); },
+  });
+  await assert.rejects(boot.startup(), (error) => error === failure);
+  assert.deepEqual(activity, ["start:first", "stop:second", "stop:first:startup_failed"]);
+});
+
+test("RunStageExecutor settles concurrent termination when every termination diagnostic fails", async () => {
+  const activity: string[] = [];
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => { release = resolve; });
+  let entered!: () => void;
+  const running = new Promise<void>((resolve) => { entered = resolve; });
+  const logger = noopLogger();
+  logger.info = (input) => {
+    if (input.event.startsWith("run_termination_") || input.event === "run_stage_stopped") {
+      throw new Error("termination logger unavailable");
+    }
+  };
+  logger.error = () => { throw new Error("error logger unavailable"); };
+  const boot = new RunStageExecutor({ runId: "termination-log-error", logger });
+  boot.registerSerial({
+    id: "blocked",
+    async start() { entered(); await blocked; },
+    async stop() { activity.push("stopped"); },
+  }, stage("never", activity));
+  const starting = boot.startup();
+  const rejected = assert.rejects(starting, /Run startup terminated/);
+  await running;
+  const termination = boot.terminate("cancel");
+  assert.equal(boot.terminate("cancel-again"), termination);
+  release();
+  await Promise.all([termination, rejected]);
+  assert.deepEqual(activity, ["stopped"]);
+  assert.equal(boot.snapshot().status, "failed");
+});
+
+test("RunStageExecutor still stops ready resources when termination logging fails", async () => {
+  const activity: string[] = [];
+  const logger = noopLogger();
+  const boot = new RunStageExecutor({ runId: "ready-stop-log-error", logger });
+  boot.registerSerial(stage("resource", activity));
+  await boot.startup();
+  logger.info = () => { throw new Error("log unavailable"); };
+  logger.error = () => { throw new Error("error log unavailable"); };
+  await boot.terminate("stop");
+  assert.deepEqual(activity, ["start:resource", "stop:resource:stop"]);
+  assert.equal(boot.snapshot().status, "failed");
+});
+
 function stage(id: string, activity: string[]): RunStage {
   return {
     id,
