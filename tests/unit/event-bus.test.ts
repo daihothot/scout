@@ -167,6 +167,68 @@ test("event bus publishAndWait awaits async handlers", async () => {
   assert.equal(completed, true);
 });
 
+for (const publish of ["publish", "publishAndWait"] as const) {
+  test(`event bus drain waits for ${publish} on its route, not unrelated work`, async () => {
+    const bus = new InMemoryEventBus();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let releaseOther!: () => void;
+    const otherGate = new Promise<void>((resolve) => { releaseOther = resolve; });
+    bus.subscribe(AgentEvents.task.assigned, () => gate);
+    bus.subscribe(AgentEvents.task.messageQueued, () => otherGate);
+    const publishing = bus[publish](AgentEvents.task.assigned, { taskId: "task-1" });
+    const other = bus.publishAndWait(AgentEvents.task.messageQueued, { taskId: "task-2" });
+    let drained = false;
+    const draining = bus.drain(AgentEvents.task.assigned).then(() => { drained = true; });
+    await Promise.resolve();
+    assert.equal(drained, false);
+    release();
+    await draining;
+    assert.equal(drained, true);
+    releaseOther();
+    await Promise.all([publishing, other]);
+  });
+}
+
+test("event bus drain waits for a failed dispatch's unfinished peers without inheriting its error", async () => {
+  const bus = new InMemoryEventBus();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  bus.subscribe(AgentEvents.task.assigned, () => { throw new Error("observer failed"); });
+  bus.subscribe(AgentEvents.task.assigned, () => gate);
+  const publishing = assert.rejects(
+    bus.publishAndWait(AgentEvents.task.assigned, { taskId: "task-1" }),
+    /observer failed/,
+  );
+  let drained = false;
+  const draining = bus.drain(AgentEvents.task.assigned).then(() => { drained = true; });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(drained, false);
+  release();
+  await Promise.all([publishing, draining]);
+  assert.equal(drained, true);
+  await bus.drain(AgentEvents.task.assigned);
+});
+
+test("event bus tracks a dispatch before a synchronous handler requests its later drain", async () => {
+  const bus = new InMemoryEventBus();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let draining: Promise<void> | undefined;
+  let drained = false;
+  bus.subscribe(AgentEvents.task.assigned, () => {
+    // A lifecycle request may start here, but must not await its own dispatch.
+    draining = bus.drain(AgentEvents.task.assigned).then(() => { drained = true; });
+  }, { priority: EventSubscriptionPriorities.Critical });
+  bus.subscribe(AgentEvents.task.assigned, () => gate);
+  const publishing = bus.publishAndWait(AgentEvents.task.assigned, { taskId: "task-1" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(drained, false);
+  release();
+  await Promise.all([publishing, draining]);
+  assert.equal(drained, true);
+});
+
 test("event bus dispatches subscription priorities from high to low", async () => {
   const bus = new InMemoryEventBus();
   const calls: string[] = [];

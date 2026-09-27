@@ -46,6 +46,8 @@ export interface EventBus {
     payload: TPayload,
     options?: EventPublishOptions,
   ): Promise<ScoutEvent<TPayload>>;
+  /** Waits for current dispatches of one event type to settle, including failed handlers. */
+  drain(type: EventType): Promise<void>;
   subscribe<TPayload>(
     target: EventSubscriptionTarget,
     handler: ScoutEventHandler<TPayload>,
@@ -62,6 +64,7 @@ export interface EventBus {
 export class InMemoryEventBus implements EventBus {
   private readonly exactHandlers = new Map<string, RegisteredHandler[]>();
   private readonly groupHandlers = new Map<string, RegisteredHandler[]>();
+  private readonly dispatches = new Map<string, Set<Promise<void>>>();
   private sequence = 0;
 
   publish<TPayload>(
@@ -70,7 +73,7 @@ export class InMemoryEventBus implements EventBus {
     options: EventPublishOptions = {},
   ): ScoutEvent<TPayload> {
     const event = this.createEvent(type, payload, options);
-    void this.dispatch(event).catch(() => undefined);
+    void this.startDispatch(event).catch(() => undefined);
     return event;
   }
 
@@ -80,8 +83,30 @@ export class InMemoryEventBus implements EventBus {
     options: EventPublishOptions = {},
   ): Promise<ScoutEvent<TPayload>> {
     const event = this.createEvent(type, payload, options);
-    await this.dispatch(event);
+    await this.startDispatch(event);
     return event;
+  }
+
+  async drain(type: EventType): Promise<void> {
+    await Promise.all([...(this.dispatches.get(type.routeKey) ?? [])]);
+  }
+
+  private startDispatch(event: ScoutEvent): Promise<void> {
+    let complete!: () => void;
+    const settled = new Promise<void>((resolve) => { complete = resolve; });
+    const pending = this.dispatches.get(event.key.routeKey) ?? new Set<Promise<void>>();
+    pending.add(settled);
+    this.dispatches.set(event.key.routeKey, pending);
+    // Register before invoking handlers so a synchronous lifecycle request can
+    // see this dispatch. Completion tracks lifetime, not handler success.
+    const execution = this.dispatch(event);
+    const finish = () => {
+      pending.delete(settled);
+      if (pending.size === 0) this.dispatches.delete(event.key.routeKey);
+      complete();
+    };
+    void execution.then(finish, finish);
+    return execution;
   }
 
   subscribe<TPayload>(
@@ -170,7 +195,14 @@ export class InMemoryEventBus implements EventBus {
           results.push(Promise.reject(error));
         }
       }
-      await Promise.all(results);
+      try {
+        await Promise.all(results);
+      } catch (error) {
+        // A rejected peer must not make drain finish while another handler is
+        // still using the current subscribers' resources.
+        await Promise.allSettled(results);
+        throw error;
+      }
     }
   }
 }
