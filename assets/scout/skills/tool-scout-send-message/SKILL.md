@@ -30,5 +30,5 @@ summary: 规定 SendMessage 的目标绑定与 steer/queued 投递语义。
 ## Result Rules
 
 - `status: queued` 只表示消息已被 Runtime 接受，不表示接收方已处理、接受或完成；返回的投递模式可能是 steer 或 queued。
-- SendMessage 不能替代 AssignTask、RequestHumanInput、RespondHumanInput、SubmitTask、ArchiveTask 或 SubmitPhaseOutcome。
+- SendMessage 不能替代 AssignTask、RequestHumanInput、RespondHumanInput、SubmitTask 或 SubmitPhaseOutcome。
 - 目标不存在、没有可接收 runner 或工具失败时，不得把消息描述为已送达。

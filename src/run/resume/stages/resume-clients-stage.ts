@@ -28,9 +28,14 @@ export class ResumeClientsStage implements RunStage {
   private stage?: RunAppServerStage;
   private rootConfigStage?: AppServerRootConfigStage;
 
+  constructor(private readonly options: {
+    /** Only the resume entry point may establish that initialization never finished. */
+    allowMissingHome?: boolean;
+  } = {}) {}
+
   /** Validates copied Codex state, then starts the app-server client stage. */
   async start(): Promise<void> {
-    assertRunCodexHomeIsContained();
+    assertRunCodexHomeIsContained(this.options.allowMissingHome === true);
     const rootConfigStage = new AppServerRootConfigStage();
     try {
       await rootConfigStage.start();
@@ -54,7 +59,7 @@ export class ResumeClientsStage implements RunStage {
 }
 
 /** Rejects copied Codex homes that escape the run root or contain symlinks. */
-function assertRunCodexHomeIsContained(): void {
+function assertRunCodexHomeIsContained(allowMissingHome: boolean): void {
   const scope = currentRunScope();
   const scoutRoot = resolve(scope.scoutRoot);
   const runRoot = resolve(scope.runRoot);
@@ -64,7 +69,8 @@ function assertRunCodexHomeIsContained(): void {
     root: string,
     target: string,
     label: string,
-  ): void => {
+    allowMissing = false,
+  ): boolean => {
     if (!isPathWithin(root, target, { allowRoot: false })) {
       throw new Error(`${label} escapes ${root}: ${target}.`);
     }
@@ -76,6 +82,7 @@ function assertRunCodexHomeIsContained(): void {
       try {
         stat = lstatSync(current);
       } catch (error) {
+        if (allowMissing && (error as NodeJS.ErrnoException).code === "ENOENT") return false;
         throw new Error(`Cannot inspect ${label} component ${current}.`, { cause: error });
       }
       if (stat.isSymbolicLink()) {
@@ -85,6 +92,7 @@ function assertRunCodexHomeIsContained(): void {
         throw new Error(`Expected ${label} component to be a directory: ${current}.`);
       }
     }
+    return true;
   };
   const assertInside = (path: string, root: string, label: string): void => {
     if (isPathWithin(root, path)) return;
@@ -111,7 +119,7 @@ function assertRunCodexHomeIsContained(): void {
   const scoutRootReal = realpathSync(scoutRoot);
   const runRootReal = realpathSync(runRoot);
   assertInside(runRootReal, scoutRootReal, "Run root");
-  requireDirectoryChain(runRoot, codexRoot, "Codex home");
+  if (!requireDirectoryChain(runRoot, codexRoot, "Codex home", allowMissingHome)) return;
   const codexRootReal = realpathSync(codexRoot);
   assertInside(codexRootReal, runRootReal, "Codex home");
 

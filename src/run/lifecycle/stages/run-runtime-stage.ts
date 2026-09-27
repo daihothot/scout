@@ -25,7 +25,7 @@ export class RunRuntimeStage implements RunStage {
         mode: this.mode,
         processId: process.pid,
       },
-      checkpointSeq: scope.journal.lastSeq,
+      checkpointSeq: scope.workflow.lastSeq,
     }));
     scope.logger.info({
       module: "run.lifecycle",
@@ -61,7 +61,7 @@ export class RunRuntimeStage implements RunStage {
     scope.manifestStore.update((manifest) => ({
       ...manifest,
       runtime: { status: interrupted ? "interrupted" : "detached", reason },
-      checkpointSeq: scope.journal.lastSeq,
+      checkpointSeq: scope.workflow.lastSeq,
     }));
     if (interrupted) {
       scope.logger.warn({

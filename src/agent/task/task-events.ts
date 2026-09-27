@@ -25,7 +25,7 @@ const taskEventCatalog = {
     notAssigned: event<AgentTaskNotAssignedEventPayload>(),
     messageQueued: event<AgentTaskState>(),
     done: event<AgentTaskState>(),
-    archived: event<AgentTaskState>(),
+    released: event<AgentTaskState>(),
     stopped: event<AgentTaskState>(),
     pendingMessagesDrained: event<AgentTaskState>(),
     stepStarted: event<AgentTaskState>(),

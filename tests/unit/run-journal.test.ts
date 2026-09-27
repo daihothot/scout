@@ -2,15 +2,17 @@ import assert from "node:assert/strict";
 import {
   appendFileSync,
   existsSync,
+  mkdtempSync,
   mkdirSync,
   readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { hostname } from "node:os";
-import { join } from "node:path";
+import { hostname, tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import test from "node:test";
+import type { TestContext } from "node:test";
 import { agent } from "../../src/agent/context/agent-attachments.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import {
@@ -20,14 +22,16 @@ import {
   EventSubscriptionPriorities,
   InMemoryEventBus,
 } from "../../src/core/events/index.js";
-import { WorkflowEvents } from "../../src/core/workflow/index.js";
+import { WorkflowBenchmarks, WorkflowEvents } from "../../src/core/workflow/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
+import { BaseDomain, ScoutDomainId } from "../../src/domain/index.js";
+import type { RunScope } from "../../src/run/run-scope.js";
 import {
-  RunJournal,
-  RunJournalWriter,
+  Journal,
+  JournalWriter,
+  type JournalLocation,
   readJournalEvents,
-} from "../../src/run/journal/index.js";
-import { WorkflowJournalStage } from "../../src/run/lifecycle/index.js";
+} from "../../src/core/journal/index.js";
 import {
   RunEvents,
   type RunJournalWriteFailedEvent,
@@ -35,15 +39,28 @@ import {
 import { projectRun as projectRunEvents } from "../../src/run/resume/projection/index.js";
 import {
   createTestRunPersistence,
+  createTestScheduler,
   installTestRunScope,
 } from "../helpers/run-persistence.js";
 
 const projectRun = (events: Parameters<typeof projectRunEvents>[0]) =>
   projectRunEvents(events, "coordinator");
 
-test("RunJournalWriter persists recovery events and excludes runtime readiness telemetry", async (t) => {
+function baseDomain(scope: RunScope): BaseDomain {
+  const domain = scope.domainRegistry.get(ScoutDomainId.Base);
+  assert.ok(domain instanceof BaseDomain);
+  return domain;
+}
+
+test("Workflow Journal writer persists recovery events and excludes readiness telemetry", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const { journal } = createTestRunPersistence(t, "journal-sequence", "/repo", eventBus);
+  const { journal, workflow } = createTestRunPersistence(
+    t,
+    "journal-sequence",
+    "/repo",
+    eventBus,
+  );
+  assert.equal(basename(journal.path), "scout.journal");
   await eventBus.publishAndWait(RunEvents.runtime.attached, {
     mode: "start",
     attachedAt: "2026-07-22T00:00:00.000Z",
@@ -64,30 +81,31 @@ test("RunJournalWriter persists recovery events and excludes runtime readiness t
     false,
   );
   assert.deepEqual(journal.readAll().map((event) => event.seq), [1, 2, 3]);
+  const location = scoutJournalLocation(journal.runId, journal.runRoot);
   assert.throws(
-    () => RunJournal.open({ runId: journal.runId, runRoot: journal.runRoot }),
+    () => Journal.open(location),
     /already attached/,
   );
-  const lockPath = join(journal.runRoot, ".run.lock");
+  const lockPath = location.lockPath;
   const lock = JSON.parse(readFileSync(lockPath, "utf8")) as { hostId: string };
   assert.equal(lock.hostId, hostname());
-  journal.close();
+  await workflow.stop();
   assert.equal(existsSync(lockPath), false);
 });
 
-test("RunJournal replaces a stale lock only when it belongs to the current host", (t) => {
-  const { journal } = createTestRunPersistence(t, "journal-stale-local-lock");
-  const lockPath = join(journal.runRoot, ".run.lock");
+test("Journal replaces a stale lock only when it belongs to the current host", (t) => {
+  const { journal, location } = createCoreJournal(t, "journal-stale-local-lock");
+  const lockPath = location.lockPath;
   journal.close();
   writeFileSync(lockPath, `${JSON.stringify({
-    runId: journal.runId,
+    journalId: journal.journalId,
     hostId: hostname(),
     processId: 2_147_483_647,
     token: "stale-local-token",
     acquiredAt: "2026-07-22T00:00:00.000Z",
   })}\n`, "utf8");
 
-  const reopened = RunJournal.open({ runId: journal.runId, runRoot: journal.runRoot });
+  const reopened = Journal.open(location);
   t.after(() => reopened.close());
   const lock = JSON.parse(readFileSync(lockPath, "utf8")) as {
     hostId: string;
@@ -99,12 +117,12 @@ test("RunJournal replaces a stale lock only when it belongs to the current host"
   assert.notEqual(lock.token, "stale-local-token");
 });
 
-test("RunJournal preserves and rejects a foreign-host lock", (t) => {
-  const { journal } = createTestRunPersistence(t, "journal-foreign-lock");
-  const lockPath = join(journal.runRoot, ".run.lock");
+test("Journal preserves and rejects a foreign-host lock", (t) => {
+  const { journal, location } = createCoreJournal(t, "journal-foreign-lock");
+  const lockPath = location.lockPath;
   journal.close();
   const foreignLock = `${JSON.stringify({
-    runId: journal.runId,
+    journalId: journal.journalId,
     hostId: `${hostname()}-foreign`,
     processId: process.pid,
     token: "foreign-token",
@@ -113,47 +131,49 @@ test("RunJournal preserves and rejects a foreign-host lock", (t) => {
   writeFileSync(lockPath, foreignLock, "utf8");
 
   assert.throws(
-    () => RunJournal.open({ runId: journal.runId, runRoot: journal.runRoot }),
+    () => Journal.open(location),
     /locked by host .*foreign.*current host/,
   );
   assert.equal(readFileSync(lockPath, "utf8"), foreignLock);
 });
 
-test("RunJournal repairs an incomplete tail before the next EventBus append", async (t) => {
-  const eventBus = new InMemoryEventBus();
-  const { journal, manifestStore } = createTestRunPersistence(
-    t,
-    "journal-tail",
-    "/repo",
-    eventBus,
-  );
-  await eventBus.publishAndWait(RunEvents.runtime.attached, {
+test("Journal repairs an incomplete tail before the next append", async (t) => {
+  const { journal, location } = createCoreJournal(t, "journal-tail");
+  journal.append({
+    id: "event-1",
+    key: RunEvents.run.created,
+    payload: { runId: "journal-tail", scoutRoot: "/repo", createdAt: "2026-07-22T00:00:00.000Z" },
+    occurredAt: "2026-07-22T00:00:00.000Z",
+  });
+  journal.append({
+    id: "event-2",
+    key: WorkflowEvents.workflow.initialized,
+    payload: {
+      state: createTestScheduler().snapshot(),
+      initializedAt: "2026-07-22T00:00:00.000Z",
+    },
+    occurredAt: "2026-07-22T00:00:00.000Z",
+  });
+  journal.append({
+    id: "event-3",
+    key: RunEvents.runtime.attached,
+    payload: {
     mode: "start",
     attachedAt: "2026-07-22T00:00:00.000Z",
     processId: process.pid,
-  }, {
+    },
     occurredAt: "2026-07-22T00:00:00.000Z",
   });
   journal.close();
   appendFileSync(journal.path, '{"version":1,"seq":4', "utf8");
 
-  const reopened = RunJournal.open({ runId: journal.runId, runRoot: journal.runRoot });
+  const reopened = Journal.open(location);
   t.after(() => reopened.close());
   assert.equal(reopened.lastSeq, 3);
-  const reopenedBus = new InMemoryEventBus();
-  installTestRunScope(t, {
-    runId: reopened.runId,
-    eventBus: reopenedBus,
-    journal: reopened,
-    manifestStore,
-  });
-  const writer = new RunJournalWriter();
-  writer.start();
-  t.after(() => writer.stop());
-  await reopenedBus.publishAndWait(RunEvents.runtime.detached, {
-    reason: "test",
-    detachedAt: "2026-07-22T00:00:01.000Z",
-  }, {
+  reopened.append({
+    id: "event-4",
+    key: RunEvents.runtime.detached,
+    payload: { reason: "test", detachedAt: "2026-07-22T00:00:01.000Z" },
     occurredAt: "2026-07-22T00:00:01.000Z",
   });
 
@@ -161,7 +181,7 @@ test("RunJournal repairs an incomplete tail before the next EventBus append", as
   assert.deepEqual(readJournalEvents(journal.path).map((event) => event.seq), [1, 2, 3, 4]);
 });
 
-test("RunJournalWriter persists Human Input semantics and message delivery as separate events", async (t) => {
+test("Workflow Journal writer persists Human Input and delivery as separate events", async (t) => {
   const eventBus = new InMemoryEventBus();
   const { journal } = createTestRunPersistence(t, "journal-human-input", "/repo", eventBus);
   const requestMessage = {
@@ -213,7 +233,7 @@ test("RunJournalWriter persists Human Input semantics and message delivery as se
   );
 });
 
-test("RunJournalWriter persists thread identities without resume and close telemetry", async (t) => {
+test("Workflow Journal writer persists thread identities without transient telemetry", async (t) => {
   const eventBus = new InMemoryEventBus();
   const { journal } = createTestRunPersistence(t, "journal-thread", "/repo", eventBus);
   const started = {
@@ -371,13 +391,18 @@ test("Run projection rejects a restart whose previous thread is not current", as
   );
 });
 
-test("RunJournalWriter retries the same event once after a transient write failure", async (t) => {
+test("JournalWriter retries the same event once after a transient write failure", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const { journal } = createTestRunPersistence(t, "journal-write-retry", "/repo", eventBus);
-  const failures: RunJournalWriteFailedEvent[] = [];
-  eventBus.subscribe<RunJournalWriteFailedEvent>(RunEvents.journal.writeFailed, (event) => {
-    failures.push(event.payload);
+  const { journal } = createCoreJournal(t, "journal-write-retry");
+  const failures: unknown[] = [];
+  const writer = new JournalWriter({
+    eventBus,
+    eventTypes: [RunEvents.runtime.attached],
+    journal: () => journal,
+    onFailure: (failure) => failures.push(failure),
   });
+  writer.start();
+  t.after(() => writer.stop());
   const append = journal.append.bind(journal);
   let attempts = 0;
   journal.append = (event) => {
@@ -390,7 +415,6 @@ test("RunJournalWriter retries the same event once after a transient write failu
       restoreJournalPath();
     }
   };
-
   await eventBus.publishAndWait(RunEvents.runtime.attached, {
     mode: "start",
     attachedAt: "2026-07-23T00:00:00.000Z",
@@ -403,14 +427,21 @@ test("RunJournalWriter retries the same event once after a transient write failu
   assert.equal(journal.readAll().at(-1)?.key.routeKey, RunEvents.runtime.attached.routeKey);
 });
 
-test("RunJournalWriter drops an unrecoverable event without blocking later dispatch or writes", async (t) => {
+test("Workflow Journal writer reports an unrecoverable event and accepts later writes", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const { journal } = createTestRunPersistence(
+  const persistence = createTestRunPersistence(
     t,
     "journal-write-recovery",
     "/repo",
     eventBus,
   );
+  const { journal, workflow } = persistence;
+  installTestRunScope(t, {
+    runId: journal.runId,
+    eventBus,
+    workflow,
+    manifestStore: persistence.manifestStore,
+  });
   const failures: RunJournalWriteFailedEvent[] = [];
   let downstreamDeliveries = 0;
   eventBus.subscribe<RunJournalWriteFailedEvent>(RunEvents.journal.writeFailed, (event) => {
@@ -434,7 +465,7 @@ test("RunJournalWriter drops an unrecoverable event without blocking later dispa
   }
 
   assert.equal(downstreamDeliveries, 1);
-  assert.equal(journal.failed, true);
+  assert.equal(workflow.journalFailed, true);
   assert.equal(failures.length, 1);
   assert.equal(failures[0]?.failedEventKey, RunEvents.runtime.attached.routeKey);
   assert.equal(
@@ -447,7 +478,7 @@ test("RunJournalWriter drops an unrecoverable event without blocking later dispa
     detachedAt: "2026-07-23T00:00:01.000Z",
   });
 
-  assert.equal(journal.failed, false);
+  assert.equal(workflow.journalFailed, false);
   assert.equal(
     journal.readAll().at(-1)?.key.routeKey,
     RunEvents.runtime.detached.routeKey,
@@ -458,38 +489,44 @@ test("RunJournalWriter drops an unrecoverable event without blocking later dispa
   );
 });
 
-test("WorkflowJournalStage replaces a completed Workflow with the next recovery window", async (t) => {
+test("Workflow starts a numbered Flow while retaining the completed scout.journal", async (t) => {
   const eventBus = new InMemoryEventBus();
+  const scoutRoot = mkdtempSync(join(tmpdir(), "scout-flow-stage-test-"));
   const persistence = createTestRunPersistence(
     t,
     "journal-workflow-replay",
-    "/repo",
+    scoutRoot,
     eventBus,
+    join(scoutRoot, "run", "journal-workflow-replay"),
   );
-  installTestRunScope(t, {
+  const benchmarks = new WorkflowBenchmarks(persistence.runRoot);
+  const scope = installTestRunScope(t, {
     runId: persistence.journal.runId,
     eventBus,
-    journal: persistence.journal,
+    workflow: persistence.workflow,
     manifestStore: persistence.manifestStore,
-    scheduler: persistence.scheduler,
+    scoutRoot,
   });
-  const stage = new WorkflowJournalStage();
-  await stage.start();
-  t.after(() => stage.stop());
+  baseDomain(scope).start();
+  t.after(() => baseDomain(scope).close());
+  t.after(() => rmSync(scoutRoot, { recursive: true, force: true }));
   await eventBus.publishAndWait(RunEvents.runtime.attached, {
     mode: "start",
     attachedAt: "2026-07-24T00:00:00.000Z",
     processId: process.pid,
   });
-  persistence.scheduler.advance("completed");
-  persistence.scheduler.advance("completed");
-  persistence.scheduler.advance("completed");
-  const completed = persistence.scheduler.advance("completed");
+  persistence.workflow.scheduler.advance("completed");
+  persistence.workflow.scheduler.advance("completed");
+  persistence.workflow.scheduler.advance("completed");
+  const completed = persistence.workflow.scheduler.advance("completed");
   assert.equal(completed.cycleCompleted, true);
+  assert.equal(persistence.workflow.flowSnapshot().status, "settling");
   assert.ok(persistence.journal.readAll().some((event) =>
     WorkflowEvents.workflow.advanced.is(event)
   ));
+  const completedJournalPath = persistence.journal.path;
 
+  await persistence.workflow.prepareNextFlow();
   await eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
     messageId: "workflow-replay-message",
     text: "重新执行",
@@ -497,7 +534,7 @@ test("WorkflowJournalStage replaces a completed Workflow with the next recovery 
     submittedAt: "2026-07-24T00:01:00.000Z",
   });
 
-  const events = persistence.journal.readAll();
+  const events = scope.workflow.readEvents();
   assert.deepEqual(events.map((event) => event.seq), [1, 2, 3, 4]);
   assert.deepEqual(events.map((event) => event.key.routeKey), [
     RunEvents.run.created.routeKey,
@@ -506,17 +543,22 @@ test("WorkflowJournalStage replaces a completed Workflow with the next recovery 
     SystemEvents.interaction.userMessageSubmitted.routeKey,
   ]);
   assert.equal(events.some((event) => WorkflowEvents.workflow.advanced.is(event)), false);
-  assert.equal(persistence.manifestStore.read().checkpointSeq, 3);
+  assert.ok(readJournalEvents(completedJournalPath).some((event) =>
+    WorkflowEvents.workflow.advanced.is(event)
+  ));
+  assert.equal(readJournalEvents(completedJournalPath).filter((event) =>
+    WorkflowEvents.workflow.completed.is(event)
+  ).length, 1);
+  assert.equal(benchmarks.read()?.currentFlow, "journal-0002");
+  assert.equal(persistence.manifestStore.read().checkpointSeq, 2);
+  assert.equal(Object.hasOwn(persistence.manifestStore.read(), "flowId"), false);
   assert.throws(
-    () => RunJournal.open({
-      runId: persistence.journal.runId,
-      runRoot: persistence.journal.runRoot,
-    }),
+    () => Journal.open(scoutJournalLocation(scope.runId, scope.workflow.journalRoot)),
     /already attached/,
   );
 });
 
-test("WorkflowJournalStage blocks replay while the completed Workflow retains a Task", async (t) => {
+test("Workflow blocks replay while a settling Flow retains a Task", async (t) => {
   const eventBus = new InMemoryEventBus();
   const persistence = createTestRunPersistence(
     t,
@@ -524,16 +566,14 @@ test("WorkflowJournalStage blocks replay while the completed Workflow retains a 
     "/repo",
     eventBus,
   );
-  installTestRunScope(t, {
+  const scope = installTestRunScope(t, {
     runId: persistence.journal.runId,
     eventBus,
-    journal: persistence.journal,
+    workflow: persistence.workflow,
     manifestStore: persistence.manifestStore,
-    scheduler: persistence.scheduler,
   });
-  const stage = new WorkflowJournalStage();
-  await stage.start();
-  t.after(() => stage.stop());
+  baseDomain(scope).start();
+  t.after(() => baseDomain(scope).close());
   await eventBus.publishAndWait(RunEvents.runtime.attached, {
     mode: "start",
     attachedAt: "2026-07-24T00:00:00.000Z",
@@ -554,20 +594,24 @@ test("WorkflowJournalStage blocks replay while the completed Workflow retains a 
     createdAt: "2026-07-24T00:00:01.000Z",
     updatedAt: "2026-07-24T00:00:01.000Z",
   });
-  persistence.scheduler.advance("completed");
-  persistence.scheduler.advance("completed");
-  persistence.scheduler.advance("completed");
-  persistence.scheduler.advance("completed");
+  persistence.workflow.scheduler.advance("completed");
+  persistence.workflow.scheduler.advance("completed");
+  persistence.workflow.scheduler.advance("completed");
+  persistence.workflow.scheduler.advance("completed");
+  assert.equal(persistence.workflow.flowSnapshot().status, "settling");
 
   await assert.rejects(
-    eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
-      messageId: "workflow-replay-blocked-message",
-      text: "重新执行",
-      attachment: agent.turn.message("重新执行"),
-      submittedAt: "2026-07-24T00:01:00.000Z",
-    }),
-    /1 unarchived Task/,
+    persistence.workflow.prepareNextFlow(),
+    /unfinished Task researcher-task-0001/,
   );
+  assert.equal(persistence.workflow.flowSnapshot().status, "settling");
+  assert.equal(persistence.journal.readAll().some((event) => WorkflowEvents.workflow.completed.is(event)), false);
+  await assert.rejects(eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
+    messageId: "workflow-replay-blocked-message",
+    text: "重新执行",
+    attachment: agent.turn.message("重新执行"),
+    submittedAt: "2026-07-24T00:01:00.000Z",
+  }), /not ready to accept input/);
   assert.equal(
     persistence.journal.readAll().some((event) =>
       SystemEvents.interaction.userMessageSubmitted.is(event)
@@ -577,14 +621,14 @@ test("WorkflowJournalStage blocks replay while the completed Workflow retains a 
   );
 });
 
-test("RunJournal rejects a malformed complete event", (t) => {
-  const { journal } = createTestRunPersistence(t, "journal-malformed");
+test("Journal rejects a malformed complete event", (t) => {
+  const { journal, location } = createCoreJournal(t, "journal-malformed");
   journal.close();
   appendFileSync(journal.path, "not-json\n", "utf8");
 
   assert.throws(
-    () => RunJournal.open({ runId: journal.runId, runRoot: journal.runRoot }),
-    /Invalid run journal JSON/,
+    () => Journal.open(location),
+    /Invalid journal JSON/,
   );
 });
 
@@ -596,4 +640,30 @@ function blockJournalWrites(path: string): () => void {
     rmSync(path, { recursive: true, force: true });
     renameSync(backupPath, path);
   };
+}
+
+function scoutJournalLocation(runId: string, journalRoot: string): JournalLocation {
+  return {
+    journalId: `${runId}:workflow:scout`,
+    path: join(journalRoot, "scout.journal"),
+    lockPath: join(journalRoot, ".scout.lock"),
+  };
+}
+
+function createCoreJournal(
+  t: TestContext,
+  journalId: string,
+): { journal: Journal; location: JournalLocation } {
+  const root = mkdtempSync(join(tmpdir(), "scout-core-journal-test-"));
+  const location = {
+    journalId,
+    path: join(root, "events.journal"),
+    lockPath: join(root, ".events.lock"),
+  };
+  const journal = Journal.create(location);
+  t.after(() => {
+    journal.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  return { journal, location };
 }

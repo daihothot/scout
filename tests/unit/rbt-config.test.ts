@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { AssetStore } from "../../src/asset-store/index.js";
-import { loadRbtConfig } from "../../src/domain/rbt/index.js";
+import { loadRbtConfig } from "../../src/domain/domains/rbt/index.js";
 
 test("loadRbtConfig reads the physical execution target", () => {
   const scoutRoot = mkdtempSync(join(tmpdir(), "scout-rbt-config-"));

@@ -26,9 +26,9 @@ export interface GraphRole {
   readonly phases: readonly string[];
 }
 
-/** Current Workflow graph and cursor owned by one Scheduler. */
+/** Immutable snapshot of the Workflow-owned Graph and its current cursor. */
 export interface GraphState {
-  /** Stable domain identifier selected by the Workflow Profile. */
+  /** Business Domain selected by the Workflow Profile. */
   readonly domain: string;
   readonly workflowProfile: string;
   readonly phases: readonly GraphPhase[];

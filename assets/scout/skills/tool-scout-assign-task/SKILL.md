@@ -25,6 +25,7 @@ summary: 规定 AssignTask 的 Phase 路由、输入完整性和返回状态语�
 - `description` 是简短任务标签；`prompt` 是完整中文任务指令，必须包含目标、已确认输入、正式 refs、边界、期望输出和 handoff 要求。
 - Coordinator 不传 Phase、role 或 Agent；Runtime 使用 `GraphState.currentPhase`，由当前 Phase 按声明顺序选择第一个空闲 Worker。
 - 工具只分配 Scout Worker task，不创建 Codex native subagent。
+- 已结束且无待处理消息的旧 Task 不占用 Worker；分配新任务时由 Worker 释放旧绑定。仍需修正原任务时使用 SendMessage，不分配替代任务。
 
 ## Result Rules
 

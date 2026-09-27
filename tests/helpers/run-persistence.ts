@@ -1,17 +1,19 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
 import { AssetStore, type AssetConfig } from "../../src/asset-store/index.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
+import type { JournalEvent } from "../../src/core/journal/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
-import type { ScoutDomain } from "../../src/domain/index.js";
+import {
+  BaseDomain,
+  DomainAgentBackend,
+  ScoutDomainId,
+  type ScoutDomain,
+} from "../../src/domain/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import type { RuntimeInteractionPort } from "../../src/interaction/index.js";
-import {
-  RunJournal,
-  RunJournalWriter,
-} from "../../src/run/journal/index.js";
 import { RunEvents } from "../../src/run/events/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import {
@@ -23,7 +25,10 @@ import type { RunEnvironment } from "../../src/run/types.js";
 import type { ExecutionPlatformPort } from "../../src/execution/scout-execution-system.js";
 import {
   createGraphState,
+  Graph,
   Scheduler,
+  Workflow,
+  type WorkflowFlowState,
 } from "../../src/core/workflow/index.js";
 
 const noopLogger = {
@@ -34,9 +39,10 @@ const noopLogger = {
 } as unknown as Logger;
 
 const testDomain: ScoutDomain = {
-  domainId: "test",
-  name: "test",
-  dynamicToolsForPhase: () => [],
+  description: { id: ScoutDomainId.Validation, name: "Test Domain" },
+  backend: new class extends DomainAgentBackend {
+    override async handleDynamicToolCall() { return undefined; }
+  }(),
 };
 
 export function createTestRunPersistence(
@@ -45,73 +51,76 @@ export function createTestRunPersistence(
   scoutRoot = "/repo",
   eventBus = new InMemoryEventBus(),
   runRootOverride?: string,
-  domain: ScoutDomain = testDomain,
+  schedulerOverride?: Scheduler,
 ): {
   runRoot: string;
-  journal: RunJournal;
-  domainJournal?: RunJournal;
+  journal: {
+    readonly runId: string;
+    readonly runRoot: string;
+    readonly path: string;
+    readonly lastSeq: number;
+    readAll(): JournalEvent[];
+  };
   manifestStore: RunManifestStore;
-  scheduler: Scheduler;
+  workflow: Workflow;
   config: AssetConfig;
 } {
   const root = runRootOverride === undefined
     ? mkdtempSync(join(tmpdir(), "scout-run-test-"))
     : undefined;
   const runRoot = runRootOverride ?? join(root!, runId);
-  const journal = RunJournal.create({ runId, runRoot });
-  const domainJournal = domain.journal
-    ? RunJournal.create({
-      runId,
-      runRoot,
-      fileName: `${domain.domainId}-events.jsonl`,
-      lockFileName: `.${domain.domainId}-events.lock`,
-    })
-    : undefined;
   const manifestStore = new RunManifestStore(runRoot);
-  const scheduler = createTestScheduler(eventBus);
+  const scheduler = schedulerOverride ?? createTestScheduler();
+  const workflowRoot = root ?? resolveTestWorkflowRoot(runRoot);
+  const workflow = new Workflow({
+    graphState: scheduler.snapshot(),
+  });
   const config = new AssetStore().config(scoutRoot);
   const scope = new RunScope({
     runId,
-    scoutRoot,
+    scoutRoot: workflowRoot,
     runRoot,
     logger: noopLogger,
     eventBus,
-    scheduler,
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain,
     config,
-    journal,
-    domainJournal,
+    workflow,
     manifestStore,
     terminate: async () => undefined,
   });
   const releaseScope = installRunScope(scope);
-  const writer = new RunJournalWriter();
-  writer.start();
   const createdAt = new Date().toISOString();
-  eventBus.publish(
-    RunEvents.run.created,
-    { runId, scoutRoot, createdAt },
-    { occurredAt: createdAt },
-  );
-  scheduler.initialize();
-  if (journal.lastSeq !== 2) {
+  manifestStore.create({ runId, scoutRoot, createdAt, checkpointSeq: 0 });
+  void workflow.start();
+  if (workflow.lastSeq !== 2) {
     throw new Error(`Test run ${runId} did not persist run.created and Workflow initialization.`);
   }
-  manifestStore.create({
-    runId,
-    scoutRoot,
-    createdAt,
-    checkpointSeq: journal.lastSeq,
-  });
+  manifestStore.update((manifest) => ({ ...manifest, checkpointSeq: workflow.lastSeq }));
   releaseScope();
-  t.after(() => {
-    writer.stop();
-    journal.close();
-    if (domainJournal && domainJournal !== journal) domainJournal.close();
+  const journal = {
+    runId,
+    get runRoot() {
+      return workflow.journalRoot;
+    },
+    get path() {
+      return workflow.journalPath;
+    },
+    get lastSeq() {
+      return workflow.lastSeq;
+    },
+    readAll: () => workflow.readEvents(),
+  };
+  t.after(async () => {
+    await workflow.stop();
     if (root !== undefined) rmSync(root, { recursive: true, force: true });
   });
-  return { runRoot, journal, domainJournal, manifestStore, scheduler, config };
+  return {
+    runRoot,
+    journal,
+    manifestStore,
+    workflow,
+    config,
+  };
 }
 
 export function installTestRunScope(
@@ -124,25 +133,23 @@ export function installTestRunScope(
     eventBus?: InMemoryEventBus;
     interactionPort?: RuntimeInteractionPort;
     domain?: ScoutDomain;
-    journal?: RunJournal;
-    domainJournal?: RunJournal;
+    workflow?: Workflow;
     manifestStore?: RunManifestStore;
     appServer?: CodexAppServerClient;
     environment?: RunEnvironment;
     scheduler?: Scheduler;
     executionSystem?: ExecutionPlatformPort;
+    flowState?: WorkflowFlowState;
     terminate?(reason: string): Promise<void>;
   },
 ): RunScope {
   const scoutRoot = options.scoutRoot ?? "/repo";
   const eventBus = options.eventBus ?? new InMemoryEventBus();
-  const persistence = options.journal && options.manifestStore
+  const persistence = options.workflow && options.manifestStore
     ? {
-      runRoot: options.runRoot ?? options.journal.runRoot,
-      journal: options.journal,
-      domainJournal: options.domainJournal,
+      runRoot: options.runRoot ?? dirname(options.manifestStore.path),
+      workflow: options.workflow,
       manifestStore: options.manifestStore,
-      scheduler: options.scheduler ?? createTestScheduler(eventBus),
       config: new AssetStore().config(scoutRoot),
     }
     : createTestRunPersistence(
@@ -151,7 +158,7 @@ export function installTestRunScope(
       scoutRoot,
       eventBus,
       options.runRoot,
-      options.domain,
+      options.scheduler,
     );
   const scope = new RunScope({
     runId: options.runId,
@@ -159,26 +166,52 @@ export function installTestRunScope(
     logger: options.logger ?? noopLogger,
     eventBus,
     interactionPort: options.interactionPort ?? new NoopRuntimeInteractionPort(),
-    domain: options.domain ?? testDomain,
     ...persistence,
-    scheduler: options.scheduler ?? persistence.scheduler,
     terminate: options.terminate ?? (async () => undefined),
   });
-  if (options.executionSystem) scope.setExecutionSystem(options.executionSystem);
+  const executionSystem = options.executionSystem ?? {
+    identify: async () => ({
+      ok: false as const,
+      code: "test_execution_unavailable",
+      message: "No execution system was configured for this test.",
+    }),
+    launch: async () => ({
+      ok: false as const,
+      code: "test_execution_unavailable",
+      message: "No execution system was configured for this test.",
+    }),
+    shutdown: async () => ({
+      ok: false as const,
+      code: "test_execution_unavailable",
+      message: "No execution system was configured for this test.",
+    }),
+  } satisfies ExecutionPlatformPort;
+  scope.setExecutionSystem(executionSystem);
   if (options.appServer) scope.setAppServer(options.appServer);
   if (options.environment) scope.setEnvironment(options.environment);
   const release = installRunScope(scope);
-  t.after(() => {
+  const domain = options.domain ?? testDomain;
+  const baseDomain = new BaseDomain();
+  scope.domainRegistry.register(baseDomain);
+  scope.domainRegistry.register(domain);
+  baseDomain.start();
+  t.after(async () => {
+    await domain.stop?.();
+    baseDomain.close();
     if (options.appServer) scope.clearAppServer(options.appServer);
     release();
   });
   return scope;
 }
 
+function resolveTestWorkflowRoot(runRoot: string): string {
+  return dirname(dirname(runRoot));
+}
+
 /** Creates the smallest valid Scheduler used by isolated run tests. */
-export function createTestScheduler(eventBus = new InMemoryEventBus()): Scheduler {
-  return new Scheduler(createGraphState({
-    domain: "test",
+export function createTestScheduler(domain = "test"): Scheduler {
+  return new Scheduler(new Graph(createGraphState({
+    domain: domain,
     workflowProfile: "test-workflow",
     phases: [
       {
@@ -209,5 +242,5 @@ export function createTestScheduler(eventBus = new InMemoryEventBus()): Schedule
       { name: "validator", phases: ["research-reviewer", "verify-reviewer"] },
     ],
     currentPhase: "research",
-  }), eventBus);
+  })));
 }

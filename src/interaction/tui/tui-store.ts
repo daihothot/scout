@@ -272,27 +272,23 @@ export class TuiStore {
         ? event.payload.task
         : event.payload as AgentTaskState;
     let systemText: string | undefined;
-    const archived = AgentEvents.task.archived.is(event);
+    const released = AgentEvents.task.released.is(event);
     const existing = this.taskMap.get(task.taskId);
     if (
       !existing
       && !AgentEvents.task.assigned.is(event)
-      && !archived
+      && !released
     ) return;
-    const status = archived ? "archived" : task.status;
-    const updatedAt = archived ? event.occurredAt : task.updatedAt;
+    const status = task.status;
+    const updatedAt = released ? event.occurredAt : task.updatedAt;
     if (existing) {
       const staleSnapshot = updatedAt < existing.updatedAt;
       const sameTimeActiveRegression = updatedAt === existing.updatedAt
         && (existing.status === "done"
           || existing.status === "failed"
-          || existing.status === "stopped"
-          || existing.status === "archived")
+          || existing.status === "stopped")
         && (status === "queued" || status === "running");
-      const sameTimeArchiveRegression = updatedAt === existing.updatedAt
-        && existing.status === "archived"
-        && status !== "archived";
-      if (staleSnapshot || sameTimeActiveRegression || sameTimeArchiveRegression) return;
+      if (staleSnapshot || sameTimeActiveRegression) return;
     }
     this.taskMap.set(task.taskId, projectTaskSummary(
       task,
@@ -304,8 +300,8 @@ export class TuiStore {
         return step ? [step] : [];
       }),
     ));
-    if (archived) {
-      systemText = `任务 ${task.taskId} 已归档。`;
+    if (released) {
+      systemText = `任务 ${task.taskId} 的运行资源已释放，结果保留。`;
     } else if (AgentEvents.task.assigned.is(event)) {
       systemText = `任务 ${task.taskId} 已指派给 ${task.role}。`;
     } else if (AgentEvents.task.done.is(event)) {

@@ -3,7 +3,7 @@ import { AgentStepStatuses } from "../../../agent/step/types.js";
 import { RunEvents } from "../../events/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
-import { projectRun } from "../projection/index.js";
+import { projectRun, readDomainJournalProjections } from "../projection/index.js";
 import { resolveSynthesisRole } from "../../../core/workflow/index.js";
 
 /**
@@ -19,12 +19,11 @@ export class RecordResumeInterruptionsStage implements RunStage {
   async start(): Promise<void> {
     this.recordPreviousRuntimeInterruption();
     const scope = currentRunScope();
-    const synthesisRole = resolveSynthesisRole(scope.scheduler.snapshot()).name;
+    const synthesisRole = resolveSynthesisRole(scope.workflow.scheduler.snapshot()).name;
     let projection = projectRun(
-      scope.journal.readAll(),
+      scope.workflow.readEvents(),
       synthesisRole,
-      scope.domain.journal,
-      scope.domainJournal.readAll(),
+      readDomainJournalProjections(scope.domainRegistry.list()),
     );
     scope.stepStore.restore(projection.steps);
     for (const turn of projection.turns.filter((candidate) => !candidate.completedAt)) {
@@ -43,10 +42,9 @@ export class RecordResumeInterruptionsStage implements RunStage {
     }
 
     projection = projectRun(
-      scope.journal.readAll(),
+      scope.workflow.readEvents(),
       synthesisRole,
-      scope.domain.journal,
-      scope.domainJournal.readAll(),
+      readDomainJournalProjections(scope.domainRegistry.list()),
     );
     const interruptionReason = "previous_runtime_ended_before_step_completion";
     for (const step of projection.steps) {
@@ -71,12 +69,11 @@ export class RecordResumeInterruptionsStage implements RunStage {
     }
 
     projection = projectRun(
-      scope.journal.readAll(),
+      scope.workflow.readEvents(),
       synthesisRole,
-      scope.domain.journal,
-      scope.domainJournal.readAll(),
+      readDomainJournalProjections(scope.domainRegistry.list()),
     );
-    if (projection.checkpointSeq !== scope.journal.lastSeq) {
+    if (projection.checkpointSeq !== scope.workflow.lastSeq) {
       throw new Error(`Run projection did not consume journal tail for ${projection.runId}.`);
     }
   }
@@ -84,7 +81,7 @@ export class RecordResumeInterruptionsStage implements RunStage {
   /** Emits one runtime interruption only when the prior runtime lacks a detach. */
   private recordPreviousRuntimeInterruption(): void {
     const scope = currentRunScope();
-    const runtimeEvent = [...scope.journal.readAll()].reverse().find((event) =>
+    const runtimeEvent = [...scope.workflow.readEvents()].reverse().find((event) =>
       RunEvents.runtime.attached.is(event)
       || RunEvents.runtime.ready.is(event)
       || RunEvents.runtime.detached.is(event)

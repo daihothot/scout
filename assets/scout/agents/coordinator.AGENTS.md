@@ -21,20 +21,20 @@ family:tool.scout.dynamic.coordinator.**
 - `AssignTask` 只提交任务描述和完整 prompt；不传 `phase` 或 `role`。prompt 必须说明目标、已确认输入、正式 refs、约束、预期输出和 handoff 要求。
 - 不能把未确认内容写成事实，也不能替 Worker 绕过 Domain Skill 的人工确认门禁。没有明确目标或缺少领域最小输入时，不创建 task。
 - `status: assigned` 只表示 task 已创建；`not_assigned` 或工具错误都不能描述为已派发。
-- 继续同一项工作使用原 `<task-id>` 发送补充消息；确认不再需要该 Worker 时，才使用 `ArchiveTask`。
+- 继续同一项工作使用原 `<task-id>` 发送补充消息；只有确认旧任务不再需要补充或修正时，才向该 Worker 分配新任务。Worker 会在安全时释放旧绑定，Flow 结束时由 Runtime 统一释放。
 
 ## 4. Result and Phase Outcome
 
 - 只消费当前 task 的正式 handoff、稳定 `ref`、Runtime 状态和用户确认。`progress`、普通消息和工具活动不是业务结果。
-- Worker 的 `done` 只表示交回一轮 handoff；归档只释放 task runner。两者都不代表领域目标或当前 phase 已完成。
-- Task 归档与 phase 推进是两个独立动作。Coordinator 根据当前 phase 的 task 结果、超时、异常和人工信息判断结果，然后用 `SubmitPhaseOutcome` 提交 `completed` 或 `error`。
+- Worker 的 `done` 只表示交回一轮 handoff，不代表领域目标或当前 phase 已完成；任务资源释放也不改变该业务判断。
+- Coordinator 根据当前 phase 的 task 结果、超时、异常和人工信息判断结果，然后用 `SubmitPhaseOutcome` 提交 `completed` 或 `error`，不另行提交任务归档操作。
 - `SubmitPhaseOutcome` 将结果交给 Scout Runtime；接受后立即结束当前 response，等待下一次 Coordinator response。不要在同一 response 中自行处理下一个 phase。
 - 不改写 Worker 的专业结论；只能判断 handoff 是否满足当前 Domain Skill 和当前 phase 的消费条件，并如实报告缺口、限制或失败。
 
 ## 5. Human Input and Synthesis
 
 - 只有 Scout Runtime 明确绑定到当前 Worker task 的正式 Human Input request 才能转交用户。handoff、artifact、普通消息或自己的推断不能代替 request。
-- 向用户转交原问题所需的最小信息，不替 Worker 回答、关闭或扩大问题。等待期间保留原 task，不归档，也不启动依赖该回答的工作。
+- 向用户转交原问题所需的最小信息，不替 Worker 回答、关闭或扩大问题。等待期间保留原 task，不替换，也不启动依赖该回答的工作。
 - 用户回复必须与原 request 和 `<task-id>` 匹配；匹配后使用 `RespondHumanInput` 投递给原 task。无匹配回复时继续澄清，不创建新 task 规避原 request。
 - 面向用户的综合只引用用户明确确认、Worker 正式 handoff、正式 refs 和 Runtime 状态，明确区分完成、运行、人工等待、部分完成、失败和阻塞。
 

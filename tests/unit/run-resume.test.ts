@@ -21,6 +21,7 @@ import { CoordinatorRunner } from "../../src/agent/runner/coordinator/coordinato
 import { TaskRunner } from "../../src/agent/runner/task/task-runner.js";
 import { WorkerRunner } from "../../src/agent/runner/worker/worker-runner.js";
 import { ScoutAgent } from "../../src/agent/core/scout-agent.js";
+import { CoordinatorAgent } from "../../src/agent/roles/coordinator-agent.js";
 import { Result } from "../../src/core/result.js";
 import type { AgentMessage } from "../../src/agent/message/types.js";
 import {
@@ -43,14 +44,15 @@ import {
   InMemoryEventBus,
   type ScoutEvent,
 } from "../../src/core/events/index.js";
+import type { JournalEvent } from "../../src/core/journal/index.js";
+import { Workflow, WorkflowEvents, projectWorkflowFlowState } from "../../src/core/workflow/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
-import type { ScoutDomain } from "../../src/domain/index.js";
-import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import {
-  RunJournal,
-  RunJournalWriter,
-  type RunJournalEvent,
-} from "../../src/run/journal/index.js";
+  ScoutDomainId,
+  DomainAgentBackend,
+  type ScoutDomain,
+} from "../../src/domain/index.js";
+import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import { RunEvents } from "../../src/run/events/index.js";
 import { buildResumePacket } from "../../src/run/resume/packet/index.js";
 import {
@@ -66,6 +68,7 @@ import {
   RunScope,
 } from "../../src/run/run-scope.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
+import { ScoutExecutionSystem } from "../../src/execution/index.js";
 
 const projectRun = (events: Parameters<typeof projectRunEvents>[0]) =>
   projectRunEvents(events, "coordinator");
@@ -86,15 +89,17 @@ import {
   AgentBackendStage,
   AgentTelemetryStage,
   DomainStage,
+  ExecutionStage,
   InteractionStage,
   OrchestratorStage,
-  RunJournalWriterStage,
   RunRuntimeStage,
   RunScopeStage,
   RunStageExecutor,
+  WorkflowStage,
   type RunStage,
 } from "../../src/run/lifecycle/index.js";
 import {
+  createTestRunPersistence,
   createTestScheduler,
   installTestRunScope,
 } from "../helpers/run-persistence.js";
@@ -168,6 +173,24 @@ test("Run projection rebuilds pending messages, human gate and interrupted turn"
     inferTaskRecoveryCheckpoint(projection, projection.tasks[0]),
     TaskRecoveryCheckpoints.WaitingForHumanInput,
   );
+});
+
+test("Run projection rejects duplicate invocation identities instead of replacing a completed turn", () => {
+  const started = {
+    invocationId: "coordinator-thread-invocation-existing",
+    agentId: "coordinator",
+    role: "coordinator",
+    threadId: "coordinator-thread",
+    prompt: "first invocation",
+    startedAt: "2026-07-22T00:00:00.000Z",
+  };
+  assert.throws(() => projectRun(journalEvents(
+    scoutEvent(AgentEvents.turn.started, started),
+    scoutEvent(AgentEvents.turn.completed, {
+      turn: { ...started, finishedAt: "2026-07-22T00:00:01.000Z", status: "completed" },
+    }),
+    scoutEvent(AgentEvents.turn.started, { ...started, prompt: "colliding invocation" }),
+  )), /Duplicate turn invocation id: coordinator-thread-invocation-existing/);
 });
 
 test("Run projection keeps the original thread snapshot across resume lifecycles", () => {
@@ -522,6 +545,46 @@ test("Coordinator keeps an outcome when its completed turn started before the ou
   );
 });
 
+test("Domain journal ordinals do not decide task review; pending Domain messages remain consumable", () => {
+  const task = taskState({ status: AgentTaskStatuses.Done });
+  const projection = projectRun(journalEvents(
+    scoutEvent(AgentEvents.task.assigned, taskState()),
+    scoutEvent(AgentEvents.task.outcomeSubmitted, {
+      task, stepId: "worker-step", outcome: "done", submittedAt: "2026-09-27T00:00:00Z",
+    }),
+    scoutEvent(AgentEvents.turn.started, {
+      invocationId: "review", agentId: "coordinator", role: "coordinator",
+      threadId: "coordinator-thread", prompt: "review outcome", startedAt: "2026-09-27T00:00:01Z",
+    }),
+    scoutEvent(AgentEvents.turn.completed, {
+      turn: {
+        invocationId: "review", agentId: "coordinator", role: "coordinator",
+        threadId: "coordinator-thread", turnId: "review-turn", status: "completed",
+        startedAt: "2026-09-27T00:00:01Z", finishedAt: "2026-09-27T00:00:02Z",
+      },
+    }),
+  ));
+  for (const journalSeq of [1, 10_000]) {
+    projection.artifacts = [{
+      artifactId: "artifact", taskId: task.taskId, agentId: task.agentId, role: task.role,
+      ref: "artifact", digest: "digest", status: "published", publishedAt: "2026-09-27T00:00:03Z", journalSeq,
+    }];
+    projection.gates = [{
+      gateId: "gate", taskId: task.taskId, agentId: task.agentId, checkedRef: "artifact",
+      checkedDigest: "digest", gateRef: "gate", gateDigest: "digest", status: "passed",
+      recordedAt: "2026-09-27T00:00:03Z", journalSeq,
+    }];
+    assert.deepEqual(planResumeActions({ projection, agentId: "coordinator", role: "coordinator", synthesisRole: "coordinator" }), []);
+  }
+  projection.pendingMessages.push({
+    messageId: "domain-notification", agentId: "coordinator", body: "New Domain evidence",
+    queuedAt: "2026-09-27T00:00:03Z",
+  });
+  assert.deepEqual(planResumeActions({ projection, agentId: "coordinator", role: "coordinator", synthesisRole: "coordinator" }), [
+    { type: ResumeActionTypes.ConsumeMessage, messageId: "domain-notification" },
+  ]);
+});
+
 test("Coordinator re-evaluates a completed outcome after a newer outcome", () => {
   const task = taskState({ status: AgentTaskStatuses.Done });
   const firstCheck = [
@@ -759,26 +822,26 @@ test("Run projection persists one consumption fact for each Human Input directio
   )), /Human input request .* was consumed more than once/);
 });
 
-test("Archived tasks do not retain unresolved Human Gates or their pending delivery", () => {
+test("Released tasks do not retain unresolved Human Gates or their pending delivery", () => {
   const task = taskState();
   const projection = projectRun(journalEvents(
     scoutEvent(AgentEvents.task.assigned, task),
     scoutEvent(AgentEvents.humanInput.requested, {
-      requestId: "archived-request",
-      stepId: "researcher-task-0001-step-archived",
+      requestId: "released-request",
+      stepId: "researcher-task-0001-step-released",
       taskId: task.taskId,
       agentId: task.agentId,
       body: "已经失效的请求",
       requestedAt: "2026-07-22T00:01:00.000Z",
       message: {
-        messageId: "archived-request-message",
+        messageId: "released-request-message",
         agentId: "coordinator",
         body: agent.turn.wait_for_human_request("已经失效的请求"),
         queuedAt: "2026-07-22T00:01:00.000Z",
       },
     }),
     scoutEvent(
-      AgentEvents.task.archived,
+      AgentEvents.task.released,
       task,
       "2026-07-22T00:01:01.000Z",
     ),
@@ -969,6 +1032,136 @@ test("Coordinator resume packet uses its own interrupted Step prompt only", () =
     false,
   );
 });
+
+for (const nextStepStarted of [false, true]) {
+  test(`Phase handoff recovery ${nextStepStarted ? "resumes the started Step" : "wakes the committed Phase without another input"}`, () => {
+    const graph = createTestScheduler().snapshot();
+    const oldStep = {
+      ...agentStepState({ agentId: "coordinator", stepId: "old-phase-step" }),
+      taskId: undefined,
+    };
+    const nextStep = { ...oldStep, stepId: "next-phase-step" };
+    const projection = projectRun(journalEvents(
+      scoutEvent(AgentEvents.step.started, oldStep),
+      scoutEvent(WorkflowEvents.workflow.advanced, {
+        state: { ...graph, currentPhase: "research-reviewer" }, previousPhase: "research",
+        outcome: "completed", cycleCompleted: false,
+        advancedAt: "2026-07-22T00:00:01.000Z",
+      }),
+      scoutEvent(AgentEvents.step.completed, { ...oldStep, status: AgentStepStatuses.Completed }),
+      ...(nextStepStarted ? [scoutEvent(AgentEvents.step.started, nextStep)] : []),
+    ));
+    assert.deepEqual(projection.pendingMessages, []);
+    assert.deepEqual(planResumeActions({
+      projection, agentId: "coordinator", role: "coordinator", synthesisRole: "coordinator",
+    }), nextStepStarted
+      ? [{ type: ResumeActionTypes.ResumeCoordinatorStep, stepId: nextStep.stepId }]
+      : [{ type: ResumeActionTypes.ContinuePhase, phase: "research-reviewer" }]);
+  });
+}
+
+test("Settling recovery separates old work from deferred user input", () => {
+  const graph = createTestScheduler().snapshot();
+  const projection = projectRun(journalEvents(
+    scoutEvent(SystemEvents.interaction.userMessageSubmitted, {
+      messageId: "next-flow-input", text: "next flow only", attachment: agent.turn.message("next flow only"),
+      submittedAt: "2026-07-22T00:00:00.000Z",
+    }),
+    scoutEvent(AgentEvents.message.queued, {
+      messageId: "old-worker-message", agentId: "coordinator", body: "finish old work",
+      queuedAt: "2026-07-22T00:00:00.000Z",
+    }),
+    scoutEvent(WorkflowEvents.workflow.advanced, {
+      state: graph, previousPhase: graph.currentPhase,
+      outcome: "error", cycleCompleted: true, advancedAt: "2026-07-22T00:00:01.000Z",
+    }),
+  ));
+  assert.deepEqual(planResumeActions({
+    projection, agentId: "coordinator", role: "coordinator", synthesisRole: "coordinator",
+  }), [
+    { type: ResumeActionTypes.ConsumeMessage, messageId: "old-worker-message" },
+    { type: ResumeActionTypes.SettleFlow },
+  ]);
+  const packet = buildPlannedResumePacket({
+    projection, agentId: "coordinator", role: "coordinator", assetCommitId: "coordinator-assets",
+  });
+  assert.doesNotMatch(packet, /next flow only/);
+});
+
+for (const status of [AgentStepStatuses.Running, AgentStepStatuses.Interrupted]) {
+  test(`Coordinator plans its own ${status} Step after consuming the only user input`, () => {
+    const step = {
+      ...agentStepState({
+        stepId: "coordinator-consumed-input-step",
+        agentId: "coordinator",
+        status,
+        prompt: agent.turn.message("continue this interrupted request"),
+      }),
+      taskId: undefined,
+    } satisfies AgentStepState;
+    const projection = projectRun(journalEvents(
+      scoutEvent(AgentEvents.step.interrupted, {
+        ...step, stepId: "coordinator-older-interruption", status: AgentStepStatuses.Interrupted,
+        prompt: "obsolete interrupted request",
+      }),
+      scoutEvent(SystemEvents.interaction.userMessageSubmitted, {
+        messageId: "consumed-user-input", text: "finish the request",
+        attachment: agent.turn.message("finish the request"),
+        submittedAt: "2026-07-22T00:00:00.000Z",
+      }),
+      scoutEvent(AgentEvents.message.consumed, {
+        messageId: "consumed-user-input", agentId: "coordinator", stepId: step.stepId,
+        consumedAt: "2026-07-22T00:00:01.000Z",
+      }),
+      scoutEvent(AgentEvents.step.started, { ...step, status: AgentStepStatuses.Running }),
+      ...(status === AgentStepStatuses.Interrupted
+        ? [scoutEvent(AgentEvents.step.interrupted, step)]
+        : []),
+    ));
+    assert.deepEqual(projection.pendingMessages, []);
+    assert.deepEqual(projection.tasks, []);
+    assert.deepEqual(planResumeActions({
+      projection, agentId: "coordinator", role: "coordinator", synthesisRole: "coordinator",
+    }), [{ type: ResumeActionTypes.ResumeCoordinatorStep, stepId: step.stepId }]);
+    const packet = JSON.parse(attachments.readTagBlock(buildPlannedResumePacket({
+      projection, agentId: "coordinator", role: "coordinator", assetCommitId: "ac-coordinator",
+    }), "resume")[0]?.body ?? "{}");
+    assert.equal(packet.resume_actions[0]?.type, ResumeActionTypes.ResumeCoordinatorStep);
+    assert.equal(packet.resume_actions[0]?.step_id, step.stepId);
+    assert.equal(packet.open[0]?.step_id, step.stepId);
+    assert.equal(packet.open[0]?.prompt, step.prompt);
+    assert.equal(packet.open.some((entry: { step_id?: string }) => entry.step_id === "coordinator-older-interruption"), false);
+  });
+}
+
+for (const status of [AgentStepStatuses.Completed, AgentStepStatuses.Failed]) {
+  test(`A later ${status} Coordinator Step supersedes an old interruption in actions and packet`, () => {
+    const oldStep = {
+      ...agentStepState({
+        stepId: "coordinator-old-interruption", agentId: "coordinator",
+        status: AgentStepStatuses.Interrupted, prompt: "obsolete coordinator input",
+      }),
+      taskId: undefined,
+    } satisfies AgentStepState;
+    const latestStep = { ...oldStep, stepId: "coordinator-latest-step", status, prompt: "newer input" };
+    const projection = projectRun(journalEvents(
+      scoutEvent(AgentEvents.step.interrupted, oldStep),
+      scoutEvent(AgentEvents.step.started, { ...latestStep, status: AgentStepStatuses.Running }),
+      scoutEvent(
+        status === AgentStepStatuses.Completed ? AgentEvents.step.completed : AgentEvents.step.failed,
+        latestStep,
+      ),
+    ));
+    assert.deepEqual(planResumeActions({
+      projection, agentId: "coordinator", role: "coordinator", synthesisRole: "coordinator",
+    }), []);
+    const packet = JSON.parse(attachments.readTagBlock(buildPlannedResumePacket({
+      projection, agentId: "coordinator", role: "coordinator", assetCommitId: "ac-coordinator",
+    }), "resume")[0]?.body ?? "{}");
+    assert.deepEqual(packet.resume_actions, []);
+    assert.equal(packet.open.some((entry: { step_id?: string }) => entry.step_id === oldStep.stepId), false);
+  });
+}
 
 test("Resume Packet bounds long outcomes without message duplication", () => {
   const task = taskState({ status: AgentTaskStatuses.Done });
@@ -1382,6 +1575,106 @@ test("ScoutAgent restores accepted delivery ids without replaying them", async (
   );
 });
 
+for (const hasCurrentFlowTurn of [false, true]) {
+  test(`ScoutAgent invocation identities survive Flow boundaries and repeated restoration with ${hasCurrentFlowTurn ? "a prior" : "no"} current Flow turn`, async (t) => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-resume-invocation-identity-"));
+    const runId = "invocation-identity";
+    let providerTurnSequence = 0;
+    const appServer = {
+      async startThread(startInput: Record<string, unknown>) {
+        return { threadId: "shared-thread", startInput, response: { thread: { id: "shared-thread" } } };
+      },
+      async resumeThread(resumeInput: { threadId: string }) {
+        return { threadId: resumeInput.threadId, resumeInput, response: { thread: { id: resumeInput.threadId } } };
+      },
+      async runTurn() {
+        return { turnId: `provider-turn-${++providerTurnSequence}`, finalResponse: "completed" };
+      },
+    } as unknown as CodexAppServerClient;
+    const environment = {
+      contextBundle: { runId, contextBundleId: "context-1" },
+    } as never;
+    const eventBus = new InMemoryEventBus();
+    const persistence = createTestRunPersistence(
+      t, runId, fixtureRoot, eventBus, join(fixtureRoot, "run", runId),
+    );
+    const initialScope = new RunScope({
+      runId, scoutRoot: fixtureRoot, runRoot: persistence.runRoot, eventBus,
+      workflow: persistence.workflow, config: persistence.config, manifestStore: persistence.manifestStore,
+      logger: noopLogger(), interactionPort: new NoopRuntimeInteractionPort(), terminate: async () => undefined,
+    });
+    initialScope.setAppServer(appServer);
+    initialScope.setEnvironment(environment);
+    const releaseInitialScope = installRunScope(initialScope);
+    let initialScopeInstalled = true;
+    t.after(() => { if (initialScopeInstalled) releaseInitialScope(); });
+    const initialAgent = new RestorableMessageAgent();
+    initialScope.agentRegistry.registerAgent(initialAgent);
+    await initialAgent.startThread();
+    await initialScope.eventBus.publishAndWait(RunEvents.runtime.attached, {
+      mode: "start", attachedAt: new Date().toISOString(), processId: process.pid,
+    });
+    const first = await initialAgent.runTurn({ prompt: "first Flow" });
+    const firstFlowPath = initialScope.workflow.journalPath;
+    initialScope.workflow.scheduler.advance("error");
+    await initialScope.workflow.prepareNextFlow();
+    assert.equal(projectRun(initialScope.workflow.readEvents()).turns.length, 0);
+    const second = hasCurrentFlowTurn
+      ? await initialAgent.runTurn({ prompt: "second Flow before restore" })
+      : undefined;
+    if (second) assert.notEqual(first.turn.invocationId, second.turn.invocationId);
+    const previousFlowContents = readFileSync(firstFlowPath, "utf8");
+    await initialAgent.stopAgent("restore_identity_test");
+    const flowId = initialScope.workflow.flowSnapshot().flowId;
+    const journalRoot = initialScope.workflow.journalRoot;
+    const graphState = initialScope.workflow.graph.snapshot();
+    let events = initialScope.workflow.readEvents();
+    await initialScope.workflow.stop();
+    releaseInitialScope();
+    initialScopeInstalled = false;
+
+    const invocationIds = [first.turn.invocationId, ...(second ? [second.turn.invocationId] : [])];
+    for (let restore = 0; restore < 2; restore += 1) {
+      const restoredThread = projectRun(events).threads[0];
+      assert.ok(restoredThread);
+      const workflow = new Workflow({
+        graphState,
+        resume: {
+          flow: projectWorkflowFlowState(flowId, events),
+          journalRoot,
+        },
+      });
+      const scope = new RunScope({
+        runId, scoutRoot: fixtureRoot, runRoot: initialScope.runRoot,
+        config: initialScope.config, logger: noopLogger(), eventBus: new InMemoryEventBus(),
+        workflow, manifestStore: initialScope.manifestStore,
+        interactionPort: new NoopRuntimeInteractionPort(), terminate: async () => undefined,
+      });
+      scope.setAppServer(appServer);
+      scope.setEnvironment(environment);
+      const release = installRunScope(scope);
+      try {
+        await workflow.start();
+        const restoredAgent = new RestorableMessageAgent();
+        scope.agentRegistry.registerAgent(restoredAgent);
+        await restoredAgent.resumeThread({ thread: restoredThread, rolloutPath: "/unused-test-rollout" });
+        const outcome = await restoredAgent.runTurn({ prompt: `restored turn ${restore + 1}` });
+        invocationIds.push(outcome.turn.invocationId);
+        assert.equal(new Set(invocationIds).size, invocationIds.length);
+        assert.equal(projectRun(workflow.readEvents()).turns.length, restore + 1 + Number(hasCurrentFlowTurn));
+        await restoredAgent.stopAgent("restore_identity_test");
+        events = workflow.readEvents();
+        await workflow.stop();
+      } finally {
+        await workflow.stop();
+        release();
+      }
+    }
+    assert.equal(readFileSync(firstFlowPath, "utf8"), previousFlowContents);
+    t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  });
+}
+
 for (const status of ["failed", "interrupted"] as const) {
   test(`CoordinatorRunner does not publish a partial response from a ${status} turn`, async (t) => {
     const eventBus = new InMemoryEventBus();
@@ -1421,6 +1714,136 @@ for (const status of ["failed", "interrupted"] as const) {
     assert.deepEqual(producedMessages, []);
   });
 }
+
+test("Resume activation continues a Coordinator-only interruption after its user input was consumed", async (t) => {
+  const prompts: string[] = [];
+  let newThreadSequence = 0;
+  const appServer = {
+    async startThread(startInput: Record<string, unknown>) {
+      const threadId = `unused-worker-thread-${++newThreadSequence}`;
+      return { threadId, startInput, response: { thread: { id: threadId } } };
+    },
+    async resumeThread(resumeInput: { threadId: string }) {
+      return { threadId: resumeInput.threadId, resumeInput, response: { thread: { id: resumeInput.threadId } } };
+    },
+    async runTurn(input: { prompt: string; onTurnStarted?(turnId: string): void }) {
+      prompts.push(input.prompt);
+      input.onTurnStarted?.("resumed-coordinator-turn");
+      return { turnId: "resumed-coordinator-turn", finalResponse: "continued request" };
+    },
+    async request() { return {}; },
+  } as unknown as CodexAppServerClient;
+  const fixture = await installRolloutLocatorFixture(t, "coordinator-only-interruption", {
+    includeTurn: false, appServer,
+  });
+  const thread = {
+    ...fixture.thread, agentId: "coordinator", role: "coordinator", phases: ["Synthesis"],
+    threadId: "coordinator-interrupted-thread",
+    startInput: {
+      ...fixture.thread.startInput,
+      cwd: fixture.scope.environment.agents.coordinator.mount.mountRoot,
+      permissions: scoutAgentPermissionProfile("coordinator"),
+    },
+    startResponse: { thread: { id: "coordinator-interrupted-thread" } },
+  } satisfies AgentThreadSnapshot;
+  const step = {
+    ...agentStepState({
+      stepId: "coordinator-consumed-input-step", agentId: "coordinator",
+      status: AgentStepStatuses.Running, prompt: agent.turn.message("recover my interrupted request"),
+    }),
+    taskId: undefined,
+  } satisfies AgentStepState;
+  await fixture.scope.eventBus.publishAndWait(AgentEvents.thread.started, thread);
+  writePersistedRollout({ scoutRoot: fixture.fixtureRoot, runId: fixture.scope.runId, threadId: thread.threadId });
+  await fixture.scope.eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
+    messageId: "consumed-coordinator-input", text: "recover my interrupted request",
+    attachment: step.prompt, submittedAt: step.startedAt,
+  });
+  await fixture.scope.eventBus.publishAndWait(AgentEvents.step.started, step);
+  await fixture.scope.eventBus.publishAndWait(AgentEvents.message.consumed, {
+    messageId: "consumed-coordinator-input", agentId: "coordinator", stepId: step.stepId,
+    consumedAt: step.startedAt,
+  });
+  await fixture.scope.eventBus.publishAndWait(AgentEvents.turn.started, {
+    invocationId: "interrupted-coordinator-invocation", agentId: "coordinator", role: "coordinator",
+    threadId: thread.threadId, prompt: step.prompt, startedAt: step.startedAt,
+  });
+  await new RecordResumeInterruptionsStage().start();
+  const restoreAgents = new RestoreAgentsStage();
+  await restoreAgents.start();
+  try {
+    await new RestoreTasksStage().start();
+    const inject = new InjectResumeContextStage();
+    await inject.start();
+    const coordinator = fixture.scope.agentRegistry.resolveAgent("coordinator");
+    assert.ok(coordinator instanceof CoordinatorAgent);
+    assert.equal(coordinator.snapshot().pendingMessageCount, 0);
+    assert.deepEqual(fixture.scope.taskStore.listTasks(), []);
+    assert.deepEqual(prompts, []);
+    inject.activate();
+    await coordinator.runToIdle();
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0] ?? "", /resume_coordinator_step/);
+    assert.match(prompts[0] ?? "", /recover my interrupted request/);
+    assert.equal(projectRun(fixture.scope.workflow.readEvents()).coordinatorMessages.length, 1);
+  } finally {
+    await restoreAgents.stop("test_cleanup");
+  }
+});
+
+test("Resume activation wakes a committed next Phase after the previous Coordinator Step finished", async (t) => {
+  const prompts: string[] = [];
+  let threadSequence = 0;
+  const appServer = {
+    async startThread(startInput: Record<string, unknown>) {
+      const threadId = `phase-worker-${++threadSequence}`;
+      return { threadId, startInput, response: { thread: { id: threadId } } };
+    },
+    async resumeThread(resumeInput: { threadId: string }) {
+      return { threadId: resumeInput.threadId, resumeInput, response: { thread: { id: resumeInput.threadId } } };
+    },
+    async runTurn(input: { prompt: string; onTurnStarted?(turnId: string): void }) {
+      prompts.push(input.prompt);
+      input.onTurnStarted?.("next-phase-turn");
+      return { turnId: "next-phase-turn", finalResponse: "next phase resumed" };
+    },
+    async request() { return {}; },
+  } as unknown as CodexAppServerClient;
+  const fixture = await installRolloutLocatorFixture(t, "phase-handoff", { includeTurn: false, appServer });
+  const thread = {
+    ...fixture.thread, agentId: "coordinator", role: "coordinator", phases: ["Synthesis"],
+    threadId: "phase-coordinator-thread",
+    startInput: {
+      ...fixture.thread.startInput, cwd: fixture.scope.environment.agents.coordinator.mount.mountRoot,
+      permissions: scoutAgentPermissionProfile("coordinator"),
+    },
+    startResponse: { thread: { id: "phase-coordinator-thread" } },
+  } satisfies AgentThreadSnapshot;
+  await fixture.scope.eventBus.publishAndWait(AgentEvents.thread.started, thread);
+  writePersistedRollout({ scoutRoot: fixture.fixtureRoot, runId: fixture.scope.runId, threadId: thread.threadId });
+  const step = { ...agentStepState({ agentId: "coordinator", stepId: "completed-old-phase" }), taskId: undefined };
+  await fixture.scope.eventBus.publishAndWait(AgentEvents.step.started, step);
+  fixture.scope.workflow.scheduler.advance("completed");
+  await fixture.scope.eventBus.publishAndWait(AgentEvents.step.completed, { ...step, status: AgentStepStatuses.Completed });
+  const restoreAgents = new RestoreAgentsStage();
+  await restoreAgents.start();
+  try {
+    await new RestoreTasksStage().start();
+    const inject = new InjectResumeContextStage();
+    await inject.start();
+    assert.deepEqual(prompts, []);
+    inject.activate();
+    const coordinator = fixture.scope.agentRegistry.resolveAgent("coordinator");
+    assert.ok(coordinator instanceof CoordinatorAgent);
+    await coordinator.runToIdle();
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0]!, /continue_phase/);
+    assert.match(prompts[0]!, /research-reviewer/);
+    assert.equal(projectRun(fixture.scope.workflow.readEvents()).pendingPhase, undefined);
+  } finally {
+    await restoreAgents.stop("test_cleanup");
+  }
+});
 
 test("RestoreAgentsStage never cold-starts an Agent after thread resume fails", (t) =>
   assertThreadRestoreFailure(t));
@@ -1807,9 +2230,11 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
 
   const runId = "run-resume-flow";
   const runRoot = join(fixtureRoot, "run", runId);
-  const initialJournal = RunJournal.create({ runId, runRoot });
   const initialManifestStore = new RunManifestStore(runRoot);
   const initialEventBus = new InMemoryEventBus();
+  const initialWorkflow = new Workflow({
+    graphState: createTestScheduler("validation").snapshot(),
+  });
   const initialScope = new RunScope({
     runId,
     scoutRoot: fixtureRoot,
@@ -1817,17 +2242,14 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     runRoot,
     logger: noopLogger(),
     eventBus: initialEventBus,
-    scheduler: createTestScheduler(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: runtimeTestDomain(),
-    journal: initialJournal,
+    workflow: initialWorkflow,
     manifestStore: initialManifestStore,
     terminate: async () => undefined,
   });
   const releaseInitialScope = installRunScope(initialScope);
-  const initialJournalWriter = new RunJournalWriter();
-  initialJournalWriter.start();
   await new InitializeRunStage().start();
+  await initialWorkflow.start();
   await new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
   }).start();
@@ -1996,10 +2418,14 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   }, {
     occurredAt: "2026-07-22T00:00:10.000Z",
   });
-  initialJournalWriter.stop();
+  const resumeFlow = projectWorkflowFlowState(
+    initialWorkflow.flowSnapshot().flowId,
+    initialWorkflow.readEvents(),
+  );
+  const resumeJournalRoot = initialWorkflow.journalRoot;
+  await initialWorkflow.stop();
   releaseInitialScope();
-  initialJournal.close();
-  assert.equal(existsSync(join(runRoot, ".run.lock")), false);
+  assert.equal(existsSync(join(resumeJournalRoot, ".scout.lock")), false);
   const researcherRolloutPath = writePersistedRollout({
     scoutRoot: fixtureRoot,
     runId,
@@ -2096,7 +2522,6 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
       return undefined;
     },
   } as unknown as CodexAppServerClient;
-  const resumedJournal = RunJournal.open({ runId, runRoot });
   const resumedManifestStore = new RunManifestStore(runRoot);
   const resumedEventBus = new InMemoryEventBus();
   resumedEventBus.subscribe(AgentEvents.thread.resumed, (event) => {
@@ -2109,6 +2534,13 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     runId,
     logger: noopLogger(),
   });
+  const resumedWorkflow = new Workflow({
+    graphState: createTestScheduler("validation").snapshot(),
+    resume: {
+      flow: resumeFlow,
+      journalRoot: resumeJournalRoot,
+    },
+  });
   const scope = new RunScope({
     runId,
     scoutRoot: fixtureRoot,
@@ -2116,27 +2548,36 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     runRoot,
     logger: noopLogger(),
     eventBus: resumedEventBus,
-    scheduler: createTestScheduler(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: runtimeTestDomain(),
-    journal: resumedJournal,
     manifestStore: resumedManifestStore,
     terminate: (reason) => executor.terminate(reason),
   });
   scope.setAppServer(appServer);
-  const releaseResumedScope = installRunScope(scope);
   const injectResumeContextStage = new InjectResumeContextStage();
   executor.registerSerial(
-    new RunJournalWriterStage(),
-    new RecordResumeInterruptionsStage(),
-    new RunRuntimeStage("resume"),
+    new RunScopeStage(scope),
+    new WorkflowStage(resumedWorkflow),
     new RestoreEnvironmentStage({
       preflightMount: async () => ({ status: "passed" }),
     }),
     new InteractionStage(),
+    new ExecutionStage(async (_options, eventBus) => ScoutExecutionSystem.start({
+      async start() {},
+      async invoke() {
+        return {
+          ok: false,
+          code: "test_execution_unavailable",
+          message: "Execution is not used by this resume test.",
+        };
+      },
+      async close() {},
+    }, eventBus)),
+    new DomainStage(),
+    new RestoreDomainStage(),
+    new RecordResumeInterruptionsStage(),
+    new RunRuntimeStage("resume"),
   );
-  executor.registerParallel(new DomainStage(), new AgentTelemetryStage());
-  executor.registerSerial(new RestoreDomainStage());
+  executor.registerSerial(new AgentTelemetryStage());
   executor.registerParallel(new AgentBackendStage(), new OrchestratorStage());
   executor.registerSerial(
     new RestoreAgentsStage(),
@@ -2149,7 +2590,6 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
       await executor.terminate("test_resume_cleanup");
     }
     scope.clearAppServer(appServer);
-    releaseResumedScope();
   });
   await executor.startup();
   injectResumeContextStage.activate();
@@ -2208,7 +2648,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     root.startsWith(runRoot)
   ));
 
-  const restoredEvents = scope.journal.readAll();
+  const restoredEvents = scope.workflow.readEvents();
   const projection = projectRun(restoredEvents);
   const restoredResearcher = projection.tasks.find((task) =>
     task.taskId === researcherTask.taskId
@@ -2280,7 +2720,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   releaseResumedTurns?.();
   await termination;
   assert.equal(dynamicToolHandlerInstalled, false);
-  assert.equal(existsSync(join(runRoot, ".run.lock")), false);
+  assert.equal(existsSync(join(resumeJournalRoot, ".scout.lock")), false);
 });
 
 test("RunStageExecutor releases the journal lock when startup fails after installing the RunScope", async (t) => {
@@ -2288,7 +2728,10 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   const runId = "run-start-failure";
   const runRoot = join(fixtureRoot, "run", runId);
-  const journal = RunJournal.create({ runId, runRoot });
+  const eventBus = new InMemoryEventBus();
+  const workflow = new Workflow({
+    graphState: createTestScheduler().snapshot(),
+  });
   const executor = new RunStageExecutor({
     runId,
     logger: noopLogger(),
@@ -2299,11 +2742,8 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
     config: new AssetStore().config(fixtureRoot),
     runRoot,
     logger: noopLogger(),
-    eventBus: new InMemoryEventBus(),
-    scheduler: createTestScheduler(),
+    eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: runtimeTestDomain(),
-    journal,
     manifestStore: new RunManifestStore(runRoot),
     terminate: (reason) => executor.terminate(reason),
   });
@@ -2315,7 +2755,8 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
   };
   executor.registerSerial(
     new RunScopeStage(scope),
-    new RunJournalWriterStage(),
+    new InitializeRunStage(),
+    new WorkflowStage(workflow),
     failingStage,
   );
 
@@ -2326,7 +2767,10 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
 
   assert.equal(executor.snapshot().status, "failed");
   assert.throws(() => currentRunScope(), /No active Scout run scope/);
-  assert.equal(existsSync(join(runRoot, ".run.lock")), false);
+  assert.equal(
+    existsSync(join(runRoot, "journal-0001", ".scout.lock")),
+    false,
+  );
 });
 
 function buildPlannedResumePacket(
@@ -2372,7 +2816,6 @@ async function assertThreadRestoreFailure(
   t: Parameters<typeof installTestRunScope>[0],
 ): Promise<void> {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-thread-restore-failure-"));
-  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
   cpSync(join(process.cwd(), "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
@@ -2429,6 +2872,7 @@ async function assertThreadRestoreFailure(
     appServer,
     domain: runtimeTestDomain(),
   });
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   await new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
   }).start();
@@ -2505,7 +2949,6 @@ async function installRolloutLocatorFixture(
   thread: AgentThreadSnapshot;
 }> {
   const fixtureRoot = mkdtempSync(join(tmpdir(), `scout-rollout-${suffix}-`));
-  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
   cpSync(join(process.cwd(), "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
     recursive: true,
@@ -2525,6 +2968,7 @@ async function installRolloutLocatorFixture(
     appServer: options.appServer ?? ({} as CodexAppServerClient),
     domain: runtimeTestDomain(),
   });
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   await new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
   }).start();
@@ -2584,7 +3028,7 @@ function scoutEvent<TPayload>(
   };
 }
 
-function journalEvents(...inputs: ScoutEvent[]): RunJournalEvent[] {
+function journalEvents(...inputs: ScoutEvent[]): JournalEvent[] {
   const created = scoutEvent(RunEvents.run.created, {
     runId: "run-resume-test",
     scoutRoot: "/repo",
@@ -2702,8 +3146,9 @@ function noopLogger(): Logger {
 
 function runtimeTestDomain(): ScoutDomain {
   return {
-    domainId: "test",
-    name: "test",
-    dynamicToolsForPhase: () => [],
+    description: { id: ScoutDomainId.Validation, name: "Test Domain" },
+    backend: new class extends DomainAgentBackend {
+      override async handleDynamicToolCall() { return undefined; }
+    }(),
   };
 }

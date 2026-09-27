@@ -7,6 +7,10 @@ export class RestoreDomainStage implements RunStage {
 
   /** Delegates restoration to the domain owner without adding resume policy. */
   async start(): Promise<void> {
-    await currentRunScope().domain.restore?.();
+    const scope = currentRunScope();
+    const flow = scope.workflow.flowSnapshot();
+    for (const domain of scope.domainRegistry.list()) {
+      await domain.restore?.(flow);
+    }
   }
 }

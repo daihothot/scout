@@ -146,7 +146,7 @@ test("task drawer viewport can reach plan rows clipped by terminal height", () =
   assert.equal(resolveTaskDrawerScrollTop(10, 3, 8), 7);
 });
 
-test("task drawer keeps archived tasks after current tasks and summarizes their count", () => {
+test("task drawer keeps finished results after active tasks and summarizes their count", () => {
   const state: TuiState = {
     runtime: {
       cwd: "/repo/scout",
@@ -163,7 +163,7 @@ test("task drawer keeps archived tasks after current tasks and summarizes their 
         taskId: "researcher-task-0001",
         taskSequence: 1,
         role: "researcher",
-        status: "archived",
+        status: "done",
         description: "旧研究任务",
         updatedAt: "2026-07-10T00:00:01.000Z",
         turns: [],
@@ -197,10 +197,10 @@ test("task drawer keeps archived tasks after current tasks and summarizes their 
   };
 
   const tasks = selectTaskSummaries(state);
-  assert.deepEqual(tasks.map((task) => task.status), ["running", "archived"]);
+  assert.deepEqual(tasks.map((task) => task.status), ["running", "done"]);
   assert.equal(
     buildCollapsedTaskSummary(tasks, 120),
-    "▸ Tasks  1 active · VALID:t-0001 running · 1 archived",
+    "▸ Tasks  1 active · VALID:t-0001 running · 1 finished",
   );
   assert.doesNotMatch(buildCollapsedTaskSummary(tasks, 120), /Coordinator|COORD|Observe workers/);
 });

@@ -30,9 +30,16 @@ export interface ResumePacketInput {
  * intended boundary; it is not an authorization to execute the action here.
  */
 export type ResumePacketAction =
+  | { type: typeof ResumeActionTypes.ContinuePhase; phase: string; instruction: string }
+  | { type: typeof ResumeActionTypes.SettleFlow; instruction: string }
   | {
     type: typeof ResumeActionTypes.ResumeTask;
     task_id: string;
+    instruction: string;
+  }
+  | {
+    type: typeof ResumeActionTypes.ResumeCoordinatorStep;
+    step_id: string;
     instruction: string;
   }
   | {
@@ -111,10 +118,20 @@ export function renderArtifact(
 
 /**
  * Converts an internal action discriminant into the packet schema without
- * dropping the task or message identifier required by the resumed agent.
+ * dropping the task, Step, or message identifier required by the resumed agent.
  */
 export function renderResumeAction(action: ResumeAction): ResumePacketAction {
   switch (action.type) {
+    case ResumeActionTypes.ContinuePhase:
+      return { type: action.type, phase: action.phase, instruction: "阶段推进已经提交，继续编排该 Phase；不要重复提交上一阶段 outcome。" };
+    case ResumeActionTypes.SettleFlow:
+      return { type: action.type, instruction: "Graph 终止已经提交。仅核对旧 Task、结果和中断 Step 并完成收尾；不得新建 Task、再次推进 Graph，或开始处理下一 Flow 的用户输入。" };
+    case ResumeActionTypes.ResumeCoordinatorStep:
+      return {
+        type: action.type,
+        step_id: action.stepId,
+        instruction: "核对 Coordinator 中断 Step 的输入和副作用后继续编排。",
+      };
     case ResumeActionTypes.ResumeTask:
       return {
         type: action.type,
@@ -137,7 +154,7 @@ export function renderResumeAction(action: ResumeAction): ResumePacketAction {
       return {
         type: action.type,
         task_id: action.taskId,
-        instruction: "检查已提交的 Task outcome，并决定归档或继续。",
+        instruction: "检查已提交的 Task outcome；需要补充或修正时向原 Task 发送消息，否则按当前 Phase contract 判断结果。",
       };
     case ResumeActionTypes.ResolveTermination:
       return {

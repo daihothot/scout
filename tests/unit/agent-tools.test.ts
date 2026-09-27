@@ -1,14 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
   AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
   AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
   AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
   AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
-  buildArchiveTaskDynamicTool,
   buildAssignTaskDynamicTool,
   buildRequestHumanInputDynamicTool,
   buildRespondHumanInputDynamicTool,
@@ -26,7 +24,6 @@ test("agent dynamic tool specs expose stable namespaces, guidance Skills, and re
     buildRequestHumanInputDynamicTool(),
     buildRespondHumanInputDynamicTool(),
     buildSubmitTaskDynamicTool(),
-    buildArchiveTaskDynamicTool(),
     buildSubmitPhaseOutcomeDynamicTool(),
   ];
   assert.deepEqual(tools.map((tool) => tool.namespace), [
@@ -35,7 +32,6 @@ test("agent dynamic tool specs expose stable namespaces, guidance Skills, and re
     AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
     AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
     AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
-    AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
     AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
   ]);
   assert.deepEqual(tools.map((tool) => tool.guidanceSkill), [
@@ -44,7 +40,6 @@ test("agent dynamic tool specs expose stable namespaces, guidance Skills, and re
     "tool-scout-request-human-input",
     "tool-scout-respond-human-input",
     "tool-scout-submit-task",
-    "tool-scout-archive-task",
     "tool-scout-submit-phase-outcome",
   ]);
   assert.deepEqual(tools.map((tool) => readRequired(tool.inputSchema)), [
@@ -53,7 +48,6 @@ test("agent dynamic tool specs expose stable namespaces, guidance Skills, and re
     ["request"],
     ["task_id", "response"],
     ["outcome"],
-    ["task_id"],
     ["outcome"],
   ]);
 });
@@ -91,9 +85,9 @@ test("agent tool parser validates and normalizes each supported payload", () => 
   assert.deepEqual(parseAgentDynamicToolCall("SubmitTask", {
     outcome: " ## Outcome\n\nartifact: research/index.md ",
   }), { tool: "SubmitTask", outcome: "## Outcome\n\nartifact: research/index.md" });
-  assert.deepEqual(parseAgentDynamicToolCall("ArchiveTask", {
-    task_id: " task-1 ",
-  }), { tool: "ArchiveTask", task_id: "task-1" });
+  assert.throws(() => parseAgentDynamicToolCall("ArchiveTask", {
+    task_id: "task-1",
+  }), /Unsupported agent tool/);
   assert.deepEqual(parseAgentDynamicToolCall("SubmitPhaseOutcome", {
     outcome: "completed",
   }), { tool: "SubmitPhaseOutcome", outcome: "completed" });
@@ -112,7 +106,7 @@ test("agent tool parser rejects malformed and removed Skill tool payloads", () =
     description: "Research BDD",
     prompt: " ",
   }), /AssignTask prompt/);
-  assert.throws(() => parseAgentDynamicToolCall("ArchiveTask", { task_id: " " }), /ArchiveTask task_id/);
+  assert.throws(() => parseAgentDynamicToolCall("ArchiveTask", { task_id: " " }), /Unsupported agent tool/);
   assert.throws(
     () => parseAgentDynamicToolCall("SubmitPhaseOutcome", { outcome: "blocked" }),
     /SubmitPhaseOutcome outcome/,

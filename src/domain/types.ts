@@ -2,15 +2,32 @@ import type {
   ScoutAgentPhase,
   ScoutAgentRole,
 } from "../agent/thread/types.js";
-import type { AgentDynamicToolSpec } from "../agent/tools/types.js";
 import type {
   EventType,
   ScoutEvent,
 } from "../core/events/index.js";
-import type {
-  DynamicToolCallInput,
-  DynamicToolCallResponse,
-} from "../agent-server/types.js";
+import type { DynamicToolCallInput } from "../agent-server/types.js";
+import type { WorkflowFlowState } from "../core/workflow/index.js";
+import type { JournalEvent } from "../core/journal/index.js";
+import type { DomainAgentBackend } from "./agent/domain-agent-backend.js";
+
+/** Stable identities of Scout Domain runtimes available to a Workflow. */
+export enum ScoutDomainId {
+  Base = "base",
+  Rbt = "rbt",
+  Validation = "validation",
+}
+
+/** Immutable identity and display metadata owned by one Scout Domain. */
+export interface ScoutDomainDescription {
+  readonly id: ScoutDomainId;
+  readonly name: string;
+}
+
+export function isScoutDomainId(value: unknown): value is ScoutDomainId {
+  return typeof value === "string"
+    && Object.values(ScoutDomainId).some((domainId) => domainId === value);
+}
 
 /** Dynamic-tool invocation forwarded from an agent server into a domain backend. */
 export interface ScoutDomainDynamicToolCall {
@@ -70,24 +87,36 @@ export interface ScoutDomainJournalEvent extends ScoutEvent {
 export interface ScoutDomainJournalProjection<
   TRuntimeFact extends ScoutDomainRuntimeFact = ScoutDomainRuntimeFact,
 > {
-  /** Event routes written to `<domain>-events.jsonl`, never to the Scout journal. */
+  /** Event routes written to this Domain's own journal, never to scout.journal. */
   readonly eventTypes: readonly EventType[];
+  /** Reads persisted events when this projection owns a readable Domain journal. */
+  readAll?(): JournalEvent[];
   /** Projects a Domain journal event into shared resume facts when needed. */
   project(event: ScoutEvent, journalSeq: number): ScoutDomainJournalFact | undefined;
   /** Rebuilds the Domain's current runtime facts from its persisted event stream. */
   aggregate?(events: readonly ScoutDomainJournalEvent[]): TRuntimeFact;
 }
 
+/** A prepared Flow boundary whose resources remain owned by its Domain. */
+export interface ScoutDomainFlowChange {
+  /** Switches only in-memory references and state after all preparation succeeds. */
+  commit(): void;
+  /** Closes uncommitted resources without changing the current Flow. */
+  abort(): void;
+  /** Releases the previous Flow's resources after the new Flow is committed. */
+  releasePrevious(): void;
+}
+
 /** Lifecycle and tool surface owned by a Scout domain implementation. */
 export interface ScoutDomain {
-  readonly domainId: string;
-  readonly name: string;
-  dynamicToolsForPhase(phase: ScoutAgentPhase): AgentDynamicToolSpec[];
+  readonly description: ScoutDomainDescription;
+  readonly backend: DomainAgentBackend;
   readonly journal?: ScoutDomainJournalProjection;
-  handleDynamicToolCall?(
-    call: ScoutDomainDynamicToolCall,
-  ): Promise<DynamicToolCallResponse | undefined> | DynamicToolCallResponse | undefined;
-  restore?(): Promise<void> | void;
-  start?(): Promise<void>;
-  stop?(): Promise<void>;
+  prepareFlow?(
+    flow: WorkflowFlowState,
+    journalRoot: string,
+  ): Promise<ScoutDomainFlowChange> | ScoutDomainFlowChange;
+  restore?(flow: WorkflowFlowState): Promise<void> | void;
+  start?(): Promise<void> | void;
+  stop?(): Promise<void> | void;
 }

@@ -416,7 +416,7 @@ test("TuiStore does not regress a completed task when older running events arriv
   assert.equal(isActiveTaskStatus(projected?.status), false);
 });
 
-test("TuiStore keeps plans separated by turn and retains them after archive", () => {
+test("TuiStore keeps plans separated by turn and retains them after resource release", () => {
   const store = createStore();
   const bus = new InMemoryEventBus();
   const assigned = taskState();
@@ -510,12 +510,12 @@ test("TuiStore keeps plans separated by turn and retains them after archive", ()
     ],
   );
 
-  const archivedEvent = bus.publish(AgentEvents.task.archived, taskState({
+  const releasedEvent = bus.publish(AgentEvents.task.released, taskState({
     status: "done",
     updatedAt: "2026-07-10T00:00:04.000Z",
     stepIds: ["step-1", "step-2"],
   }));
-  store.addTaskEvent(archivedEvent);
+  store.addTaskEvent(releasedEvent);
 
   assert.deepEqual(store.snapshot().tasks, [{
     taskId: "researcher-task-0001",
@@ -523,9 +523,9 @@ test("TuiStore keeps plans separated by turn and retains them after archive", ()
     agentId: "researcher",
     role: "researcher",
     phase: "research",
-    status: "archived",
+    status: "done",
     description: "Research BDD evidence",
-    updatedAt: archivedEvent.occurredAt,
+    updatedAt: releasedEvent.occurredAt,
     turns: [
       {
         stepId: "step-1",
@@ -547,7 +547,7 @@ test("TuiStore keeps plans separated by turn and retains them after archive", ()
       },
     ],
   }]);
-  assert.equal(store.snapshot().logs.at(-1)?.text, "任务 researcher-task-0001 已归档。");
+  assert.equal(store.snapshot().logs.at(-1)?.text, "任务 researcher-task-0001 的运行资源已释放，结果保留。");
 });
 
 test("TuiStore keeps an interrupted turn separate from its resumed turn", () => {

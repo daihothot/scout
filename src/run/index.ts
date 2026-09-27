@@ -9,6 +9,5 @@ export * from "./events/index.js";
 export * from "./types.js";
 export * from "./environment/index.js";
 export * from "./progress/index.js";
-export * from "./journal/index.js";
 export * from "./persistence/index.js";
 export * from "./resume/index.js";

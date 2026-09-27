@@ -19,14 +19,12 @@ export class AgentBackend {
   readonly commandExecution: AgentCommandExecutionBackend;
   readonly step: AgentStepBackend;
   readonly toolCall: AgentToolCallBackend;
-  readonly domain: RunScope["domain"];
   private readonly scope: RunScope;
   private unsubscribeTimeline?: () => void;
 
   constructor() {
     const scope = currentRunScope();
     this.scope = scope;
-    this.domain = scope.domain;
     this.registry = scope.agentRegistry;
     this.activity = new AgentActivityBackend();
     this.subagent = new AgentSubagentBackend();

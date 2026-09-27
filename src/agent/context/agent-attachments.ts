@@ -55,8 +55,12 @@ export const agent = {
     workflow_phase(): string {
       const scope = currentRunScope();
       return attachments.addTagBlock(AgentContextTags.WorkflowPhase, [
-        `current_domain: ${scope.domain.domainId}`,
-        `current_phase: ${scope.scheduler.snapshot().currentPhase}`,
+        `current_domain: ${scope.workflow.graph.snapshot().domain}`,
+        `current_phase: ${scope.workflow.scheduler.snapshot().currentPhase}`,
+        `flow_status: ${scope.workflow.flowSnapshot().status}`,
+        ...(scope.workflow.flowSnapshot().status === "settling"
+          ? ["Graph 已终止：只完成旧工作收尾；不得新建 Task 或再次推进 Graph，待消费用户输入将交给下一 Flow。"]
+          : []),
       ].join("\n"));
     },
   },

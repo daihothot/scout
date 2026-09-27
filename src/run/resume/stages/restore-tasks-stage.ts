@@ -6,7 +6,7 @@ import {
 } from "../../../core/workflow/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
-import { projectRun } from "../projection/index.js";
+import { projectRun, readDomainJournalProjections } from "../projection/index.js";
 
 /**
  * Rehydrates worker task stores and republishes projected task facts to the
@@ -16,19 +16,18 @@ import { projectRun } from "../projection/index.js";
 export class RestoreTasksStage implements RunStage {
   readonly id = "restore_tasks";
 
-  /** Restores active and archived task projections for every worker role. */
+  /** Restores bound tasks and historical results without rebinding released tasks. */
   async start(): Promise<void> {
     const scope = currentRunScope();
-    const graphState = scope.scheduler.snapshot();
+    const graphState = scope.workflow.scheduler.snapshot();
     const projection = projectRun(
-      scope.journal.readAll(),
+      scope.workflow.readEvents(),
       resolveSynthesisRole(graphState).name,
-      scope.domain.journal,
-      scope.domainJournal.readAll(),
+      readDomainJournalProjections(scope.domainRegistry.list()),
     );
     const allTasks = [
       ...projection.tasks,
-      ...projection.archivedTasks.map(({ task }) => task),
+      ...projection.releasedTasks.map(({ task }) => task),
     ];
     const workerRoles = listWorkerRoles(graphState).map((role) => role.name);
     for (const role of workerRoles) {
@@ -38,13 +37,13 @@ export class RestoreTasksStage implements RunStage {
       }
       const roleTasks = allTasks.filter((task) => task.agentId === worker.agentId);
       const maxTaskSequence = Math.max(0, ...roleTasks.map((task) => task.taskSequence));
-      const unarchivedTasks = projection.tasks.filter((task) =>
+      const unreleasedTasks = projection.tasks.filter((task) =>
         task.agentId === worker.agentId
       );
-      if (unarchivedTasks.length > 1) {
-        throw new Error(`Worker agent ${worker.agentId} has multiple unarchived tasks.`);
+      if (unreleasedTasks.length > 1) {
+        throw new Error(`Worker agent ${worker.agentId} has multiple bound tasks.`);
       }
-      const boundTask = unarchivedTasks[0];
+      const boundTask = unreleasedTasks[0];
       if (boundTask) {
         worker.restoreTask({ task: boundTask, maxTaskSequence });
       } else {
@@ -55,12 +54,12 @@ export class RestoreTasksStage implements RunStage {
     for (const task of projection.tasks) {
       await scope.interactionPort.restoreTaskSnapshot(task);
     }
-    for (const archived of projection.archivedTasks) {
+    for (const released of projection.releasedTasks) {
       await scope.interactionPort.publishTaskEvent({
-        id: `restore-archived-${archived.task.taskId}`,
-        key: AgentEvents.task.archived,
-        payload: archived.task,
-        occurredAt: archived.archivedAt,
+        id: `restore-released-${released.task.taskId}`,
+        key: AgentEvents.task.released,
+        payload: released.task,
+        occurredAt: released.releasedAt,
       });
     }
   }

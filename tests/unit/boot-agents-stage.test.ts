@@ -12,7 +12,13 @@ import {
   RunScope,
 } from "../../src/run/run-scope.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
-import type { ScoutDomain } from "../../src/domain/index.js";
+import {
+  BaseDomain,
+  DomainAgentBackend,
+  ScoutDomainId,
+  type ScoutDomain,
+} from "../../src/domain/index.js";
+import type { ExecutionPlatformPort } from "../../src/execution/index.js";
 import type {
   CodexAppServerClient,
   ThreadStartOptions,
@@ -47,18 +53,21 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
     startedThreads.push(threadId);
     return threadId;
   });
+  const domain = createStaticDomain();
   const scope = new RunScope({
     runId,
     scoutRoot: root,
     logger: createNoopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: createStaticDomain(),
     ...createTestRunPersistence(t, runId, root, undefined, join(root, "run", runId)),
     terminate: async () => undefined,
   });
+  scope.setExecutionSystem(unavailableExecutionSystem());
   scope.setAppServer(appServer);
   const releaseScope = installRunScope(scope);
+  scope.domainRegistry.register(new BaseDomain());
+  scope.domainRegistry.register(domain);
   const environment = new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
   });
@@ -122,18 +131,21 @@ test("AgentsStage closes started threads when another Agent fails to start", asy
     if (role === "validator") throw new Error("validator thread failed");
     return `thread-${role}`;
   });
+  const domain = createStaticDomain();
   const scope = new RunScope({
     runId,
     scoutRoot: root,
     logger: createNoopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: createStaticDomain(),
     ...createTestRunPersistence(t, runId, root, undefined, join(root, "run", runId)),
     terminate: async () => undefined,
   });
+  scope.setExecutionSystem(unavailableExecutionSystem());
   scope.setAppServer(appServer);
   const releaseScope = installRunScope(scope);
+  scope.domainRegistry.register(new BaseDomain());
+  scope.domainRegistry.register(domain);
   const environment = new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
   });
@@ -186,11 +198,25 @@ function createAppServer(
   } as unknown as CodexAppServerClient;
 }
 
+function unavailableExecutionSystem(): ExecutionPlatformPort {
+  const unavailable = {
+    ok: false as const,
+    code: "test_execution_unavailable",
+    message: "Execution is not used by AgentsStage tests.",
+  };
+  return {
+    identify: async () => unavailable,
+    launch: async () => unavailable,
+    shutdown: async () => unavailable,
+  };
+}
+
 function createStaticDomain(): ScoutDomain {
   return {
-    domainId: "test",
-    name: "test",
-    dynamicToolsForPhase: () => [],
+    description: { id: ScoutDomainId.Validation, name: "Test Domain" },
+    backend: new class extends DomainAgentBackend {
+      override async handleDynamicToolCall() { return undefined; }
+    }(),
   };
 }
 

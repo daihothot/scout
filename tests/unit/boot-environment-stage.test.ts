@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import {
   cpSync,
@@ -24,7 +24,7 @@ import {
   type MountManifest,
 } from "../../src/asset-store/index.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
-import { Scheduler } from "../../src/core/workflow/index.js";
+import { Workflow } from "../../src/core/workflow/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import {
   NoopRuntimeInteractionPort,
@@ -32,6 +32,7 @@ import {
   type RuntimeInteractionPort,
 } from "../../src/interaction/protocol/port.js";
 import { PrepareEnvironmentStage } from "../../src/run/startup/index.js";
+import { RunAppServerStage } from "../../src/run/lifecycle/index.js";
 import {
   ResumeClientsStage,
   RestoreEnvironmentStage,
@@ -41,7 +42,6 @@ import {
   RunScope,
 } from "../../src/run/run-scope.js";
 import type { ScoutConfig } from "../../src/system/config/index.js";
-import type { RunJournal } from "../../src/run/journal/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import {
   createTestScheduler,
@@ -50,6 +50,12 @@ import {
 } from "../helpers/run-persistence.js";
 
 const scoutRoot = process.cwd();
+const linkedFixtureRoots: string[] = [];
+
+// Per-test hooks close Workflow root locks and release scopes before filesystem cleanup.
+after(() => {
+  for (const root of linkedFixtureRoots) rmSync(root, { recursive: true, force: true });
+});
 
 test("PrepareEnvironmentStage materializes, preflights, and commits every agent mount", async (t) => {
   const fixtureRoot = createFixture("scout-boot-environment-");
@@ -255,7 +261,7 @@ test("RestoreEnvironmentStage applies the explicit global resource-drift policy"
   assert.ok(sourceAsset);
   writeFileSync(resolve(fixtureRoot, sourceAsset.sourcePath), "changed", "utf8");
 
-  const journal = initial.scope.journal;
+  const journal = initial.scope.workflow;
   const manifestStore = initial.scope.manifestStore;
   initial.release();
   initialReleased = true;
@@ -343,7 +349,7 @@ test("RestoreEnvironmentStage rolls back the run index when metadata commit fail
   assert.ok(sourceAsset);
   writeFileSync(resolve(fixtureRoot, sourceAsset.sourcePath), "changed", "utf8");
 
-  const journal = initial.scope.journal;
+  const journal = initial.scope.workflow;
   initial.release();
   initialReleased = true;
   const failingManifestStore = new FailOnceManifestUpdateStore(
@@ -442,8 +448,37 @@ for (const scenario of [
       new ResumeClientsStage().start(),
       /Refusing symlinked Codex home component/,
     );
+    await assert.rejects(
+      new ResumeClientsStage({ allowMissingHome: true }).start(),
+      /Refusing symlinked Codex home component/,
+    );
 
     assert.equal(readFileSync(configPath, "utf8"), "sentinel\n");
+  });
+}
+
+for (const missing of ["codex-home", ".codex"] as const) {
+  test(`ResumeClientsStage only allows a missing ${missing} for unfinished initialization`, async (t) => {
+    const fixtureRoot = createLinkedAssetsFixture(t, "scout-resume-unfinished-home-");
+    const runtime = installEnvironmentScope(t, fixtureRoot, "unfinished-home");
+    t.after(runtime.release);
+    const codexHome = join(runtime.scope.runRoot, "codex-home");
+    if (missing === ".codex") mkdirSync(codexHome);
+    const clients = t.mock.method(RunAppServerStage.prototype, "start", async () => {
+      mkdirSync(join(codexHome, ".codex"), { recursive: true });
+    });
+
+    await assert.rejects(new ResumeClientsStage().start(), /Cannot inspect Codex home component/);
+    assert.equal(clients.mock.callCount(), 0);
+    assert.equal(existsSync(join(codexHome, ".codex")), false);
+    const stage = new ResumeClientsStage({ allowMissingHome: true });
+    try {
+      await stage.start();
+      assert.equal(clients.mock.callCount(), 1);
+      assert.equal(existsSync(join(codexHome, ".codex")), true);
+    } finally {
+      await stage.stop("test_cleanup");
+    }
   });
 }
 
@@ -563,8 +598,9 @@ test("RestoreEnvironmentStage permits the ScoutRoot assets symlink", async (t) =
   const resumed = installTestRunScope(t, {
     runId,
     scoutRoot: fixtureRoot,
+    runRoot: join(fixtureRoot, "run", runId),
     appServer: {} as CodexAppServerClient,
-    journal: initial.scope.journal,
+    workflow: initial.scope.workflow,
     manifestStore: initial.scope.manifestStore,
   });
   await new RestoreEnvironmentStage({
@@ -606,7 +642,7 @@ test("RestoreEnvironmentStage rebuilds only damaged roles and is idempotent", as
   );
   writeFileSync(damagedConfig, `${readFileSync(damagedConfig, "utf8")}# damaged\n`, "utf8");
 
-  const journal = initial.scope.journal;
+  const journal = initial.scope.workflow;
   const manifestStore = initial.scope.manifestStore;
   initial.release();
   initialReleased = true;
@@ -685,7 +721,6 @@ test("RestoreEnvironmentStage follows current GraphState roles and retains remov
     preflightMount: async () => ({ status: "passed" }),
   }).start();
   const removedMountRoot = initial.scope.environment.agents.verifier.mount.mountRoot;
-  const journal = initial.scope.journal;
   const manifestStore = initial.scope.manifestStore;
   initial.release();
   initialReleased = true;
@@ -712,21 +747,19 @@ test("RestoreEnvironmentStage follows current GraphState roles and retains remov
   };
   writeFileSync(workflowPath, JSON.stringify(workflow, null, 2) + "\n", "utf8");
 
-  const scheduler = new Scheduler(
-    new AssetStore().buildWorkflow(fixtureRoot, "validation"),
-    new InMemoryEventBus(),
-  );
+  const workflowRuntime = new Workflow({
+    graphState: new AssetStore().buildWorkflow(fixtureRoot, "validation"),
+  });
   const resumed = installExistingEnvironmentScope(
     fixtureRoot,
     runId,
-    journal,
+    workflowRuntime,
     manifestStore,
     new NoopRuntimeInteractionPort(),
     {
       workflow: { profile: "validation" },
       restore: { allowAssetResourceDrift: true },
     },
-    scheduler,
   );
   let resumedReleased = false;
   t.after(() => {
@@ -770,7 +803,7 @@ test("RestoreEnvironmentStage self-heals a partial mount without rebuilding comp
     const configPath = join(mountRoot, ".codex", "config.toml");
     writeFileSync(configPath, readFileSync(configPath, "utf8") + "# force rebuild\n", "utf8");
   }
-  const journal = initial.scope.journal;
+  const journal = initial.scope.workflow;
   const manifestStore = initial.scope.manifestStore;
   initial.release();
   initialReleased = true;
@@ -886,7 +919,7 @@ function createLinkedAssetsFixture(
 ): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));
   symlinkSync(join(scoutRoot, "assets"), join(fixtureRoot, "assets"), "dir");
-  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  t.after(() => { linkedFixtureRoots.push(fixtureRoot); });
   return fixtureRoot;
 }
 
@@ -931,11 +964,6 @@ function installEnvironmentScope(
     eventBus: new InMemoryEventBus(),
     interactionPort,
     scoutConfig,
-    domain: {
-      domainId: "test",
-      name: "test",
-      dynamicToolsForPhase: () => [],
-    },
     ...createTestRunPersistence(
       t,
       runId,
@@ -960,11 +988,10 @@ function installEnvironmentScope(
 function installExistingEnvironmentScope(
   scoutRoot: string,
   runId: string,
-  journal: RunJournal,
+  workflow: Workflow,
   manifestStore: RunManifestStore,
   interactionPort: RuntimeInteractionPort,
   scoutConfig?: ScoutConfig,
-  scheduler: Scheduler = createTestScheduler(),
 ): {
   scope: RunScope;
   appServer: CodexAppServerClient;
@@ -978,15 +1005,9 @@ function installExistingEnvironmentScope(
     runRoot: join(scoutRoot, "run", runId),
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
-    scheduler,
+    workflow,
     interactionPort,
     scoutConfig,
-    domain: {
-      domainId: "test",
-      name: "test",
-      dynamicToolsForPhase: () => [],
-    },
-    journal,
     manifestStore,
     terminate: async () => undefined,
   });

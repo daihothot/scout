@@ -5,7 +5,6 @@ import type {
 import type { ScoutAgent } from "../core/scout-agent.js";
 import { CoordinatorAgent } from "../roles/coordinator-agent.js";
 import {
-  type ArchiveTaskToolCall,
   type AssignTaskToolCall,
   AGENT_TOOL_NAMESPACES,
   assertAgentToolNamespace,
@@ -22,7 +21,6 @@ import { WorkerAgent } from "../roles/worker-agent.js";
 import { attachments } from "../context/attachments.js";
 import { agent } from "../context/agent-attachments.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
-import { DomainEvents } from "../../domain/domain-events.js";
 
 /** Dependencies required to dispatch agent-owned dynamic tools. */
 export interface AgentDynamicToolBackendOptions {
@@ -45,19 +43,24 @@ type AssignTaskToolResponse =
  */
 export class AgentDynamicToolBackend {
   private readonly registry: RunScope["agentRegistry"];
+  private readonly domains: RunScope["domainRegistry"];
   private readonly taskStore: RunScope["taskStore"];
   private readonly taskBackend: AgentTaskBackend;
-  private readonly domain: RunScope["domain"];
-  private readonly scheduler: RunScope["scheduler"];
   private unsubscribeDynamicTools?: () => void;
+  private readonly phaseOutcomeReceipts = new WeakMap<CoordinatorAgent, {
+    threadId: string;
+    turnId: string;
+    callId: string;
+    outcome: SubmitPhaseOutcomeToolCall["outcome"];
+    response: Record<string, unknown>;
+  }>();
 
   constructor(options: AgentDynamicToolBackendOptions) {
     const scope = currentRunScope();
     this.registry = scope.agentRegistry;
+    this.domains = scope.domainRegistry;
     this.taskStore = scope.taskStore;
     this.taskBackend = options.taskBackend;
-    this.domain = scope.domain;
-    this.scheduler = scope.scheduler;
   }
 
   start(): void {
@@ -98,66 +101,63 @@ export class AgentDynamicToolBackend {
     input: DynamicToolCallInput,
     caller: ScoutAgent,
   ): Promise<DynamicToolCallResponse> {
-    const startedAt = new Date().toISOString();
-    const phase = this.scheduler.current().name;
-    let response: DynamicToolCallResponse;
     try {
-      if (!this.domain.handleDynamicToolCall) {
-        response = dynamicToolFailure(
+      const phase = currentRunScope().workflow.scheduler.current().name;
+      const call = {
+        input,
+        caller: {
+          agentId: caller.agentId,
+          role: caller.role,
+          phase,
+          threadId: caller.threadId,
+        },
+      } satisfies import("../../domain/types.js").ScoutDomainDynamicToolCall;
+      const assigned = currentRunScope().workflow.scheduler.snapshot().roles.some((role) =>
+        role.name === caller.role && role.phases.includes(phase)
+      );
+      if (!assigned) {
+        return dynamicToolFailure(
+          `Role ${caller.role} is not assigned to the current Workflow Phase ${phase}.`,
+        );
+      }
+      const owners = this.domains.list().filter((domain) =>
+        domain.backend.dynamicToolsForPhase(phase).some((tool) =>
+          (tool.namespace ?? null) === input.namespace && tool.name === input.tool
+        )
+      );
+      if (owners.length === 0) {
+        return dynamicToolFailure(
           `Unsupported dynamic tool namespace: ${input.namespace ?? "null"}`,
         );
-      } else {
-        const assigned = this.scheduler.snapshot().roles.some((role) =>
-          role.name === caller.role && role.phases.includes(phase)
-        );
-        if (!assigned) {
-          response = dynamicToolFailure(
-            `Role ${caller.role} is not assigned to the current Workflow Phase ${phase}.`,
-          );
-        } else {
-          const result = await this.domain.handleDynamicToolCall({
-            input,
-            caller: {
-              agentId: caller.agentId,
-              role: caller.role,
-              phase,
-              threadId: caller.threadId,
-            },
-          });
-          response = result ?? dynamicToolFailure(
-            `Unsupported dynamic tool namespace: ${input.namespace ?? "null"}`,
-          );
-        }
       }
+      if (owners.length > 1) {
+        throw new Error(
+          `Dynamic tool ${input.namespace ?? "<none>"}/${input.tool}`
+          + ` is registered by multiple Scout Domains: ${owners.map((domain) =>
+            domain.description.id
+          ).join(", ")}.`,
+        );
+      }
+      const owner = owners[0]!;
+      return await owner.backend.handleDynamicToolCall(call) ?? dynamicToolFailure(
+        `Unsupported dynamic tool namespace: ${input.namespace ?? "null"}`,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.stack ?? error.message : String(error);
-      response = dynamicToolFailure(message);
+      return dynamicToolFailure(message);
     }
-    const completedAt = new Date().toISOString();
-    currentRunScope().eventBus.publish(DomainEvents.agentToolCall.observed, {
-      domainId: this.domain.domainId,
-      callId: input.callId,
-      ...(caller.threadId ? { threadId: caller.threadId } : {}),
-      agentId: caller.agentId,
-      role: caller.role,
-      phase,
-      namespace: input.namespace ?? "",
-      tool: input.tool,
-      arguments: input.arguments,
-      response,
-      startedAt,
-      completedAt,
-    }, { occurredAt: completedAt });
-    return response;
   }
 
   private async handleAssignTaskToolCall(
     call: AssignTaskToolCall,
   ): Promise<AssignTaskToolResponse> {
-    const phase = this.scheduler.current();
+    if (currentRunScope().workflow.flowSnapshot().status !== "active") {
+      throw new Error("Cannot assign a new Task while the Workflow Flow is settling or completed.");
+    }
+    const phase = currentRunScope().workflow.scheduler.current();
     const workerRole = phase.selectAvailableRole((role) => {
       const candidate = this.registry.findAgent(role);
-      return candidate instanceof WorkerAgent && candidate.taskRunner === undefined;
+      return candidate instanceof WorkerAgent && candidate.canAcceptTask();
     });
     if (!workerRole) {
       return {
@@ -194,31 +194,30 @@ export class AgentDynamicToolBackend {
 
   private handleSubmitPhaseOutcomeToolCall(
     call: SubmitPhaseOutcomeToolCall,
-    caller: CoordinatorAgent,
+    caller: ScoutAgent,
+    delivery: DynamicToolCallInput,
   ): Record<string, unknown> {
-    const advanced = this.scheduler.advance(call.outcome);
-    if (!advanced.cycleCompleted) caller.scheduleCurrentPhaseStep();
-    return {
+    if (!(caller instanceof CoordinatorAgent)) {
+      throw new Error("SubmitPhaseOutcome is only available to the Coordinator agent.");
+    }
+    caller.assertOwnsActiveTurn(delivery);
+    const receipt = this.phaseOutcomeReceipts.get(caller);
+    if (receipt?.threadId === delivery.threadId && receipt.turnId === delivery.turnId) {
+      if (receipt.callId === delivery.callId && receipt.outcome === call.outcome) {
+        return structuredClone(receipt.response);
+      }
+      throw new Error("This Coordinator turn already submitted a Phase outcome; continue in the next Phase's turn.");
+    }
+    const advanced = currentRunScope().workflow.scheduler.advance(call.outcome);
+    const response = {
       status: "accepted",
       currentPhase: advanced.state.currentPhase,
       cycleCompleted: advanced.cycleCompleted,
     };
-  }
-
-  private async handleArchiveTaskToolCall(
-    call: ArchiveTaskToolCall,
-    caller: ScoutAgent,
-  ): Promise<Record<string, unknown>> {
-    if (!(caller instanceof CoordinatorAgent)) {
-      throw new Error("ArchiveTask is only available to the Coordinator agent.");
-    }
-    const archived = await this.taskBackend.archiveAgentTask(call.task_id);
-    return {
-      status: "archived",
-      taskId: archived.taskId,
-      agentId: archived.agentId,
-      role: archived.role,
-    };
+    this.phaseOutcomeReceipts.set(caller, { threadId: delivery.threadId, turnId: delivery.turnId, callId: delivery.callId, outcome: call.outcome, response });
+    if (!advanced.cycleCompleted) caller.scheduleCurrentPhaseStep();
+    else caller.scheduleFlowSettlementStep();
+    return structuredClone(response);
   }
 
   private async handleSubmitTaskToolCall(
@@ -303,10 +302,8 @@ export class AgentDynamicToolBackend {
         return this.handleRespondHumanInputToolCall(call, caller, delivery);
       case "SubmitTask":
         return this.handleSubmitTaskToolCall(call, caller, delivery);
-      case "ArchiveTask":
-        return this.handleArchiveTaskToolCall(call, caller);
       case "SubmitPhaseOutcome":
-        return this.handleSubmitPhaseOutcomeToolCall(call, caller as CoordinatorAgent);
+        return this.handleSubmitPhaseOutcomeToolCall(call, caller, delivery);
       default:
         throw new Error(`Unsupported agent tool: ${String((call as { tool?: unknown }).tool)}`);
     }

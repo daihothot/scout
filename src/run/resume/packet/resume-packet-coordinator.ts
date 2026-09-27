@@ -41,13 +41,13 @@ export function buildCoordinatorResumePacket(
       description: boundedText(task.description),
       recovery_checkpoint: inferTaskRecoveryCheckpoint(input.projection, task),
     })),
-    ...input.projection.archivedTasks.slice(-20).map(({ task, archivedAt }) => ({
+    ...input.projection.releasedTasks.slice(-20).map(({ task, releasedAt }) => ({
       id: task.taskId,
       agent_id: task.agentId,
       role: task.role,
-      status: "archived",
+      status: task.status,
       description: task.description,
-      archived_at: archivedAt,
+      released_at: releasedAt,
     })),
   ];
 
@@ -100,10 +100,12 @@ export function buildCoordinatorResumePacket(
       .filter((step) =>
         step.agentId === input.agentId
         && step.taskId === undefined
-        && (step.status === AgentStepStatuses.Running || step.status === AgentStepStatuses.Interrupted)
       )
       .at(-1);
-    const coordinatorStepEntry = coordinatorStep
+    const coordinatorStepEntry = coordinatorStep && (
+      coordinatorStep.status === AgentStepStatuses.Running
+      || coordinatorStep.status === AgentStepStatuses.Interrupted
+    )
       ? [{
         type: coordinatorStep.status === AgentStepStatuses.Interrupted
           ? "interrupted_step"

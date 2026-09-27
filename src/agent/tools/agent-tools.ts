@@ -18,8 +18,6 @@ export const AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE = "scout_agent_requesthuma
 export const AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE = "scout_agent_respondhumaninput";
 /** Namespace for formal worker task handoffs. */
 export const AGENT_SUBMIT_TASK_TOOL_NAMESPACE = "scout_agent_submittask";
-/** Namespace for coordinator task archival. */
-export const AGENT_ARCHIVE_TASK_TOOL_NAMESPACE = "scout_agent_archivetask";
 /** Namespace for Coordinator-owned Workflow Phase outcomes. */
 export const AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE = "scout_agent_submitphaseoutcome";
 
@@ -30,7 +28,6 @@ export const AGENT_TOOL_NAMESPACE_BY_NAME: Readonly<Record<string, string>> = {
   RequestHumanInput: AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE,
   RespondHumanInput: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
   SubmitTask: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
-  ArchiveTask: AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
   SubmitPhaseOutcome: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
 };
 
@@ -82,12 +79,6 @@ export interface SubmitTaskToolCall {
   outcome: string;
 }
 
-/** Input contract for coordinator task archival. */
-export interface ArchiveTaskToolCall {
-  tool: "ArchiveTask";
-  task_id: string;
-}
-
 /** Input contract for Coordinator synthesis of the current Workflow Phase. */
 export interface SubmitPhaseOutcomeToolCall {
   tool: "SubmitPhaseOutcome";
@@ -101,7 +92,6 @@ export type AgentDynamicToolCall =
   | RequestHumanInputToolCall
   | RespondHumanInputToolCall
   | SubmitTaskToolCall
-  | ArchiveTaskToolCall
   | SubmitPhaseOutcomeToolCall;
 
 /** Builds the schema for assigning work to an existing worker agent. */
@@ -201,22 +191,6 @@ export function buildSubmitTaskDynamicTool(): AgentDynamicToolSpec {
   };
 }
 
-/** Builds the schema for coordinator-only task archival. */
-export function buildArchiveTaskDynamicTool(): AgentDynamicToolSpec {
-  return {
-    guidanceSkill: "tool-scout-archive-task",
-    namespace: AGENT_ARCHIVE_TASK_TOOL_NAMESPACE,
-    name: "ArchiveTask",
-    description: "仅供 Coordinator 归档指定 Worker task。",
-    inputSchema: objectSchema({
-      task_id: {
-        type: "string",
-        description: "需要归档的准确 task id。",
-      },
-    }, ["task_id"]),
-  };
-}
-
 /** Builds the schema for submitting the current Workflow Phase outcome. */
 export function buildSubmitPhaseOutcomeDynamicTool(): AgentDynamicToolSpec {
   return {
@@ -310,16 +284,6 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
       return {
         tool: "SubmitTask",
         outcome: outcome.trim(),
-      };
-    }
-    case "ArchiveTask": {
-      const taskId = input.task_id;
-      if (typeof taskId !== "string" || taskId.trim().length === 0) {
-        throw new Error("ArchiveTask task_id must be a non-empty string.");
-      }
-      return {
-        tool: "ArchiveTask",
-        task_id: taskId.trim(),
       };
     }
     case "SubmitPhaseOutcome": {

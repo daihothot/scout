@@ -7,10 +7,12 @@ import {
 } from "../../../core/workflow/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
+import { SystemEvents } from "../../../system/events/index.js";
 import { buildResumePacket } from "../packet/index.js";
 import {
   planResumeActions,
   projectRun,
+  readDomainJournalProjections,
   ResumeActionTypes,
 } from "../projection/index.js";
 
@@ -29,13 +31,12 @@ export class InjectResumeContextStage implements RunStage {
   /** Loads journal-derived context into interaction stores and agent runners. */
   async start(): Promise<void> {
     const scope = currentRunScope();
-    const graphState = scope.scheduler.snapshot();
+    const graphState = scope.workflow.scheduler.snapshot();
     const synthesisRole = resolveSynthesisRole(graphState).name;
     const projection = projectRun(
-      scope.journal.readAll(),
+      scope.workflow.readEvents(),
       synthesisRole,
-      scope.domain.journal,
-      scope.domainJournal.readAll(),
+      readDomainJournalProjections(scope.domainRegistry.list()),
     );
     scope.toolCallStore.restore(projection.toolCalls);
     scope.stepStore.restore(projection.steps);
@@ -125,6 +126,7 @@ export class InjectResumeContextStage implements RunStage {
     });
     this.activateCoordinator = coordinatorResumeActions.length > 0;
     this.coordinator.restoreState({
+      userInputs: scope.workflow.readEvents().filter((event) => SystemEvents.interaction.userMessageSubmitted.is(event)),
       acceptedMessages: projection.messageDeliveries.filter((message) =>
         message.agentId === coordinator.agentId
       ),

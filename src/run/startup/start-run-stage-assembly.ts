@@ -8,12 +8,12 @@ import {
   OrchestratorStage,
   RunAppServerStage,
   AppServerRootConfigStage,
-  RunJournalWriterStage,
   RunRuntimeStage,
   RunScopeStage,
   RunStageExecutor,
-  WorkflowJournalStage,
+  WorkflowStage,
 } from "../lifecycle/index.js";
+import type { Workflow } from "../../core/workflow/index.js";
 import type { RunScope } from "../run-scope.js";
 import { PrepareEnvironmentStage } from "./stages/prepare-environment-stage.js";
 import { InitializeRunStage } from "./stages/initialize-run-stage.js";
@@ -26,6 +26,7 @@ export class StartRunStageAssembly {
   constructor(input: {
     executor: RunStageExecutor;
     runScope: RunScope;
+    workflow: Workflow;
   }) {
     const executor = input.executor;
     const runScopeStage = new RunScopeStage(input.runScope);
@@ -33,9 +34,8 @@ export class StartRunStageAssembly {
 
     executor.registerSerial(
       runScopeStage,
-      new RunJournalWriterStage(),
-      new WorkflowJournalStage(),
       new InitializeRunStage(),
+      new WorkflowStage(input.workflow),
       new RunRuntimeStage("start"),
       new ExecutionStage(),
       new InteractionStage(),

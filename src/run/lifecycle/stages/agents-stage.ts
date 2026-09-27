@@ -10,7 +10,7 @@ export class AgentsStage implements RunStage {
 
   async start(): Promise<void> {
     const builder = new AgentBuilder();
-    const graphState = currentRunScope().scheduler.snapshot();
+    const graphState = currentRunScope().workflow.scheduler.snapshot();
     const coordinatorRole = resolveSynthesisRole(graphState).name;
     const roles = graphState.roles.map((role) => role.name);
     const agents = roles.map((role) =>
@@ -33,13 +33,25 @@ export class AgentsStage implements RunStage {
   async stop(reason: string): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
-    await this.stopAgents(reason);
+    const failures: unknown[] = [];
+    try {
+      await currentRunScope().workflow.quiesce();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await this.stopAgents(reason);
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, "Workflow and Agents failed to stop.");
   }
 
   private async stopAgents(reason: string): Promise<void> {
     const agents = currentRunScope().agentRegistry.listAgents();
     const coordinatorRole = resolveSynthesisRole(
-      currentRunScope().scheduler.snapshot(),
+      currentRunScope().workflow.scheduler.snapshot(),
     ).name;
     const coordinator = agents.find((agent) =>
       agent.role === coordinatorRole

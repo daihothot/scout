@@ -19,6 +19,7 @@ import {
   subprocessProgressStatusText,
 } from "../../src/interaction/tui/chrome/subprocess-progress-bar.js";
 import { buildChatVisualRows } from "../../src/interaction/tui/panels/chat-panel.js";
+import { buildCollapsedTaskSummary } from "../../src/interaction/tui/panels/tasks-drawer.js";
 import { buildCoordinatorMessageRows } from "../../src/interaction/tui/rows/coordinator-message-row.js";
 import { taskMarker } from "../../src/interaction/tui/markers.js";
 import {
@@ -444,6 +445,34 @@ test("Top chrome matches the full mount layout at normal and boundary widths", (
   }
 });
 
+test("task summaries extract sequences from UUID-suffixed runtime task ids", () => {
+  for (const sequence of ["0001", "12345"]) {
+    const taskId = `custom-task-0002-worker-task-${sequence}-123e4567-e89b-42d3-a456-426614174000`;
+    const updatedAt = "2026-09-27T00:00:00.000Z";
+    const activity = selectCurrentAgentActivity(tuiState({
+      turnActivities: [{
+        seq: 1,
+        agentId: "custom-task-0002-worker",
+        role: "researcher",
+        taskId,
+        threadId: "thread-worker",
+        turnId: "turn-worker",
+        status: "inProgress",
+        updatedAt,
+      }],
+    }));
+    assert.equal(buildActivityBarPresentation(activity, 80).taskRef, `:t-${sequence}`);
+    assert.equal(buildActivityBarPresentation(activity, 40).taskRef, "");
+    assert.equal(buildCollapsedTaskSummary([{
+      taskId,
+      role: "researcher",
+      status: "running",
+      updatedAt,
+      turns: [],
+    }], 80), `▸ Tasks  1 active · RESEA:t-${sequence} running`);
+  }
+});
+
 test("activity strip retains the latest Agent activity after it completes", () => {
   const state = tuiState({
     activities: [
@@ -854,11 +883,11 @@ test("activity strip presents context compaction independently from turn process
   assert.equal(failed?.activity, "上下文压缩失败");
 });
 
-test("selected task marker is distinct from running and archived markers", () => {
+test("selected task marker is distinct from running and done markers", () => {
   assert.equal(taskMarker("running", true), "▶");
-  assert.equal(taskMarker("archived", true), "▶");
+  assert.equal(taskMarker("done", true), "▶");
   assert.equal(taskMarker("running", false), "→");
-  assert.equal(taskMarker("archived", false), "□");
+  assert.equal(taskMarker("done", false), "✓");
 });
 
 function lineText(line: { spans: Array<{ text: string }> }): string {

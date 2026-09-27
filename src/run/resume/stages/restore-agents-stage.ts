@@ -23,6 +23,7 @@ import { currentRunScope } from "../../run-scope.js";
 import { isPathWithin } from "../../../core/path.js";
 import {
   projectRun,
+  readDomainJournalProjections,
   type RunProjection,
 } from "../projection/index.js";
 
@@ -40,13 +41,12 @@ export class RestoreAgentsStage implements RunStage {
   /** Builds all role agents and restores each role's persisted thread state. */
   async start(): Promise<void> {
     const scope = currentRunScope();
-    const graphState = scope.scheduler.snapshot();
+    const graphState = scope.workflow.scheduler.snapshot();
     const synthesisRole = resolveSynthesisRole(graphState).name;
     const projection = projectRun(
-      scope.journal.readAll(),
+      scope.workflow.readEvents(),
       synthesisRole,
-      scope.domain.journal,
-      scope.domainJournal.readAll(),
+      readDomainJournalProjections(scope.domainRegistry.list()),
     );
     const roles = graphState.roles.map((role) => role.name);
     const activeRoleNames = new Set(roles);
@@ -94,7 +94,19 @@ export class RestoreAgentsStage implements RunStage {
   async stop(reason: string): Promise<void> {
     if (this.stopped) return;
     this.stopped = true;
-    await this.stopAgents(reason);
+    const failures: unknown[] = [];
+    try {
+      await currentRunScope().workflow.quiesce();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await this.stopAgents(reason);
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, "Workflow and restored Agents failed to stop.");
   }
 
   /**
@@ -149,7 +161,6 @@ export class RestoreAgentsStage implements RunStage {
     }
     await agent.resumeThread({
       thread,
-      invocationSequence: threadTurns.length,
       rolloutPath,
     });
   }
@@ -158,7 +169,7 @@ export class RestoreAgentsStage implements RunStage {
   private async stopAgents(reason: string): Promise<void> {
     const agents = currentRunScope().agentRegistry.listAgents();
     const synthesisRole = resolveSynthesisRole(
-      currentRunScope().scheduler.snapshot(),
+      currentRunScope().workflow.scheduler.snapshot(),
     ).name;
     const coordinator = agents.find((agent) =>
       agent.role === synthesisRole

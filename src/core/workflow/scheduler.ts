@@ -1,8 +1,10 @@
-import type { EventBus } from "../events/index.js";
-import { createGraphState, type GraphState } from "./graph-state.js";
-import type { WorkflowPhaseOutcome } from "./graph-state.js";
+import { AgentStepStatuses } from "../../agent/step/types.js";
+import { AgentTaskStatuses } from "../../agent/task/types.js";
+import { currentRunScope } from "../../run/run-scope.js";
+import type { GraphState, WorkflowPhaseOutcome } from "./graph-state.js";
+import type { Graph } from "./graph.js";
 import { Phase } from "./phase.js";
-import { WorkflowEvents } from "./workflow-events.js";
+import type { Workflow } from "./workflow.js";
 
 /** Result of applying one Coordinator-owned Phase outcome. */
 export interface SchedulerAdvanceResult {
@@ -10,67 +12,64 @@ export interface SchedulerAdvanceResult {
   readonly cycleCompleted: boolean;
 }
 
-/** Owns the current Workflow cursor and applies declared Phase edges. */
+/** Schedules work against the Workflow-owned Graph and publishes its transitions. */
 export class Scheduler {
-  private state: GraphState;
+  private workflow?: Workflow;
 
-  constructor(
-    initialState: GraphState,
-    private readonly eventBus: EventBus,
-  ) {
-    this.state = createGraphState(initialState);
+  constructor(private readonly graph: Graph) {}
+
+  start(): void {
+    if (this.workflow) return;
+    this.workflow = currentRunScope().workflow;
+  }
+
+  stop(): void {
+    this.workflow = undefined;
   }
 
   /** Returns an immutable snapshot of the current graph state. */
   snapshot(): GraphState {
-    return createGraphState(this.state);
+    return this.graph.snapshot();
   }
 
   /** Publishes the initial graph so recovery can restore the runtime cursor. */
   initialize(): GraphState {
-    const initializedAt = new Date().toISOString();
-    const state = this.snapshot();
-    this.eventBus.publish(WorkflowEvents.workflow.initialized, {
-      state,
-      initializedAt,
-    }, { occurredAt: initializedAt });
-    return state;
+    return this.requireWorkflow().initializeGraph();
   }
 
   /** Returns the current Phase that owns Worker selection. */
   current(): Phase {
-    const phase = this.state.phases.find((candidate) =>
-      candidate.name === this.state.currentPhase
-    );
-    if (!phase) {
-      throw new Error(`Current Workflow Phase is not declared: ${this.state.currentPhase}`);
-    }
-    return new Phase(phase);
+    return this.graph.current();
   }
 
-  /** Moves the cursor through the edge selected by Coordinator synthesis. */
+  /** Advances only after the currently accepted Worker execution has ended. */
   advance(outcome: WorkflowPhaseOutcome): SchedulerAdvanceResult {
-    const currentPhase = this.state.currentPhase;
-    const phase = this.state.phases.find((candidate) => candidate.name === currentPhase);
-    if (!phase) {
-      throw new Error(`Current Workflow Phase is not declared: ${currentPhase}`);
+    const workflow = this.requireWorkflow();
+    const scope = currentRunScope();
+    const tasks = scope.taskStore.listTasks();
+    const blockers = [
+      ...tasks
+        .filter((task) => task.status === AgentTaskStatuses.Queued || task.status === AgentTaskStatuses.Running)
+        .map((task) => `Task ${task.taskId} (${task.status})`),
+      ...scope.stepStore.list()
+        .filter((step) => step.taskId !== undefined && step.status === AgentStepStatuses.Running)
+        .map((step) => `Worker Step ${step.stepId} for Task ${step.taskId} is still running`),
+      ...scope.agentRegistry.listAgents().flatMap((agent) => {
+        const snapshot = agent.snapshot();
+        const task = tasks.find((task) => task.taskId === snapshot.activeTask?.taskId);
+        return task?.status === AgentTaskStatuses.Done && snapshot.pendingMessageCount > 0
+          ? [`Task ${task.taskId} has ${snapshot.pendingMessageCount} pending Worker message(s)`]
+          : [];
+      }),
+    ];
+    if (blockers.length > 0) {
+      throw new Error(`Cannot advance Workflow Phase ${this.graph.snapshot().currentPhase}: ${blockers.join(", ")}. Finish or stop the outstanding Worker execution first.`);
     }
-    const target = phase.edges[outcome];
-    const cycleCompleted = target === null;
-    const nextPhase = target ?? this.state.phases[0]!.name;
-    this.state = createGraphState({
-      ...this.state,
-      currentPhase: nextPhase,
-    });
-    const advancedAt = new Date().toISOString();
-    const state = this.snapshot();
-    this.eventBus.publish(WorkflowEvents.workflow.advanced, {
-      state,
-      previousPhase: currentPhase,
-      outcome,
-      cycleCompleted,
-      advancedAt,
-    }, { occurredAt: advancedAt });
-    return { state, cycleCompleted };
+    return workflow.advanceGraph(outcome);
+  }
+
+  private requireWorkflow(): Workflow {
+    if (!this.workflow) throw new Error("Workflow Scheduler is not started.");
+    return this.workflow;
   }
 }

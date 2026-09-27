@@ -166,10 +166,10 @@ test("Task disposition persists in Task state and stays out of Step telemetry", 
   });
 
   assert.equal(
-    scope.journal.readAll().at(-1)?.key.routeKey,
+    scope.workflow.readEvents().at(-1)?.key.routeKey,
     AgentEvents.task.dispositionRecorded.routeKey,
   );
-  const projection = projectRun(scope.journal.readAll());
+  const projection = projectRun(scope.workflow.readEvents());
   assert.deepEqual(projection.tasks[0]?.dispositions, [disposition]);
   assert.equal(Object.hasOwn(projection.steps[0] ?? {}, "disposition"), false);
 

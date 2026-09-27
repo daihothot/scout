@@ -288,7 +288,7 @@ export function buildActivityBarPresentation(
   item: TuiAgentActivityStripItem | undefined,
   width: number,
 ): ActivityBarPresentation {
-  const taskSequence = item?.taskId?.match(/-task-(\d+)$/)?.[1];
+  const taskSequence = item?.taskId?.match(/^.*-task-(\d+)\b/)?.[1];
   const taskRef = width >= 64 && taskSequence ? `:t-${taskSequence}` : "";
   const agentPrefix = item ? `${item.label}${taskRef} ` : "";
   const prefixWidth = terminalDisplayWidth(`activity  · ${agentPrefix}`);

@@ -22,6 +22,9 @@ export type TaskRecoveryCheckpoint =
 /** Discriminants for actions a resumed agent may be asked to inspect or run. */
 export const ResumeActionTypes = {
   ResumeTask: "resume_task",
+  ResumeCoordinatorStep: "resume_coordinator_step",
+  ContinuePhase: "continue_phase",
+  SettleFlow: "settle_flow",
   ConsumeMessage: "consume_message",
   InspectInterruption: "inspect_interruption",
   EvaluateOutcome: "evaluate_outcome",
@@ -37,9 +40,15 @@ export type ResumeActionType =
  * layer, so constructing this union cannot mutate the run.
  */
 export type ResumeAction =
+  | { type: typeof ResumeActionTypes.ContinuePhase; phase: string }
+  | { type: typeof ResumeActionTypes.SettleFlow }
   | {
     type: typeof ResumeActionTypes.ResumeTask;
     taskId: string;
+  }
+  | {
+    type: typeof ResumeActionTypes.ResumeCoordinatorStep;
+    stepId: string;
   }
   | {
     type: typeof ResumeActionTypes.ConsumeMessage;
@@ -99,10 +108,12 @@ export function inferTaskRecoveryCheckpoint(
 }
 
 /**
- * Plans pending-message consumption and role-specific task actions. The
- * coordinator evaluates a completed task only when its outcome or related
- * validation facts have not already been covered by a Coordinator turn that
- * started and completed after those facts. A worker receives only its own
+ * Plans pending-message consumption and role-specific recovery actions. The
+ * coordinator resumes its latest unfinished Step and evaluates a completed
+ * task only when its outcome has not already been covered by a Coordinator
+ * turn that started and completed after it in the Scout journal. Domain facts
+ * have independent journal ordinals; Domain work arrives through Agent messages
+ * and is recovered by the message-consumption path. A worker receives only its own
  * queued/resumable task; this function records intent without executing it.
  */
 export function planResumeActions(input: {
@@ -113,12 +124,31 @@ export function planResumeActions(input: {
 }): ResumeAction[] {
   const actions: ResumeAction[] = input.projection.pendingMessages
     .filter((message) => message.agentId === input.agentId)
+    .filter((message) => input.projection.flowStatus === "active"
+      || !input.projection.userMessages.some((user) => user.messageId === message.messageId))
     .map((message) => ({
       type: ResumeActionTypes.ConsumeMessage,
       messageId: message.messageId,
     }));
 
   if (input.role === input.synthesisRole) {
+    if (input.projection.flowStatus === "settling") {
+      actions.push({ type: ResumeActionTypes.SettleFlow });
+    } else if (input.projection.pendingPhase !== undefined) {
+      actions.push({ type: ResumeActionTypes.ContinuePhase, phase: input.projection.pendingPhase });
+    }
+    const coordinatorStep = input.projection.steps
+      .filter((step) => step.agentId === input.agentId && step.taskId === undefined)
+      .at(-1);
+    if (
+      coordinatorStep?.status === AgentStepStatuses.Running
+      || coordinatorStep?.status === AgentStepStatuses.Interrupted
+    ) {
+      actions.push({
+        type: ResumeActionTypes.ResumeCoordinatorStep,
+        stepId: coordinatorStep.stepId,
+      });
+    }
     const completedCoordinatorTurns = input.projection.turns
       .filter((turn) =>
         turn.agentId === input.agentId
@@ -139,12 +169,6 @@ export function planResumeActions(input: {
           ...input.projection.taskOutcomes
             .filter((outcome) => outcome.taskId === task.taskId)
             .map((outcome) => outcome.journalSeq),
-          ...input.projection.artifacts
-            .filter((artifact) => artifact.taskId === task.taskId)
-            .map((artifact) => artifact.journalSeq),
-          ...input.projection.gates
-            .filter((gate) => gate.taskId === task.taskId)
-            .map((gate) => gate.journalSeq),
         ];
         const latestTaskFact = taskFactSequences
           .sort((left, right) => left - right)

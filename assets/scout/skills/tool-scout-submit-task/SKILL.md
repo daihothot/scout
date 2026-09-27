@@ -28,6 +28,6 @@ summary: 规定 SubmitTask 的正式输出、当前 turn 所有权和 dispositio
 
 ## Result Rules
 
-- `status: accepted` 表示当前 handoff 已被 Runtime 接受并进入 `done`，不表示 Coordinator 已归档，也不表示领域目标完成。
+- `status: accepted` 表示当前 handoff 已被 Runtime 接受；当前 Step 结束后进入 `done`，不表示领域目标完成。原 Task 仍绑定时可继续接收补充或修正。
 - 此调用是当前 step 的 `handoff_submitted` disposition，不能在同一 step 再调用 RequestHumanInput。
 - 调用失败时修正真实问题后重试；不得用 final response 伪装提交成功。

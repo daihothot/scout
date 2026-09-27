@@ -1,10 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   RunStageExecutor,
+  WorkflowStage,
   type RunStage,
 } from "../../src/run/lifecycle/index.js";
-import type { Logger, LogInput, LogLevel } from "../../src/core/logging/index.js";
+import { Logger, type LogInput, type LogLevel } from "../../src/core/logging/index.js";
+import { startRun } from "../../src/run/startup/start-run.js";
+import { PrepareEnvironmentStage } from "../../src/run/startup/stages/prepare-environment-stage.js";
+import { currentRunScope } from "../../src/run/run-scope.js";
+import { NoopRuntimeInteractionPort, type RuntimeDisclosureEvent } from "../../src/interaction/index.js";
 
 interface CapturedLog {
   level: LogLevel;
@@ -270,6 +278,61 @@ test("RunStageExecutor still stops ready resources when termination logging fail
   assert.deepEqual(activity, ["start:resource", "stop:resource:stop"]);
   assert.equal(boot.snapshot().status, "failed");
 });
+
+for (const [event, withEnvironment] of [
+  ["run_startup_completed", false], ["run_ready", false], ["run_startup_completed", true],
+] as const) {
+  test(`startRun releases its real Workflow lock when ${event} logging fails (environment=${withEnvironment})`, async (t) => {
+    const root = mkdtempSync(join(tmpdir(), "scout-start-log-failure-"));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    cpSync(join(process.cwd(), "assets", "scout"), join(root, "assets", "scout"), { recursive: true });
+    if (withEnvironment) {
+      cpSync(join(process.cwd(), "assets", "agent-runtimes"), join(root, "assets", "agent-runtimes"), { recursive: true });
+    }
+    const failure = new Error(`${event} unavailable`);
+    const register = RunStageExecutor.prototype.registerSerial;
+    t.mock.method(RunStageExecutor.prototype, "registerSerial", function (this: RunStageExecutor, ...stages: RunStage[]) {
+      register.apply(this, stages.flatMap((stage) => {
+        if (["run_scope", "workflow", "initialize_run"].includes(stage.id)) return [stage];
+        if (withEnvironment && stage.id === "environment") {
+          return [new PrepareEnvironmentStage({ preflightMount: async () => ({ status: "passed" }) })];
+        }
+        return [];
+      }));
+    });
+    t.mock.method(RunStageExecutor.prototype, "registerParallel", () => undefined);
+    let journalRoot: string | undefined;
+    const start = WorkflowStage.prototype.start;
+    t.mock.method(WorkflowStage.prototype, "start", async function (this: WorkflowStage) {
+      await start.call(this);
+      journalRoot = currentRunScope().workflow.journalRoot;
+    });
+    const info = Logger.prototype.info;
+    t.mock.method(Logger.prototype, "info", function (this: Logger, input: LogInput) {
+      if (input.event === event) throw failure;
+      return info.call(this, input);
+    });
+    t.mock.method(Logger.prototype, "error", () => { throw new Error("failure logger unavailable"); });
+    const disclosures: RuntimeDisclosureEvent[] = [];
+    const interactionPort = new NoopRuntimeInteractionPort();
+    t.mock.method(interactionPort, "disclose", async (event: RuntimeDisclosureEvent) => { disclosures.push(event); });
+
+    if (withEnvironment) {
+      const summary = await startRun({ cwd: root, interactionPort });
+      assert.equal(summary.status, "failed");
+      assert.ok(summary.agents.coordinator);
+      assert.ok(disclosures.some((event) => event.source === "run.start"
+        && JSON.stringify(event.data).includes(failure.message)));
+    } else {
+      await assert.rejects(startRun({ cwd: root, interactionPort }), (error) => error === failure);
+    }
+
+    assert.ok(journalRoot);
+    assert.equal(existsSync(join(journalRoot, "scout.journal")), true);
+    assert.equal(existsSync(join(journalRoot, ".scout.lock")), false);
+    assert.throws(() => currentRunScope(), /No active Scout run scope/);
+  });
+}
 
 function stage(id: string, activity: string[]): RunStage {
   return {

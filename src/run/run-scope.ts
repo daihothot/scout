@@ -7,8 +7,8 @@ import { AgentStepStore } from "../agent/step/agent-step-store.js";
 import { AgentToolCallStore } from "../agent/tool-call/agent-tool-call-store.js";
 import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
-import type { Scheduler } from "../core/workflow/index.js";
-import type { ScoutDomain } from "../domain/index.js";
+import type { Workflow } from "../core/workflow/workflow.js";
+import { DomainRegistry } from "../domain/index.js";
 import type { ExecutionPlatformPort } from "../execution/scout-execution-system.js";
 import type { RuntimeInteractionPort } from "../interaction/protocol/port.js";
 import {
@@ -19,7 +19,6 @@ import type {
   RunContextBundle,
   RunEnvironment,
 } from "./types.js";
-import type { RunJournal } from "./journal/index.js";
 import type { RunManifestStore } from "./persistence/index.js";
 
 /** Dependencies and lifecycle callbacks required to own one active run. */
@@ -29,13 +28,10 @@ export interface RunScopeOptions {
   runRoot: string;
   logger: Logger;
   eventBus: EventBus;
-  scheduler: Scheduler;
   interactionPort: RuntimeInteractionPort;
-  domain: ScoutDomain;
+  workflow?: Workflow;
   config: AssetConfig;
   scoutConfig?: ScoutConfig;
-  journal: RunJournal;
-  domainJournal?: RunJournal;
   manifestStore: RunManifestStore;
   terminate(reason: string): Promise<void>;
 }
@@ -51,23 +47,20 @@ export class RunScope {
   readonly runRoot: string;
   readonly logger: Logger;
   readonly eventBus: EventBus;
-  readonly scheduler: Scheduler;
   readonly interactionPort: RuntimeInteractionPort;
   readonly agentRegistry = new AgentRegistry();
+  readonly domainRegistry = new DomainRegistry();
   readonly taskStore = new AgentTaskStore();
   readonly toolCallStore = new AgentToolCallStore();
   readonly humanInputStore: AgentHumanInputStore;
   readonly stepStore: AgentStepStore;
-  readonly domain: ScoutDomain;
   readonly config: AssetConfig;
   readonly scoutConfig: ScoutConfig;
-  readonly journal: RunJournal;
-  /** Domain-owned journal. Tests may omit it and use the run journal as an in-memory fallback. */
-  readonly domainJournal: RunJournal;
   readonly manifestStore: RunManifestStore;
   private readonly terminateRun: RunScopeOptions["terminate"];
   private activeAppServer?: CodexAppServerClient;
   private activeExecutionSystem?: ExecutionPlatformPort;
+  private activeWorkflow?: Workflow;
   private preparedEnvironment?: RunEnvironment;
 
   constructor(options: RunScopeOptions) {
@@ -76,15 +69,12 @@ export class RunScope {
     this.runRoot = options.runRoot;
     this.logger = options.logger;
     this.eventBus = options.eventBus;
-    this.scheduler = options.scheduler;
     this.interactionPort = options.interactionPort;
     this.humanInputStore = new AgentHumanInputStore();
     this.stepStore = new AgentStepStore();
-    this.domain = options.domain;
+    this.activeWorkflow = options.workflow;
     this.config = options.config;
     this.scoutConfig = options.scoutConfig ?? defaultScoutConfig;
-    this.journal = options.journal;
-    this.domainJournal = options.domainJournal ?? options.journal;
     this.manifestStore = options.manifestStore;
     this.terminateRun = options.terminate;
   }
@@ -114,8 +104,25 @@ export class RunScope {
     return this.environment.contextBundle;
   }
 
+  get workflow(): Workflow {
+    if (!this.activeWorkflow) throw new Error("Workflow Service is not available.");
+    return this.activeWorkflow;
+  }
+
   get hasEnvironment(): boolean {
     return this.preparedEnvironment !== undefined;
+  }
+
+  setWorkflow(workflow: Workflow): void {
+    if (this.activeWorkflow) throw new Error("Workflow Service is already available.");
+    this.activeWorkflow = workflow;
+  }
+
+  clearWorkflow(workflow: Workflow): void {
+    if (this.activeWorkflow !== workflow) {
+      throw new Error("Cannot clear an inactive Workflow Service.");
+    }
+    this.activeWorkflow = undefined;
   }
 
   setAppServer(appServer: CodexAppServerClient): void {

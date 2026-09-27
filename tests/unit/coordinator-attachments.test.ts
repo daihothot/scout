@@ -21,7 +21,7 @@ test("coordinator attachments build tagged context blocks", () => {
     role: "verifier",
     activeTaskId: "task-1",
     requestedDescription: "Verify another BDD",
-    reason: "The current task has not been archived.",
+    reason: "The current task still has unfinished work.",
   });
 
   const prompt = attachments.compose(
@@ -55,6 +55,6 @@ test("coordinator attachments build tagged context blocks", () => {
     "- Role: verifier",
     "- Active Task ID: task-1",
     "- Requested Task: Verify another BDD",
-    "- Reason: The current task has not been archived.",
+    "- Reason: The current task still has unfinished work.",
   ].join("\n"));
 });

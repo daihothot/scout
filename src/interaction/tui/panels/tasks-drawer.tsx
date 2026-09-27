@@ -210,11 +210,10 @@ export function buildCollapsedTaskSummary(
   width: number,
 ): string {
   const activeTasks = tasks.filter((task) => isActiveTaskStatus(task.status));
-  const archivedTaskCount = tasks.filter((task) => task.status === "archived").length;
-  const taskDetails = tasks
-    .filter((task) => task.status !== "archived")
+  const finishedTaskCount = tasks.length - activeTasks.length;
+  const taskDetails = activeTasks
     .map((task) => {
-      const sequence = task.taskId.match(/-task-(\d+)$/)?.[1];
+      const sequence = task.taskId.match(/^.*-task-(\d+)\b/)?.[1];
       const role = (task.role ?? "worker")
         .replace(/[^A-Za-z0-9]/g, "")
         .slice(0, 5)
@@ -222,8 +221,8 @@ export function buildCollapsedTaskSummary(
       return `${role}:${sequence ? `t-${sequence}` : task.taskId} ${task.status ?? "unknown"}`;
     })
     .join(" · ");
-  const archivedSummary = archivedTaskCount > 0 ? `${archivedTaskCount} archived` : "";
-  const details = [taskDetails, archivedSummary].filter(Boolean).join(" · ");
+  const finishedSummary = finishedTaskCount > 0 ? `${finishedTaskCount} finished` : "";
+  const details = [taskDetails, finishedSummary].filter(Boolean).join(" · ");
   return truncateByDisplayWidth(
     `▸ Tasks  ${activeTasks.length} active${details ? ` · ${details}` : ""}`,
     width,

@@ -47,7 +47,7 @@ summary: 使用当前 mount 的稳定查询入口定位 Scout Runtime 资源并�
 
 | 名称 | 实际内容 |
 | --- | --- |
-| `<domain>` | 当前 Workflow Profile 声明的实际 domain。 |
+| `<domain>` | 当前 Workflow Profile 声明的业务 Domain。 |
 | `<phase>` | 当前 `role` 参与的一个实际 Phase 名称。 |
 | `<phase-a>`、`<phase-b>` | 示例中的实际 Phase 名称；仅用于说明多个 Phase 的分组。 |
 | `<family-name>` | `scout-assets family` 返回或当前上下文明确提供的一个 family 名称。 |
@@ -131,7 +131,7 @@ scout-assets summary
 路径语义：
 
 - `profile.phases` 是当前 `role` 参与的完整 Phase 列表，不表示 Scheduler 当前正在执行的 `current_phase`。
-- `profile.domain` 是当前 Workflow Profile 声明的 domain。
+- `profile.domain` 是当前 Workflow Profile 声明的业务 Domain。
 - `profile.resourceParks` 是当前 `role` 使用的 Resource Park 名称列表。
 - `runtimeRoots[*].path` 是以当前 `mount` 为基准的相对路径，例如 `.`、`../artifacts` 和 `../tmp`。使用它们时保持当前 mount 上下文。
 - `profileRoots[*].source` 是 profile 的可移植逻辑声明，例如 `~/.guru/knowledge` 或 `${SCOUT_ROOT}`。

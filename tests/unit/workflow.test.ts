@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   readWorkflowProfile,
 } from "../../src/asset-store/index.js";
@@ -19,10 +19,17 @@ import {
   Scheduler,
   WorkflowEvents,
 } from "../../src/core/workflow/index.js";
+import { AgentTaskDispositionKinds, AgentTaskStatuses, type AgentTaskState } from "../../src/agent/task/types.js";
+import { AgentStepStatuses, type AgentStepState } from "../../src/agent/step/types.js";
 import { projectGraphState } from "../../src/run/resume/projection/index.js";
-import { createTestRunPersistence } from "../helpers/run-persistence.js";
-import { createDomainRuntime } from "../../src/domain/index.js";
-import { RbtDomain } from "../../src/domain/rbt/index.js";
+import { createTestRunPersistence, installTestRunScope } from "../helpers/run-persistence.js";
+import {
+  createDomainRuntime,
+  DomainAgentBackend,
+  ScoutDomainId,
+} from "../../src/domain/index.js";
+import { RbtDomain, RbtDomainAgentBackend, RbtJournal } from "../../src/domain/domains/rbt/index.js";
+import { ValidationDomain } from "../../src/domain/domains/validation/index.js";
 
 const scoutRoot = process.cwd();
 const profilePath = join(
@@ -34,11 +41,45 @@ const profilePath = join(
 );
 
 test("Domain Runtime is selected by the GraphState domain identifier", async () => {
-  assert.ok(await createDomainRuntime("rbt") instanceof RbtDomain);
+  const rbt = await createDomainRuntime(ScoutDomainId.Rbt);
+  assert.ok(rbt instanceof RbtDomain);
+  assert.ok(rbt.backend instanceof DomainAgentBackend);
+  assert.equal(typeof rbt.journal.readAll, "function");
+  const validation = await createDomainRuntime(ScoutDomainId.Validation);
+  assert.ok(validation instanceof ValidationDomain);
+  assert.ok(validation.backend instanceof DomainAgentBackend);
+  assert.deepEqual(validation.backend.dynamicToolsForPhase("research"), []);
   await assert.rejects(
-    createDomainRuntime("missing-domain"),
-    /Cannot load Workflow domain: missing-domain/,
+    createDomainRuntime("missing-domain" as ScoutDomainId),
+    /Invalid Workflow domain: missing-domain/,
   );
+});
+
+test("Domain loading validates backend methods instead of Domain forwarding methods", async (t) => {
+  for (const method of ["register", "unregister", "dynamicToolsForPhase", "handleDynamicToolCall"]) {
+    await t.test(method, async () => {
+      const prototype = RbtDomainAgentBackend.prototype;
+      const descriptor = Object.getOwnPropertyDescriptor(prototype, method);
+      Object.defineProperty(prototype, method, { value: undefined, configurable: true });
+      try {
+        await assert.rejects(createDomainRuntime(ScoutDomainId.Rbt), /invalid Domain backend/);
+      } finally {
+        if (descriptor) Object.defineProperty(prototype, method, descriptor);
+        else Reflect.deleteProperty(prototype, method);
+      }
+    });
+  }
+});
+
+test("Domain loading validates the Journal read contract", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(RbtJournal.prototype, "readAll");
+  Object.defineProperty(RbtJournal.prototype, "readAll", { value: "invalid", configurable: true });
+  try {
+    await assert.rejects(createDomainRuntime(ScoutDomainId.Rbt), /invalid Domain journal/);
+  } finally {
+    if (descriptor) Object.defineProperty(RbtJournal.prototype, "readAll", descriptor);
+    else Reflect.deleteProperty(RbtJournal.prototype, "readAll");
+  }
 });
 
 test("Phase selects the first available role in declaration order", () => {
@@ -58,14 +99,18 @@ test("Phase selects the first available role in declaration order", () => {
 
 test("Scheduler persists graph initialization and restores the latest Phase", (t) => {
   const eventBus = new InMemoryEventBus();
-  const { journal, scheduler } = createTestRunPersistence(
+  const persistence = createTestRunPersistence(
     t,
     "workflow-journal-projection",
     "/repo",
     eventBus,
   );
+  const { journal, workflow } = persistence;
+  installTestRunScope(t, {
+    runId: journal.runId, eventBus, workflow, manifestStore: persistence.manifestStore,
+  });
 
-  const advanced = scheduler.advance("completed");
+  const advanced = workflow.scheduler.advance("completed");
   const events = journal.readAll();
   const initialized = events.find((event) =>
     WorkflowEvents.workflow.initialized.is(event)
@@ -82,6 +127,102 @@ test("Scheduler persists graph initialization and restores the latest Phase", (t
   assert.equal(advanced.state.currentPhase, "research-reviewer");
   assert.equal(projectGraphState(events).currentPhase, "research-reviewer");
 });
+
+for (const outcome of ["completed", "error"] as const) {
+  for (const status of Object.values(AgentTaskStatuses)) {
+    test(`Scheduler ${outcome} checks ${status} Task execution without implicitly releasing it`, (t) => {
+      const scope = installTestRunScope(t, { runId: `phase-guard-${outcome}-${status}` });
+      const workflow = scope.workflow;
+      const now = new Date().toISOString();
+      const task: AgentTaskState = {
+        type: "local_agent", taskId: "phase-task", taskSequence: 1,
+        agentId: "researcher", role: "researcher", phase: "research",
+        description: "Outstanding work", initialPrompt: "Do the work", status,
+        isBackgrounded: true, stepIds: [], dispositions: [], createdAt: now, updatedAt: now,
+      };
+      const stored = scope.taskStore.addTask(task);
+      const beforeGraph = workflow.graph.snapshot();
+      const beforeFlow = workflow.flowSnapshot();
+      const beforeJournal = readFileSync(workflow.journalPath, "utf8");
+      const benchmarkPath = join(dirname(workflow.journalRoot), "benchmarks.json");
+      const beforeBenchmark = readFileSync(benchmarkPath, "utf8");
+      let published = 0;
+      scope.eventBus.subscribe(WorkflowEvents.workflow.advanced, () => { published += 1; });
+
+      if (status === AgentTaskStatuses.Queued || status === AgentTaskStatuses.Running) {
+        assert.throws(() => workflow.scheduler.advance(outcome), /Cannot advance Workflow Phase research: Task phase-task/);
+        assert.deepEqual(workflow.graph.snapshot(), beforeGraph);
+        assert.deepEqual(workflow.flowSnapshot(), beforeFlow);
+        assert.equal(readFileSync(workflow.journalPath, "utf8"), beforeJournal);
+        assert.equal(readFileSync(benchmarkPath, "utf8"), beforeBenchmark);
+        assert.equal(published, 0);
+        assert.deepEqual(scope.taskStore.getTask(task.taskId), stored);
+        scope.taskStore.updateTask(task.taskId, (current) => ({ ...current, status: AgentTaskStatuses.Done }));
+      }
+
+      const advanced = workflow.scheduler.advance(outcome);
+      assert.equal(advanced.cycleCompleted, outcome === "error");
+      assert.equal(advanced.state.currentPhase, outcome === "error" ? "research" : "research-reviewer");
+      assert.equal(workflow.flowSnapshot().status, outcome === "error" ? "settling" : "active");
+      assert.equal(published, 1);
+      assert.ok(scope.taskStore.getTask(task.taskId), "Phase advancement does not release the Task");
+    });
+  }
+}
+
+test("Scheduler keeps human-waiting and restored earlier-Phase Tasks on the active Flow", (t) => {
+  const scope = installTestRunScope(t, { runId: "phase-guard-human-wait" });
+  scope.workflow.scheduler.advance("completed");
+  const now = new Date().toISOString();
+  scope.taskStore.addTask({
+    type: "local_agent", taskId: "restored-human-task", taskSequence: 1,
+    agentId: "researcher", role: "researcher", phase: "research",
+    description: "Waiting for a human", initialPrompt: "Need confirmation",
+    status: AgentTaskStatuses.Running, isBackgrounded: true,
+    stepIds: ["human-request-step"], createdAt: now, updatedAt: now,
+    dispositions: [{
+      kind: AgentTaskDispositionKinds.WaitingForHuman,
+      stepId: "human-request-step", turnId: "human-request-turn", callId: "human-request-call",
+      timestamp: now, requestId: "human-request", request: "Confirm the target",
+    }],
+  });
+  const graph = scope.workflow.graph.snapshot();
+  const flow = scope.workflow.flowSnapshot();
+  for (const outcome of ["completed", "error"] as const) {
+    assert.throws(() => scope.workflow.scheduler.advance(outcome), /restored-human-task \(running\)/);
+    assert.deepEqual(scope.workflow.graph.snapshot(), graph);
+    assert.deepEqual(scope.workflow.flowSnapshot(), flow);
+    assert.doesNotThrow(() => scope.workflow.assertAcceptingInput());
+  }
+});
+
+for (const status of [AgentTaskStatuses.Done, AgentTaskStatuses.Failed, AgentTaskStatuses.Stopped]) {
+  test(`Scheduler waits for a ${status} Task's running Step but not the Coordinator Step`, (t) => {
+    const scope = installTestRunScope(t, { runId: `phase-guard-step-${status}` });
+    const now = new Date().toISOString();
+    scope.taskStore.addTask({
+      type: "local_agent", taskId: "ended-task", taskSequence: 1,
+      agentId: "researcher", role: "researcher", phase: "research",
+      description: "Finishing work", initialPrompt: "Work", status,
+      isBackgrounded: true, stepIds: ["finishing-step"], dispositions: [], createdAt: now, updatedAt: now,
+    });
+    const workerStep: AgentStepState = {
+      stepId: "finishing-step", agentId: "researcher", taskId: "ended-task",
+      status: AgentStepStatuses.Running, prompt: "Work", toolCallIds: [], humanInputReferences: [],
+      startedAt: now, updatedAt: now,
+    };
+    scope.stepStore.restore([
+      workerStep,
+      { ...workerStep, stepId: "coordinator-step", agentId: "coordinator", taskId: undefined },
+    ]);
+    const before = scope.workflow.flowSnapshot();
+    assert.throws(() => scope.workflow.scheduler.advance("error"), /Worker Step finishing-step for Task ended-task is still running/);
+    assert.deepEqual(scope.workflow.flowSnapshot(), before);
+    scope.stepStore.updateStep(workerStep.stepId, (step) => ({ ...step, status: AgentStepStatuses.Completed }));
+    assert.equal(scope.workflow.scheduler.advance("error").cycleCompleted, true);
+    assert.equal(scope.stepStore.getStep("coordinator-step")?.status, AgentStepStatuses.Running);
+  });
+}
 
 test("GraphState recovery rejects a Run without Workflow initialization", (t) => {
   const { journal } = createTestRunPersistence(t, "workflow-missing-initialization");

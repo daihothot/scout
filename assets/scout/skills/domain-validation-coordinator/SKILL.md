@@ -44,7 +44,7 @@ summary: 规范 Research Pack Gate、Verification 和 Verification Report Gate �
 - 每个 Coordinator Step 都包含 `<workflow_phase>` Attachment；`current_phase` 是当前唯一可执行的 Worker Phase。
 - Coordinator 根据 `current_phase` 形成当前 Task，不自行选择 role、Agent 或其它 Phase。
 - 新 Task 使用 AssignTask；Scout Runtime 由当前 Phase 选择第一个空闲 Worker。已有 Task 的补充工作使用 SendMessage 投递到原 `taskId`。
-- 当前 Phase 得到足以判断的结果后，Coordinator 使用 SubmitPhaseOutcome 提交 `completed` 或 `error`。Task 归档与 Phase 推进是两个独立动作。
+- 当前 Phase 得到足以判断的结果后，Coordinator 使用 SubmitPhaseOutcome 提交 `completed` 或 `error`。Task 资源释放遵循通用 Coordinator 规则，不属于领域调度动作。
 - 当前流程状态来自 task 生命周期、正式 Human Input Request / Response、Worker 正式 handoff、artifact refs、digest 和 Validator Gate，不依赖已废弃的 schema 状态投影。
 - Coordinator 只判断输入形态是否足以派发；BDD 是否真实存在、是否唯一匹配由 Researcher 确认。
 - Worker progress、工具活动、普通 summary 和共享记忆不是 Validation 结论。
@@ -180,7 +180,7 @@ Optional：
 
 Missing：
 
-- 缺少 Gate ref、report digest 或 Gate 状态时，不归档 Verifier task，也不形成最终 synthesis。
+- 缺少 Gate ref、report digest 或 Gate 状态时，保留 Verifier task 继续修正，也不形成最终 synthesis。
 
 Confirmation：
 
@@ -201,7 +201,7 @@ Confirmation：
 2. 当前 Phase 的新 Task 调用 AssignTask，不传 Phase、role 或 Agent。
 3. Worker 正式 handoff 到达后，根据当前 Phase contract 判断结果。
 4. 需要保留原 Task 继续修正时，使用 SendMessage 投递到原 `taskId`。
-5. 独立完成必要的 Task 归档后，调用 SubmitPhaseOutcome 提交当前 Phase 结果。
+5. 已接受的 Worker 工作结束后，调用 SubmitPhaseOutcome 提交当前 Phase 结果。
 6. SubmitPhaseOutcome 返回 `cycleCompleted: false` 时结束当前 response，等待 Scout Runtime 以新 Phase 启动下一 Coordinator Step。
 7. SubmitPhaseOutcome 返回 `cycleCompleted: true` 时结束当前 response；Run 保持 idle，等待下一轮输入。
 
@@ -214,7 +214,7 @@ Confirmation：
 - Task synthesis：已确认目标、约束、输入 refs、未确认内容，以及对应 Worker Skill 已定义的最小 handoff contract。
 - BDD clarification request：最小必要问题及当前无法派发的原因。
 - Worker follow-up：原问题、匹配回复、task id 和继续目标。
-- Task archive decision：当前 Worker 是否仍需继续工作，以及归档所依据的正式 handoff 和当前状态。
+- Task follow-up decision：依据正式 handoff 和当前状态，判断当前 Worker 是否仍需在原 Task 上继续工作。
 - Research gate synthesis：Research pack ref、pack digest、Gate、问题 refs、限制和当前阶段结论。
 - Verification synthesis：Verification Report ref、report digest、Verification Report Gate、逐项 verification state refs、限制和当前 Validation 结论。
 
@@ -266,7 +266,7 @@ Main Flow：
 
 Knowledge：
 
-- Researcher 生产 Research pack，Research Validator 只检查该 pack；两者使用独立 task，Gate accepted 前不归档 Researcher。
+- Researcher 生产 Research pack，Research Validator 只检查该 pack；两者使用独立 task，Gate accepted 前保留 Researcher task 供修正使用。
 
 Flow：
 
@@ -276,7 +276,7 @@ flowchart TD
   B -- 否 --> C[保留 Researcher task]
   B -- 是 --> D[创建或继续 Research Validator]
   D --> E{Gate}
-  E -- accepted --> F[归档两 task并进入 Verification]
+  E -- accepted --> F[提交 Phase 结果并进入 Verification]
   E -- needs_fix/insufficient_evidence --> G[把 Gate ref和问题发回原 Researcher]
   E -- blocked --> H[保留两 task并报告阻塞]
 ```
@@ -311,7 +311,7 @@ flowchart TD
   C -- 否 --> D[保留 Verifier task]
   C -- 是 --> E[创建新的 Verification Validator]
   E --> F{Gate}
-  F -- accepted --> G[归档并形成逐项 synthesis]
+  F -- accepted --> G[形成逐项 synthesis并提交 Phase 结果]
   F -- needs_fix/insufficient_evidence --> H[问题回传原 Verifier]
   F -- blocked --> I[保留两 task并报告阻塞]
 ```
@@ -332,7 +332,7 @@ Exit：
 
 - XR-001：不得从 Researcher handoff 跳过 Validator Research Pack Gate。
 - XR-002：任何 Worker 报告 partial、blocked 或 evidence 不足时，不得综合成全部完成。
-- XR-003：Researcher task 在 Gate accepted 前不得归档；修正和复查必须继续使用各自原 task。
+- XR-003：Researcher task 在 Gate accepted 前不得被新任务替换；修正和复查必须继续使用各自原 task。
 - XR-004：没有最新 accepted Research Pack Gate、唯一 pack ref 和对应 digest 时，不得创建 Verifier task。
 - XR-005：Research Pack Gate 与 Verification Report Gate 必须使用两个独立 Validator task；不得复用、重开或改写前一个 task 的职责。
 - XR-006：每次 Validator 检查必须使用其 handoff 明确引用的独立 Gate 记录；不得覆盖、复用旧 Gate 或自行猜测最高序号文件。
@@ -359,7 +359,7 @@ Exit：
 
 - BR-001：缺少 BDD 定位输入时必须停止在输入阶段。
 - BR-002：缺少下一角色所需正式产物时不得派发该角色；Research Validator 需要唯一 Research pack，Verifier 需要 accepted Research Gate，Verification Validator 需要正式 Verification Report。
-- BR-003：Researcher、Verifier 或 Validator 已绑定不匹配的未归档 task 时不得覆盖其 runner。
+- BR-003：Researcher、Verifier 或 Validator 仍有未完成工作、待处理消息或人工请求时不得派发替代 task；需要修正时继续原 task。
 
 ## Retry Rules (Enforcement)
 
@@ -397,7 +397,7 @@ Exit：
 2. 接收 Researcher 正式 handoff 和 Research artifact refs。
 3. 保留 Researcher task，指派 Research Validator 对唯一 Research pack 形成 Research Pack Gate。
 4. Gate 为 `needs_fix` 时把报告问题发回原 Researcher task；Researcher 修正后由原 Validator task 复查。
-5. Gate 为 `accepted` 且 digest 对应最新 pack 时归档两个 task，创建 Verifier task。
+5. Gate 为 `accepted` 且 digest 对应最新 pack 时提交 Phase 结果，进入 Verification 后创建 Verifier task。
 6. Verifier 提交 Verification Report 后创建新的 Verification Validator task。
 7. Verification Report Gate accepted 后按 report 中每个 verification point 的原状态形成最终 synthesis。
 

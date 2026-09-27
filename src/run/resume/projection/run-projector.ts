@@ -12,16 +12,18 @@ import type { AgentMessage } from "../../../agent/message/types.js";
 import type { AgentStepState } from "../../../agent/step/types.js";
 import type { AgentToolCallState } from "../../../agent/tool-call/types.js";
 import type {
+  ScoutDomain,
   ScoutDomainArtifactFact,
   ScoutDomainGateFact,
   ScoutDomainJournalProjection,
 } from "../../../domain/types.js";
 import { SystemEvents } from "../../../system/events/index.js";
 import { RunEvents } from "../../events/index.js";
-import type { RunJournalEvent } from "../../journal/index.js";
+import type { JournalEvent } from "../../../core/journal/index.js";
+import { WorkflowEvents, type WorkflowFlowStatus } from "../../../core/workflow/index.js";
 import {
   applyTaskJournalEvent,
-  type ProjectedArchivedTask,
+  type ProjectedReleasedTask,
 } from "./task-projector.js";
 
 /** Human-input state retained under the projection's recovery namespace. */
@@ -66,16 +68,18 @@ export interface ProjectedGate extends ScoutDomainGateFact {
 /**
  * Read model derived from the Scout journal and the separately supplied Domain
  * journal at a single checkpoint. It combines
- * active and archived tasks, thread state, deliveries, human-input requests,
+ * bound and released tasks, thread state, deliveries, human-input requests,
  * turns, outcomes, artifacts, and gates; it is not a second source of truth
  * and does not perform runtime restoration.
  */
 export interface RunProjection {
   runId: string;
   checkpointSeq: number;
+  flowStatus: WorkflowFlowStatus;
+  pendingPhase?: string;
   threads: AgentThreadSnapshot[];
   tasks: AgentTaskState[];
-  archivedTasks: ProjectedArchivedTask[];
+  releasedTasks: ProjectedReleasedTask[];
   messageDeliveries: AgentMessage[];
   pendingMessages: AgentMessage[];
   humanInputRequests: ProjectedHumanInputRequest[];
@@ -100,6 +104,24 @@ export interface RunProjection {
   }>;
 }
 
+/** One Domain-owned projection paired with the events from that Domain's journal. */
+export interface DomainJournalProjectionInput {
+  readonly journal: ScoutDomainJournalProjection;
+  readonly events: JournalEvent[];
+}
+
+export function readDomainJournalProjections(
+  domains: readonly ScoutDomain[],
+): DomainJournalProjectionInput[] {
+  return domains.flatMap((domain) => {
+    if (!domain.journal?.readAll) return [];
+    return [{
+      journal: domain.journal,
+      events: domain.journal.readAll(),
+    }];
+  });
+}
+
 /**
  * Folds ordered Scout events and separately supplied Domain events into a recovery read model. The projector
  * validates required starts and matching identifiers, preserves the last
@@ -107,17 +129,16 @@ export interface RunProjection {
  * than inventing state. It is read-only with respect to the journal.
  */
 export function projectRun(
-  events: RunJournalEvent[],
+  events: JournalEvent[],
   synthesisRole: string,
-  domainJournal?: ScoutDomainJournalProjection,
-  domainEvents: RunJournalEvent[] = [],
+  domainJournals: readonly DomainJournalProjectionInput[] = [],
 ): RunProjection {
   const created = events.find((event) => RunEvents.run.created.is(event));
   if (!created || !RunEvents.run.created.is(created)) {
     throw new Error("Run journal is missing run.created.");
   }
   const tasks = new Map<string, AgentTaskState>();
-  const archivedTasks = new Map<string, ProjectedArchivedTask>();
+  const releasedTasks = new Map<string, ProjectedReleasedTask>();
   const threads = new Map<string, AgentThreadSnapshot>();
   const queuedMessages = new Map<string, AgentMessage>();
   const queuedMessageSeq = new Map<string, number>();
@@ -134,8 +155,20 @@ export function projectRun(
   const gates: ProjectedGate[] = [];
   const userMessages: RunProjection["userMessages"] = [];
   const coordinatorMessages: RunProjection["coordinatorMessages"] = [];
+  let flowStatus: WorkflowFlowStatus = "active";
+  let pendingPhase: string | undefined;
 
   for (const event of events) {
+    if (WorkflowEvents.workflow.advanced.is(event)) {
+      flowStatus = event.payload.cycleCompleted ? "settling" : "active";
+      pendingPhase = event.payload.cycleCompleted ? undefined : event.payload.state.currentPhase;
+      continue;
+    }
+    if (WorkflowEvents.workflow.completed.is(event)) {
+      flowStatus = "completed";
+      pendingPhase = undefined;
+      continue;
+    }
     if (AgentEvents.thread.started.is(event)) {
       threads.set(event.payload.agentId, structuredClone(event.payload));
       continue;
@@ -186,7 +219,7 @@ export function projectRun(
       threads.set(event.payload.agentId, structuredClone(event.payload));
       continue;
     }
-    if (applyTaskJournalEvent(tasks, archivedTasks, event)) {
+    if (applyTaskJournalEvent(tasks, releasedTasks, event)) {
       if (AgentEvents.task.outcomeSubmitted.is(event)) {
         outcomes.push({
           taskId: event.payload.task.taskId,
@@ -207,6 +240,10 @@ export function projectRun(
       || AgentEvents.step.humanInputReferenced.is(event)
     ) {
       steps.set(event.payload.stepId, structuredClone(event.payload));
+      if (AgentEvents.step.started.is(event) && !event.payload.taskId
+        && (threads.get(event.payload.agentId)?.role ?? event.payload.agentId) === synthesisRole) {
+        pendingPhase = undefined;
+      }
       continue;
     }
     if (AgentEvents.toolCall.observed.is(event)) {
@@ -316,6 +353,9 @@ export function projectRun(
       continue;
     }
     if (AgentEvents.turn.started.is(event)) {
+      if (turns.has(event.payload.invocationId)) {
+        throw new Error(`Duplicate turn invocation id: ${event.payload.invocationId}`);
+      }
       turns.set(event.payload.invocationId, {
         invocationId: event.payload.invocationId,
         agentId: event.payload.agentId,
@@ -390,18 +430,20 @@ export function projectRun(
     }
   }
 
-  for (const event of domainEvents) {
-    const domainFact = domainJournal?.project(event, event.seq);
-    if (domainFact?.kind === "artifact") {
-      artifacts.push({
-        ...structuredClone(domainFact.payload),
-        journalSeq: event.seq,
-      });
-    } else if (domainFact?.kind === "gate") {
-      gates.push({
-        ...structuredClone(domainFact.payload),
-        journalSeq: event.seq,
-      });
+  for (const domainJournal of domainJournals) {
+    for (const event of domainJournal.events) {
+      const domainFact = domainJournal.journal.project(event, event.seq);
+      if (domainFact?.kind === "artifact") {
+        artifacts.push({
+          ...structuredClone(domainFact.payload),
+          journalSeq: event.seq,
+        });
+      } else if (domainFact?.kind === "gate") {
+        gates.push({
+          ...structuredClone(domainFact.payload),
+          journalSeq: event.seq,
+        });
+      }
     }
   }
 
@@ -429,9 +471,11 @@ export function projectRun(
   return {
     runId: created.payload.runId,
     checkpointSeq: events[events.length - 1]?.seq ?? 0,
+    flowStatus,
+    ...(pendingPhase === undefined ? {} : { pendingPhase }),
     threads: [...threads.values()].map((thread) => structuredClone(thread)),
     tasks: [...tasks.values()].map((task) => structuredClone(task)),
-    archivedTasks: [...archivedTasks.values()].map((task) => structuredClone(task)),
+    releasedTasks: [...releasedTasks.values()].map((task) => structuredClone(task)),
     messageDeliveries: [...queuedMessages.values()].map((message) => structuredClone(message)),
     pendingMessages: [
       ...userMessages
@@ -453,7 +497,7 @@ export function projectRun(
           if (consumedMessages.has(message.messageId)) return false;
           if (obsoleteHumanRequestMessages.has(message.messageId)) return false;
           const taskId = message.taskId ?? recoveryMessageTask.get(message.messageId);
-          return !taskId || !archivedTasks.has(taskId);
+          return !taskId || !releasedTasks.has(taskId);
         })
         .map((message) => ({
           seq: recoverableMessageSeq.get(message.messageId) ?? Number.MAX_SAFE_INTEGER,

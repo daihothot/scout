@@ -1,6 +1,7 @@
 import test, { type TestContext } from "node:test";
 import {
   createTestRunPersistence,
+  createTestScheduler,
   installTestRunScope,
 } from "../helpers/run-persistence.js";
 import assert from "node:assert/strict";
@@ -55,6 +56,7 @@ import { AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE } from "../../src/agent/tools/
 import type { AgentMessage } from "../../src/agent/message/types.js";
 import { attachments } from "../../src/agent/context/attachments.js";
 import { AgenticLoop } from "../../src/agent/core/agentic-loop.js";
+import { Graph, Scheduler } from "../../src/core/workflow/index.js";
 
 test("TaskRunner runs one bounded correction turn and fails visibly when both turns omit disposition", async (t) => {
   let turnCount = 0;
@@ -352,7 +354,7 @@ test("TaskRunner enters done from SubmitTask and resumes the same task from a me
   assert.match(turnPrompts[1] ?? "", /<message>\nPlease correct the evidence refs\.\n<\/message>/);
 });
 
-test("TaskRunner archive waits for the active turn before deleting task state", async (t) => {
+test("TaskRunner refuses to release active execution and preserves its result after completion", async (t) => {
   let releaseTurn: (() => void) | undefined;
   let markTurnStarted: (() => void) | undefined;
   const turnStarted = new Promise<void>((resolve) => {
@@ -368,29 +370,29 @@ test("TaskRunner archive waits for the active turn before deleting task state", 
       phase: "verify",
       prompt: agent.turn.message("Verify BDD"),
     },
-    runTurn: async () => {
+    runTurn: async (_turn, runtime) => {
       markTurnStarted?.();
       await turnReleased;
+      await submit(runtime, "## Outcome", "turn-1", "submit-1");
       return completedTurn("worker response");
     },
   });
 
   await turnStarted;
-  let archiveSettled = false;
-  const archivePromise = harness.runtime.archiveTask("task-1").then((task) => {
-    archiveSettled = true;
-    return task;
-  });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(archiveSettled, false);
+  await assert.rejects(harness.runtime.taskRunner.releaseTask("task-1"), /before its execution has ended/);
+  assert.equal(harness.runtime.getTaskSnapshot("task-1")?.status, AgentTaskStatuses.Running);
+  assert.equal(harness.events.some((event) => AgentEvents.task.released.is(event)), false);
 
   releaseTurn?.();
-  const archived = await archivePromise;
+  await harness.runtime.runTasksToIdle();
+  const released = await harness.runtime.releaseTask("task-1");
 
-  assert.equal(archived.taskId, "task-1");
+  assert.equal(released.taskId, "task-1");
+  assert.equal(released.status, AgentTaskStatuses.Done);
+  assert.deepEqual(harness.deliveredOutcomes, ["## Outcome"]);
   assert.equal(harness.runtime.getTaskSnapshot("task-1"), undefined);
   assert.equal(harness.runtime.snapshot().activeTask, undefined);
-  assert.ok(harness.events.some((event) => AgentEvents.task.archived.is(event)));
+  assert.ok(harness.events.some((event) => AgentEvents.task.released.is(event)));
 });
 
 test("TaskRunner explicitly initializes and registers its single task", async (t) => {
@@ -403,7 +405,7 @@ test("TaskRunner explicitly initializes and registers its single task", async (t
   });
   const task = harness.runtime.snapshot().activeTask;
 
-  assert.equal(task?.taskId, "verifier-task-0001");
+  assert.match(task?.taskId ?? "", /^verifier-task-0001-[0-9a-f-]{36}$/);
   assert.equal(task?.taskSequence, 1);
   assert.equal(task?.description, "First task");
   await harness.runtime.stop();
@@ -827,11 +829,6 @@ test("AgentStepBackend reduces app-server plan timeline entries into step state"
     logger: {} as RunScope["logger"],
     eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: {
-      domainId: "test",
-      name: "test",
-      dynamicToolsForPhase: () => [],
-    },
     ...createTestRunPersistence(t, runId),
     terminate: async () => undefined,
   });
@@ -902,7 +899,7 @@ class TestTaskRuntime {
   private pendingMessages: AgentMessage[] = [];
   private messageSequence = 0;
   private stopped = false;
-  private archiving = false;
+  private releasing = false;
   private readonly steerActiveTurn: (input: {
     message: string;
     messageId?: string;
@@ -933,7 +930,7 @@ class TestTaskRuntime {
       agentId: "verifier",
       takeTick: () => this.taskRunner.prepareStep(structuredClone(this.pendingMessages)),
       runTick: (preparation) => this.runTaskStep(preparation),
-      isStopped: () => this.stopped || this.archiving,
+      isStopped: () => this.stopped || this.releasing,
       onError: (error) => this.taskRunner.failActiveTask(error),
     });
     this.steerActiveTurn = input.steerActiveTurn;
@@ -985,17 +982,17 @@ class TestTaskRuntime {
     await this.loop.runToIdle();
   }
 
-  async archiveTask(taskId: string): Promise<AgentTaskState> {
-    this.archiving = true;
+  async releaseTask(taskId: string): Promise<AgentTaskState> {
+    if (this.pendingMessages.length > 0 || !this.taskRunner.canReleaseTask()) {
+      throw new Error("Cannot release unfinished work or pending messages.");
+    }
+    this.releasing = true;
     this.loop.stop();
-    this.taskRunner.cancelPreparedStep();
     try {
       await this.loop.runToIdle();
-      const task = await this.taskRunner.archiveTask(taskId);
-      this.pendingMessages = [];
-      return task;
+      return await this.taskRunner.releaseTask(taskId);
     } finally {
-      this.archiving = false;
+      this.releasing = false;
     }
   }
 
@@ -1085,6 +1082,7 @@ async function createHarness(t: TestContext, input: {
   const scope = installTestRunScope(t, {
     runId: "worker-runner-harness",
     eventBus,
+    scheduler: new Scheduler(new Graph({ ...createTestScheduler().snapshot(), currentPhase: "verify" })),
   });
   const events: ScoutEvent[] = [];
   const terminalTasks: AgentTaskState[] = [];
@@ -1097,7 +1095,7 @@ async function createHarness(t: TestContext, input: {
     AgentEvents.task.assigned,
     AgentEvents.task.messageQueued,
     AgentEvents.task.done,
-    AgentEvents.task.archived,
+    AgentEvents.task.released,
     AgentEvents.task.pendingMessagesDrained,
     AgentEvents.task.stepStarted,
     AgentEvents.task.stepCompleted,

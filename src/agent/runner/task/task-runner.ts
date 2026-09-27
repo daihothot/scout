@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   attachments,
 } from "../../context/attachments.js";
@@ -128,6 +129,15 @@ export class TaskRunner {
     if (isTerminalTaskStatus(task.status)) {
       throw new Error(`Cannot queue message for terminal task ${task.taskId}. Status: ${task.status}`);
     }
+    const workflow = currentRunScope().workflow;
+    const flow = workflow.flowSnapshot();
+    if (flow.status !== "active") {
+      throw new Error(`Cannot queue message for Task ${task.taskId}: Flow ${flow.flowId} is ${flow.status}.`);
+    }
+    const phase = workflow.scheduler.current().name;
+    if (task.phase !== phase) {
+      throw new Error(`Cannot queue message: Task ${task.taskId} belongs to Phase ${task.phase}; current Phase is ${phase}.`);
+    }
     return cloneAgentTaskState(task);
   }
 
@@ -169,18 +179,28 @@ export class TaskRunner {
     return this.store.getTask(taskId);
   }
 
-  async archiveTask(taskId: string): Promise<AgentTaskState> {
+  /** Execution must have ended before the owning Worker can release this binding. */
+  canReleaseTask(): boolean {
+    const task = this.activeTask;
+    return Boolean(task
+      && (task.status === AgentTaskStatuses.Done || isTerminalTaskStatus(task.status))
+      && !currentRunScope().stepStore.list({ agentId: this.host.agentId })
+        .some((step) => step.taskId === task.taskId && step.status === "running"));
+  }
+
+  async releaseTask(taskId: string): Promise<AgentTaskState> {
     this.ensureOwnedTask(taskId);
+    if (!this.canReleaseTask()) throw new Error(`Cannot release Task ${taskId} before its execution has ended.`);
     const task = this.getTask(taskId);
-    const archivedAt = new Date().toISOString();
-    this.eventBus.publish(
-      AgentEvents.task.archived,
+    const releasedAt = new Date().toISOString();
+    await this.eventBus.publishAndWait(
+      AgentEvents.task.released,
       task,
-      { occurredAt: archivedAt },
+      { occurredAt: releasedAt },
     );
-    const archived = this.store.removeTask(taskId);
+    const released = this.store.removeTask(taskId);
     this.activeTask = undefined;
-    return cloneAgentTaskState(archived);
+    return cloneAgentTaskState(released);
   }
 
   shouldActivateRestoredTask(pendingMessageCount: number): boolean {
@@ -225,7 +245,7 @@ export class TaskRunner {
   }
 
   private buildTaskId(taskSequence: number): string {
-    return `${this.host.agentId}-task-${String(taskSequence).padStart(4, "0")}`;
+    return `${this.host.agentId}-task-${String(taskSequence).padStart(4, "0")}-${randomUUID()}`;
   }
 
   prepareStep(pendingMessages: AgentMessage[]): TaskStepPreparation | undefined {

@@ -4,7 +4,7 @@ import type {
   WorkflowPhaseOutcome,
 } from "./graph-state.js";
 
-/** Initial graph fact persisted before a new Run becomes active. */
+/** Initial Graph fact persisted before a new Flow becomes active. */
 export interface WorkflowGraphInitializedEvent {
   state: GraphState;
   initializedAt: string;
@@ -19,10 +19,11 @@ export interface WorkflowGraphAdvancedEvent {
   advancedAt: string;
 }
 
-/** Durable Workflow graph facts consumed by the Run Journal and recovery. */
+/** Durable Workflow Graph and completion facts owned by scout.journal. */
 export const WorkflowEvents = defineEventCatalog("system", {
   workflow: {
     initialized: event<WorkflowGraphInitializedEvent>(),
     advanced: event<WorkflowGraphAdvancedEvent>(),
+    completed: event<{ completedAt: string }>(),
   },
 } as const);

@@ -14,7 +14,7 @@ export interface TuiTaskDrawerItem {
   turns: TuiTaskTurn[];
 }
 
-/** Selects task summaries in their stable sequence order for the drawer. */
+/** Keeps executing tasks first and historical results in their stable order. */
 export function selectTaskSummaries(state: TuiState): TuiTaskDrawerItem[] {
   return state.tasks
     .map((task) => ({
@@ -30,7 +30,7 @@ export function selectTaskSummaries(state: TuiState): TuiTaskDrawerItem[] {
       })),
     }))
     .sort((left, right) =>
-      Number(left.status === "archived") - Number(right.status === "archived")
+      Number(isActiveTaskStatus(right.status)) - Number(isActiveTaskStatus(left.status))
     );
 }
 

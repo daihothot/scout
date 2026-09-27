@@ -94,6 +94,8 @@ export class InteractionGateway {
     source?: string;
     data?: unknown;
   }): Promise<void> {
+    const scope = currentRunScope();
+    scope.workflow.assertAcceptingInput();
     const messageId = input.messageId ?? `user-message-${Date.now()}`;
     const submittedAt = new Date().toISOString();
     const payload = {
@@ -110,7 +112,7 @@ export class InteractionGateway {
       source: input.source,
       data: input.data,
     } satisfies UserMessageSubmittedPayload;
-    await currentRunScope().eventBus.publishAndWait(
+    await scope.eventBus.publishAndWait(
       SystemEvents.interaction.userMessageSubmitted,
       payload,
       { occurredAt: submittedAt },

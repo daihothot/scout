@@ -108,7 +108,6 @@ export abstract class ScoutAgent {
   private thread?: AgentThreadSnapshot;
   private threadPreflight?: ScoutAgentThreadPreflightSnapshot;
   private threadPreflightPromise?: Promise<void>;
-  private invocationSequence = 0;
   private inFlightTurn?: InFlightTurnOwnership;
   private stopping = false;
   private stopPromise?: Promise<void>;
@@ -350,7 +349,6 @@ export abstract class ScoutAgent {
 
   async resumeThread(input: {
     thread: AgentThreadSnapshot;
-    invocationSequence: number;
     rolloutPath: string;
   }): Promise<AgentThreadSnapshot> {
     if (this.thread?.status === "active") return this.thread;
@@ -364,12 +362,6 @@ export abstract class ScoutAgent {
     }
     if (input.thread.startInput.ephemeral) {
       throw new Error(`Thread ${input.thread.threadId} is ephemeral and cannot be resumed.`);
-    }
-    if (
-      !Number.isInteger(input.invocationSequence)
-      || input.invocationSequence < 0
-    ) {
-      throw new Error(`Invalid invocation sequence for agent ${this.agentId}.`);
     }
     const resumed = await this.appServer.resumeThread({
       threadId: input.thread.threadId,
@@ -394,7 +386,6 @@ export abstract class ScoutAgent {
       ...thread,
       status: "active",
     };
-    this.invocationSequence = input.invocationSequence;
     this.registry.bindThread(this.agentId, this.thread.threadId);
     const resumedAt = new Date().toISOString();
     this.eventBus.publish(AgentEvents.thread.resumed, {
@@ -799,8 +790,7 @@ export abstract class ScoutAgent {
   }
 
   private nextInvocationId(threadId: string): string {
-    this.invocationSequence += 1;
-    return `${safePathSegment(this.agentId)}-${safePathSegment(threadId)}-invocation-${String(this.invocationSequence).padStart(4, "0")}`;
+    return `${safePathSegment(this.agentId)}-${safePathSegment(threadId)}-invocation-${randomUUID()}`;
   }
 }
 

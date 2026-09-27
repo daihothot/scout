@@ -3,7 +3,7 @@ assetKind: scout.skill
 name: tool-execution-platform
 description: 当前 <role> 需要通过 ExecutionPlatform dynamic tool 启动或关闭当前执行平台会话时使用。
 id: tool-execution-platform
-version: 0.2.0
+version: 0.3.0
 type: tool
 family: [tool, scout, dynamic, execution]
 tags: [execution, platform, dynamic-tool, lifecycle]
@@ -30,7 +30,13 @@ summary: 规范 ExecutionPlatform dynamic tool 的平台会话启动与关闭操
 | `launch` | 建立或复用当前执行会话，并等待 Platform 达到可执行状态。 | 创建或复用当前会话。 |
 | `shutdown` | 关闭当前执行会话对应的 Platform。 | 成功后结束当前会话。 |
 
-调用只提供 `operation`，不得提交 platform type、version、transport、设备 selector 或底层命令。Platform 识别、Adapter 选择与当前会话由 Scout Runtime 管理。
+调用方只提供 `operation`，表达启动或关闭的操作语义。执行目标、启动参数和当前会话身份由 Scout Runtime 管理，调用方不需要获取或回传这些信息。
+
+```json
+{
+  "operation": "launch"
+}
+```
 
 ## Result Contract
 
@@ -63,7 +69,7 @@ summary: 规范 ExecutionPlatform dynamic tool 的平台会话启动与关闭操
 ## Boundaries
 
 - 只使用当前 Phase 实际投放的 `ExecutionPlatform`。
-- `launch` 和 `shutdown` 不接收或转发底层 transport 参数。
+- `launch` 和 `shutdown` 只提交 `operation`；不得添加 `request`、平台选择、应用标识或启动参数。
 - 构建、安装、日志导出、证据采集、业务命令和结果判定不属于本 Tool。
 - 失败结果不能解释为平台已启动、已停止或业务执行完成。
 - 不得绕过本 Tool 调用其内部 transport。

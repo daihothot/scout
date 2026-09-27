@@ -60,7 +60,7 @@ export class RunAppServerStage implements RunStage {
 
   async start(): Promise<void> {
     const scope = currentRunScope();
-    const synthesisRole = resolveSynthesisRole(scope.scheduler.snapshot()).name;
+    const synthesisRole = resolveSynthesisRole(scope.workflow.scheduler.snapshot()).name;
     if (!this.rootConfigStage.prepared) await this.rootConfigStage.start();
     const rootConfig = this.rootConfigStage.rootConfig;
     const defaultModel = scope.hasEnvironment

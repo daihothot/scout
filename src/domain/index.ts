@@ -1,22 +1,30 @@
 /** Domain contracts and the dynamic Domain creation entry exposed to run stages. */
 export * from "./types.js";
 export * from "./domain-events.js";
-export * from "./tools/index.js";
+export * from "./domain-registry.js";
+export * from "./agent/index.js";
+export * from "./core/journal/index.js";
+export * from "./domains/base/index.js";
 
-import type { ScoutDomain } from "./types.js";
+import { DomainAgentBackend } from "./agent/index.js";
+import {
+  isScoutDomainId,
+  type ScoutDomain,
+  type ScoutDomainId,
+} from "./types.js";
 
 /**
  * Creates the Domain selected by GraphState through its conventional module entry.
- * A Domain named <domain> is loaded from domain/<domain>/index.js.
+ * A Domain named <domain> is loaded from domain/domains/<domain>/index.js.
  */
-export async function createDomainRuntime(domainId: string): Promise<ScoutDomain> {
-  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(domainId)) {
+export async function createDomainRuntime(domainId: ScoutDomainId): Promise<ScoutDomain> {
+  if (!isScoutDomainId(domainId)) {
     throw new Error(`Invalid Workflow domain: ${domainId}`);
   }
 
   let domainModule: unknown;
   try {
-    domainModule = await import(`./${domainId}/index.js`);
+    domainModule = await import(`./domains/${domainId}/index.js`);
   } catch (error) {
     throw new Error(`Cannot load Workflow domain: ${domainId}`, { cause: error });
   }
@@ -35,22 +43,32 @@ export async function createDomainRuntime(domainId: string): Promise<ScoutDomain
   if (
     typeof domain !== "object"
     || domain === null
-    || typeof (domain as ScoutDomain).domainId !== "string"
-    || typeof (domain as ScoutDomain).name !== "string"
-    || typeof (domain as ScoutDomain).dynamicToolsForPhase !== "function"
-    || (domain as ScoutDomain).domainId !== domainId
+    || typeof (domain as ScoutDomain).description !== "object"
+    || (domain as ScoutDomain).description === null
+    || !isScoutDomainId((domain as ScoutDomain).description.id)
+    || typeof (domain as ScoutDomain).description.name !== "string"
+    || (domain as ScoutDomain).description.id !== domainId
   ) {
     throw new Error(`Workflow domain ${domainId} returned an invalid Domain instance.`);
   }
   const candidate = domain as ScoutDomain;
   if (
-    (candidate.handleDynamicToolCall !== undefined
-      && typeof candidate.handleDynamicToolCall !== "function")
+    (candidate.prepareFlow !== undefined && typeof candidate.prepareFlow !== "function")
     || (candidate.restore !== undefined && typeof candidate.restore !== "function")
     || (candidate.start !== undefined && typeof candidate.start !== "function")
     || (candidate.stop !== undefined && typeof candidate.stop !== "function")
   ) {
     throw new Error(`Workflow domain ${domainId} returned an invalid Domain instance.`);
+  }
+  const backend = candidate.backend;
+  if (
+    !(backend instanceof DomainAgentBackend)
+    || typeof backend.register !== "function"
+    || typeof backend.unregister !== "function"
+    || typeof backend.dynamicToolsForPhase !== "function"
+    || typeof backend.handleDynamicToolCall !== "function"
+  ) {
+    throw new Error(`Workflow domain ${domainId} returned an invalid Domain backend.`);
   }
   const journal = candidate.journal;
   if (
@@ -67,6 +85,7 @@ export async function createDomainRuntime(domainId: string): Promise<ScoutDomain
         && typeof (eventType as { is?: unknown }).is === "function"
       ))
       || typeof journal.project !== "function"
+      || (journal.readAll !== undefined && typeof journal.readAll !== "function")
       || (journal.aggregate !== undefined && typeof journal.aggregate !== "function")
     )
   ) {

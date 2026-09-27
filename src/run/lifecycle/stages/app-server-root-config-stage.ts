@@ -89,7 +89,7 @@ export class AppServerRootConfigStage implements RunStage {
         runRoot: scope.runRoot,
         workflowProfileName: scope.scoutConfig.workflow.profile,
         agentRoles: this.options.agentRoles
-          ?? scope.scheduler.snapshot().roles.map((role) => role.name),
+          ?? scope.workflow.scheduler.snapshot().roles.map((role) => role.name),
       });
     this.stopped = false;
   }
@@ -197,7 +197,7 @@ export function createClientRootConfig(options: {
   };
 }
 
-/** Creates the root configuration after mounts have been prepared, using the Scheduler domain fact. */
+/** Creates the root configuration after mounts have been prepared, using the Scheduler Domain facts. */
 export function createPreparedClientRootConfig(
   environment: RunEnvironment,
   currentScoutRoot: string,
@@ -211,7 +211,7 @@ export function createPreparedClientRootConfig(
     "assets",
     CodexAgentRuntimeAssetLayout.root,
   );
-  const workflowDomain = currentRunScope().scheduler.snapshot().domain;
+  const workflowDomain = currentRunScope().workflow.scheduler.snapshot().domain;
   const shellTools = new AssetStore().json(scoutRoot)
     .readJson(ScoutAssetLayout.shellTools) as ShellToolsFile;
   const roleRoots = agents.map((agent) => ({

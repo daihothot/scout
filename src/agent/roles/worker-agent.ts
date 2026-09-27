@@ -22,14 +22,15 @@ import { AgenticLoop } from "../core/agentic-loop.js";
 
 /**
  * Base implementation for role-specific workers. It owns one reusable Step
- * runner and zero or one unarchived TaskRunner.
+ * runner and zero or one bound TaskRunner.
  */
 export class WorkerAgent extends ScoutAgent {
   readonly stepRunner: WorkerRunner;
   private readonly loop: AgenticLoop<TaskStepPreparation>;
   private currentTaskRunner?: TaskRunner;
   private taskSequence = 0;
-  private archivingTask = false;
+  private taskChangeInProgress = false;
+  private pendingMessageDeliveries = 0;
 
   constructor(options: ScoutAgentOptions & { spec: AgentThreadSpec }) {
     super(options);
@@ -46,7 +47,7 @@ export class WorkerAgent extends ScoutAgent {
       agentId: this.agentId,
       takeTick: () => this.currentTaskRunner?.prepareStep(this.pendingMessagesSnapshot()),
       runTick: (preparation) => this.runWorkerTick(preparation),
-      isStopped: () => this.isStopping || this.archivingTask,
+      isStopped: () => this.isStopping || this.taskChangeInProgress,
       onError: (error) => this.currentTaskRunner?.failActiveTask(error),
     });
   }
@@ -55,18 +56,25 @@ export class WorkerAgent extends ScoutAgent {
     return this.currentTaskRunner;
   }
 
+  /** A finished binding can be replaced; accepted work and messages cannot. */
+  canAcceptTask(): boolean {
+    return !this.isStopping && !this.taskChangeInProgress
+      && this.pendingMessageDeliveries === 0 && this.pendingMessageCount === 0
+      && (!this.currentTaskRunner || this.currentTaskRunner.canReleaseTask());
+  }
+
   async assignTask(
     input: AssignAgentTaskInput,
   ): Promise<Result<AgentTaskState, AgentTaskNotAssignedEventPayload>> {
     if (this.isStopping) {
       throw new Error(`Worker agent ${this.agentId} is stopping and cannot accept another task.`);
     }
-    if (this.currentTaskRunner) {
-      const activeTask = this.currentTaskRunner.snapshot().activeTask;
+    if (!this.canAcceptTask()) {
+      const activeTask = this.currentTaskRunner?.snapshot().activeTask;
       if (!activeTask) {
         throw new Error(`Worker agent ${this.agentId} has a TaskRunner without a bound task.`);
       }
-      const reason = "The worker agent already has a task that has not been archived.";
+      const reason = "The worker agent still has unfinished work, pending messages, or a task change in progress.";
       const rejection = {
         agentId: this.agentId,
         role: this.role,
@@ -78,58 +86,79 @@ export class WorkerAgent extends ScoutAgent {
       return Result.err(rejection);
     }
 
-    const taskSequence = this.taskSequence + 1;
-    const runner = this.createTaskRunner({ taskSequence });
-    this.currentTaskRunner = runner;
+    this.taskChangeInProgress = true;
     try {
-      const task = await runner.assignTask(input);
-      this.taskSequence = taskSequence;
+      if (this.currentTaskRunner) await this.releaseTaskRunner(this.currentTaskRunner);
+      const taskSequence = this.taskSequence + 1;
+      const runner = this.createTaskRunner({ taskSequence });
+      this.currentTaskRunner = runner;
+      try {
+        const task = await runner.assignTask(input);
+        this.taskSequence = taskSequence;
+        return Result.ok(task);
+      } catch (error) {
+        if (this.currentTaskRunner === runner) this.currentTaskRunner = undefined;
+        throw error;
+      }
+    } finally {
+      this.taskChangeInProgress = false;
       queueMicrotask(() => this.loop.schedule());
-      return Result.ok(task);
-    } catch (error) {
-      if (this.currentTaskRunner === runner) this.currentTaskRunner = undefined;
-      throw error;
     }
   }
 
   async sendMessage(input: SendAgentMessageInput): Promise<Result<void, string>> {
+    if (this.taskChangeInProgress) {
+      return Result.err(`Worker agent ${this.agentId} is changing its task binding.`);
+    }
     const runner = this.currentTaskRunner;
     if (!runner) {
       return Result.err(`Worker agent ${this.agentId} has no TaskRunner to receive a message.`);
     }
     const task = runner.assertCanReceiveMessage(input.taskId);
-    const accepted = await this.enqueueMessageDelivery(input, {
-      taskId: task.taskId,
-      deliveryName: "Worker",
-      onAccepted: () => runner.recordMessageQueued(task.taskId),
-    });
-    if (accepted && !this.isStopping && !this.archivingTask) this.loop.schedule();
-    return Result.ok(undefined);
+    this.pendingMessageDeliveries++;
+    try {
+      const accepted = await this.enqueueMessageDelivery(input, {
+        taskId: task.taskId,
+        deliveryName: "Worker",
+        onAccepted: () => runner.recordMessageQueued(task.taskId),
+      });
+      if (accepted && !this.isStopping) this.loop.schedule();
+      return Result.ok(undefined);
+    } finally {
+      this.pendingMessageDeliveries--;
+    }
   }
 
-  async archiveTask(taskId: string): Promise<AgentTaskState> {
+  /** Releases a finished binding at a Flow boundary; never discards accepted work. */
+  async releaseTask(taskId: string): Promise<AgentTaskState> {
+    if (this.taskChangeInProgress) throw new Error(`Worker agent ${this.agentId} is changing its task binding.`);
     const runner = this.currentTaskRunner;
     if (!runner) {
-      throw new Error(`Worker agent ${this.agentId} has no TaskRunner to archive.`);
+      throw new Error(`Worker agent ${this.agentId} has no TaskRunner to release.`);
     }
     const task = runner.snapshot().activeTask;
     if (!task || task.taskId !== taskId) {
       throw new Error(`Worker agent ${this.agentId} does not own task ${taskId}.`);
     }
-    this.archivingTask = true;
-    this.loop.stop();
-    runner.cancelPreparedStep();
+    this.taskChangeInProgress = true;
     try {
-      await this.loop.runToIdle();
-      const archived = await runner.archiveTask(taskId);
-      this.clearPendingMessages();
-      if (this.currentTaskRunner === runner) {
-        this.currentTaskRunner = undefined;
-      }
-      return archived;
+      return await this.releaseTaskRunner(runner);
     } finally {
-      this.archivingTask = false;
+      this.taskChangeInProgress = false;
     }
+  }
+
+  private async releaseTaskRunner(runner: TaskRunner): Promise<AgentTaskState> {
+    if (this.pendingMessageDeliveries > 0 || this.pendingMessageCount > 0 || !runner.canReleaseTask()) {
+      throw new Error(`Worker agent ${this.agentId} cannot release unfinished work or pending messages.`);
+    }
+    this.loop.stop();
+    await this.loop.runToIdle();
+    const task = runner.snapshot().activeTask;
+    if (this.currentTaskRunner !== runner || !task) throw new Error(`Worker agent ${this.agentId} task binding changed during release.`);
+    const released = await runner.releaseTask(task.taskId);
+    this.currentTaskRunner = undefined;
+    return released;
   }
 
   async stopTask(

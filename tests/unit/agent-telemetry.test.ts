@@ -27,6 +27,7 @@ import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
 import type { AgentToolCallState } from "../../src/agent/tool-call/types.js";
 import type { AgentTaskNotAssignedEventPayload } from "../../src/agent/task/task-events.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
+import { TaskRunner } from "../../src/agent/runner/task/task-runner.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
@@ -66,7 +67,7 @@ test("TaskEventRecorder writes only task lifecycle facts", async (t) => {
     role: "researcher",
     activeTaskId: task.taskId,
     requestedDescription: "Research another BDD",
-    reason: "The current task has not been archived.",
+    reason: "The current task still has unfinished work.",
   } satisfies AgentTaskNotAssignedEventPayload);
   recorder.stop();
 
@@ -83,6 +84,42 @@ test("TaskEventRecorder writes only task lifecycle facts", async (t) => {
   assert.equal(existsSync(join(logsRoot, "steps.log")), false);
   assert.equal(existsSync(join(root, "logs", "runtime.log")), false);
   assert.equal(existsSync(join(logsRoot, "activity.log")), false);
+});
+
+test("TaskEventRecorder separates new tasks after a restored worker reuses its local task sequence", async (t) => {
+  const scope = installTestRunScope(t, { runId: "restored-task-identity" });
+  const logsRoot = join(scope.runRoot, "agents", "researcher", "logs");
+  registerAgent(scope.agentRegistry, "researcher", logsRoot);
+  const recorder = new TaskEventRecorder();
+  recorder.start();
+  t.after(() => recorder.stop());
+  const host = {
+    agentId: "researcher", role: "researcher",
+    deliverTaskOutcome: async () => undefined,
+    deliverTaskProtocolFailure: async () => undefined,
+  };
+  const firstRunner = new TaskRunner({ host, taskSequence: 1 });
+  const first = await firstRunner.assignTask({
+    description: "before new Flow", phase: "research", prompt: "first unique task prompt",
+  });
+  await firstRunner.stopTask(first.taskId);
+  await firstRunner.releaseTask(first.taskId);
+  const restoredRunner = new TaskRunner({ host, taskSequence: 1 });
+  const second = await restoredRunner.assignTask({
+    description: "after restored Flow", phase: "research", prompt: "second unique task prompt",
+  });
+  await scope.eventBus.drain(AgentEvents.task.assigned);
+  await scope.eventBus.drain(AgentEvents.task.released);
+  assert.equal(first.taskSequence, second.taskSequence);
+  assert.notEqual(first.taskId, second.taskId);
+  assert.match(first.taskId, /^researcher-task-0001-[0-9a-f-]{36}$/);
+  assert.match(second.taskId, /^researcher-task-0001-[0-9a-f-]{36}$/);
+  const firstLog = readFileSync(join(logsRoot, `${first.taskId}.log`), "utf8");
+  const secondLog = readFileSync(join(logsRoot, `${second.taskId}.log`), "utf8");
+  assert.match(firstLog, /first unique task prompt/);
+  assert.doesNotMatch(firstLog, /second unique task prompt/);
+  assert.match(secondLog, /second unique task prompt/);
+  assert.doesNotMatch(secondLog, /first unique task prompt/);
 });
 
 test("AgentHumanInputRecorder writes one Human Input body with message identity", async (t) => {
@@ -344,7 +381,7 @@ test("AgentActivityRecorder writes stable activity to the role activity log", as
     seq: 3,
     type: "dynamicToolCall",
     status: "completed",
-    label: "ArchiveTask",
+    label: "SubmitTask",
   }));
   await eventBus.publishAndWait(AgentEvents.activity.observed, activity({
     seq: 4,
@@ -367,7 +404,7 @@ test("AgentActivityRecorder writes stable activity to the role activity log", as
   assert.equal(readEventCount(text), 3);
   assert.match(text, /detail: "Stable summary"/);
   assert.doesNotMatch(text, /Partial summary/);
-  assert.doesNotMatch(text, /ArchiveTask/);
+  assert.doesNotMatch(text, /SubmitTask/);
   assert.match(text, /event=agent\.activity\.turn_observed/);
   assert.match(text, /status: "inProgress"/);
   assert.equal(existsSync(join(root, "logs", "runtime.log")), false);

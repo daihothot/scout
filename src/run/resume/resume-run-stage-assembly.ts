@@ -5,18 +5,18 @@ import {
   ExecutionStage,
   InteractionStage,
   OrchestratorStage,
-  RunJournalWriterStage,
   RunRuntimeStage,
   RunScopeStage,
   RunStageExecutor,
-  WorkflowJournalStage,
+  WorkflowStage,
+  type RunStage,
 } from "../lifecycle/index.js";
+import type { Workflow } from "../../core/workflow/index.js";
 import type { RunScope } from "../run-scope.js";
 import {
   ResumeClientsStage,
   RestoreAgentsStage,
   RestoreDomainStage,
-  RestoreEnvironmentStage,
   RestoreTasksStage,
   InjectResumeContextStage,
   RecordResumeInterruptionsStage,
@@ -39,23 +39,26 @@ export class ResumeRunStageAssembly {
   constructor(input: {
     executor: RunStageExecutor;
     runScope: RunScope;
+    workflow: Workflow;
+    clientsStage: ResumeClientsStage;
+    environmentStage: RunStage;
   }) {
     const executor = input.executor;
     const runScopeStage = new RunScopeStage(input.runScope);
 
     executor.registerSerial(
       runScopeStage,
-      new RunJournalWriterStage(),
-      new WorkflowJournalStage(),
-      new ResumeClientsStage(),
-      new RestoreEnvironmentStage(),
-      new RecordResumeInterruptionsStage(),
-      new RunRuntimeStage("resume"),
+      new WorkflowStage(input.workflow),
+      input.clientsStage,
+      input.environmentStage,
       new ExecutionStage(),
       new InteractionStage(),
+      new DomainStage(),
+      new RestoreDomainStage(),
+      new RecordResumeInterruptionsStage(),
+      new RunRuntimeStage("resume"),
     );
-    executor.registerParallel(new DomainStage(), new AgentTelemetryStage());
-    executor.registerSerial(new RestoreDomainStage());
+    executor.registerSerial(new AgentTelemetryStage());
     executor.registerParallel(new AgentBackendStage(), new OrchestratorStage());
     executor.registerSerial(new RestoreAgentsStage());
     const injectResumeContextStage = new InjectResumeContextStage();

@@ -1,22 +1,22 @@
 import type { AgentTaskState } from "../../../agent/task/types.js";
 import { AgentEvents } from "../../../agent/events/index.js";
-import type { RunJournalEvent } from "../../journal/index.js";
+import type { JournalEvent } from "../../../core/journal/index.js";
 
-/** Task state retained after an archive event removes it from the active queue. */
-export interface ProjectedArchivedTask {
+/** Historical result retained after its Worker releases the runtime binding. */
+export interface ProjectedReleasedTask {
   task: AgentTaskState;
-  archivedAt: string;
+  releasedAt: string;
 }
 
 /**
  * Applies one task-domain journal event to the maps owned by `projectRun`.
- * Returns whether the event belongs to task projection; archive removes the
- * active task. Step lifecycle facts are projected separately.
+ * Returns whether the event belongs to task projection; release detaches the
+ * task without changing its result. Step lifecycle facts are projected separately.
  */
 export function applyTaskJournalEvent(
   tasks: Map<string, AgentTaskState>,
-  archivedTasks: Map<string, ProjectedArchivedTask>,
-  event: RunJournalEvent,
+  releasedTasks: Map<string, ProjectedReleasedTask>,
+  event: JournalEvent,
 ): boolean {
   const requireTaskPhase = (task: AgentTaskState): void => {
     if (typeof task.phase !== "string" || task.phase.length === 0) {
@@ -47,12 +47,12 @@ export function applyTaskJournalEvent(
     tasks.set(task.taskId, structuredClone(task));
     return true;
   }
-  if (AgentEvents.task.archived.is(event)) {
+  if (AgentEvents.task.released.is(event)) {
     requireTaskPhase(event.payload);
     tasks.delete(event.payload.taskId);
-    archivedTasks.set(event.payload.taskId, {
+    releasedTasks.set(event.payload.taskId, {
       task: structuredClone(event.payload),
-      archivedAt: event.occurredAt,
+      releasedAt: event.occurredAt,
     });
     return true;
   }

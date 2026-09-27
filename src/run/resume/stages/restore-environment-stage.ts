@@ -64,7 +64,7 @@ export class RestoreEnvironmentStage implements RunStage {
     const scope = currentRunScope();
     const scoutRoot = resolve(scope.scoutRoot);
     const runRoot = resolve(scope.runRoot);
-    const roles = scope.scheduler.snapshot().roles.map((role) => role.name);
+    const roles = scope.workflow.scheduler.snapshot().roles.map((role) => role.name);
     const assetStore = this.options.assetStore ?? new AssetStore();
     const progress = createMountPreparationProgress(roles);
     const publishProgress = createMountPreparationProgressPublisher(scope.interactionPort);
@@ -198,7 +198,7 @@ export class RestoreEnvironmentStage implements RunStage {
       const environment = new RunEnvironmentBuilder(assetStore).build({
         runId: scope.runId,
         agents,
-        graphState: scope.scheduler.snapshot(),
+        graphState: scope.workflow.scheduler.snapshot(),
       });
       const transaction = new EnvironmentMetadataTransaction({
         rollback,

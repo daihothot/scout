@@ -162,7 +162,7 @@ test("interaction gateway publishes every task event once", async (t) => {
     updatedAt: "2026-07-10T00:00:03.000Z",
     stepIds: ["researcher-task-0001-step-0001"],
   }));
-  await bus.publishAndWait(AgentEvents.task.archived, taskState({
+  await bus.publishAndWait(AgentEvents.task.released, taskState({
     status: AgentTaskStatuses.Done,
     updatedAt: "2026-07-10T00:00:04.000Z",
     stepIds: ["researcher-task-0001-step-0001"],
@@ -175,7 +175,7 @@ test("interaction gateway publishes every task event once", async (t) => {
       AgentEvents.task.assigned.routeKey,
       AgentEvents.task.dispositionRecorded.routeKey,
       AgentEvents.task.done.routeKey,
-      AgentEvents.task.archived.routeKey,
+      AgentEvents.task.released.routeKey,
     ],
   );
 });
@@ -293,7 +293,7 @@ test("interaction gateway projects assigned task plan and Worker activity into T
   assert.equal(store.snapshot().tasks[0]?.status, AgentTaskStatuses.Done);
   assert.equal(store.snapshot().tasks[0]?.turns[0]?.planSteps[0]?.status, "completed");
 
-  await bus.publishAndWait(AgentEvents.task.archived, taskState({
+  await bus.publishAndWait(AgentEvents.task.released, taskState({
     status: AgentTaskStatuses.Done,
     updatedAt: "2026-07-10T00:00:04.000Z",
     stepIds: ["researcher-task-0001-step-0001"],
@@ -301,7 +301,7 @@ test("interaction gateway projects assigned task plan and Worker activity into T
   gateway.stop();
 
   assert.equal(store.snapshot().tasks.length, 1);
-  assert.equal(store.snapshot().tasks[0]?.status, "archived");
+  assert.equal(store.snapshot().tasks[0]?.status, AgentTaskStatuses.Done);
   assert.equal(store.snapshot().tasks[0]?.turns[0]?.planSteps[0]?.status, "completed");
 });
 

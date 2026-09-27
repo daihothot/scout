@@ -80,10 +80,10 @@ export class TaskEventRecorder {
       });
       return;
     }
-    if (AgentEvents.task.archived.is(event)) {
+    if (AgentEvents.task.released.is(event)) {
       this.write(event, task.agentId, task.taskId, {
         status: task.status,
-        archivedAt: event.occurredAt,
+        releasedAt: event.occurredAt,
       });
       return;
     }

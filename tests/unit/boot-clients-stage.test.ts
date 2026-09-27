@@ -29,6 +29,11 @@ import {
 import { AssetStore } from "../../src/asset-store/index.js";
 import { buildClientConfig } from "../../src/agent-server/codex/app-server-config.js";
 import {
+  ScoutDomainId,
+  DomainAgentBackend,
+  type ScoutDomain,
+} from "../../src/domain/index.js";
+import {
   OpenAIProvider,
   resolveCodexModelProvider,
 } from "../../src/agent-server/codex/model-provider.js";
@@ -91,7 +96,6 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: testDomain(),
     ...createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
     terminate: async () => undefined,
   });
@@ -309,7 +313,6 @@ test("RunAppServerStage preserves its owned client when a second start cannot in
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: testDomain(),
     ...createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
     terminate: async () => undefined,
   });
@@ -350,7 +353,6 @@ test("RunAppServerStage rejects a missing target model provider without falling 
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: testDomain(),
     ...createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
     terminate: async () => undefined,
   });
@@ -415,7 +417,6 @@ test("RunAppServerStage rebinds target Codex auth without retaining copied crede
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: testDomain(),
     ...createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
     terminate: async () => undefined,
   });
@@ -531,10 +532,11 @@ function noopLogger(): Logger {
   } as unknown as Logger;
 }
 
-function testDomain(): RunScope["domain"] {
+function testDomain(): ScoutDomain {
   return {
-    domainId: "test",
-    name: "test",
-    dynamicToolsForPhase: () => [],
+    description: { id: ScoutDomainId.Validation, name: "Test Domain" },
+    backend: new class extends DomainAgentBackend {
+      override async handleDynamicToolCall() { return undefined; }
+    }(),
   };
 }

@@ -21,14 +21,16 @@ summary: 规定当前 Workflow Phase 结果的提交语义。
 
 ## Tool Contract
 
-- 仅 Coordinator 使用。
+- 仅 Coordinator 在自己的当前活动 Turn 中使用。
 - `outcome` 只能是 `completed` 或 `error`。
 - Coordinator 根据当前 Phase 的 Task 结果、超时、异常和人工信息判断 `outcome`。
-- 工具不要求 Task 已完成、已归档，也不要求 Human Input 已解决。
+- 推进前须结束已接受的 Worker 工作：排队、运行、等待人工输入、尚未退出的 Worker Step，以及已完成 Task 的待处理消息都会阻止推进。被拒绝时，根据 Runtime 返回的原因完成收尾后重试。
 - 工具只把结果交给 Scheduler；Scheduler 根据 Workflow Profile 中当前 Phase 的 edge 推进游标。
+- 每个 Turn 最多成功推进一次；收到接受结果后结束当前 response，不在同一 Turn 提交下一 Phase 的结果。被拒绝的调用不占用成功推进次数。
 
 ## Result Rules
 
 - `status: accepted` 表示 Scheduler 已消费当前 Phase 的结果。
+- Runtime 在同一 Turn 重复投递同一个已成功调用（相同调用标识和 `outcome`）时返回原回执，不再次推进；这不允许 Agent 另发一次调用继续推进。
 - `cycleCompleted: false` 表示游标已进入下一个 Phase，Runtime 将启动新的 Coordinator Step。
-- `cycleCompleted: true` 表示本轮流程已结束，游标已重置到第一个 Worker Phase，Run 进入 idle。
+- `cycleCompleted: true` 表示 Graph 已终止、Flow 进入 `settling`，不表示 Flow 已完成。Runtime 统一释放已结束的 Worker 任务绑定，完成收尾并成功切换新 Flow 后，游标才重置到第一个 Worker Phase。

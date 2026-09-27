@@ -93,11 +93,6 @@ function createRunScope(t: import("node:test").TestContext, runId: string): RunS
     logger: {} as RunScope["logger"],
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    domain: {
-      domainId: "test",
-      name: "test",
-      dynamicToolsForPhase: () => [],
-    },
     ...createTestRunPersistence(t, runId),
     terminate: async () => undefined,
   });

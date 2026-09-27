@@ -21,7 +21,7 @@ export class AgentBuilder {
   private readonly scope: RunScope = currentRunScope();
 
   buildCoordinator(): CoordinatorAgent {
-    const role = resolveSynthesisRole(this.scope.scheduler.snapshot()).name;
+    const role = resolveSynthesisRole(this.scope.workflow.scheduler.snapshot()).name;
     const options = this.agentOptionsForRole(role);
     const agent = new CoordinatorAgent({
       ...options,
@@ -34,13 +34,14 @@ export class AgentBuilder {
   }
 
   buildWorker(role: ScoutAgentRole): ScoutAgent {
-    const graphState = this.scope.scheduler.snapshot();
+    const graphState = this.scope.workflow.scheduler.snapshot();
     if (role === resolveSynthesisRole(graphState).name) {
       throw new Error("Coordinator must be built through buildCoordinator().");
     }
     const agentOptions = this.agentOptionsForRole(role);
     const phaseDynamicTools = agentOptions.agentMount.agentProfile.phases
-      .flatMap((phase) => this.scope.domain.dynamicToolsForPhase(phase));
+      .flatMap((phase) => this.scope.domainRegistry.list()
+        .flatMap((domain) => domain.backend.dynamicToolsForPhase(phase)));
     const options = {
       ...agentOptions,
       dynamicTools: this.dynamicToolsForRole(

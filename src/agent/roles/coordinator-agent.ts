@@ -25,6 +25,7 @@ import { resolveSynthesisRole } from "../../core/workflow/index.js";
 interface CoordinatorTick {
   messages: AgentMessage[];
   workflowPhaseRequested: boolean;
+  flowSettlementRequested: boolean;
 }
 
 /** Coordinator role: owns orchestration messages and task assignment, not worker tasks. */
@@ -34,10 +35,12 @@ export class CoordinatorAgent extends ScoutAgent {
   private readonly inbox: AgentInbox;
   private resumeContext?: string;
   private workflowPhaseStepRequested = false;
+  private flowSettlementRequested = false;
+  private readonly userInputs = new Map<string, ScoutEvent<UserMessageSubmittedPayload>>();
 
   constructor(options: ScoutAgentOptions) {
     const scope = currentRunScope();
-    const role = resolveSynthesisRole(scope.scheduler.snapshot()).name;
+    const role = resolveSynthesisRole(scope.workflow.scheduler.snapshot()).name;
     super({
       ...options,
       spec: {
@@ -76,7 +79,23 @@ export class CoordinatorAgent extends ScoutAgent {
     this.loop = new AgenticLoop({
       agentId: this.agentId,
       takeTick: () => this.takeCoordinatorTick(),
-      runTick: (messages) => this.runCoordinatorTick(messages),
+      runTick: async (tick) => {
+        try {
+          await this.runCoordinatorTick(tick);
+        } catch (error) {
+          // Keep the failed tick's report in its Flow before attempting the
+          // independent lifecycle transition.
+          this.publishFailure(error);
+        }
+        if (!this.isStopping) {
+          const previousFlowId = scope.workflow.flowSnapshot().flowId;
+          await scope.workflow.prepareNextFlow();
+          if (scope.workflow.flowSnapshot().flowId !== previousFlowId) {
+            this.flowSettlementRequested = false;
+            this.workflowPhaseStepRequested = false;
+          }
+        }
+      },
       isStopped: () => this.isStopping,
       onError: (error) => this.publishFailure(error),
     });
@@ -103,7 +122,11 @@ export class CoordinatorAgent extends ScoutAgent {
     acceptedMessages: AgentMessage[];
     pendingMessages: AgentMessage[];
     resumeContext: string;
+    userInputs: ScoutEvent<UserMessageSubmittedPayload>[];
   }): void {
+    for (const event of input.userInputs) {
+      this.userInputs.set(event.payload.messageId, { ...event, payload: structuredClone(event.payload) });
+    }
     this.restoreMessageState({
       acceptedMessages: input.acceptedMessages,
       pendingMessages: input.pendingMessages,
@@ -114,6 +137,19 @@ export class CoordinatorAgent extends ScoutAgent {
 
   activateRestoredState(): void {
     this.loop.schedule();
+  }
+
+  /** Finishes accepted input delivery without waiting on the Coordinator's own Step. */
+  async drainInput(): Promise<void> {
+    await this.inbox.runToIdle();
+  }
+
+  /** Input owned by this inbox that has not been consumed by any Step. */
+  pendingFlowInputs(): Array<{ event: ScoutEvent<UserMessageSubmittedPayload>; delivery: AgentMessage }> {
+    return this.pendingMessagesSnapshot().flatMap((delivery) => {
+      const event = this.userInputs.get(delivery.messageId);
+      return event ? [{ event: { ...event, payload: structuredClone(event.payload) }, delivery }] : [];
+    });
   }
 
   async runToIdle(): Promise<void> {
@@ -129,6 +165,12 @@ export class CoordinatorAgent extends ScoutAgent {
     if (!this.isStopping) this.loop.schedule();
   }
 
+  /** Schedules a terminal follow-up if automatic Flow settlement cannot finish. */
+  scheduleFlowSettlementStep(): void {
+    this.flowSettlementRequested = true;
+    if (!this.isStopping) this.loop.schedule();
+  }
+
   protected async stopExecution(reason: string): Promise<void> {
     this.inbox.stop();
     this.loop.stop();
@@ -140,14 +182,19 @@ export class CoordinatorAgent extends ScoutAgent {
   }
 
   private takeCoordinatorTick(): CoordinatorTick | undefined {
+    const messages = this.pendingMessagesSnapshot().filter((message) =>
+      this.runScope.workflow.flowSnapshot().status === "active" || !this.userInputs.has(message.messageId)
+    );
     if (
-      this.pendingMessageCount === 0
+      messages.length === 0
       && !this.resumeContext
       && !this.workflowPhaseStepRequested
+      && !this.flowSettlementRequested
     ) return undefined;
     return {
-      messages: this.pendingMessagesSnapshot(),
+      messages,
       workflowPhaseRequested: this.workflowPhaseStepRequested,
+      flowSettlementRequested: this.flowSettlementRequested,
     };
   }
 
@@ -156,8 +203,12 @@ export class CoordinatorAgent extends ScoutAgent {
       if (SystemEvents.interaction.userMessageSubmitted.is(event)) {
         const payload = event.payload;
         if (payload.attachment.trim().length > 0) {
+          if (!this.userInputs.has(payload.messageId)) {
+            this.userInputs.set(payload.messageId, { ...event, payload: structuredClone(payload) });
+          }
           await this.sendMessage({
             message: payload.attachment,
+            deliveryMode: "queued",
             delivery: {
               messageId: payload.messageId,
               queuedAt: payload.submittedAt,
@@ -184,6 +235,7 @@ export class CoordinatorAgent extends ScoutAgent {
         this.consumeQueuedMessages(messages, step.stepId);
         this.resumeContext = undefined;
         if (tick.workflowPhaseRequested) this.workflowPhaseStepRequested = false;
+        if (tick.flowSettlementRequested) this.flowSettlementRequested = false;
       },
     });
     const { outcome } = result;

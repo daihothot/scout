@@ -4,10 +4,11 @@ import type {
   ScoutAgentRole,
 } from "../agent/thread/types.js";
 import { defineEventCatalog, event } from "../core/events/index.js";
+import type { ScoutDomainId } from "./types.js";
 
 /** One completed Agent invocation of a Domain-owned dynamic tool. */
 export interface DomainAgentToolCallObservedEvent {
-  domainId: string;
+  domainId: ScoutDomainId;
   callId: string;
   threadId?: string;
   agentId: string;

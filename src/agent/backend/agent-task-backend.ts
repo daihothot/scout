@@ -201,15 +201,6 @@ export class AgentTaskBackend {
     return task;
   }
 
-  async archiveAgentTask(taskId: string): Promise<AgentTaskState> {
-    const task = this.getAgentTask(taskId);
-    const agent = this.registry.resolveAgent(task.agentId);
-    if (!(agent instanceof WorkerAgent)) {
-      throw new Error(`Task ${taskId} is not owned by a Worker agent.`);
-    }
-    return agent.archiveTask(taskId);
-  }
-
   hasRunningAgentTasks(): boolean {
     return this.taskStore.hasRunningTasks();
   }

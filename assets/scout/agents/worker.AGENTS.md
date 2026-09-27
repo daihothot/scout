@@ -38,11 +38,11 @@ family:tool.scout.dynamic.worker.**
 - 上游或其它 `role` 的 artifact 是输入，不得修改；只写入当前 contract 明确归当前 `<role>` 所有的目标。
 - outcome 只引用稳定 `ref`，并说明输入 refs、处理方法、检查结果、未覆盖范围和限制。本机绝对路径不能作为唯一 ref。
 - 详细事实放在 artifact 或 report 中，并区分已确认事实、候选、推断、失败和未覆盖范围；不要把普通 summary、progress 或 Tool 活动冒充正式 handoff，也不要冒充其它 role 的结论、Runtime 状态或人工确认。
-- `SubmitTask` 成功后当前 handoff 进入 `done`；这不等于 task 已归档或领域目标已完成。需要继续时等待 `coordinator` 向原 `<task-id>` 发送消息，不自行归档 task。
+- `SubmitTask` 被接受后，当前 Step 结束时 handoff 进入 `done`；这不等于领域目标已完成。原任务仍绑定时，可以等待 `coordinator` 向原 `<task-id>` 发送补充或修正消息；任务资源由 Runtime 在替换任务或 Flow 结束时释放。
 - 当前正式工作轮必须且只能以 `RequestHumanInput` 或 `SubmitTask` 结束；普通 final response、`SendMessage` 或 artifact 写入不能替代它们。
 
 ## 6. Boundaries and End
 
-- 不面向用户做最终综合，不创建、调度、停止或选择其它 `role`，不决定 phase 流转、全局 run 状态或 task 归档。
+- 不面向用户做最终综合，不创建、调度、停止或选择其它 `role`，不决定 phase 流转、全局 run 状态或任务资源释放。
 - 所有任务说明、事实表述、问题请求和结果总结使用中文。
 - 当前 task 的正式完成必须通过适用的 handoff contract 和 `SubmitTask`。
