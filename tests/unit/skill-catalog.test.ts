@@ -273,6 +273,25 @@ test("Domain Skill visibility requires an exact Workflow Profile domain", () => 
   );
 });
 
+test("Domain Skill visibility isolates one Domain and deduplicates its shared dependencies", () => {
+  const catalog = [
+    parseMetadata("shared-tool", { type: "tool", phase: null }),
+    parseMetadata("validation-entry", { domain: "validation", requiredSkills: "[shared-tool]" }),
+    parseMetadata("rbt-entry", { domain: "rbt", requiredSkills: "[shared-tool]" }),
+    parseMetadata("rbt-second-entry", { domain: "rbt", requiredSkills: "[shared-tool]" }),
+    parseMetadata("unselected-entry", { domain: "other-domain" }),
+    parseMetadata("wrong-phase-entry", { domain: "rbt", phase: "[verify]" }),
+    parseMetadata("internal-entry", { type: "internal", phase: "[Internal]" }),
+  ];
+  assert.deepEqual(
+    resolveScoutSkillsForPhases(catalog, {
+      domain: "rbt",
+      phases: ["research"],
+    }).map((skill) => skill.name),
+    ["shared-tool", "rbt-entry", "rbt-second-entry", "internal-entry"],
+  );
+});
+
 test("Scout Skill catalog checks cycles while selected dependency loading stays strict", () => {
   const catalog = [
     parseMetadata("foundation"),

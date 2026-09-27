@@ -128,8 +128,12 @@ function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
     );
   }
   validateEdges(workers, path);
+  const domain = requireString(profile.domain, path, "domain");
+  if (!DOMAIN_ID_PATTERN.test(domain)) {
+    throw new Error(`Invalid Workflow Profile at ${path}: domain has invalid token: ${domain}`);
+  }
   return {
-    domain: requireDomainId(profile.domain, path),
+    domain,
     defaults: {
       config: requireString(defaults.config, path, "defaults.config"),
       model: parseModel(defaults.model, path, "defaults.model"),
@@ -142,14 +146,6 @@ function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
     resources,
     roles,
   };
-}
-
-function requireDomainId(value: unknown, path: string): string {
-  const domain = requireString(value, path, "domain");
-  if (!DOMAIN_ID_PATTERN.test(domain)) {
-    throw new Error(`Invalid Workflow Profile at ${path}: domain has invalid token: ${domain}`);
-  }
-  return domain;
 }
 
 function parseWorkerPhase(

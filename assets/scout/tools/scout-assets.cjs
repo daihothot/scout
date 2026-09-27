@@ -47,8 +47,8 @@ function readMountManifest() {
 }
 
 function readManifestDomain(manifest) {
-  if (typeof manifest.domain !== "string" || manifest.domain.length === 0) {
-    fail("mount manifest does not declare a workflow domain.");
+  if (typeof manifest.domain !== "string" || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(manifest.domain)) {
+    fail("mount manifest does not declare one valid workflow domain identifier.");
   }
   return manifest.domain;
 }

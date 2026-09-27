@@ -20,6 +20,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   AssetStore,
+  readWorkflowProfile,
   inspectCodexMount,
   materializeCodexMount,
   prepareCodexMount,
@@ -31,6 +32,7 @@ import {
 } from "../../src/asset-store/index.js";
 import { MountInspector } from "../../src/asset-store/inspection/mount-inspector.js";
 import { buildMountShellPath } from "../../src/asset-store/mount/macros.js";
+import { createGraphState, type GraphState } from "../../src/core/workflow/index.js";
 
 const scoutRoot = process.cwd();
 type Mutable<T> = {
@@ -40,6 +42,79 @@ type Mutable<T> = {
       ? Mutable<T[Key]>
       : T[Key];
 };
+
+test("Workflow Profiles retain one Domain and reject plural or invalid selection", (t) => {
+  const fixtureRoot = createCodexAssetFixture("scout-workflow-domain-");
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  const profilePath = join(fixtureRoot, "assets", "scout", "workflows", "validation.json");
+  const original = JSON.parse(readFileSync(profilePath, "utf8")) as Mutable<WorkflowProfile>;
+  writeFileSync(profilePath, JSON.stringify({ ...original, domain: "rbt" }));
+
+  assert.equal(readWorkflowProfile(fixtureRoot, "validation").profile.domain, "rbt");
+  const graph = new AssetStore().buildWorkflow(fixtureRoot, "validation");
+  assert.equal(graph.domain, "rbt");
+  assert.ok(Object.isFrozen(graph));
+  const input = { ...graph, domain: "rbt" };
+  const snapshot = createGraphState(input);
+  input.domain = "validation";
+  assert.equal(snapshot.domain, "rbt");
+
+  for (const domain of [undefined, "", [], ["rbt"], ["rbt", "validation"], "RBT"]) {
+    writeFileSync(profilePath, JSON.stringify({ ...original, domain }));
+    assert.throws(() => readWorkflowProfile(fixtureRoot, "validation"), /domain/);
+  }
+  const { domain: removedDomain, ...withoutDomain } = original;
+  void removedDomain;
+  writeFileSync(profilePath, JSON.stringify({ ...withoutDomain, domains: ["validation"] }));
+  assert.throws(() => readWorkflowProfile(fixtureRoot, "validation"), /unknown top-level field\(s\): domains/);
+  const { domain: removedGraphDomain, ...withoutGraphDomain } = graph;
+  void removedGraphDomain;
+  assert.throws(
+    () => createGraphState({ ...withoutGraphDomain, domains: ["validation"] } as unknown as GraphState),
+    /requires one valid domain identifier/,
+  );
+});
+
+test("Mount inspection detects a changed business Domain", (t) => {
+  const fixtureRoot = createCodexAssetFixture("scout-mount-domain-");
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  const profilePath = join(fixtureRoot, "assets", "scout", "workflows", "validation.json");
+  const profile = JSON.parse(readFileSync(profilePath, "utf8")) as Mutable<WorkflowProfile>;
+  profile.domain = "validation";
+  writeFileSync(profilePath, JSON.stringify(profile));
+  const store = new AssetStore();
+  const options = {
+    scoutRoot: fixtureRoot,
+    runId: "run-mount-domain",
+    agentId: "coordinator",
+    workflowProfileName: "validation",
+  };
+  const mount = store.materializeMount(options);
+  const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
+  assert.equal(manifest.domain, "validation");
+  assert.ok(manifest.skills.some((skill) => skill.name === "domain-validation-coordinator"));
+  assert.equal(manifest.skills.some((skill) => skill.name === "domain-rbt-coordinator"), false);
+
+  writeFileSync(mount.manifestPath, JSON.stringify({ ...manifest, domain: "rbt" }));
+  const inspection = store.inspectMount({
+    ...options,
+    cleanRunRoot: false,
+    persistedManifest: { ...manifest, domain: "rbt" },
+    persistedIdentity: mountIdentity(mount),
+  });
+  assert.equal(inspection.decision, "rebuild");
+  assert.match(inspection.reason ?? "", /workflow domain changed/);
+
+  writeFileSync(mount.manifestPath, JSON.stringify(manifest));
+  profile.domain = "rbt";
+  writeFileSync(profilePath, JSON.stringify(profile));
+  assert.throws(() => store.inspectMount({
+    ...options,
+    cleanRunRoot: false,
+    persistedManifest: manifest,
+    persistedIdentity: mountIdentity(mount),
+  }), /Persisted asset changed/);
+});
 
 test("AssetStore reports unresolved shell tools as issues and excludes them from mount outputs", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-shell-tools-");

@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -18,6 +19,7 @@ import {
   type MountManifest,
   type WorkflowProfile,
 } from "../../src/asset-store/index.js";
+import { createClientRootConfig } from "../../src/run/lifecycle/stages/app-server-root-config-stage.js";
 
 const scoutRoot = process.cwd();
 type Mutable<T> = {
@@ -27,6 +29,32 @@ type Mutable<T> = {
       ? Mutable<T[Key]>
       : T[Key];
 };
+
+test("Client permissions include only the selected Domain's phase Skills", (t) => {
+  const fixtureRoot = createCodexAssetFixture("scout-domain-permissions-");
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  const profilePath = join(fixtureRoot, "assets", "scout", "workflows", "validation.json");
+  const profile = JSON.parse(readFileSync(profilePath, "utf8")) as Mutable<WorkflowProfile>;
+  profile.domain = "rbt";
+  writeFileSync(profilePath, JSON.stringify(profile));
+  const options = {
+    scoutRoot: fixtureRoot,
+    runRoot: join(fixtureRoot, "run", "run-domain-permissions"),
+    workflowProfileName: "validation",
+    agentRoles: ["coordinator"],
+  };
+  const permissions = createClientRootConfig(options).permissionProfiles.coordinator!;
+  const skillRoot = join(fixtureRoot, "assets", "scout", "skills");
+  assert.equal(permissions.readableRoots.includes(join(skillRoot, "domain-validation-coordinator")), false);
+  assert.ok(permissions.readableRoots.includes(join(skillRoot, "domain-rbt-coordinator")));
+  assert.equal(permissions.readableRoots.includes(join(skillRoot, "domain-rbt-executor")), false);
+
+  profile.domain = "validation";
+  writeFileSync(profilePath, JSON.stringify(profile));
+  const validationOnly = createClientRootConfig(options).permissionProfiles.coordinator!;
+  assert.ok(validationOnly.readableRoots.includes(join(skillRoot, "domain-validation-coordinator")));
+  assert.equal(validationOnly.readableRoots.includes(join(skillRoot, "domain-rbt-coordinator")), false);
+});
 
 test("AssetStore materializes read and write roots from agent profile", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-asset-store-permissions-"));

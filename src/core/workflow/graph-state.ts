@@ -38,6 +38,9 @@ export interface GraphState {
 
 /** Creates an immutable graph state without introducing a separate state identity. */
 export function createGraphState(input: GraphState): GraphState {
+  if (typeof input.domain !== "string" || !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(input.domain)) {
+    throw new Error("GraphState requires one valid domain identifier.");
+  }
   const phases = input.phases.map((phase) => Object.freeze({
     name: phase.name,
     edges: Object.freeze({ ...phase.edges }),

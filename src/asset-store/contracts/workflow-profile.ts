@@ -29,7 +29,7 @@ export interface WorkflowRoleDefinition {
 
 /** Repository Workflow Profile selected by Scout Config. */
 export interface WorkflowProfile {
-  /** Domain whose Domain Skills are eligible for this Workflow Profile. */
+  /** Business Domain whose Skills are eligible for this Workflow Profile. */
   readonly domain: string;
   readonly defaults: {
     readonly config: string;

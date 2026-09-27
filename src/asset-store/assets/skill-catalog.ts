@@ -230,7 +230,7 @@ export function resolveSkillDependencyLoadOrder(
   return result;
 }
 
-/** Returns Internal Skills and current-domain Skills visible in the supplied Phases. */
+/** Returns Internal Skills and selected-Domain Skills visible in the supplied Phases. */
 export function resolveScoutSkillsForPhases(
   catalog: ScoutSkillCatalogEntry[],
   input: {
@@ -247,6 +247,7 @@ export function resolveScoutSkillsForPhases(
           return skill.phase?.includes(InternalPhase) === true;
         }
         return skill.type === ScoutSkillTypes.Domain
+          && skill.domain !== undefined
           && skill.domain === input.domain
           && skill.phase?.some((phase) => selectedPhases.has(phase)) === true;
       })

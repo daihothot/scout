@@ -82,6 +82,75 @@ test("scout-assets summary presents current profile, roots, counts, and role too
   assert.equal(output.phaseTools.mcpServers[0].name, "jarvis");
 });
 
+test("scout-assets discovers phase roots only from the selected Domain", () => {
+  const root = createTemporaryRoot();
+  writeFileSync(join(root, "mount-manifest.json"), JSON.stringify({
+    domain: "rbt",
+    agentProfile: { phases: ["review"] },
+    skills: [{
+      name: "validation-review",
+      type: "domain",
+      domain: "validation",
+      phase: ["review"],
+      family: ["validation"],
+      requiredSkills: ["shared-tool"],
+    }, {
+      name: "rbt-review",
+      type: "domain",
+      domain: "rbt",
+      phase: ["review"],
+      family: ["rbt"],
+      requiredSkills: ["shared-tool"],
+    }, {
+      name: "unselected-domain",
+      type: "domain",
+      domain: "other",
+      phase: ["review"],
+      family: ["other"],
+    }, {
+      name: "rbt-execute",
+      type: "domain",
+      domain: "rbt",
+      phase: ["execute"],
+      family: ["execution"],
+    }, {
+      name: "shared-tool",
+      type: "tool",
+      family: ["tool"],
+    }],
+  }));
+  assert.equal(parseSuccessful(root, "summary").profile.domain, "rbt");
+  assert.deepEqual(parseSuccessful(root, "family", "--phase", "review"), {
+    phase: "review",
+    families: ["rbt", "tool"],
+  });
+  const shared = parseSuccessful(root, "family", "tool", "--phase", "review");
+  assert.deepEqual(shared.skills.map((skill: { name: string }) => skill.name), ["shared-tool"]);
+});
+
+test("scout-assets rejects plural manifests and invalid Domain identifiers", () => {
+  const root = createTemporaryRoot();
+  for (const selection of [
+    { domains: ["validation"] },
+    { domain: [] },
+    { domain: ["validation"] },
+    { domain: ["validation", "rbt"] },
+    { domain: "" },
+    { domain: "RBT" },
+  ]) {
+    writeFileSync(join(root, "mount-manifest.json"), JSON.stringify({
+      ...selection,
+      agentProfile: { phases: ["review"] },
+      skills: [],
+    }));
+    for (const command of ["summary", "family"]) {
+      const result = runScoutAssets(root, command);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /workflow domain identifier/);
+    }
+  }
+});
+
 test("scout-assets family groups current content by phase and resolves leaf families", () => {
   const fixture = createFixture();
   const families = parseSuccessful(fixture.mountRoot, "family");

@@ -31,7 +31,8 @@ export class MountManifestInspector {
       return `mount contains materialization error: ${fatalIssue.code}`
         + ` (${fatalIssue.resourceId}): ${fatalIssue.message}`;
     }
-    if (manifest.domain !== context.workflowProfileAsset.profile.domain) {
+    if (typeof manifest.domain !== "string"
+      || manifest.domain !== context.workflowProfileAsset.profile.domain) {
       return "workflow domain changed";
     }
     if (!Array.isArray(manifest.customAgents)
