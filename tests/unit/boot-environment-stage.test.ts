@@ -1,5 +1,6 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -17,6 +18,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import {
   AssetStore,
@@ -24,6 +26,7 @@ import {
   type MountManifest,
 } from "../../src/asset-store/index.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
+import { sha256Text, stableJson } from "../../src/core/fs.js";
 import { Workflow } from "../../src/core/workflow/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import {
@@ -43,6 +46,7 @@ import {
 } from "../../src/run/run-scope.js";
 import type { ScoutConfig } from "../../src/system/config/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
+import { EnvironmentMetadataRollback, EnvironmentSnapshotLoader } from "../../src/run/environment/index.js";
 import {
   createTestScheduler,
   createTestRunPersistence,
@@ -898,6 +902,169 @@ test("RestoreEnvironmentStage self-heals a partial mount without rebuilding comp
   finalResume.release();
   finalReleased = true;
 });
+
+for (const crashAt of ["wipe", "before-index", "after-index"] as const) {
+  test(`RestoreEnvironmentStage survives process death at ${crashAt}`, async (t) => {
+    const fixtureRoot = createFixture(`scout-environment-crash-${crashAt}-`);
+    const runId = `environment-crash-${crashAt}`;
+    const initial = installEnvironmentScope(t, fixtureRoot, runId);
+    await new PrepareEnvironmentStage({ preflightMount: async () => ({ status: "passed" }) }).start();
+    const { manifestStore } = initial.scope;
+    const runRoot = join(fixtureRoot, "run", runId);
+    const coordinator = initial.scope.environment.agents.coordinator;
+    const previousHash = coordinator.mount.resourceHash;
+    const roles = initial.scope.workflow.scheduler.snapshot().roles.map((role) => role.name);
+    initial.release();
+    t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+    const drift = crashAt !== "wipe";
+    if (drift) {
+      const manifest = JSON.parse(readFileSync(coordinator.mount.manifestPath, "utf8")) as MountManifest;
+      const sourceAsset = manifest.assets.find((asset) => asset.type !== "plugin");
+      assert.ok(sourceAsset);
+      writeFileSync(resolve(fixtureRoot, sourceAsset.sourcePath), "changed", "utf8");
+    } else {
+      const configPath = join(coordinator.mount.mountRoot, ".codex", "config.toml");
+      writeFileSync(configPath, `${readFileSync(configPath, "utf8")}\n# force rebuild\n`, "utf8");
+    }
+
+    const killed = runEnvironmentChild(fixtureRoot, runId, crashAt, drift);
+    assert.equal(killed.signal, "SIGKILL", killed.stderr);
+    const recordPath = join(runRoot, "environment-rollback.json");
+    assert.ok(existsSync(recordPath));
+    if (crashAt === "wipe") {
+      assert.equal(existsSync(coordinator.mount.manifestPath), false);
+    } else {
+      const manifest = JSON.parse(readFileSync(coordinator.mount.manifestPath, "utf8")) as MountManifest;
+      assert.notEqual(manifest.resourceHash, previousHash);
+      assert.equal(manifestStore.read().agents?.coordinator.resourceHash === previousHash,
+        crashAt === "before-index");
+    }
+
+    manifestStore.update((manifest) => ({
+      ...manifest,
+      checkpointSeq: 12345,
+      runtime: { status: "interrupted", mode: "resume", reason: "latest-runtime-fact" },
+    }));
+    if (crashAt === "wipe") {
+      const interruptedRollback = runEnvironmentChild(fixtureRoot, runId, "rollback", drift);
+      assert.equal(interruptedRollback.signal, "SIGKILL", interruptedRollback.stderr);
+      assert.ok(existsSync(recordPath), "recovery evidence survives a second process death");
+    }
+    const recovered = runEnvironmentChild(fixtureRoot, runId, "complete", drift);
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.equal(existsSync(recordPath), false);
+    const manifest = manifestStore.read();
+    assert.equal(manifest.checkpointSeq, 12345);
+    assert.equal(manifest.runtime.reason, "latest-runtime-fact");
+    const snapshot = new EnvironmentSnapshotLoader({ scoutRoot: fixtureRoot, runRoot, manifest, roles }).load();
+    assert.equal(snapshot.agents.length, roles.length);
+    assert.equal(manifest.agents?.coordinator.resourceHash === previousHash, !drift);
+    const repeated = runEnvironmentChild(fixtureRoot, runId, "complete", drift);
+    assert.equal(repeated.status, 0, repeated.stderr);
+    assert.deepEqual(manifestStore.read().agents, manifest.agents);
+  });
+}
+
+for (const invalid of ["json", "run", "role", "ref", "identity", "symlink", "ancestor", "directory",
+  "record-symlink", "manifest-symlink", "omitted-role", "empty-roles", "null-role", "null-index"] as const) {
+  test(`Environment rollback rejects ${invalid} before any repair write`, async (t) => {
+    const { fixtureRoot, runtime } = await prepareLinkedEnvironment(t, `rollback-${invalid}`);
+    const { manifestStore, runRoot } = runtime.scope;
+    const roles = runtime.scope.workflow.scheduler.snapshot().roles.map((role) => role.name);
+    const snapshot = new EnvironmentSnapshotLoader({
+      scoutRoot: fixtureRoot, runRoot, manifest: manifestStore.read(), roles,
+    }).load();
+    const rollback = new EnvironmentMetadataRollback(snapshot, manifestStore, fixtureRoot);
+    rollback.begin();
+    const recordPath = join(runRoot, "environment-rollback.json");
+    const record = JSON.parse(readFileSync(recordPath, "utf8"));
+    const target = snapshot.agents.at(-1)!;
+    const earlierPath = snapshot.agents[0]!.assetCommitPath;
+    writeFileSync(earlierPath, "earlier role must not be repaired yet\n", "utf8");
+    const outsidePath = join(fixtureRoot, "outside-sentinel.json");
+    writeFileSync(outsidePath, "outside must not change\n", "utf8");
+    const previousManifest = readFileSync(manifestStore.path, "utf8");
+    switch (invalid) {
+      case "json": writeFileSync(recordPath, "{invalid", "utf8"); break;
+      case "run": record.runId = "another-run"; break;
+      case "role": record.agents.at(-1).role = "../outside"; break;
+      case "ref": record.manifest.agents[target.role].mountManifestRef = "../../outside-sentinel.json"; break;
+      case "identity": record.agents.at(-1).mountManifest.assetCommitId = "different"; break;
+      case "omitted-role": record.agents.pop(); break;
+      case "empty-roles": record.agents = []; break;
+      case "null-role": record.agents[0] = null; break;
+      case "null-index": record.manifest.agents[target.role] = null; break;
+      case "record-symlink":
+        renameSync(recordPath, `${recordPath}.saved`);
+        symlinkSync(outsidePath, recordPath);
+        break;
+      case "manifest-symlink":
+        renameSync(manifestStore.path, `${manifestStore.path}.saved`);
+        symlinkSync(outsidePath, manifestStore.path);
+        break;
+      case "symlink":
+        renameSync(target.mountManifestPath, `${target.mountManifestPath}.saved`);
+        symlinkSync(outsidePath, target.mountManifestPath);
+        break;
+      case "ancestor": {
+        const mountRoot = runtime.scope.environment.agents[target.role].mount.mountRoot;
+        renameSync(mountRoot, `${mountRoot}.saved`);
+        const outsideRoot = join(fixtureRoot, "outside-mount");
+        mkdirSync(outsideRoot);
+        symlinkSync(outsideRoot, mountRoot, "dir");
+        break;
+      }
+      case "directory":
+        renameSync(target.mountManifestPath, `${target.mountManifestPath}.saved`);
+        mkdirSync(target.mountManifestPath);
+        break;
+    }
+    if (["run", "role", "ref", "identity", "null-role", "null-index"].includes(invalid)) {
+      const { checksum: _checksum, ...captured } = record;
+      record.checksum = sha256Text(stableJson(captured));
+      writeFileSync(recordPath, JSON.stringify(record), "utf8");
+    } else if (["omitted-role", "empty-roles"].includes(invalid)) {
+      writeFileSync(recordPath, JSON.stringify(record), "utf8");
+    }
+    assert.throws(() => EnvironmentMetadataRollback.recoverPending(fixtureRoot, manifestStore));
+    assert.ok(existsSync(recordPath));
+    assert.equal(readFileSync(earlierPath, "utf8"), "earlier role must not be repaired yet\n");
+    assert.equal(readFileSync(outsidePath, "utf8"), "outside must not change\n");
+    assert.equal(readFileSync(invalid === "manifest-symlink"
+      ? `${manifestStore.path}.saved` : manifestStore.path, "utf8"), previousManifest);
+  });
+}
+
+test("Environment rollback refuses to overwrite pending evidence and leaves ordinary loading strict", async (t) => {
+  const { fixtureRoot, runtime } = await prepareLinkedEnvironment(t, "rollback-evidence");
+  const { runRoot, manifestStore } = runtime.scope;
+  const loader = new EnvironmentSnapshotLoader({
+    scoutRoot: fixtureRoot,
+    runRoot,
+    manifest: manifestStore.read(),
+    roles: runtime.scope.workflow.scheduler.snapshot().roles.map((role) => role.name),
+  });
+  const snapshot = loader.load();
+  const rollback = new EnvironmentMetadataRollback(snapshot, manifestStore, fixtureRoot);
+  rollback.begin();
+  const recordPath = join(runRoot, "environment-rollback.json");
+  const record = readFileSync(recordPath, "utf8");
+  assert.throws(() => rollback.begin(), /EEXIST/);
+  assert.equal(readFileSync(recordPath, "utf8"), record);
+  assert.deepEqual(readdirSync(runRoot).filter((name) => name.startsWith("environment-rollback.json.")), []);
+  renameSync(snapshot.agents[0]!.mountManifestPath, `${snapshot.agents[0]!.mountManifestPath}.saved`);
+  assert.throws(() => loader.load(), /Cannot inspect persisted/);
+  EnvironmentMetadataRollback.recoverPending(fixtureRoot, manifestStore);
+  assert.equal(existsSync(recordPath), false);
+  loader.load();
+});
+
+function runEnvironmentChild(scoutRoot: string, runId: string, crashAt: string, allowDrift: boolean) {
+  return spawnSync(process.execPath, [
+    fileURLToPath(new URL("../fixtures/environment-restore-crash.js", import.meta.url)),
+    scoutRoot, runId, crashAt, String(allowDrift),
+  ], { encoding: "utf8", timeout: 30_000 });
+}
 
 function createFixture(prefix: string): string {
   const fixtureRoot = mkdtempSync(join(tmpdir(), prefix));

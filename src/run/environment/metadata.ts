@@ -1,6 +1,8 @@
 import { summarizeAgentServerPreflight } from "../../agent-server/codex/app-server-preflight.js";
-import { writeJsonFile } from "../../core/fs.js";
-import { relative, resolve } from "node:path";
+import { sha256Text, stableJson, writeJsonFile } from "../../core/fs.js";
+import { randomUUID } from "node:crypto";
+import { closeSync, fsyncSync, linkSync, openSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import type {
   RunAgentManifestEntry,
   RunManifest,
@@ -12,6 +14,7 @@ import type {
   EnvironmentRoleRunnerResult,
   EnvironmentSnapshot,
 } from "./types.js";
+import { EnvironmentSnapshotLoader } from "./snapshot-loader.js";
 
 /**
  * Persists the two role artifacts whose content is produced by the shared
@@ -31,16 +34,67 @@ export class EnvironmentArtifactWriter {
   }
 }
 
-/** Restores the persisted role artifacts captured by the snapshot loader. */
+/** Persists rollback evidence before mount writes and replays it after interruption. */
 export class EnvironmentMetadataRollback {
+  private readonly recordPath: string;
+
   constructor(
     private readonly snapshot: EnvironmentSnapshot,
     private readonly manifestStore: RunManifestStore,
-  ) {}
+    private readonly scoutRoot: string,
+  ) {
+    this.recordPath = join(dirname(manifestStore.path), "environment-rollback.json");
+  }
+
+  static recoverPending(scoutRoot: string, manifestStore: RunManifestStore): void {
+    const snapshot = EnvironmentSnapshotLoader.readRollback(scoutRoot, dirname(manifestStore.path));
+    if (snapshot) new EnvironmentMetadataRollback(snapshot, manifestStore, scoutRoot).restore();
+  }
+
+  /** The hard-link publication is atomic and refuses to overwrite a pending record. */
+  begin(): void {
+    const captured = {
+      version: 1,
+      runId: this.snapshot.manifest.runId,
+      manifest: this.snapshot.manifest,
+      agents: this.snapshot.agents.map(({ role, mountManifest, assetCommit, preflight }) => ({
+        role, mountManifest, assetCommit, preflight,
+      })),
+    };
+    const temporaryPath = `${this.recordPath}.${randomUUID()}.tmp`;
+    const descriptor = openSync(temporaryPath, "wx", 0o600);
+    try {
+      try {
+        writeFileSync(descriptor, `${JSON.stringify({
+          ...captured,
+          checksum: sha256Text(stableJson(captured)),
+        }, null, 2)}\n`, "utf8");
+        fsyncSync(descriptor);
+      } finally {
+        closeSync(descriptor);
+      }
+      linkSync(temporaryPath, this.recordPath);
+    } finally {
+      unlinkSync(temporaryPath);
+    }
+  }
+
+  /** Only a fully committed or fully restored environment may retire its evidence. */
+  complete(): void {
+    unlinkSync(this.recordPath);
+  }
 
   restore(): void {
+    // Validate all destinations together before writing any of them. A crash
+    // may have removed the mount, but does not authorize following a symlink.
+    const snapshot = EnvironmentSnapshotLoader.readRollback(this.scoutRoot, dirname(this.manifestStore.path));
+    if (!snapshot) throw new Error(`Environment rollback record is missing: ${this.recordPath}.`);
+    const currentManifest = this.manifestStore.read();
+    if (currentManifest.runId !== snapshot.manifest.runId) {
+      throw new Error("Environment rollback does not belong to the current run.");
+    }
     let firstError: unknown;
-    for (const persisted of this.snapshot.agents) {
+    for (const persisted of snapshot.agents) {
       for (const [path, value] of [
         [persisted.mountManifestPath, persisted.mountManifest],
         [persisted.assetCommitPath, persisted.assetCommit],
@@ -54,13 +108,15 @@ export class EnvironmentMetadataRollback {
       }
     }
     try {
-      this.manifestStore.restore(this.snapshot.manifest);
+      // Runtime status and checkpoint facts are not owned by the environment.
+      this.manifestStore.restore({ ...currentManifest, agents: snapshot.manifest.agents });
     } catch (error) {
       firstError ??= error;
     }
     if (firstError !== undefined) {
       throw firstError;
     }
+    this.complete();
   }
 }
 
@@ -83,6 +139,7 @@ export class EnvironmentMetadataTransaction {
         ...manifest,
         agents: updateManifestAgents(manifest, agents, this.input.runRoot),
       }));
+      this.input.rollback.complete();
     } catch (error) {
       try {
         this.input.rollback.restore();

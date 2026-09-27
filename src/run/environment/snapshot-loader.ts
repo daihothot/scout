@@ -19,9 +19,12 @@ import {
 } from "../../agent/thread/types.js";
 import {
   readJsonFile,
+  sha256Text,
+  stableJson,
 } from "../../core/fs.js";
 import { isPathWithin } from "../../core/path.js";
 import type { RunManifest } from "../persistence/index.js";
+import { assertMountPathSegment } from "../../asset-store/files/asset-paths.js";
 import {
   type EnvironmentSnapshot,
   type PersistedEnvironmentAgent,
@@ -53,7 +56,107 @@ export class EnvironmentSnapshotLoader {
     },
   ) {}
 
+  /** Validates an interrupted environment transaction before any repair writes. */
+  static readRollback(scoutRoot: string, runRoot: string): EnvironmentSnapshot | undefined {
+    scoutRoot = resolve(scoutRoot);
+    runRoot = resolve(runRoot);
+    const runRootReal = requireContainedPath({
+      root: scoutRoot,
+      rootReal: realpathSync(scoutRoot),
+      path: runRoot,
+      label: "run root",
+      kind: "directory",
+    });
+    const path = join(runRoot, "environment-rollback.json");
+    try {
+      lstatSync(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+    requireContainedPath({
+      root: runRoot,
+      rootReal: runRootReal,
+      path,
+      label: "environment rollback record",
+      kind: "file",
+    });
+    requireContainedPath({
+      root: runRoot,
+      rootReal: runRootReal,
+      path: join(runRoot, "run.json"),
+      label: "run manifest",
+      kind: "file",
+    });
+    const record = readJsonFile<{
+      version: number;
+      checksum: string;
+      runId: string;
+      manifest: RunManifest;
+      agents: Array<Pick<PersistedEnvironmentAgent,
+        "role" | "mountManifest" | "assetCommit" | "preflight">>;
+    }>(path);
+    if (record?.version !== 1
+      || record.runId !== basename(runRoot)
+      || record.manifest?.version !== 1
+      || record.manifest.runId !== record.runId
+      || !record.manifest.agents || Array.isArray(record.manifest.agents)
+      || !Array.isArray(record.agents)) {
+      throw new Error(`Invalid environment rollback record: ${path}.`);
+    }
+    const { checksum, ...captured } = record;
+    if (checksum !== sha256Text(stableJson(captured))) {
+      throw new Error(`Environment rollback record checksum mismatch: ${path}.`);
+    }
+    // The whole index is restored, including roles not selected by the current
+    // profile. None of its references may introduce a different destination.
+    for (const [role, entry] of Object.entries(record.manifest.agents)) {
+      assertMountPathSegment(role, "environment rollback indexed role");
+      if (!entry || typeof entry !== "object"
+        || [entry.mountId, entry.assetCommitId, entry.resourceHash,
+          entry.mountManifestRef, entry.assetCommitRef, entry.preflightRef].some((value) =>
+          typeof value !== "string" || value.length === 0
+        )) {
+        throw new Error(`Invalid captured environment index for ${role}.`);
+      }
+      const agentRoot = join(runRoot, "agents", role);
+      for (const [ref, expected] of [
+        [entry.mountManifestRef, join(agentRoot, "mount", "mount-manifest.json")],
+        [entry.assetCommitRef, join(agentRoot, "artifacts", "asset-commit.json")],
+        [entry.preflightRef, join(agentRoot, "artifacts", "app-server-preflight.json")],
+      ] as const) {
+        requireCanonicalRunRef(resolveRunRef(runRoot, ref, "environment rollback artifact"),
+          expected, `${role} rollback artifact`);
+      }
+    }
+    const roles = new Set<string>();
+    for (const captured of record.agents) {
+      if (!captured || typeof captured.role !== "string"
+        || !captured.mountManifest || !captured.assetCommit
+        || !captured.preflight
+        || !["passed", "failed"].includes(captured.preflight.status)) {
+        throw new Error(`Invalid captured environment role in ${path}.`);
+      }
+      assertMountPathSegment(captured.role, "environment rollback role");
+      if (roles.has(captured.role)) {
+        throw new Error(`Duplicate environment rollback role: ${captured.role}.`);
+      }
+      roles.add(captured.role);
+    }
+    return new EnvironmentSnapshotLoader({
+      scoutRoot,
+      runRoot,
+      manifest: record.manifest,
+      roles: [...roles],
+    }).loadSnapshot(record.agents);
+  }
+
   load(): EnvironmentSnapshot {
+    return this.loadSnapshot();
+  }
+
+  private loadSnapshot(capturedAgents?: readonly Pick<PersistedEnvironmentAgent,
+    "role" | "mountManifest" | "assetCommit" | "preflight">[]): EnvironmentSnapshot {
     const scoutRoot = resolve(this.input.scoutRoot);
     const runRoot = resolve(this.input.runRoot);
     const scoutRootReal = realpathSync(scoutRoot);
@@ -94,6 +197,7 @@ export class EnvironmentSnapshotLoader {
           agentsRoot,
           runRoot,
           runRootReal,
+          captured: capturedAgents?.find((agent) => agent.role === role),
         }));
       } catch (error) {
         throw new EnvironmentSnapshotLoadError(role, error);
@@ -110,6 +214,7 @@ export class EnvironmentSnapshotLoader {
     agentsRoot: string;
     runRoot: string;
     runRootReal: string;
+    captured?: Pick<PersistedEnvironmentAgent, "mountManifest" | "assetCommit" | "preflight">;
   }): PersistedEnvironmentAgent {
     const {
       role,
@@ -118,6 +223,7 @@ export class EnvironmentSnapshotLoader {
       agentsRoot,
       runRoot,
       runRootReal,
+      captured,
     } = input;
     const entry = manifestAgents[role];
     if (!entry) {
@@ -166,6 +272,7 @@ export class EnvironmentSnapshotLoader {
       path: mountManifestPath,
       label: `${role} mount manifest`,
       kind: "file",
+      allowMissing: captured !== undefined,
     });
     requireContainedPath({
       root: runRoot,
@@ -182,9 +289,9 @@ export class EnvironmentSnapshotLoader {
       kind: "file",
     });
 
-    const mountManifest = readJsonFile<MountManifest>(mountManifestPath);
-    const assetCommit = readJsonFile<AssetCommit>(assetCommitPath);
-    const preflight = readJsonFile<AgentServerPreflightReport>(preflightPath);
+    const mountManifest = captured?.mountManifest ?? readJsonFile<MountManifest>(mountManifestPath);
+    const assetCommit = captured?.assetCommit ?? readJsonFile<AssetCommit>(assetCommitPath);
+    const preflight = captured?.preflight ?? readJsonFile<AgentServerPreflightReport>(preflightPath);
     assertPersistedIdentity({
       role,
       entry,
@@ -215,7 +322,11 @@ function assertPersistedIdentity(input: {
 }): void {
   const { role, entry, mountManifest, assetCommit } = input;
   if (
-    mountManifest.agentId !== role
+    [entry.mountId, entry.assetCommitId, entry.resourceHash].some((value) =>
+      typeof value !== "string" || value.length === 0
+    )
+    || !mountManifest.agentProfile || !assetCommit.agentProfile
+    || mountManifest.agentId !== role
     || assetCommit.agentId !== role
     || mountManifest.mountId !== entry.mountId
     || assetCommit.mountId !== entry.mountId
@@ -249,6 +360,7 @@ function requireContainedPath(input: {
   path: string;
   label: string;
   kind: "directory" | "file";
+  allowMissing?: boolean;
 }): string {
   const path = resolve(input.path);
   if (!isPathWithin(input.root, path, { allowRoot: false })) {
@@ -263,6 +375,7 @@ function requireContainedPath(input: {
     try {
       stat = lstatSync(current);
     } catch (error) {
+      if (input.allowMissing && (error as NodeJS.ErrnoException).code === "ENOENT") return path;
       throw new Error(`Cannot inspect persisted ${input.label} component ${current}.`, {
         cause: error,
       });

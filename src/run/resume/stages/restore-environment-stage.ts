@@ -72,6 +72,7 @@ export class RestoreEnvironmentStage implements RunStage {
 
     let snapshot: EnvironmentSnapshot;
     try {
+      EnvironmentMetadataRollback.recoverPending(scoutRoot, scope.manifestStore);
       const manifest = scope.manifestStore.read();
       const persistedRoles = roles.filter((role) => manifest.agents?.[role] !== undefined);
       snapshot = new EnvironmentSnapshotLoader({
@@ -184,7 +185,8 @@ export class RestoreEnvironmentStage implements RunStage {
       },
     });
 
-    const rollback = new EnvironmentMetadataRollback(snapshot, scope.manifestStore);
+    const rollback = new EnvironmentMetadataRollback(snapshot, scope.manifestStore, scoutRoot);
+    rollback.begin();
     let result: EnvironmentRoleRunnerResult;
     let metadataTransactionStarted = false;
     try {
