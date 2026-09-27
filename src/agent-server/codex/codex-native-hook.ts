@@ -14,6 +14,7 @@ interface CodexToolUseInput {
 }
 
 interface NativeHookContext {
+  runtimeId: string;
   runId: string;
   agentId: string;
   stateRoot: string;
@@ -53,6 +54,7 @@ export function handleCodexNativeHook(
   if (payload.hook_event_name === "PostToolUse") {
     routeAgentHook({
       kind: "command_execution_completed",
+      runtimeId: context.runtimeId,
       runId: context.runId,
       agentId: context.agentId,
       invocationId: payload.tool_use_id,
@@ -62,6 +64,7 @@ export function handleCodexNativeHook(
   }
   const result = routeAgentHook({
     kind: "command_execution_approval",
+    runtimeId: context.runtimeId,
     runId: context.runId,
     agentId: context.agentId,
     invocationId: payload.tool_use_id,
@@ -95,10 +98,12 @@ function readContext(arguments_: string[]): NativeHookContext {
   const runId = valueAfter("--run-id");
   const agentId = valueAfter("--agent-id");
   const stateRoot = valueAfter("--state-root");
+  const runtimeId = process.env.SCOUT_HOOK_RUNTIME_ID;
   if (!runId || !agentId || !stateRoot) {
     throw new Error("Codex native hook requires --run-id, --agent-id, and --state-root.");
   }
-  return { runId, agentId, stateRoot };
+  if (!runtimeId) throw new Error("Codex native hook requires SCOUT_HOOK_RUNTIME_ID from its app-server instance.");
+  return { runId, agentId, stateRoot, runtimeId };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

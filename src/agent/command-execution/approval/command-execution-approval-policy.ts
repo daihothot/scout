@@ -15,7 +15,7 @@ export const MERGED_CONTENT_READ_REASON =
 /** Enforces Scout's single-primary-result rule for one shell tool call. */
 export function evaluateCommandExecutionApproval(
   command: string,
-  lease?: { stateRoot: string; invocationId: string },
+  lease?: { stateRoot: string; invocationId: string; runtimeId: string },
 ): AgentHookResult {
   type Token = { kind: "word" | "pipe" | "separator"; value: string };
 
@@ -151,15 +151,15 @@ export function evaluateCommandExecutionApproval(
 
   const resultCount = primaryResultCount(command);
   if (resultCount > 1) return { decision: "deny", reason: MERGED_CONTENT_READ_REASON };
-  if (resultCount === 1 && lease && !acquirePrimaryReadLease(lease.stateRoot, lease.invocationId)) {
+  if (resultCount === 1 && lease && !acquirePrimaryReadLease(lease.stateRoot, lease.invocationId, lease.runtimeId)) {
     return { decision: "deny", reason: MERGED_CONTENT_READ_REASON };
   }
   return { decision: "allow" };
 }
 
 /** Releases the primary-read slot after the matching native PostToolUse event. */
-export function completeCommandExecutionApproval(stateRoot: string, invocationId: string): void {
-  const path = primaryReadLeasePath(stateRoot);
+export function completeCommandExecutionApproval(stateRoot: string, invocationId: string, runtimeId: string): void {
+  const path = primaryReadLeasePath(stateRoot, runtimeId);
   let source: string;
   try {
     source = readFileSync(path, "utf8");
@@ -182,8 +182,8 @@ export function completeCommandExecutionApproval(stateRoot: string, invocationId
   ) unlinkSync(path);
 }
 
-function acquirePrimaryReadLease(stateRoot: string, invocationId: string): boolean {
-  const path = primaryReadLeasePath(stateRoot);
+function acquirePrimaryReadLease(stateRoot: string, invocationId: string, runtimeId: string): boolean {
+  const path = primaryReadLeasePath(stateRoot, runtimeId);
   mkdirSync(dirname(path), { recursive: true });
   let descriptor: number;
   try {
@@ -208,6 +208,7 @@ function acquirePrimaryReadLease(stateRoot: string, invocationId: string): boole
   return true;
 }
 
-function primaryReadLeasePath(stateRoot: string): string {
-  return join(stateRoot, "agent-hooks", "primary-content-read.lock");
+function primaryReadLeasePath(stateRoot: string, runtimeId: string): string {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(runtimeId)) throw new Error("Invalid app-server hook runtime identity.");
+  return join(stateRoot, "agent-hooks", runtimeId, "primary-content-read.lock");
 }

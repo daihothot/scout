@@ -70,10 +70,12 @@ test("command approval serializes concurrent primary reads until completion", (t
   assert.deepEqual(evaluateCommandExecutionApproval("cat first.ts", {
     stateRoot,
     invocationId: "tool-1",
+    runtimeId: "runtime-1",
   }), { decision: "allow" });
   assert.deepEqual(evaluateCommandExecutionApproval("rg -n symbol second.ts", {
     stateRoot,
     invocationId: "tool-2",
+    runtimeId: "runtime-1",
   }), {
     decision: "deny",
     reason: MERGED_CONTENT_READ_REASON,
@@ -81,12 +83,14 @@ test("command approval serializes concurrent primary reads until completion", (t
   assert.deepEqual(evaluateCommandExecutionApproval("pwd; scout-assets summary; scout-assets skill tool-codegraph", {
     stateRoot,
     invocationId: "tool-metadata",
+    runtimeId: "runtime-1",
   }), { decision: "allow" });
 
-  completeCommandExecutionApproval(stateRoot, "tool-1");
+  completeCommandExecutionApproval(stateRoot, "tool-1", "runtime-1");
   assert.deepEqual(evaluateCommandExecutionApproval("rg -n symbol second.ts", {
     stateRoot,
     invocationId: "tool-2",
+    runtimeId: "runtime-1",
   }), { decision: "allow" });
 });
 
@@ -105,6 +109,7 @@ test("Codex native hook maps Bash PreToolUse through the Agent hook router", (t)
   }, {
     runId: "run-1",
     agentId: "executor",
+    runtimeId: "runtime-1",
     stateRoot,
   });
 
@@ -120,7 +125,7 @@ test("Codex native hook maps Bash PreToolUse through the Agent hook router", (t)
 test("Codex native hook releases primary-read state on PostToolUse", (t) => {
   const stateRoot = mkdtempSync(join(tmpdir(), "scout-codex-native-hook-post-"));
   t.after(() => rmSync(stateRoot, { recursive: true, force: true }));
-  const context = { runId: "run-1", agentId: "executor", stateRoot };
+  const context = { runId: "run-1", agentId: "executor", stateRoot, runtimeId: "runtime-1" };
   const input = {
     session_id: "session-1",
     cwd: "/workspace",
@@ -153,5 +158,24 @@ test("Codex native hook ignores unrelated native events", () => {
     runId: "run-1",
     agentId: "executor",
     stateRoot: "/tmp/scout-unused-hook-state",
+    runtimeId: "runtime-1",
   }), undefined);
+});
+
+test("an app-server restart isolates stale read locks and late completions", (t) => {
+  const stateRoot = mkdtempSync(join(tmpdir(), "scout-hook-runtime-"));
+  t.after(() => rmSync(stateRoot, { recursive: true, force: true }));
+  const oldRuntime = { runId: "run-1", agentId: "executor", stateRoot, runtimeId: "old-runtime" };
+  const newRuntime = { ...oldRuntime, runtimeId: "new-runtime" };
+  const input = {
+    session_id: "restored-thread", cwd: "/workspace", hook_event_name: "PreToolUse",
+    tool_name: "Bash", tool_use_id: "same-tool-id", tool_input: { command: "cat first.ts" },
+  };
+  assert.equal(handleCodexNativeHook(input, oldRuntime)?.hookSpecificOutput.permissionDecision, "allow");
+  assert.equal(handleCodexNativeHook(input, newRuntime)?.hookSpecificOutput.permissionDecision, "allow");
+  handleCodexNativeHook({ ...input, hook_event_name: "PostToolUse" }, oldRuntime);
+  assert.equal(handleCodexNativeHook({ ...input, tool_use_id: "next-tool" }, newRuntime)?.hookSpecificOutput.permissionDecision, "deny");
+  handleCodexNativeHook({ ...input, hook_event_name: "PostToolUse" }, newRuntime);
+  assert.equal(handleCodexNativeHook({ ...input, tool_use_id: "next-tool" }, newRuntime)?.hookSpecificOutput.permissionDecision, "allow");
+  assert.throws(() => handleCodexNativeHook(input, { ...newRuntime, runtimeId: "../escape" }), /Invalid app-server/);
 });

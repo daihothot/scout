@@ -1,5 +1,6 @@
 /** Scout-owned input routed from a provider-native synchronous hook. */
 export interface CommandExecutionApprovalHookInvocation {
+  runtimeId: string;
   kind: "command_execution_approval";
   runId: string;
   agentId: string;
@@ -11,6 +12,7 @@ export interface CommandExecutionApprovalHookInvocation {
 
 /** Completion of a command whose synchronous approval state can be released. */
 export interface CommandExecutionCompletedHookInvocation {
+  runtimeId: string;
   kind: "command_execution_completed";
   runId: string;
   agentId: string;

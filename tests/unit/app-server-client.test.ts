@@ -12,6 +12,33 @@ import { join } from "node:path";
 import { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import { AppServerTimelineStreams } from "../../src/agent-server/codex/app-server-event-store.js";
 
+test("CodexAppServerClient supplies a fresh hook runtime identity to each process", async () => {
+  const fakeServer = writeFakeAppServer(`
+    const readline = require("node:readline");
+    readline.createInterface({ input: process.stdin }).on("line", (line) => {
+      const message = JSON.parse(line);
+      if (message.id !== undefined) process.stdout.write(JSON.stringify({
+        id: message.id, result: { runtimeId: process.env.SCOUT_HOOK_RUNTIME_ID }
+      }) + "\\n");
+    });
+  `);
+  const identities: string[] = [];
+  for (let index = 0; index < 2; index += 1) {
+    const client = new CodexAppServerClient({
+      codexPath: fakeServer, home: tmpdir(), codexHome: tmpdir(),
+      providerEnvironment: { SCOUT_HOOK_RUNTIME_ID: "must-not-reuse-provider-value" },
+    });
+    try {
+      const result = await client.request("hook-identity", {}) as { runtimeId: string };
+      assert.match(result.runtimeId, /^[a-f0-9-]{36}$/);
+      identities.push(result.runtimeId);
+    } finally {
+      client.close();
+    }
+  }
+  assert.notEqual(identities[0], identities[1]);
+});
+
 test("CodexAppServerClient accepts the pinned version from supported app-server user agents", async () => {
   for (const userAgent of [
     "scout-runtime/0.150.1 (Mac OS 26.6.2; arm64) vscode/1.135.0 (scout-runtime; 0.1.0)",

@@ -11,9 +11,10 @@ export function routeAgentHook(invocation: AgentHookInvocation): AgentHookResult
       return evaluateCommandExecutionApproval(invocation.command, {
         stateRoot: invocation.stateRoot,
         invocationId: invocation.invocationId,
+        runtimeId: invocation.runtimeId,
       });
     case "command_execution_completed":
-      completeCommandExecutionApproval(invocation.stateRoot, invocation.invocationId);
+      completeCommandExecutionApproval(invocation.stateRoot, invocation.invocationId, invocation.runtimeId);
       return { decision: "allow" };
   }
 }

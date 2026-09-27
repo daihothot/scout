@@ -6,6 +6,7 @@
  * a workspace; those decisions belong to run stages and the asset store.
  */
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import readline from "node:readline";
@@ -286,6 +287,7 @@ export class CodexAppServerClient {
       ...options.providerEnvironment,
       HOME: options.home,
       CODEX_HOME: options.codexHome,
+      SCOUT_HOOK_RUNTIME_ID: randomUUID(),
     };
 
     this.logPrefix = options.logPrefix ?? "scout app-server";
