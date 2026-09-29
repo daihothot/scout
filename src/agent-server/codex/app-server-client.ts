@@ -193,6 +193,8 @@ export interface ThreadResumeResponse {
 /** Prompt and execution policy for one Codex turn. */
 export interface TurnStartOptions {
   threadId: string;
+  cwd?: string;
+  runtimeWorkspaceRoots?: string[];
   prompt: string;
   timeoutMs?: number;
   model?: string;
@@ -512,6 +514,8 @@ export class CodexAppServerClient {
   async startTurn(options: TurnStartOptions): Promise<TurnStartResponse> {
     const response = await this.request("turn/start", cleanUndefined({
       threadId: options.threadId,
+      cwd: options.cwd,
+      runtimeWorkspaceRoots: options.runtimeWorkspaceRoots,
       input: [{ type: "text", text: options.prompt, text_elements: [] }],
       approvalPolicy: options.approvalPolicy ?? "never",
       permissions: options.permissions,
