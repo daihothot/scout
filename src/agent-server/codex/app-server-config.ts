@@ -18,6 +18,7 @@ export function buildClientConfig(input: {
   const mountRoots = uniqueResolved(input.mountRoots);
   const lines = [
     'default_permissions = ":read-only"',
+    'approvals_reviewer = "user"',
     `model = "${escapeToml(input.model.id)}"`,
     `model_provider = "${escapeToml(input.provider.id)}"`,
     `model_reasoning_effort = "${input.model.reasoningEffort}"`,
@@ -27,6 +28,7 @@ export function buildClientConfig(input: {
     "apps = false",
     "remote_plugin = false",
     "shell_snapshot = false",
+    "request_permissions_tool = true",
     "",
     ...input.provider.configLines(),
   ];

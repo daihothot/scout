@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import readline from "node:readline";
+import { isDeepStrictEqual } from "node:util";
 import {
   AppServerEventStore,
   type AppServerEventStoreSnapshot,
@@ -101,6 +102,17 @@ export interface CodexAppServerOptions {
   onDynamicToolCall?: DynamicToolCallHandler;
 }
 
+/** App-server approval policy, including explicit per-category prompt controls. */
+export type AppServerApprovalPolicy = "never" | "on-request" | "on-failure" | "untrusted" | {
+  readonly granular: {
+    readonly sandbox_approval: boolean;
+    readonly rules: boolean;
+    readonly mcp_elicitations: boolean;
+    readonly request_permissions: boolean;
+    readonly skill_approval: boolean;
+  };
+};
+
 /** Optional Scout-facing inputs used to construct a `thread/start` request. */
 export interface ThreadStartOptions {
   cwd: string;
@@ -108,7 +120,7 @@ export interface ThreadStartOptions {
   model?: string;
   modelProvider?: string;
   reasoningEffort?: CodexReasoningEffort;
-  approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
+  approvalPolicy?: AppServerApprovalPolicy;
   permissions: string;
   ephemeral?: boolean;
   config?: Record<string, unknown>;
@@ -123,7 +135,7 @@ export interface ThreadStartRequest {
   runtimeWorkspaceRoots?: string[];
   model?: string;
   modelProvider?: string;
-  approvalPolicy: "never" | "on-request" | "on-failure" | "untrusted";
+  approvalPolicy: AppServerApprovalPolicy;
   permissions: string;
   ephemeral: boolean;
   config?: Record<string, unknown>;
@@ -148,7 +160,7 @@ export interface ThreadResumeOptions {
   model?: string;
   modelProvider?: string;
   reasoningEffort?: CodexReasoningEffort;
-  approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
+  approvalPolicy?: AppServerApprovalPolicy;
   permissions: string;
   config?: Record<string, unknown>;
   baseInstructions?: string;
@@ -164,7 +176,7 @@ export interface ThreadResumeRequest {
   runtimeWorkspaceRoots?: string[];
   model?: string;
   modelProvider?: string;
-  approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
+  approvalPolicy?: AppServerApprovalPolicy;
   permissions: string;
   config?: Record<string, unknown>;
   baseInstructions?: string;
@@ -186,7 +198,7 @@ export interface TurnStartOptions {
   model?: string;
   reasoningEffort?: CodexReasoningEffort;
   reasoningSummary?: CodexReasoningSummary;
-  approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted";
+  approvalPolicy?: AppServerApprovalPolicy;
   permissions: string;
   onStatusMessage?: (message: string) => void;
   onTurnStarted?: (turnId: string) => void;
@@ -432,7 +444,9 @@ export class CodexAppServerClient {
     assertResponseString("cwd", options.cwd);
     assertResponseString("model", options.model);
     assertResponseString("modelProvider", options.modelProvider);
-    assertResponseString("approvalPolicy", options.approvalPolicy);
+    if (options.approvalPolicy !== undefined && !isDeepStrictEqual(responseObject.approvalPolicy, options.approvalPolicy)) {
+      throw new Error(`Codex resumed thread ${threadId} with unexpected approvalPolicy.`);
+    }
     assertActivePermissionProfile(responseObject, options.permissions, `resumed thread ${threadId}`);
     if (options.runtimeWorkspaceRoots !== undefined) {
       const actualRoots = responseObject.runtimeWorkspaceRoots;
@@ -809,17 +823,36 @@ export class CodexAppServerClient {
   }
 
   private async handleServerRequest(request: JsonRpcServerRequest): Promise<void> {
+    let responded = false;
     const controller: AppServerRequestController = {
-      sendResult: (result) => this.sendServerRequestResult(request.id, result),
-      sendError: (code, message) => this.sendServerRequestError(request.id, code, message),
+      sendResult: (result) => {
+        if (responded) throw new Error(`Server request ${request.id} was already answered.`);
+        responded = true;
+        this.sendServerRequestResult(request.id, result);
+      },
+      sendError: (code, message) => {
+        if (responded) throw new Error(`Server request ${request.id} was already answered.`);
+        responded = true;
+        this.sendServerRequestError(request.id, code, message);
+      },
     };
     for (const handler of this.serverRequestHandlers) {
       try {
         const handled = await handler(request, controller);
-        if (handled) return;
+        if (handled || responded) return;
       } catch (error) {
         this.writeDiagnostic(`server request handler failed: ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+        if (responded) return;
+        if (request.method === "item/permissions/requestApproval") {
+          controller.sendResult({ permissions: {}, scope: "turn" });
+          return;
+        }
       }
+    }
+
+    if (request.method === "item/permissions/requestApproval") {
+      controller.sendResult({ permissions: {}, scope: "turn" });
+      return;
     }
 
     if (request.method === "item/tool/call") {

@@ -62,6 +62,8 @@ test("built-in OpenAI provider reuses Codex auth without redefining it", (t) => 
   });
   assert.match(configToml, /^model = "gpt-5\.6-sol"$/m);
   assert.match(configToml, /^model_provider = "openai"$/m);
+  assert.match(configToml, /^approvals_reviewer = "user"$/m);
+  assert.match(configToml, /^request_permissions_tool = true$/m);
   assert.doesNotMatch(configToml, /^\[model_providers\.openai\]$/m);
 });
 
@@ -174,6 +176,8 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   assert.match(configToml, /^model_reasoning_effort = "high"$/m);
   assert.match(configToml, /^model_reasoning_summary = "concise"$/m);
   assert.match(configToml, /^default_permissions = ":read-only"$/m);
+  assert.match(configToml, /^approvals_reviewer = "user"$/m);
+  assert.match(configToml, /^request_permissions_tool = true$/m);
   assert.match(configToml, /^apps = false$/m);
   assert.match(configToml, /^remote_plugin = false$/m);
   assert.match(

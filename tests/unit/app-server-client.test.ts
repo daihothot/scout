@@ -825,6 +825,76 @@ test("CodexAppServerClient does not report an intentional close as a disconnect"
   );
 });
 
+test("CodexAppServerClient preserves granular policy across start, resume, and turns", async () => {
+  const policy = { granular: {
+    sandbox_approval: false, rules: false, mcp_elicitations: false, request_permissions: true, skill_approval: false,
+  } };
+  const server = writeFakeAppServer(`
+    const readline = require("node:readline");
+    let mismatch = false;
+    readline.createInterface({ input: process.stdin }).on("line", line => {
+      const m = JSON.parse(line);
+      if (m.method === "test/mismatch") mismatch = true;
+      const approvalPolicy = structuredClone(m.params?.approvalPolicy);
+      if (mismatch && approvalPolicy?.granular) approvalPolicy.granular.request_permissions = false;
+      const result = { thread: { id: "thread-policy" }, turn: { id: "turn-policy" },
+        cwd: m.params?.cwd, activePermissionProfile: { id: m.params?.permissions }, approvalPolicy,
+        params: m.params };
+      process.stdout.write(JSON.stringify({ id: m.id, result }) + "\\n");
+    });
+  `);
+  const client = new CodexAppServerClient({ codexPath: server, home: tmpdir(), codexHome: tmpdir() });
+  try {
+    const started = await client.startThread({ cwd: tmpdir(), permissions: "test", approvalPolicy: policy });
+    assert.deepEqual(started.startInput.approvalPolicy, policy);
+    const resumed = await client.resumeThread({ threadId: started.threadId, cwd: tmpdir(), permissions: "test", approvalPolicy: policy });
+    assert.deepEqual(resumed.resumeInput.approvalPolicy, policy);
+    const turn = await client.startTurn({ threadId: started.threadId, prompt: "test", permissions: "test", approvalPolicy: policy });
+    assert.deepEqual((turn.response as { params: { approvalPolicy: unknown } }).params.approvalPolicy, policy);
+    await client.request("test/mismatch", {});
+    await assert.rejects(client.resumeThread({ threadId: started.threadId, cwd: tmpdir(), permissions: "test", approvalPolicy: policy }), /unexpected approvalPolicy/);
+  } finally { client.close(); }
+});
+
+for (const mode of ["missing", "throw", "reply-then-throw", "double-reply"] as const) {
+  test(`Permission RPC ${mode} is answered once without generic auto-accept`, { timeout: 10_000 }, async (t) => {
+    const oldAutoAccept = process.env.SCOUT_AUTO_ACCEPT_APP_SERVER_CONFIRMATIONS;
+    process.env.SCOUT_AUTO_ACCEPT_APP_SERVER_CONFIRMATIONS = "1";
+    t.after(() => {
+      if (oldAutoAccept === undefined) delete process.env.SCOUT_AUTO_ACCEPT_APP_SERVER_CONFIRMATIONS;
+      else process.env.SCOUT_AUTO_ACCEPT_APP_SERVER_CONFIRMATIONS = oldAutoAccept;
+    });
+    const server = writeFakeAppServer(`
+      const readline = require("node:readline");
+      const replies = [];
+      let trigger;
+      const send = v => process.stdout.write(JSON.stringify(v) + "\\n");
+      readline.createInterface({ input: process.stdin }).on("line", line => {
+        const m = JSON.parse(line);
+        if (m.method === "test/trigger") {
+          trigger = m.id;
+          send({ id: "permission-rpc", method: "item/permissions/requestApproval", params: {
+            threadId: "thread-1", turnId: "turn-1", itemId: "item-1", permissions: {}, cwd: "/tmp" } });
+        } else if (m.id === "permission-rpc") {
+          replies.push(m);
+          if (replies.length === 1) send({ id: trigger, result: m });
+        } else if (m.method === "test/replies") send({ id: m.id, result: replies });
+      });
+    `);
+    const client = new CodexAppServerClient({ codexPath: server, home: tmpdir(), codexHome: tmpdir(), writeDiagnosticsToStderr: false });
+    t.after(() => client.close());
+    if (mode !== "missing") client.onServerRequest((_request, controller) => {
+      if (mode === "throw") throw new Error("approval handler failed");
+      controller.sendResult({ permissions: {}, scope: "turn" });
+      if (mode === "double-reply") controller.sendResult({ permissions: { network: { enabled: true } }, scope: "session" });
+      throw new Error("error after reply");
+    });
+    const response = await client.request("test/trigger", {});
+    assert.deepEqual(response, { id: "permission-rpc", result: { permissions: {}, scope: "turn" } });
+    assert.deepEqual(await client.request("test/replies", {}), [response]);
+  });
+}
+
 function writeFakeAppServer(source: string): string {
   const root = mkdtempSync(join(tmpdir(), "scout-fake-app-server-"));
   const path = join(root, "fake-app-server.cjs");
