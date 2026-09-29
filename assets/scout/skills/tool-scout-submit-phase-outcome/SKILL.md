@@ -33,4 +33,4 @@ summary: 规定当前 Workflow Phase 结果的提交语义。
 - `status: accepted` 表示 Scheduler 已消费当前 Phase 的结果。
 - Runtime 在同一 Turn 重复投递同一个已成功调用（相同调用标识和 `outcome`）时返回原回执，不再次推进；这不允许 Agent 另发一次调用继续推进。
 - `cycleCompleted: false` 表示游标已进入下一个 Phase，Runtime 将启动新的 Coordinator Step。
-- `cycleCompleted: true` 表示 Graph 已终止、Flow 进入 `settling`，不表示 Flow 已完成。Runtime 统一释放已结束的 Worker 任务绑定，完成收尾并成功切换新 Flow 后，游标才重置到第一个 Worker Phase。
+- `cycleCompleted: true` 表示 Graph 已终止、Workflow 进入 `settling`，不表示 Workflow 已完成。Runtime 统一释放已结束的 Worker 任务绑定，完成收尾后进入无活动 Workflow 状态，不自动开启下一次执行。只有之后接受 `StartWorkflow` 并成功开启，游标才重置到第一个 Worker Phase。

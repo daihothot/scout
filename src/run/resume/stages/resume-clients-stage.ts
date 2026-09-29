@@ -15,7 +15,7 @@ import {
   type RunStage,
 } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
-import { isPathWithin } from "../../../core/path.js";
+import { isPathWithin, runPaths } from "../../../core/path.js";
 
 /**
  * Reopens the run-scoped Codex client after validating that its copied home
@@ -63,8 +63,7 @@ function assertRunCodexHomeIsContained(allowMissingHome: boolean): void {
   const scope = currentRunScope();
   const scoutRoot = resolve(scope.scoutRoot);
   const runRoot = resolve(scope.runRoot);
-  const codexRoot = join(runRoot, "codex-home", ".codex");
-  const sessionsRoot = join(codexRoot, "sessions");
+  const { codexHome: codexRoot, codexSessionsRoot: sessionsRoot } = runPaths(runRoot);
   const requireDirectoryChain = (
     root: string,
     target: string,

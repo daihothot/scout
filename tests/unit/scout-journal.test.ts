@@ -104,7 +104,7 @@ test("ScoutJournal activation only swaps handles and releases the previous journ
     if (this.path === oldPath) oldCloses += 1;
     return close.call(this);
   });
-  const prepared = scout.prepare(join(root, "journal-0002"), [runCreated()]);
+  const prepared = scout.prepare(join(root, "workflow-002"), [runCreated()]);
   assert.equal(scout.hasPreparedJournals, true);
 
   scout.activate(prepared);
@@ -124,7 +124,7 @@ test("ScoutJournal discard retains failed close ownership and never mistakes a l
   const fixture = createScoutJournal(t);
   const { scout, root } = fixture;
   const activeRoot = scout.journalRoot;
-  const prepared = scout.prepare(join(root, "journal-0002"), []);
+  const prepared = scout.prepare(join(root, "workflow-002"), []);
   const failure = new Error("lock release failed after Journal became closed");
   let closes = 0;
   t.mock.method(prepared.journal, "close", () => {
@@ -148,7 +148,7 @@ test("ScoutJournal prepare failure closes the candidate and leaves the active jo
   const { scout, root } = createScoutJournal(t);
   const failure = new Error("baseline write failure");
   t.mock.method(Journal.prototype, "replaceAll", () => { throw failure; });
-  const nextRoot = join(root, "journal-0002");
+  const nextRoot = join(root, "workflow-002");
 
   assert.throws(() => scout.prepare(nextRoot, []), (error) => error === failure);
   assert.equal(scout.hasPreparedJournals, false);
@@ -159,7 +159,7 @@ test("ScoutJournal prepare failure closes the candidate and leaves the active jo
 test("ScoutJournal prepare retains a candidate whose baseline and close both failed", (t) => {
   const fixture = createScoutJournal(t);
   const { scout, root } = fixture;
-  const nextRoot = join(root, "journal-0002");
+  const nextRoot = join(root, "workflow-002");
   const appendFailure = new Error("baseline failure");
   const closeFailure = new Error("candidate close failure");
   const close = Journal.prototype.close;
@@ -200,7 +200,7 @@ test("ScoutJournal retains a failed retired close without changing the newly act
     return close.call(this);
   });
   fixture.expectCloseFailure = true;
-  const prepared = scout.prepare(join(root, "journal-0002"), []);
+  const prepared = scout.prepare(join(root, "workflow-002"), []);
   scout.activate(prepared);
 
   assert.throws(() => scout.releasePrevious(), AggregateError);
@@ -230,7 +230,7 @@ function createScoutJournal(t: TestContext, baseline?: readonly ScoutEvent[]) {
   });
   const release = installRunScope(scope);
   const scout = new ScoutJournal();
-  scout.create(join(root, "journal-0001"), baseline);
+  scout.create(join(root, "workflow-001"), baseline);
   scout.start();
   const fixture = { root, eventBus, scout, expectCloseFailure: false };
   t.after(() => {

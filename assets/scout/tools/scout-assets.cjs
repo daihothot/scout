@@ -364,8 +364,6 @@ function resolveProfileRoot(source) {
     SCOUT_ROOT: resolve(mountRoot, "../../../../../"),
     SCOUT_RUN_ROOT: resolve(mountRoot, "../../../../"),
     SCOUT_MOUNT_ROOT: mountRoot,
-    SCOUT_ARTIFACT_ROOT: resolve(mountRoot, "../artifacts"),
-    SCOUT_TEMP_ROOT: resolve(mountRoot, "../tmp"),
   };
   const expanded = source.replace(/\$\{([A-Za-z0-9_.]+)\}/g, (match, key) => values[key] ?? match);
   if (expanded === "~") return homedir();

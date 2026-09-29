@@ -216,7 +216,6 @@ test("PrepareEnvironmentStage collects every role before reporting a failed pref
       "boot-environment-failed",
       "agents",
       role,
-      "artifacts",
       "asset-commit.json",
     )));
   }
@@ -569,7 +568,6 @@ test("RestoreEnvironmentStage rejects an intermediate symlink before rebuilding 
     prepared.runtime.scope.runId,
     "agents",
     "validator",
-    "artifacts",
   );
   const outsideArtifacts = join(prepared.fixtureRoot, "outside-validator-artifacts");
   renameSync(validatorArtifacts, outsideArtifacts);
@@ -579,7 +577,7 @@ test("RestoreEnvironmentStage rejects an intermediate symlink before rebuilding 
     new RestoreEnvironmentStage({
       preflightMount: async () => ({ status: "passed" }),
     }).start(),
-    /Refusing symlinked persisted validator asset commit component/,
+    /Refusing symlinked persisted validator agent root component/,
   );
 
   assert.ok(existsSync(prepared.coordinatorSentinel));

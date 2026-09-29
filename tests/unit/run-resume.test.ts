@@ -1,3 +1,4 @@
+import { writeAgentThreadRecord } from "../../src/agent/thread/agent-thread-record.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -46,7 +47,7 @@ import {
   type ScoutEvent,
 } from "../../src/core/events/index.js";
 import type { JournalEvent } from "../../src/core/journal/index.js";
-import { Workflow, WorkflowEvents, projectWorkflowFlowState } from "../../src/core/workflow/index.js";
+import { Workflow, WorkflowEvents, projectWorkflowState } from "../../src/core/workflow/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import {
   ScoutDomainId,
@@ -1066,7 +1067,7 @@ test("Settling recovery separates old work from deferred user input", () => {
   const graph = createTestScheduler().snapshot();
   const projection = projectRun(journalEvents(
     scoutEvent(SystemEvents.interaction.userMessageSubmitted, {
-      messageId: "next-flow-input", text: "next flow only", attachment: agent.turn.message("next flow only"),
+      messageId: "next-workflow-input", text: "next workflow only", attachment: agent.turn.message("next workflow only"),
       submittedAt: "2026-07-22T00:00:00.000Z",
     }),
     scoutEvent(AgentEvents.message.queued, {
@@ -1082,12 +1083,12 @@ test("Settling recovery separates old work from deferred user input", () => {
     projection, agentId: "coordinator", role: "coordinator", synthesisRole: "coordinator",
   }), [
     { type: ResumeActionTypes.ConsumeMessage, messageId: "old-worker-message" },
-    { type: ResumeActionTypes.SettleFlow },
+    { type: ResumeActionTypes.SettleWorkflow },
   ]);
   const packet = buildPlannedResumePacket({
     projection, agentId: "coordinator", role: "coordinator", assetCommitId: "coordinator-assets",
   });
-  assert.doesNotMatch(packet, /next flow only/);
+  assert.doesNotMatch(packet, /next workflow only/);
 });
 
 for (const status of [AgentStepStatuses.Running, AgentStepStatuses.Interrupted]) {
@@ -1498,7 +1499,7 @@ class RestorableMessageAgent extends ScoutAgent {
   constructor() {
     super({
       agentId: "coordinator",
-      agentMount: { mountRoot: "/repo" } as never,
+      agentMount: { mountRoot: "/repo", agentRoot: join(currentRunScope().runRoot, "agents", "coordinator") } as never,
       assetCommit: {} as never,
       spec: {
         role: "coordinator",
@@ -1577,8 +1578,8 @@ test("ScoutAgent restores accepted delivery ids without replaying them", async (
   );
 });
 
-for (const hasCurrentFlowTurn of [false, true]) {
-  test(`ScoutAgent invocation identities survive Flow boundaries and repeated restoration with ${hasCurrentFlowTurn ? "a prior" : "no"} current Flow turn`, async (t) => {
+for (const hasCurrentWorkflowTurn of [false, true]) {
+  test(`ScoutAgent invocation identities survive Workflow boundaries and repeated restoration with ${hasCurrentWorkflowTurn ? "a prior" : "no"} current Workflow turn`, async (t) => {
     const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-resume-invocation-identity-"));
     const runId = "invocation-identity";
     let providerTurnSequence = 0;
@@ -1616,18 +1617,20 @@ for (const hasCurrentFlowTurn of [false, true]) {
     await initialScope.eventBus.publishAndWait(RunEvents.runtime.attached, {
       mode: "start", attachedAt: new Date().toISOString(), processId: process.pid,
     });
-    const first = await initialAgent.runTurn({ prompt: "first Flow" });
-    const firstFlowPath = initialScope.workflow.journalPath;
+    const first = await initialAgent.runTurn({ prompt: "first Workflow" });
+    const firstWorkflowPath = initialScope.workflow.journalPath;
     initialScope.workflow.scheduler.advance("error");
-    await initialScope.workflow.prepareNextFlow();
+    await initialScope.workflow.settleWorkflow();
+    assert.equal(initialScope.workflow.snapshot(), undefined);
+    await initialScope.workflow.startWorkflow();
     assert.equal(projectRun(initialScope.workflow.readEvents()).turns.length, 0);
-    const second = hasCurrentFlowTurn
-      ? await initialAgent.runTurn({ prompt: "second Flow before restore" })
+    const second = hasCurrentWorkflowTurn
+      ? await initialAgent.runTurn({ prompt: "second Workflow before restore" })
       : undefined;
     if (second) assert.notEqual(first.turn.invocationId, second.turn.invocationId);
-    const previousFlowContents = readFileSync(firstFlowPath, "utf8");
+    const previousWorkflowContents = readFileSync(firstWorkflowPath, "utf8");
     await initialAgent.stopAgent("restore_identity_test");
-    const flowId = initialScope.workflow.flowSnapshot().flowId;
+    const workflowId = initialScope.workflow.snapshot()!.workflowId;
     const journalRoot = initialScope.workflow.journalRoot;
     const graphState = initialScope.workflow.graph.snapshot();
     let events = initialScope.workflow.readEvents();
@@ -1642,7 +1645,7 @@ for (const hasCurrentFlowTurn of [false, true]) {
       const workflow = new Workflow({
         graphState,
         resume: {
-          flow: projectWorkflowFlowState(flowId, events),
+          workflowState: projectWorkflowState(workflowId, events),
           journalRoot,
         },
       });
@@ -1663,7 +1666,7 @@ for (const hasCurrentFlowTurn of [false, true]) {
         const outcome = await restoredAgent.runTurn({ prompt: `restored turn ${restore + 1}` });
         invocationIds.push(outcome.turn.invocationId);
         assert.equal(new Set(invocationIds).size, invocationIds.length);
-        assert.equal(projectRun(workflow.readEvents()).turns.length, restore + 1 + Number(hasCurrentFlowTurn));
+        assert.equal(projectRun(workflow.readEvents()).turns.length, restore + 1 + Number(hasCurrentWorkflowTurn));
         await restoredAgent.stopAgent("restore_identity_test");
         events = workflow.readEvents();
         await workflow.stop();
@@ -1672,7 +1675,7 @@ for (const hasCurrentFlowTurn of [false, true]) {
         release();
       }
     }
-    assert.equal(readFileSync(firstFlowPath, "utf8"), previousFlowContents);
+    assert.equal(readFileSync(firstWorkflowPath, "utf8"), previousWorkflowContents);
     t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   });
 }
@@ -1755,6 +1758,7 @@ test("Resume activation continues a Coordinator-only interruption after its user
     }),
     taskId: undefined,
   } satisfies AgentStepState;
+  writeAgentThreadRecord(fixture.scope.environment.agents[thread.agentId]!.mount.agentRoot, { version: 1, thread, hasTurns: true });
   await fixture.scope.eventBus.publishAndWait(AgentEvents.thread.started, thread);
   writePersistedRollout({ scoutRoot: fixture.fixtureRoot, runId: fixture.scope.runId, threadId: thread.threadId });
   await fixture.scope.eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
@@ -1821,6 +1825,7 @@ test("Resume activation wakes a committed next Phase after the previous Coordina
     },
     startResponse: { thread: { id: "phase-coordinator-thread" } },
   } satisfies AgentThreadSnapshot;
+  writeAgentThreadRecord(fixture.scope.environment.agents[thread.agentId]!.mount.agentRoot, { version: 1, thread, hasTurns: true });
   await fixture.scope.eventBus.publishAndWait(AgentEvents.thread.started, thread);
   writePersistedRollout({ scoutRoot: fixture.fixtureRoot, runId: fixture.scope.runId, threadId: thread.threadId });
   const step = { ...agentStepState({ agentId: "coordinator", stepId: "completed-old-phase" }), taskId: undefined };
@@ -1941,7 +1946,8 @@ test("RestoreAgentsStage restarts a journaled thread that Codex never persisted"
   await stage.stop("test_cleanup");
 });
 
-test("RestoreAgentsStage resumes a persisted thread even when it has no turns", async (t) => {
+for (const completedWorkflow of [false, true]) {
+test(`RestoreAgentsStage resumes Agent entity memory with ${completedWorkflow ? "a completed Workflow and empty runtime" : "a zero-turn active Workflow"}`, async (t) => {
   const resumedThreadIds: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
@@ -1963,7 +1969,8 @@ test("RestoreAgentsStage resumes a persisted thread even when it has no turns", 
         response: { thread: { id: threadId } },
       };
     },
-    async resumeThread(options: { threadId: string }) {
+    async resumeThread(options: { threadId: string; runtimeWorkspaceRoots?: string[] }) {
+      if (completedWorkflow) assert.deepEqual(options.runtimeWorkspaceRoots, []);
       resumedThreadIds.push(options.threadId);
       return {
         threadId: options.threadId,
@@ -1991,6 +1998,16 @@ test("RestoreAgentsStage resumes a persisted thread even when it has no turns", 
     threadId: zeroTurn.thread.threadId,
   });
 
+  let oldJournalPath: string | undefined;
+  let oldEvidence: string | undefined;
+  if (completedWorkflow) {
+    oldJournalPath = zeroTurn.scope.workflow.journalPath;
+    zeroTurn.scope.workflow.scheduler.advance("error");
+    await zeroTurn.scope.workflow.settleWorkflow();
+    assert.equal(zeroTurn.scope.workflow.snapshot(), undefined);
+    oldEvidence = readFileSync(oldJournalPath, "utf8");
+  }
+
   const stage = new RestoreAgentsStage();
   await stage.start();
 
@@ -2000,7 +2017,12 @@ test("RestoreAgentsStage resumes a persisted thread even when it has no turns", 
     "researcher",
   );
   await stage.stop("test_cleanup");
+  if (oldJournalPath) {
+    assert.equal(readFileSync(oldJournalPath, "utf8"), oldEvidence);
+    assert.equal(existsSync(join(zeroTurn.scope.runRoot, "workflows", "workflow-002")), false);
+  }
 });
+}
 
 test("RestoreAgentsStage restarts a current zero-turn thread after an older turn", async (t) => {
   const startedRoles: string[] = [];
@@ -2061,8 +2083,11 @@ test("RestoreAgentsStage restarts a current zero-turn thread after an older turn
     threadId: "current-zero-turn-thread",
     createdAt: "2026-07-22T00:01:00.000Z",
     status: "active" as const,
+    closedAt: undefined,
+    closeReason: undefined,
     startResponse: { thread: { id: "current-zero-turn-thread" } },
   };
+  writeAgentThreadRecord(fixture.scope.environment.agents[currentThread.agentId]!.mount.agentRoot, { version: 1, thread: currentThread, hasTurns: false });
   await fixture.scope.eventBus.publishAndWait(
     AgentEvents.thread.started,
     currentThread,
@@ -2217,7 +2242,7 @@ test("RestoreAgentsStage rejects a codex-home symlink that escapes the run", asy
 });
 
 test("resume stages restore tasks, messages, and interruptions from a Test RunScope", async (t) => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-run-resume-flow-"));
+  const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-run-resume-workflow-"));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
   cpSync(join(process.cwd(), "assets", "scout"), join(fixtureRoot, "assets", "scout"), {
@@ -2230,7 +2255,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   );
   makeFixtureShellToolsResolvable(fixtureRoot);
 
-  const runId = "run-resume-flow";
+  const runId = "run-resume-workflow";
   const runRoot = join(fixtureRoot, "run", runId);
   const initialManifestStore = new RunManifestStore(runRoot);
   const initialEventBus = new InMemoryEventBus();
@@ -2252,6 +2277,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   const releaseInitialScope = installRunScope(initialScope);
   await new InitializeRunStage().start();
   await initialWorkflow.start();
+  await initialWorkflow.startWorkflow();
   await new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
   }).start();
@@ -2305,6 +2331,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     },
     startResponse: { thread: { id: "researcher-old-thread" } },
   } satisfies AgentThreadSnapshot;
+  writeAgentThreadRecord(initialScope.environment.agents.researcher.mount.agentRoot, { version: 1, thread: researcherThread, hasTurns: true });
   await initialEventBus.publishAndWait(
     AgentEvents.thread.started,
     researcherThread,
@@ -2420,8 +2447,8 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   }, {
     occurredAt: "2026-07-22T00:00:10.000Z",
   });
-  const resumeFlow = projectWorkflowFlowState(
-    initialWorkflow.flowSnapshot().flowId,
+  const resumeWorkflow = projectWorkflowState(
+    initialWorkflow.snapshot()!.workflowId,
     initialWorkflow.readEvents(),
   );
   const resumeJournalRoot = initialWorkflow.journalRoot;
@@ -2542,7 +2569,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   const resumedWorkflow = new Workflow({
     graphState: createTestScheduler("validation").snapshot(),
     resume: {
-      flow: resumeFlow,
+      workflowState: resumeWorkflow,
       journalRoot: resumeJournalRoot,
     },
   });
@@ -2636,7 +2663,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     modelProvider: "custom",
     reasoningEffort: "high",
     cwd: restoredResearcherMount.mountRoot,
-    runtimeWorkspaceRoots: [restoredResearcherMount.mountRoot],
+    runtimeWorkspaceRoots: [dirname(resumeJournalRoot)],
     approvalPolicy: scoutAgentApprovalPolicy,
     permissions: scoutAgentPermissionProfile("researcher"),
     config: researcherAgent.spec.config,
@@ -2774,7 +2801,7 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
   assert.equal(executor.snapshot().status, "failed");
   assert.throws(() => currentRunScope(), /No active Scout run scope/);
   assert.equal(
-    existsSync(join(runRoot, "journal-0001", ".scout.lock")),
+    existsSync(join(runRoot, "workflows", "workflow-001", "journal", ".scout.lock")),
     false,
   );
 });
@@ -2908,6 +2935,7 @@ async function assertThreadRestoreFailure(
     },
     startResponse: { thread: { id: "thread-researcher-original" } },
   } satisfies AgentThreadSnapshot;
+  writeAgentThreadRecord(scope.environment.agents[thread.agentId]!.mount.agentRoot, { version: 1, thread, hasTurns: true });
   await eventBus.publishAndWait(AgentEvents.thread.started, thread);
   await eventBus.publishAndWait(AgentEvents.task.assigned, task);
   await eventBus.publishAndWait(AgentEvents.step.started, step);
@@ -2994,6 +3022,7 @@ async function installRolloutLocatorFixture(
     },
     startResponse: { thread: { id: `thread-${suffix}` } },
   } satisfies AgentThreadSnapshot;
+  writeAgentThreadRecord(scope.environment.agents[thread.agentId]!.mount.agentRoot, { version: 1, thread, hasTurns: options.includeTurn !== false });
   await eventBus.publishAndWait(AgentEvents.thread.started, thread);
   if (options.includeTurn !== false) {
     await eventBus.publishAndWait(AgentEvents.turn.started, {

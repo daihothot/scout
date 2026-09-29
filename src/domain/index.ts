@@ -53,7 +53,7 @@ export async function createDomainRuntime(domainId: ScoutDomainId): Promise<Scou
   }
   const candidate = domain as ScoutDomain;
   if (
-    (candidate.prepareFlow !== undefined && typeof candidate.prepareFlow !== "function")
+    (candidate.prepareWorkflow !== undefined && typeof candidate.prepareWorkflow !== "function")
     || (candidate.restore !== undefined && typeof candidate.restore !== "function")
     || (candidate.start !== undefined && typeof candidate.start !== "function")
     || (candidate.stop !== undefined && typeof candidate.stop !== "function")

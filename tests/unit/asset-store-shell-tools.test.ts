@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -434,7 +435,7 @@ test("AssetStore rechecks a cached inspection when the mount changes before prep
   }
 });
 
-test("AssetStore rechecks cached inspection when artifact or log roots change", () => {
+test("AssetStore rechecks cached inspection when the Agent entity root changes", () => {
   const originalInspect = MountInspector.prototype.inspect;
   let inspectionCount = 0;
   MountInspector.prototype.inspect = function () {
@@ -442,7 +443,7 @@ test("AssetStore rechecks cached inspection when artifact or log roots change", 
     return originalInspect.call(this);
   };
   try {
-    for (const rootName of ["artifactRoot", "logsRoot"] as const) {
+    for (const rootName of ["agentRoot"] as const) {
       const fixtureRoot = createCodexAssetFixture(`scout-mount-${rootName}-drift-`);
       const store = new AssetStore();
       const initial = store.materializeMount({
@@ -459,8 +460,10 @@ test("AssetStore rechecks cached inspection when artifact or log roots change", 
       };
       const before = inspectionCount;
       assert.equal(store.inspectMount(options).decision, "reused");
-      rmSync(initial[rootName], { recursive: true });
+      const savedRoot = `${initial[rootName]}-saved`;
+      renameSync(initial[rootName], savedRoot);
       mkdirSync(initial[rootName]);
+      for (const entry of readdirSync(savedRoot)) renameSync(join(savedRoot, entry), join(initial[rootName], entry));
 
       const prepared = store.prepareMount(options);
 
@@ -623,7 +626,7 @@ test("AssetStore validates config assignments instead of matching path substring
   const misleadingConfig = [
     `# expected mount: ${initial.mountRoot}`,
     `# expected run: ${initial.runRoot}`,
-    `# expected artifacts: ${initial.artifactRoot}`,
+    `# expected agent: ${initial.agentRoot}`,
     "[shell_environment_policy.set]",
     "PATH = \"/wrong/mount/bin\"",
     "SCOUT_RUN_ROOT = \"/wrong/run\"",
@@ -719,7 +722,7 @@ test("AssetStore mounts the Scout command approval native hook", () => {
   }]);
   assert.match(
     hooks.hooks.PreToolUse[0]?.hooks[0]?.command ?? "",
-    /codex-native-hook\.js'.*--run-id'.*run-command-approval-hook'.*--agent-id'.*coordinator'.*--state-root'/,
+    /codex-native-hook\.js'.*--run-id'.*run-command-approval-hook'.*--agent-id'.*coordinator'/,
   );
   assert.equal(hooks.hooks.PostToolUse[0]?.matcher, "^Bash$");
   assert.equal(
@@ -1065,8 +1068,6 @@ test("AssetStore persists only each materialized Skill identity and filesystem p
   assert.deepEqual(manifest.skills, mount.skills);
   assert.deepEqual(manifest.runtimeRoots, [
     { name: "mount", path: ".", access: "read" },
-    { name: "artifacts", path: "../artifacts", access: "read-write" },
-    { name: "tmp", path: "../tmp", access: "read-write" },
   ]);
   assert.deepEqual(readdirSync(join(mount.mountRoot, ".agents", "skills")), []);
   assert.ok(mount.skills.length > 0);
@@ -1627,7 +1628,7 @@ test("AssetStore resolves asset-local shell tool commands against the Scout root
       `export PATH=${JSON.stringify(buildMountShellPath(mount.mountRoot))}\n`,
     ),
   );
-  assert.ok(wrapper.includes(`export SCOUT_TEMP_ROOT=${JSON.stringify(mount.tempRoot)}\n`));
+  assert.doesNotMatch(wrapper, /SCOUT_(TEMP|ARTIFACT)_ROOT/);
   assert.doesNotMatch(wrapper, /export TMPDIR=/);
   assert.equal(execFileSync(wrapperPath, [], {
     cwd: mount.mountRoot,
@@ -1910,7 +1911,7 @@ test("AssetStore resolves asset-local MCP commands against the Scout root", () =
   assert.ok(server);
   assert.equal(server.command, commandPath);
   const wrapper = readFileSync(server.wrapperPath, "utf8");
-  assert.ok(wrapper.includes(`export SCOUT_TEMP_ROOT=${JSON.stringify(mount.tempRoot)}\n`));
+  assert.doesNotMatch(wrapper, /SCOUT_(TEMP|ARTIFACT)_ROOT/);
   assert.doesNotMatch(wrapper, /export TMPDIR=/);
   assert.equal(execFileSync(server.wrapperPath, [], {
     cwd: mount.mountRoot,
@@ -2044,6 +2045,26 @@ test("scout-memory reports run-level codex memory files without reading sqlite c
     "state",
   ]);
   assert.ok(list.files.every((file) => file.readable));
+});
+
+test("scout-json-write uses the explicit current Workflow root and rejects the removed environment contract", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-json-workflow-root-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const script = join(scoutRoot, "assets", "scout", "tools", "scout-json-write.cjs");
+  const artifactRoot = join(root, "renamed-workflow", "agents", "reviewer", "artifacts");
+  const output = execFileSync(process.execPath, [script, "artifact", "--artifact-root", artifactRoot, "review/report.json", "-"], {
+    input: '{"status":"passed"}', encoding: "utf8",
+  });
+  assert.match(output, /json_written=true/);
+  assert.deepEqual(JSON.parse(readFileSync(join(artifactRoot, "review", "report.json"), "utf8")), { status: "passed" });
+  assert.throws(() => execFileSync(process.execPath, [script, "artifact", "legacy.json", "-"], {
+    input: "{}", stdio: "pipe", env: { ...process.env, SCOUT_ARTIFACT_ROOT: artifactRoot },
+  }));
+  assert.equal(existsSync(join(artifactRoot, "legacy.json")), false);
+  assert.throws(() => execFileSync(process.execPath, [script, "artifact", "--artifact-root", artifactRoot, "../escape.json", "-"], {
+    input: "{}", stdio: "pipe",
+  }), /Target path escapes root/);
+  assert.equal(existsSync(join(artifactRoot, "..", "escape.json")), false);
 });
 
 test("Scout shell tools expose side-effect-free help without runtime context", () => {

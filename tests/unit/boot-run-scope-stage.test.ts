@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { agent } from "../../src/agent/context/agent-attachments.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
-import type { WorkflowFlowState } from "../../src/core/workflow/index.js";
+import type { WorkflowState } from "../../src/core/workflow/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
 import {
   ExecutionStage,
@@ -126,7 +126,7 @@ test("DomainStage creates, installs, starts, and clears both Run Domains", async
 });
 
 for (const preparationFails of [false, true]) {
-  test(`DomainStage drains ${preparationFails ? "a failed" : "a committing"} Flow before stopping any Domain`, async (t) => {
+  test(`DomainStage drains ${preparationFails ? "a failed" : "a committing"} Workflow before stopping any Domain`, async (t) => {
     const runId = `run-domain-stage-drain-${preparationFails}`;
     const eventBus = new InMemoryEventBus();
     const scope = new RunScope({
@@ -149,7 +149,7 @@ for (const preparationFails of [false, true]) {
     const executionStage = new ExecutionStage(async () => ScoutExecutionSystem.start({
       async start() {},
       async invoke() {
-        throw new Error("Flow boundary lifecycle tests must not invoke execution.");
+        throw new Error("Workflow boundary lifecycle tests must not invoke execution.");
       },
       async close() {},
     }, eventBus));
@@ -175,9 +175,11 @@ for (const preparationFails of [false, true]) {
       processId: process.pid,
     });
     for (let phase = 0; phase < 4; phase += 1) scope.workflow.scheduler.advance("completed");
-    const previousFlow = scope.workflow.flowSnapshot();
+    const previousWorkflow = scope.workflow.snapshot()!;
     const previousRoot = scope.workflow.journalRoot;
-    const nextRoot = join(dirname(previousRoot), "journal-0002");
+    const nextRoot = join(scope.runRoot, "workflows", "workflow-002", "journal");
+    await scope.workflow.settleWorkflow();
+    assert.equal(scope.workflow.snapshot(), undefined);
     const domains = scope.domainRegistry.list();
     const observed: string[] = [];
     const base = scope.domainRegistry.get(ScoutDomainId.Base);
@@ -194,14 +196,14 @@ for (const preparationFails of [false, true]) {
       observed.push("stop:validation");
       await stopValidation();
     });
-    const prepare = base.prepareFlow;
-    const preparationError = new Error("Domain Flow preparation failed during shutdown");
-    t.mock.method(base, "prepareFlow", async (flow: WorkflowFlowState, root: string) => {
+    const prepare = base.prepareWorkflow;
+    const preparationError = new Error("Domain Workflow preparation failed during shutdown");
+    t.mock.method(base, "prepareWorkflow", async (workflowState: WorkflowState, root: string) => {
       observed.push("prepare");
       announcePreparation();
       await gate;
       if (preparationFails) throw preparationError;
-      const change = await prepare.call(base, flow, root);
+      const change = await prepare.call(base, workflowState, root);
       return {
         commit() {
           observed.push("commit");
@@ -217,7 +219,7 @@ for (const preparationFails of [false, true]) {
       attachment: agent.turn.message(text),
       submittedAt: new Date().toISOString(),
     });
-    const input = scope.workflow.prepareNextFlow();
+    const input = scope.workflow.startWorkflow();
     const inputDone = preparationFails
       ? assert.rejects(input, (error) => error === preparationError)
       : input;
@@ -248,13 +250,11 @@ for (const preparationFails of [false, true]) {
       : ["prepare", "commit", "stop:validation", "stop:base"]);
     assert.deepEqual(scope.domainRegistry.list(), []);
     if (preparationFails) {
-      assert.equal(scope.workflow.flowSnapshot().flowId, previousFlow.flowId);
-      assert.equal(scope.workflow.flowSnapshot().status, "completed");
-      assert.equal(scope.workflow.flowSnapshot().checkpointSeq, previousFlow.checkpointSeq + 1);
-      assert.equal(scope.workflow.journalRoot, previousRoot);
+      assert.equal(scope.workflow.snapshot(), undefined);
+      assert.equal(existsSync(join(previousRoot, "scout.journal")), true);
       assert.equal(existsSync(nextRoot), false);
     } else {
-      assert.equal(scope.workflow.flowSnapshot().flowId, "journal-0002");
+      assert.equal(scope.workflow.snapshot()?.workflowId, "workflow-002");
       assert.equal(scope.workflow.journalRoot, nextRoot);
       assert.equal(existsSync(join(previousRoot, ".base.lock")), false);
       assert.equal(existsSync(join(nextRoot, ".base.lock")), false);

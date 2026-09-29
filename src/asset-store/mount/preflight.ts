@@ -43,8 +43,6 @@ export function collectMountReadableRoots(mount: CodexMount): string[] {
 /** Returns unique writable roots required by the mount and its MCP servers. */
 export function collectMountWritableRoots(mount: CodexMount): string[] {
   return uniqueStrings([
-    mount.artifactRoot,
-    mount.tempRoot,
     ...mount.writableRoots,
     ...mount.mcpServers.flatMap((server) => server.writableRoots),
   ]);
@@ -127,8 +125,6 @@ async function smokeMountShellTools(
     PATH: buildMountShellPath(mountRoot),
     ...buildMountShellEnvironment({
       runRoot: mount.runRoot,
-      artifactRoot: mount.artifactRoot,
-      tempRoot: mount.tempRoot,
       hostTempRoot: tmpdir(),
       assetCommitId: mount.assetCommitId,
     }),

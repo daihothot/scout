@@ -3,6 +3,7 @@ import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
 import type { AgentNativeSubagentEvent } from "../subagent/subagent-events.js";
+import { agentTelemetryLogsRoot } from "../../core/path.js";
 
 /** Persists native multi-agent collaboration facts in the owning agent log. */
 export class AgentSubagentRecorder {
@@ -28,15 +29,15 @@ export class AgentSubagentRecorder {
 
   private record(subagent: AgentNativeSubagentEvent): void {
     const scope = currentRunScope();
-    let logger = this.loggers.get(subagent.agentId);
+    const logsRoot = agentTelemetryLogsRoot(subagent.agentId);
+    let logger = this.loggers.get(logsRoot);
     if (!logger) {
-      const agent = scope.agentRegistry.resolveAgent(subagent.agentId);
       logger = new Logger({
         runId: scope.runId,
-        logsRoot: agent.mount.logsRoot,
+        logsRoot,
         fileName: "subagent.log",
       });
-      this.loggers.set(subagent.agentId, logger);
+      this.loggers.set(logsRoot, logger);
     }
     logger.info({
       module: "agent.subagent",

@@ -1,11 +1,11 @@
 import {
   existsSync,
-  mkdirSync,
   readdirSync,
   realpathSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { runAgentPaths, scoutRunsRoot } from "../../../core/path.js";
 import {
   buildScoutSkillCatalog,
   listScoutSkillPaths,
@@ -47,6 +47,7 @@ export interface RunAgentFilesystemPermissionProfile {
   writableRoots: string[];
   deniedRoots: string[];
   network: boolean;
+  workspaceRules: Record<string, "read" | "write">;
 }
 
 /** Run-wide roots plus the role-owned filesystem permission profiles. */
@@ -131,29 +132,19 @@ export function createClientRootConfig(options: {
 
   for (const role of agentRoles) {
     const profile = workflowBuilder.buildAgentProfile(role);
-    const agentRoot = join(runRoot, "agents", role);
-    const mountRoot = join(agentRoot, "mount");
-    const artifactRoot = join(agentRoot, "artifacts");
-    const tempRoot = join(agentRoot, "tmp");
-    // The app-server starts before environment materialization and needs this
-    // runtime root to exist for its permission profile.
-    mkdirSync(tempRoot, { recursive: true });
+    const { agentRoot, mountRoot } = runAgentPaths(runRoot, role);
     mountRoots.push(mountRoot);
     const profileReadableRoots = resolveProfileRoots({
       roots: profile.readableRoots,
       scoutRoot,
       runRoot,
       mountRoot,
-      artifactRoot,
-      tempRoot,
     });
     const profileWritableRoots = resolveProfileRoots({
       roots: profile.writableRoots,
       scoutRoot,
       runRoot,
       mountRoot,
-      artifactRoot,
-      tempRoot,
     });
     const runtimeReadableRoots = resolveRoleRuntimeReadableRoots({
       scoutAssetsRoot,
@@ -163,12 +154,10 @@ export function createClientRootConfig(options: {
       shellTools: shellTools.tools,
     });
     readableRoots.push(mountRoot, ...profileReadableRoots, ...runtimeReadableRoots);
-    writableRoots.push(tempRoot, artifactRoot, ...profileWritableRoots);
+    writableRoots.push(...profileWritableRoots);
     roleRoots.push({
       role,
       mountRoot,
-      artifactRoot,
-      tempRoot,
       readableRoots: [...profileReadableRoots, ...runtimeReadableRoots],
       writableRoots: profileWritableRoots,
       network: profile.network === true,
@@ -177,8 +166,6 @@ export function createClientRootConfig(options: {
       scoutRoot,
       runRoot,
       mountRoot,
-      artifactRoot,
-      tempRoot,
       assetCommitId: "",
       runId: basename(runRoot),
     });
@@ -217,8 +204,6 @@ export function createPreparedClientRootConfig(
   const roleRoots = agents.map((agent) => ({
     role: agent.role,
     mountRoot: agent.mount.mountRoot,
-    artifactRoot: agent.mount.artifactRoot,
-    tempRoot: agent.mount.tempRoot,
     readableRoots: [
       ...agent.mount.readableRoots,
       ...resolveRoleRuntimeReadableRoots({
@@ -229,7 +214,7 @@ export function createPreparedClientRootConfig(
         shellTools: shellTools.tools,
       }),
     ],
-    writableRoots: [agent.mount.tempRoot, ...agent.mount.writableRoots],
+    writableRoots: agent.mount.writableRoots,
     network: agent.mount.agentProfile.network === true,
   }));
   return {
@@ -240,7 +225,6 @@ export function createPreparedClientRootConfig(
     ]),
     writableRoots: uniqueResolved([
       ...environment.rootAccess.writableRoots,
-      ...roleRoots.map((role) => role.tempRoot),
     ]),
     permissionProfiles: createPermissionProfiles({ scoutRoot, roleRoots }),
   };
@@ -249,8 +233,6 @@ export function createPreparedClientRootConfig(
 interface AppServerRoleRoots {
   role: ScoutAgentRole;
   mountRoot: string;
-  artifactRoot: string;
-  tempRoot: string;
   readableRoots: string[];
   writableRoots: string[];
   network: boolean;
@@ -261,16 +243,13 @@ function createPermissionProfiles(input: {
   roleRoots: AppServerRoleRoots[];
 }): RunAppServerRootConfig["permissionProfiles"] {
   const scoutRoot = resolve(input.scoutRoot);
-  const runsRoot = join(scoutRoot, "run");
+  const runsRoot = scoutRunsRoot(scoutRoot);
   const logicalSkillRoot = join(scoutRoot, "assets", "scout", "skills");
   const canonicalSkillRoot = realpathSync(logicalSkillRoot);
-  const artifactRoots = input.roleRoots.map((role) => role.artifactRoot);
   const macosRuntimeReadableRoots = process.platform === "darwin"
     ? ["/System/Library/OpenSSL"]
     : [];
-  const macosRuntimeWritableRoots = process.platform === "darwin"
-    ? uniqueResolved([tmpdir(), realpathSync(tmpdir())])
-    : [];
+  const runtimeWritableRoots = uniqueResolved([tmpdir(), realpathSync(tmpdir())]);
   return Object.fromEntries(input.roleRoots.map((role) => [
     role.role,
     {
@@ -278,15 +257,12 @@ function createPermissionProfiles(input: {
       mountRoot: resolve(role.mountRoot),
       readableRoots: uniqueResolved([
         role.mountRoot,
-        ...artifactRoots,
         ...role.readableRoots,
         ...macosRuntimeReadableRoots,
       ]),
       writableRoots: uniqueResolved([
-        role.artifactRoot,
-        role.tempRoot,
         ...role.writableRoots,
-        ...macosRuntimeWritableRoots,
+        ...runtimeWritableRoots,
       ]),
       deniedRoots: uniqueResolved([
         runsRoot,
@@ -294,6 +270,9 @@ function createPermissionProfiles(input: {
         canonicalSkillRoot,
       ]),
       network: role.network,
+      workspaceRules: Object.fromEntries(input.roleRoots.map((peer) => [
+        `agents/${peer.role}/artifacts`, peer.role === role.role ? "write" : "read",
+      ])),
     } satisfies RunAgentFilesystemPermissionProfile,
   ]));
 }
@@ -427,15 +406,11 @@ function resolveProfileRoots(input: {
   scoutRoot: string;
   runRoot: string;
   mountRoot: string;
-  artifactRoot: string;
-  tempRoot: string;
 }): string[] {
   const dynamicValues = createMountMacroValues({
     scoutRoot: input.scoutRoot,
     runRoot: input.runRoot,
     mountRoot: input.mountRoot,
-    artifactRoot: input.artifactRoot,
-    tempRoot: input.tempRoot,
     assetCommitId: "",
   });
   return (input.roots ?? [])

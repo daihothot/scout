@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { statSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, statSync } from "node:fs";
+import { workflowAgentPaths, workflowRootFromJournalRoot, scoutJournalPaths } from "../path.js";
 import { isDeepStrictEqual } from "node:util";
 import { AgentEvents } from "../../agent/events/index.js";
 import { AgentStepStatuses } from "../../agent/step/types.js";
 import { CoordinatorAgent } from "../../agent/roles/coordinator-agent.js";
 import { WorkerAgent } from "../../agent/roles/worker-agent.js";
-import type { ScoutDomain, ScoutDomainFlowChange } from "../../domain/types.js";
+import type { ScoutDomain, ScoutDomainWorkflowChange } from "../../domain/types.js";
 import { RunEvents } from "../../run/events/index.js";
 import {
   projectRun,
@@ -22,12 +22,12 @@ import { type GraphState, type WorkflowPhaseOutcome, resolveSynthesisRole } from
 import { Graph } from "./graph.js";
 import { Scheduler, type SchedulerAdvanceResult } from "./scheduler.js";
 import { ScoutJournal } from "./scout-journal.js";
-import { WorkflowBenchmarks, type PreparedWorkflowFlow } from "./workflow-benchmarks.js";
+import { WorkflowBenchmarks } from "./workflow-benchmarks.js";
 import { WorkflowEvents } from "./workflow-events.js";
-import { projectWorkflowFlowState, type WorkflowFlowState } from "./workflow-flow-state.js";
+import { projectWorkflowState, type WorkflowState } from "./workflow-state.js";
 
 export interface WorkflowResumeInput {
-  flow: WorkflowFlowState;
+  workflowState: WorkflowState;
   journalRoot: string;
 }
 
@@ -38,7 +38,7 @@ export class Workflow {
   readonly scoutJournal: ScoutJournal;
   private benchmarks?: WorkflowBenchmarks;
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
-  private activeFlow?: WorkflowFlowState;
+  private activeWorkflowState?: WorkflowState;
   private eventBus?: EventBus;
   private transition?: Promise<void>;
   private transitionFailure?: Error;
@@ -48,8 +48,7 @@ export class Workflow {
   constructor(private readonly input: {
     graphState: GraphState;
     resume?: WorkflowResumeInput;
-    startBaseline?: readonly ScoutEvent[];
-    expectedMissingFlow?: PreparedWorkflowFlow;
+    missingWorkflowId?: string;
   }) {
     this.graph = new Graph(input.graphState);
     this.scheduler = new Scheduler(this.graph);
@@ -63,81 +62,49 @@ export class Workflow {
     this.eventBus = scope.eventBus;
     const benchmarks = new WorkflowBenchmarks(scope.runRoot);
     this.benchmarks = benchmarks;
-    const openInitialFlow = (): void => {
-      if (this.input.resume) {
-        const selected = benchmarks.resolve("currentFlow");
-        if (selected?.flowId !== this.input.resume.flow.flowId || selected.journalRoot !== this.input.resume.journalRoot) {
+    const openInitialWorkflow = (): void => {
+      if (this.input.missingWorkflowId) {
+        if (benchmarks.read()?.currentWorkflow !== this.input.missingWorkflowId) {
           throw new Error("Workflow benchmark selection changed before its runtime lock was acquired; retry resume.");
         }
-        this.scoutJournal.open(this.input.resume.journalRoot);
-        // The boot projection was read before acquiring the journal lock. Never
-        // attach its Graph to a newer (or replaced) persisted Flow.
-        const events = this.scoutJournal.readAll();
-        const created = events.find((event) => RunEvents.run.created.is(event));
-        const flow = projectWorkflowFlowState(this.input.resume.flow.flowId, events);
-        if (!created || !RunEvents.run.created.is(created)
-          || created.payload.runId !== scope.runId
-          || !isDeepStrictEqual(flow, this.input.resume.flow)
-          || !isDeepStrictEqual(projectGraphState(events), this.graph.snapshot())) {
-          throw new Error("Workflow recovery snapshot changed before its journal lock was acquired; retry resume.");
-        }
-        this.activeFlow = flow;
-      } else {
-        const expectedMissingFlow = this.input.expectedMissingFlow;
-        if (expectedMissingFlow) {
-          const selected = benchmarks.resolve("currentFlow");
-          if (selected?.flowId !== expectedMissingFlow.flowId
-            || selected.journalRoot !== expectedMissingFlow.journalRoot) {
-            throw new Error("Workflow benchmark selection changed before its runtime lock was acquired; retry resume.");
-          }
-          let stillMissing = false;
+        const selected = benchmarks.resolve("currentWorkflow");
+        if (selected) {
           try {
-            statSync(join(expectedMissingFlow.journalRoot, "scout.journal"));
+            statSync(scoutJournalPaths(selected.journalRoot).path);
+            throw new Error("Workflow missing journal reappeared before its runtime lock was acquired; retry resume.");
           } catch (error) {
             if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
-            stillMissing = true;
-          }
-          if (!stillMissing) {
-            throw new Error("Workflow missing journal reappeared before its runtime lock was acquired; retry resume.");
           }
         }
-        const manifest = scope.manifestStore.read();
-        if (manifest.runId !== scope.runId) throw new Error("Workflow baseline does not belong to the installed Run.");
-        const baseline: ScoutEvent[] = this.input.startBaseline ? [...this.input.startBaseline] : [{
-          id: `run-created-${manifest.runId}`,
-          key: RunEvents.run.created,
-          payload: { runId: manifest.runId, scoutRoot: scope.scoutRoot, createdAt: manifest.createdAt },
-          occurredAt: manifest.createdAt,
-        }];
-        const created = baseline.find((event) => RunEvents.run.created.is(event));
-        if (!created || !RunEvents.run.created.is(created) || created.payload.runId !== manifest.runId
-          || created.payload.createdAt !== manifest.createdAt) {
-          throw new Error("Workflow baseline must contain the persisted Run creation identity.");
-        }
-        const initializedAt = new Date().toISOString();
-        if (baseline.some((event) => WorkflowEvents.workflow.initialized.is(event))) {
-          throw new Error("Workflow owns its initial Graph fact; a supplied baseline cannot initialize it.");
-        }
-        baseline.push({
-          id: randomUUID(), key: WorkflowEvents.workflow.initialized,
-          payload: { state: this.graph.snapshot(), initializedAt }, occurredAt: initializedAt,
-        });
-        const prepared = benchmarks.prepareNext();
-        this.scoutJournal.create(prepared.journalRoot, baseline);
-        this.activeFlow = {
-          flowId: prepared.flowId,
-          status: "active",
-          checkpointSeq: this.scoutJournal.lastSeq,
-        };
-        benchmarks.recordStarted(prepared.flowId);
       }
+      if (!this.input.resume) return;
+      const selected = benchmarks.resolve("currentWorkflow");
+      if (selected?.workflowId !== this.input.resume.workflowState.workflowId || selected.journalRoot !== this.input.resume.journalRoot) {
+        throw new Error("Workflow benchmark selection changed before its runtime lock was acquired; retry resume.");
+      }
+      this.scoutJournal.open(selected.journalRoot);
+      const events = this.scoutJournal.readAll();
+      const created = events.find((event) => RunEvents.run.created.is(event));
+      const workflowState = projectWorkflowState(selected.workflowId, events);
+      if (!created || !RunEvents.run.created.is(created) || created.payload.runId !== scope.runId
+        || !isDeepStrictEqual(workflowState, this.input.resume.workflowState)
+        || !isDeepStrictEqual(projectGraphState(events), this.graph.snapshot())) {
+        throw new Error("Workflow recovery snapshot changed before its journal lock was acquired; retry resume.");
+      }
+      if (workflowState.status === "completed") {
+        const projection = projectRun(events, resolveSynthesisRole(this.graph.snapshot()).name);
+        this.assertWorkflowSettled(projection, new Set(projection.userMessages.map((message) => message.messageId)));
+        this.scoutJournal.stop();
+        return;
+      }
+      this.activeWorkflowState = workflowState;
     };
 
     try {
       benchmarks.acquire();
       this.scheduler.start();
-      openInitialFlow();
-      this.scoutJournal.start();
+      openInitialWorkflow();
+      if (this.activeWorkflowState) this.scoutJournal.start();
       this.unsubscribers.push(
         scope.eventBus.subscribe(
           SystemEvents.interaction.userMessageSubmitted,
@@ -147,56 +114,13 @@ export class Workflow {
       );
       this.stopping = false;
       this.started = true;
-      if (this.input.resume && this.requireFlow().status === "completed") {
-        // Recovery supplies historical identities before runtime services are installed.
-        const buildRecoveryBaseline = (): ScoutEvent[] => {
-          const previousEvents = this.readEvents();
-          const runCreated = previousEvents.find((event) => RunEvents.run.created.is(event));
-          if (!runCreated) {
-            throw new Error("Cannot begin the next Workflow execution without its Run baseline.");
-          }
-          const baselineAt = new Date().toISOString();
-          const projection = projectRun(previousEvents, resolveSynthesisRole(this.graph.snapshot()).name);
-          this.assertFlowSettled(projection, new Set(projection.userMessages.map((message) => message.messageId)));
-          const pendingInputIds = new Set(projection.pendingMessages.map((message) => message.messageId));
-          return [
-            toScoutEvent(runCreated),
-            {
-              id: randomUUID(),
-              key: WorkflowEvents.workflow.initialized,
-              payload: { state: { ...this.graph.snapshot(), currentPhase: this.graph.snapshot().phases[0]!.name }, initializedAt: baselineAt },
-              occurredAt: baselineAt,
-            },
-            ...previousEvents.filter((event) => AgentEvents.thread.started.is(event)
-              || AgentEvents.thread.restarted.is(event)).map(toScoutEvent),
-            ...previousEvents.filter((event) =>
-              (SystemEvents.interaction.userMessageSubmitted.is(event)
-                || AgentEvents.message.queued.is(event))
-              && pendingInputIds.has(event.payload.messageId)
-            ).map(toScoutEvent),
-          ];
-        };
-        const transition = Promise.resolve().then(async () => {
-          await this.eventBus!.drain(SystemEvents.interaction.userMessageSubmitted);
-          const baseline = buildRecoveryBaseline();
-          const terminal = [...this.readEvents()].reverse().find((event) => WorkflowEvents.workflow.advanced.is(event));
-          if (terminal && WorkflowEvents.workflow.advanced.is(terminal) && terminal.payload.outcome === "completed") {
-            benchmarks.recordSuccess(this.requireFlow().flowId);
-          }
-          await this.beginNextFlow(baseline, []);
-        }).finally(() => {
-          if (this.transition === transition) this.transition = undefined;
-        });
-        this.transition = transition;
-        await transition;
-      } else if (this.input.resume) {
-        benchmarks.recordRun(this.requireFlow().flowId);
-      }
+      if (this.activeWorkflowState) benchmarks.recordRun(this.activeWorkflowState.workflowId);
     } catch (error) {
       const failures: unknown[] = [error];
       while (this.unsubscribers.length > 0) this.unsubscribers.pop()?.();
       try {
         this.scoutJournal.stop();
+        this.activeWorkflowState = undefined;
         benchmarks.release();
         this.benchmarks = undefined;
       } catch (closeError) {
@@ -224,6 +148,7 @@ export class Workflow {
     while (this.unsubscribers.length > 0) this.unsubscribers.pop()?.();
     try {
       this.scoutJournal.stop();
+      this.activeWorkflowState = undefined;
       this.benchmarks?.release();
       this.benchmarks = undefined;
     } catch (error) {
@@ -248,22 +173,22 @@ export class Workflow {
     }
   }
 
-  /** Input admission depends on Flow readiness, never on Journal write success. */
+  /** Input admission depends on Workflow readiness, never on Journal write success. */
   assertAcceptingInput(): void {
     if (!this.started || this.stopping) throw new Error("Workflow is stopping or not started; input is unavailable.");
     if (this.transitionFailure) throw this.transitionFailure;
-    if (this.transition || this.requireFlow().status !== "active") {
-      throw new Error("Workflow Flow is not ready to accept input.");
+    if (this.transition || (this.activeWorkflowState && this.activeWorkflowState.status !== "active")) {
+      throw new Error("Workflow is not ready to accept input.");
     }
   }
 
   /** Called after Coordinator work settles, independently of the next user input. */
-  async prepareNextFlow(): Promise<void> {
+  async settleWorkflow(): Promise<void> {
     if (this.stopping) return Promise.resolve();
     if (!this.started) return Promise.reject(new Error("Workflow is not started."));
     if (this.transitionFailure) throw this.transitionFailure;
     if (this.transition) return this.transition;
-    if (this.requireFlow().status === "active") return;
+    if (!this.activeWorkflowState || this.activeWorkflowState.status === "active") return;
     // Install the shared promise before preparation can yield or invoke a Domain.
     const transition = Promise.resolve().then(async () => {
       await this.eventBus!.drain(SystemEvents.interaction.userMessageSubmitted);
@@ -275,16 +200,16 @@ export class Workflow {
       let projection = projectRun(currentEvents, resolveSynthesisRole(this.scheduler.snapshot()).name,
         readDomainJournalProjections(domains));
       const assertRuntimeSettled = (): void => {
-        this.assertFlowSettled(projection, new Set([
+        this.assertWorkflowSettled(projection, new Set([
           ...projection.userMessages.map((message) => message.messageId),
-          ...(coordinator instanceof CoordinatorAgent ? coordinator.pendingFlowInputs().map(({ delivery }) => delivery.messageId) : []),
+          ...(coordinator instanceof CoordinatorAgent ? coordinator.pendingWorkflowInputs().map(({ delivery }) => delivery.messageId) : []),
         ]));
         const blockingReasons = scope.agentRegistry.listAgents().flatMap((agent) => {
             const snapshot = agent.snapshot();
             if (snapshot.activeTask && (snapshot.activeTask.status === "queued" || snapshot.activeTask.status === "running")) {
               return [`Agent ${agent.agentId} still has unfinished Task ${snapshot.activeTask.taskId}`];
             }
-            const deferredInputs = agent instanceof CoordinatorAgent ? agent.pendingFlowInputs().length : 0;
+            const deferredInputs = agent instanceof CoordinatorAgent ? agent.pendingWorkflowInputs().length : 0;
             if (snapshot.pendingMessageCount > deferredInputs) {
               return [`Agent ${agent.agentId} still has pending messages`];
             }
@@ -296,59 +221,13 @@ export class Workflow {
           );
         }
       };
-      const buildRuntimeBaseline = (): ScoutEvent[] => {
-        const runCreated = currentEvents.find((event) => RunEvents.run.created.is(event));
-        const runtimeAttached = [...currentEvents].reverse().find((event) =>
-          RunEvents.runtime.attached.is(event)
-        );
-        if (!runCreated || !runtimeAttached) {
-          throw new Error("Cannot begin the next Workflow execution without its Run baseline.");
-        }
-        const baselineAt = new Date().toISOString();
-        const threadEvents = scope.agentRegistry.listAgents().map((agent, index) => {
-          const thread = agent.threadSnapshot;
-          if (!thread || thread.status !== "active") {
-            throw new Error(
-              `Cannot begin the next Workflow execution without active Agent ${agent.agentId}.`,
-            );
-          }
-          return {
-            id: `workflow-baseline-thread-${index + 1}-${baselineAt}`,
-            key: AgentEvents.thread.started,
-            payload: structuredClone(thread),
-            occurredAt: baselineAt,
-          };
-        });
-        return [
-          toScoutEvent(runCreated),
-          {
-            id: randomUUID(),
-            key: WorkflowEvents.workflow.initialized,
-              payload: { state: { ...this.graph.snapshot(), currentPhase: this.graph.snapshot().phases[0]!.name }, initializedAt: baselineAt },
-            occurredAt: baselineAt,
-          },
-          toScoutEvent(runtimeAttached),
-          ...threadEvents,
-          ...(coordinator instanceof CoordinatorAgent
-            ? coordinator.pendingFlowInputs().flatMap(({ event, delivery }) => [
-              event,
-              { id: randomUUID(), key: AgentEvents.message.queued, payload: delivery, occurredAt: delivery.queuedAt },
-            ])
-            : currentEvents.filter((event) => {
-              if (!SystemEvents.interaction.userMessageSubmitted.is(event)
-                && !AgentEvents.message.queued.is(event)) return false;
-              return projection.userMessages.some((message) => message.messageId === event.payload.messageId)
-                && projection.pendingMessages.some((message) => message.messageId === event.payload.messageId);
-            }).map(toScoutEvent)),
-        ];
-      };
 
       assertRuntimeSettled();
       for (const agent of scope.agentRegistry.listAgents()) {
         const task = agent.snapshot().activeTask;
         if (agent instanceof WorkerAgent && task) await agent.releaseTask(task.taskId);
       }
-      // Releases belong to the old Flow and must be persisted before completion.
+      // Releases belong to the old Workflow and must be persisted before completion.
       currentEvents = this.readEvents();
       projection = projectRun(currentEvents, resolveSynthesisRole(this.scheduler.snapshot()).name,
         readDomainJournalProjections(domains));
@@ -356,18 +235,25 @@ export class Workflow {
       if (projection.tasks.length > 0 || scope.taskStore.listTasks().length > 0) {
         throw new Error("Cannot begin the next Workflow execution: Task bindings remain after Worker release.");
       }
-      if (this.requireFlow().status === "settling") {
+      if (this.requireWorkflowState().status === "settling") {
         const completedAt = new Date().toISOString();
         const completion = { id: randomUUID(), key: WorkflowEvents.workflow.completed, payload: { completedAt }, occurredAt: completedAt };
         const persisted = this.scoutJournal.write(completion);
-        this.activeFlow = { ...this.requireFlow(), status: "completed", completedAt, checkpointSeq: persisted.seq };
+        this.activeWorkflowState = { ...this.requireWorkflowState(), status: "completed", completedAt, checkpointSeq: persisted.seq };
         this.eventBus!.publish(completion.key, completion.payload, completion);
       }
       const terminal = [...currentEvents].reverse().find((event) => WorkflowEvents.workflow.advanced.is(event));
       if (terminal && WorkflowEvents.workflow.advanced.is(terminal) && terminal.payload.outcome === "completed") {
-        this.requireBenchmarks().recordSuccess(this.requireFlow().flowId);
+        this.requireBenchmarks().recordSuccess(this.requireWorkflowState().workflowId);
       }
-      await this.beginNextFlow(buildRuntimeBaseline(), domains);
+      try {
+        for (const domain of domains) await domain.finishWorkflow?.();
+        this.scoutJournal.stop();
+      } catch (error) {
+        this.transitionFailure = new Error("Workflow completed but resource release failed; stop this runtime before continuing.", { cause: error });
+        throw this.transitionFailure;
+      }
+      this.activeWorkflowState = undefined;
     }).finally(() => {
       if (this.transition === transition) this.transition = undefined;
     });
@@ -381,7 +267,7 @@ export class Workflow {
 
   /** Commits the initial Graph fact before notifying runtime observers. */
   initializeGraph(): GraphState {
-    const flow = this.requireActiveFlow();
+    const workflowState = this.requireActiveWorkflow();
     if (!this.readEvents().some((event) => RunEvents.run.created.is(event))) {
       throw new Error("Cannot initialize Workflow without its persisted Run creation fact.");
     }
@@ -394,14 +280,14 @@ export class Workflow {
       occurredAt: initializedAt,
     };
     const persisted = this.scoutJournal.write(event);
-    this.activeFlow = { ...flow, checkpointSeq: persisted.seq };
+    this.activeWorkflowState = { ...workflowState, checkpointSeq: persisted.seq };
     this.eventBus!.publish(event.key, event.payload, event);
     return state;
   }
 
-  /** Coordinates durable Graph, Flow, and benchmark changes requested by Scheduler. */
+  /** Coordinates durable Graph, Workflow, and benchmark changes requested by Scheduler. */
   advanceGraph(outcome: WorkflowPhaseOutcome): SchedulerAdvanceResult {
-    const flow = this.requireActiveFlow();
+    const workflowState = this.requireActiveWorkflow();
     const advanced = this.graph.previewAdvance(outcome);
     const advancedAt = new Date().toISOString();
     const event = {
@@ -412,23 +298,64 @@ export class Workflow {
     };
     const persisted = this.scoutJournal.write(event);
     this.graph.advance(outcome);
-    this.activeFlow = advanced.cycleCompleted
-      ? { flowId: flow.flowId, status: "settling", checkpointSeq: persisted.seq }
-      : { ...flow, checkpointSeq: persisted.seq };
+    this.activeWorkflowState = advanced.cycleCompleted
+      ? { workflowId: workflowState.workflowId, status: "settling", checkpointSeq: persisted.seq }
+      : { ...workflowState, checkpointSeq: persisted.seq };
     this.eventBus!.publish(event.key, event.payload, event);
     return { state: advanced.state, cycleCompleted: advanced.cycleCompleted };
   }
 
-  flowSnapshot(): WorkflowFlowState {
-    return { ...structuredClone(this.requireFlow()), checkpointSeq: this.lastSeq };
+  snapshot(): WorkflowState | undefined {
+    return this.activeWorkflowState ? { ...structuredClone(this.activeWorkflowState), checkpointSeq: this.lastSeq } : undefined;
+  }
+
+  /** The orchestrator selects the active execution; core/path owns its evidence directory layout. */
+  agentPaths(agentId: string): { artifactRoot: string; logsRoot: string } {
+    this.requireWorkflowState();
+    if (!/^[A-Za-z0-9_-]+$/.test(agentId)) throw new Error("Invalid Workflow Agent identity " + agentId);
+    return workflowAgentPaths(workflowRootFromJournalRoot(this.journalRoot), agentId);
+  }
+
+  /** Explicitly opens a Workflow after the requesting Coordinator Turn and Step have ended. */
+  async startWorkflow(): Promise<void> {
+    this.assertAcceptingInput();
+    if (this.activeWorkflowState) throw new Error("A Workflow is already active.");
+    const scope = currentRunScope();
+    if (scope.stepStore.list().some((step) => step.status === AgentStepStatuses.Running)) {
+      throw new Error("Cannot open a Workflow during an active Agent Step.");
+    }
+    const transition = Promise.resolve().then(async () => {
+      const manifest = scope.manifestStore.read();
+      const at = new Date().toISOString();
+      const graph = this.graph.snapshot();
+      const baseline: ScoutEvent[] = [
+        { id: randomUUID(), key: RunEvents.run.created,
+          payload: { runId: manifest.runId, scoutRoot: scope.scoutRoot, createdAt: manifest.createdAt }, occurredAt: manifest.createdAt },
+        { id: randomUUID(), key: WorkflowEvents.workflow.initialized,
+          payload: { state: { ...graph, currentPhase: graph.phases[0]!.name }, initializedAt: at }, occurredAt: at },
+        ...scope.agentRegistry.listAgents().map((agent) => {
+          const thread = agent.threadSnapshot;
+          if (!thread || thread.status !== "active") throw new Error("Agent " + agent.agentId + " has no active Thread.");
+          return { id: randomUUID(), key: AgentEvents.thread.started, payload: thread, occurredAt: at };
+        }),
+        ...scope.agentRegistry.listAgents().flatMap((agent) => agent instanceof CoordinatorAgent
+          ? agent.pendingWorkflowInputs().flatMap(({ event, delivery }) => [
+            event,
+            { id: randomUUID(), key: AgentEvents.message.queued, payload: delivery, occurredAt: delivery.queuedAt },
+          ]) : []),
+      ];
+      await this.beginNextWorkflow(baseline, scope.domainRegistry.list());
+    }).finally(() => { if (this.transition === transition) this.transition = undefined; });
+    this.transition = transition;
+    await transition;
   }
 
   readEvents(): JournalEvent[] {
-    return this.scoutJournal.readAll();
+    return this.activeWorkflowState ? this.scoutJournal.readAll() : [];
   }
 
   get lastSeq(): number {
-    return this.scoutJournal.lastSeq;
+    return this.activeWorkflowState ? this.scoutJournal.lastSeq : 0;
   }
 
   get journalRoot(): string {
@@ -440,28 +367,18 @@ export class Workflow {
   }
 
   get journalFailed(): boolean {
-    return this.scoutJournal.failed;
+    return this.activeWorkflowState ? this.scoutJournal.failed : false;
   }
 
-  private async beginNextFlow(
+  private async beginNextWorkflow(
     baseline: readonly ScoutEvent[],
     domains: readonly ScoutDomain[],
   ): Promise<void> {
-    const previousEvents = this.readEvents();
-    const latestWorkflowEvent = [...previousEvents].reverse().find((event) =>
-      WorkflowEvents.workflow.initialized.is(event)
-      || WorkflowEvents.workflow.advanced.is(event)
-    );
-    if (
-      !latestWorkflowEvent
-      || !WorkflowEvents.workflow.advanced.is(latestWorkflowEvent)
-      || !latestWorkflowEvent.payload.cycleCompleted
-    ) throw new Error("Completed Workflow Flow has no persisted terminal Graph fact.");
 
     const scope = currentRunScope();
     const prepared = this.requireBenchmarks().prepareNext();
     let nextJournal: ReturnType<ScoutJournal["prepare"]> | undefined;
-    const domainChanges: ScoutDomainFlowChange[] = [];
+    const domainChanges: ScoutDomainWorkflowChange[] = [];
     let committed = false;
     const releasePreviousResources = (): void => {
       const failures: unknown[] = [];
@@ -470,10 +387,10 @@ export class Workflow {
       }
       try { this.scoutJournal.releasePrevious(); } catch (error) { failures.push(error); }
       if (failures.length > 0) {
-        throw new AggregateError(failures, "Failed to release previous Flow resources.");
+        throw new AggregateError(failures, "Failed to release previous Workflow resources.");
       }
     };
-    const abortPreparedFlow = (error: unknown): never => {
+    const abortPreparedWorkflow = (error: unknown): never => {
       const failures: unknown[] = [];
       for (const change of [...domainChanges].reverse()) {
         try { change.abort(); } catch (failure) { failures.push(failure); }
@@ -484,7 +401,7 @@ export class Workflow {
       if (this.scoutJournal.hasPreparedJournals || failures.length > 0) {
         this.transitionFailure = new AggregateError(
           [error, ...failures],
-          "Failed to release prepared Flow resources; its directory is retained and further transitions are blocked.",
+          "Failed to release prepared Workflow resources; its directory is retained and further transitions are blocked.",
         );
         throw this.transitionFailure;
       }
@@ -493,23 +410,29 @@ export class Workflow {
     };
 
     try {
+      for (const role of this.graph.snapshot().roles) {
+        const { artifactRoot, logsRoot } = workflowAgentPaths(prepared.workflowRoot, role.name);
+        mkdirSync(artifactRoot, { recursive: true });
+        mkdirSync(logsRoot, { recursive: true });
+      }
       nextJournal = this.scoutJournal.prepare(prepared.journalRoot, baseline);
-      const flow = {
-        flowId: prepared.flowId,
+      const workflowState = {
+        workflowId: prepared.workflowId,
         status: "active" as const,
         checkpointSeq: nextJournal.checkpointSeq,
       };
       for (const domain of domains) {
-        if (domain.prepareFlow) {
-          domainChanges.push(await domain.prepareFlow(flow, prepared.journalRoot));
+        if (domain.prepareWorkflow) {
+          domainChanges.push(await domain.prepareWorkflow(workflowState, prepared.journalRoot));
         }
       }
-      this.requireBenchmarks().recordStarted(prepared.flowId);
+      this.requireBenchmarks().recordStarted(prepared.workflowId);
       committed = true;
       // All remaining switches are synchronous, in-memory commits; no close IO here.
       this.scoutJournal.activate(nextJournal);
-      this.activeFlow = flow;
-      this.graph.beginFlow();
+      this.activeWorkflowState = workflowState;
+      this.scoutJournal.start();
+      this.graph.beginWorkflow();
       for (const change of domainChanges) change.commit();
       nextJournal = undefined;
       scope.stepStore.restore([]);
@@ -519,26 +442,26 @@ export class Workflow {
     } catch (error) {
       if (committed) {
         this.transitionFailure = new Error(
-          "Workflow Flow was committed but finalization failed; stop this runtime before continuing.",
+          "Workflow was committed but finalization failed; stop this runtime before continuing.",
           { cause: error },
         );
         throw this.transitionFailure;
       }
-      abortPreparedFlow(error);
+      abortPreparedWorkflow(error);
     }
   }
 
-  private requireActiveFlow(): WorkflowFlowState {
+  private requireActiveWorkflow(): WorkflowState {
     if (!this.started || this.stopping) throw new Error("Workflow is not accepting Graph changes.");
     if (this.transitionFailure) throw this.transitionFailure;
-    if (this.transition) throw new Error("Cannot advance Workflow while its Flow is transitioning.");
-    const flow = this.requireFlow();
-    if (flow.status !== "active") throw new Error("Cannot advance a completed Workflow Flow.");
-    return flow;
+    if (this.transition) throw new Error("Cannot advance Workflow while its Workflow is transitioning.");
+    const workflowState = this.requireWorkflowState();
+    if (workflowState.status !== "active") throw new Error("Cannot advance a completed Workflow.");
+    return workflowState;
   }
 
-  /** User input is handed to the next Flow; existing runtime work must finish here. */
-  private assertFlowSettled(projection: ReturnType<typeof projectRun>, userInputs: ReadonlySet<string>): void {
+  /** User input is handed to the next Workflow; existing runtime work must finish here. */
+  private assertWorkflowSettled(projection: ReturnType<typeof projectRun>, userInputs: ReadonlySet<string>): void {
     const pendingWork = projection.pendingMessages.filter((message) => !userInputs.has(message.messageId));
     const coordinatorRole = resolveSynthesisRole(this.graph.snapshot()).name;
     const coordinator = projection.threads.find((thread) => thread.role === coordinatorRole)?.agentId ?? coordinatorRole;
@@ -554,22 +477,13 @@ export class Workflow {
     if (reasons.length) throw new Error(`Cannot begin the next Workflow execution: ${reasons.join(", ")}.`);
   }
 
-  private requireFlow(): WorkflowFlowState {
-    if (!this.activeFlow) throw new Error("Workflow Flow is unavailable.");
-    return this.activeFlow;
+  private requireWorkflowState(): WorkflowState {
+    if (!this.activeWorkflowState) throw new Error("Workflow is unavailable.");
+    return this.activeWorkflowState;
   }
 
   private requireBenchmarks(): WorkflowBenchmarks {
     if (!this.benchmarks) throw new Error("Workflow Benchmarks are unavailable.");
     return this.benchmarks;
   }
-}
-
-function toScoutEvent(event: JournalEvent): ScoutEvent {
-  return {
-    id: event.id,
-    key: event.key,
-    payload: structuredClone(event.payload),
-    occurredAt: event.occurredAt,
-  };
 }

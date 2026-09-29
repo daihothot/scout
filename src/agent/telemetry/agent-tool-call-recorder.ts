@@ -3,8 +3,10 @@ import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
 import type { AgentToolCallState, AgentToolCallStatus } from "../tool-call/types.js";
+import { agentTelemetryLogsRoot } from "../../core/path.js";
 
 interface ToolCallLogSummary extends AgentToolCallState {
+  logsRoot: string;
   firstObservedAt: string;
   lastObservedAt: string;
   observationCount: number;
@@ -55,6 +57,7 @@ export class AgentToolCallRecorder {
       }
       : {
         ...call,
+        logsRoot: agentTelemetryLogsRoot(call.agentId),
         firstObservedAt: call.observedAt,
         lastObservedAt: call.observedAt,
         observationCount: 1,
@@ -68,22 +71,22 @@ export class AgentToolCallRecorder {
 
   private writeSummary(summary: ToolCallLogSummary): void {
     const scope = currentRunScope();
-    let logger = this.loggers.get(summary.agentId);
+    let logger = this.loggers.get(summary.logsRoot);
     if (!logger) {
-      const agent = scope.agentRegistry.resolveAgent(summary.agentId);
       logger = new Logger({
         runId: scope.runId,
-        logsRoot: agent.mount.logsRoot,
+        logsRoot: summary.logsRoot,
         fileName: "tool-calls.log",
       });
-      this.loggers.set(summary.agentId, logger);
+      this.loggers.set(summary.logsRoot, logger);
     }
+    const { logsRoot: _logsRoot, ...data } = summary;
     logger.info({
       module: "agent.tool_call",
       event: "agent.tool_call.summary",
       agentId: summary.agentId,
       taskId: summary.taskId,
-      data: summary,
+      data,
     });
     this.recordedCallIds.add(summary.toolCallId);
   }

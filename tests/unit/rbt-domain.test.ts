@@ -154,7 +154,7 @@ test("RBT restores every missing history after Agent state restoration and does 
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, history, { occurredAt });
   }
   const beforeRestore = domain.journal.readAll();
-  await domain.restore(scope.workflow.flowSnapshot());
+  await domain.restore(scope.workflow.snapshot()!);
   assert.deepEqual(scope.agentRegistry.listAgents(), []);
 
   const deliveries: SendAgentMessageInput[] = [];
@@ -180,8 +180,8 @@ test("RBT restores every missing history after Agent state restoration and does 
   messagesRestored = true;
   await scope.eventBus.publishAndWait(RunEvents.runtime.ready, { mode: "resume", readyAt: occurredAt });
   assert.deepEqual(deliveries.map((delivery) => delivery.delivery), [
-    { messageId: `${scope.runId}-rbt-history-executor-1`, queuedAt: occurredAt },
-    { messageId: `${scope.runId}-rbt-history-executor-2`, queuedAt: occurredAt },
+    { messageId: `${scope.runId}-workflow-001-rbt-history-executor-1`, queuedAt: occurredAt },
+    { messageId: `${scope.runId}-workflow-001-rbt-history-executor-2`, queuedAt: occurredAt },
   ]);
   assert.ok(deliveries.every((delivery) => delivery.deliveryMode === "queued"));
   assert.match(deliveries[0]!.message, /campaign_id: campaign-1/);
@@ -190,7 +190,7 @@ test("RBT restores every missing history after Agent state restoration and does 
   assert.equal(scope.workflow.readEvents().filter((event) => AgentEvents.message.queued.is(event)).length, 2);
   assert.equal(scope.workflow.readEvents().some((event) => RbtEvents.history.ready.is(event)), false);
 
-  await domain.restore(scope.workflow.flowSnapshot());
+  await domain.restore(scope.workflow.snapshot()!);
   await scope.eventBus.publishAndWait(RunEvents.runtime.ready, { mode: "resume", readyAt: occurredAt });
   assert.equal(deliveries.length, 2);
   await scope.eventBus.publishAndWait(RunEvents.runtime.ready, { mode: "resume", readyAt: occurredAt });
@@ -201,7 +201,7 @@ test("RBT restores every missing history after Agent state restoration and does 
     ...readyHistories[0]!, runtimeSequence: 3,
   }, { occurredAt: liveAt });
   assert.deepEqual(deliveries[2]!.delivery, {
-    messageId: `${scope.runId}-rbt-history-executor-3`,
+    messageId: `${scope.runId}-workflow-001-rbt-history-executor-3`,
     queuedAt: liveAt,
   });
 });
@@ -229,24 +229,24 @@ test("RBT recovery skips persisted queued and consumed delivery identities", asy
   }
   await scope.eventBus.publishAndWait(AgentEvents.message.queued, {
     agentId: "coordinator-runtime",
-    messageId: `${scope.runId}-rbt-history-executor-1`,
+    messageId: `${scope.runId}-workflow-001-rbt-history-executor-1`,
     body: "already accepted",
     queuedAt: "2026-09-27T00:00:02.000Z",
   });
   await scope.eventBus.publishAndWait(AgentEvents.message.consumed, {
     agentId: "coordinator-runtime",
-    messageId: `${scope.runId}-rbt-history-executor-2`,
+    messageId: `${scope.runId}-workflow-001-rbt-history-executor-2`,
     stepId: "coordinator-step-1",
     consumedAt: "2026-09-27T00:00:03.000Z",
   });
   await scope.eventBus.publishAndWait(AgentEvents.message.queued, {
     agentId: "another-agent",
-    messageId: `${scope.runId}-rbt-history-executor-3`,
+    messageId: `${scope.runId}-workflow-001-rbt-history-executor-3`,
     body: "not accepted by the Coordinator",
     queuedAt: "2026-09-27T00:00:04.000Z",
   });
   const deliveries: SendAgentMessageInput[] = [];
-  await domain.restore(scope.workflow.flowSnapshot());
+  await domain.restore(scope.workflow.snapshot()!);
   scope.agentRegistry.registerAgent({
     agentId: "coordinator-runtime",
     role: "coordinator",
@@ -257,8 +257,66 @@ test("RBT recovery skips persisted queued and consumed delivery identities", asy
   } as unknown as ScoutAgent);
   await scope.eventBus.publishAndWait(RunEvents.runtime.ready, { mode: "resume", readyAt: occurredAt });
   assert.deepEqual(deliveries.map((delivery) => delivery.delivery?.messageId), [
-    `${scope.runId}-rbt-history-executor-3`,
+    `${scope.runId}-workflow-001-rbt-history-executor-3`,
   ]);
+});
+
+test("RBT history delivery separates identical sequence numbers across Workflows for the same Coordinator", async (t) => {
+  const domain = new RbtDomain();
+  const scope = installTestRunScope(t, { runId: "rbt-cross-workflow-history", scoutRoot: process.cwd(), domain });
+  await domain.start();
+  const accepted = new Map<string, SendAgentMessageInput>();
+  const coordinator = {
+    agentId: "coordinator", role: "coordinator",
+    threadSnapshot: {
+      agentId: "coordinator", role: "coordinator", phases: ["Synthesis"], contextBundleId: "shared-context",
+      threadId: "same-coordinator-thread", createdAt: new Date().toISOString(), status: "active",
+      startInput: { cwd: scope.runRoot, ephemeral: false, permissions: "scout-coordinator", approvalPolicy: "never" },
+      startResponse: {},
+    },
+    snapshot: () => ({ agentId: "coordinator", pendingMessageCount: 0 }),
+    async sendMessage(input: SendAgentMessageInput) {
+      assert.ok(input.delivery);
+      const existing = accepted.get(input.delivery.messageId);
+      if (existing) {
+        assert.deepEqual(input, existing, "a repeated delivery identity must retain its original body");
+        return Result.ok(undefined);
+      }
+      accepted.set(input.delivery.messageId, input);
+      await scope.eventBus.publishAndWait(AgentEvents.message.queued, {
+        agentId: "coordinator", messageId: input.delivery.messageId, body: input.message,
+        queuedAt: input.delivery.queuedAt, deliveryMode: input.deliveryMode,
+      });
+      await scope.eventBus.publishAndWait(AgentEvents.message.consumed, {
+        agentId: "coordinator", messageId: input.delivery.messageId, stepId: "consumed-" + accepted.size,
+        consumedAt: input.delivery.queuedAt,
+      });
+      return Result.ok(undefined);
+    },
+  } as unknown as ScoutAgent;
+  scope.agentRegistry.registerAgent(coordinator);
+  for (const workflowId of ["workflow-001", "workflow-002"]) {
+    assert.equal(scope.workflow.snapshot()?.workflowId, workflowId);
+    await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
+      executorHistoryRef: `scout-artifact://${workflowId}/executor/history/001.json`,
+      executeFileRef: `scout-artifact://${workflowId}/executor/execute-file.json`,
+      runtimeSequence: 1, campaignId: "same-campaign", scenarioId: "same-scenario",
+      status: "completed", agentId: "executor", role: "executor",
+    });
+    await domain.restore(scope.workflow.snapshot()!);
+    await scope.eventBus.publishAndWait(RunEvents.runtime.ready, { mode: "resume", readyAt: new Date().toISOString() });
+    assert.equal(accepted.size, workflowId === "workflow-001" ? 1 : 2, "restore must not redeliver accepted history");
+    if (workflowId === "workflow-001") {
+      scope.workflow.scheduler.advance("error");
+      await scope.workflow.settleWorkflow();
+      await scope.workflow.startWorkflow();
+    }
+  }
+  assert.deepEqual([...accepted.keys()], [
+    `${scope.runId}-workflow-001-rbt-history-executor-1`,
+    `${scope.runId}-workflow-002-rbt-history-executor-1`,
+  ]);
+  assert.match([...accepted.values()][1]!.message, /scout-artifact:\/\/workflow-002\/executor\/history\/001.json/);
 });
 
 test("RBT repeated restore replaces the previous pending history subscription", async (t) => {
@@ -280,9 +338,9 @@ test("RBT repeated restore replaces the previous pending history subscription", 
     role: "executor",
   };
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history);
-  await domain.restore(scope.workflow.flowSnapshot());
+  await domain.restore(scope.workflow.snapshot()!);
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, { ...history, runtimeSequence: 2 });
-  await domain.restore(scope.workflow.flowSnapshot());
+  await domain.restore(scope.workflow.snapshot()!);
   const deliveries: SendAgentMessageInput[] = [];
   scope.agentRegistry.registerAgent({
     agentId: "coordinator",
@@ -296,13 +354,13 @@ test("RBT repeated restore replaces the previous pending history subscription", 
     mode: "resume", readyAt: new Date().toISOString(),
   });
   assert.deepEqual(deliveries.map((delivery) => delivery.delivery?.messageId), [
-    `${scope.runId}-rbt-history-executor-1`,
-    `${scope.runId}-rbt-history-executor-2`,
+    `${scope.runId}-workflow-001-rbt-history-executor-1`,
+    `${scope.runId}-workflow-001-rbt-history-executor-2`,
   ]);
 });
 
-test("RBT cancels restored history delivery on stop, completed restore, and Flow commit", async (t) => {
-  for (const boundary of ["stop", "completed_restore", "flow_commit"] as const) {
+test("RBT cancels restored history delivery on stop, completed restore, and Workflow commit", async (t) => {
+  for (const boundary of ["stop", "completed_restore", "workflow_commit"] as const) {
     await t.test(boundary, async (context) => {
       const domain = new RbtDomain();
       const scope = installTestRunScope(context, {
@@ -321,7 +379,7 @@ test("RBT cancels restored history delivery on stop, completed restore, and Flow
         agentId: "executor",
         role: "executor",
       });
-      await domain.restore(scope.workflow.flowSnapshot());
+      await domain.restore(scope.workflow.snapshot()!);
       const deliveries: SendAgentMessageInput[] = [];
       scope.agentRegistry.registerAgent({
         agentId: "coordinator",
@@ -334,11 +392,11 @@ test("RBT cancels restored history delivery on stop, completed restore, and Flow
       if (boundary === "stop") {
         await domain.stop();
       } else if (boundary === "completed_restore") {
-        await domain.restore({ ...scope.workflow.flowSnapshot(), status: "completed" });
+        await domain.restore({ ...scope.workflow.snapshot()!, status: "completed" });
       } else {
-        const change = domain.prepareFlow(
-          { flowId: "journal-0002", status: "active", checkpointSeq: 0 },
-          join(scope.runRoot, "next-flow"),
+        const change = domain.prepareWorkflow(
+          { workflowId: "workflow-002", status: "active", checkpointSeq: 0 },
+          join(scope.runRoot, "next-workflow"),
         );
         change.commit();
         change.releasePrevious();
@@ -371,7 +429,7 @@ test("RBT stops an in-flight history replay before delivering the next history",
       role: "executor",
     });
   }
-  await domain.restore(scope.workflow.flowSnapshot());
+  await domain.restore(scope.workflow.snapshot()!);
   let started!: () => void;
   const deliveryStarted = new Promise<void>((resolve) => { started = resolve; });
   let release!: () => void;
@@ -415,7 +473,7 @@ test("RBT restored history delivery failures reject runtime ready and can be ret
     agentId: "executor",
     role: "executor",
   });
-  await domain.restore(scope.workflow.flowSnapshot());
+  await domain.restore(scope.workflow.snapshot()!);
   await assert.rejects(scope.eventBus.publishAndWait(RunEvents.runtime.ready, {
     mode: "resume", readyAt: new Date().toISOString(),
   }), /without the Coordinator agent/);
@@ -430,11 +488,11 @@ test("RBT restored history delivery failures reject runtime ready and can be ret
       return fail ? Result.err("restored history enqueue failed") : Result.ok(undefined);
     },
   } as unknown as ScoutAgent);
-  await domain.restore(scope.workflow.flowSnapshot());
+  await domain.restore(scope.workflow.snapshot()!);
   await assert.rejects(scope.eventBus.publishAndWait(RunEvents.runtime.ready, {
     mode: "resume", readyAt: new Date().toISOString(),
   }), /restored history enqueue failed/);
-  await domain.restore(scope.workflow.flowSnapshot());
+  await domain.restore(scope.workflow.snapshot()!);
   fail = false;
   await scope.eventBus.publishAndWait(RunEvents.runtime.ready, {
     mode: "resume", readyAt: new Date().toISOString(),
@@ -819,8 +877,8 @@ test("RBT Reviewer shuts down the restored session using only operation, even wh
     { occurredAt: "2026-09-24T00:00:00.000Z" },
   ));
   await domain.start();
-  baseDomain(scope).restore(scope.workflow.flowSnapshot());
-  await domain.restore(scope.workflow.flowSnapshot());
+  baseDomain(scope).restore(scope.workflow.snapshot()!);
+  await domain.restore(scope.workflow.snapshot()!);
   t.after(async () => {
     await domain.stop();
     baseDomain(scope).close();
@@ -1191,8 +1249,8 @@ test("RBT Android Review reconnects a restored launched target without identify 
     { occurredAt: "2026-09-24T00:00:00.000Z" },
   ));
   await domain.start();
-  baseDomain(scope).restore(scope.workflow.flowSnapshot());
-  await domain.restore(scope.workflow.flowSnapshot());
+  baseDomain(scope).restore(scope.workflow.snapshot()!);
+  await domain.restore(scope.workflow.snapshot()!);
   t.after(async () => {
     await domain.stop();
     baseDomain(scope).close();
@@ -1212,7 +1270,7 @@ test("RBT Android Review reconnects a restored launched target without identify 
   assert.equal(result?.success, true);
   assert.deepEqual(operations, []);
   assert.deepEqual(links, ["prepare", "connect"]);
-  await domain.restore(scope.workflow.flowSnapshot());
+  await domain.restore(scope.workflow.snapshot()!);
   const reconnected = await domain.backend.handleDynamicToolCall(dynamicCall({
     callId: "call-restored-review-again", namespace: "rbt_behavior", tool: "JarvisBehavior",
     arguments: { command: "behavior.campaign.query", payload: { campaignId: "campaign", scenarioId: "scenario", includeEvidence: true } },
@@ -1327,8 +1385,8 @@ test("RBT Review link failure does not stop the shared Domain target", async (t)
     { occurredAt: "2026-09-24T00:00:00.000Z" },
   ));
   await domain.start();
-  baseDomain(scope).restore(scope.workflow.flowSnapshot());
-  await domain.restore(scope.workflow.flowSnapshot());
+  baseDomain(scope).restore(scope.workflow.snapshot()!);
+  await domain.restore(scope.workflow.snapshot()!);
   t.after(async () => {
     await domain.stop();
     baseDomain(scope).close();
@@ -1867,7 +1925,7 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
     }>;
   };
   assert.equal(history.executeFileRef,
-    "account-anon-restore-existing-account/26.7.0-rc.2/execute-file.json");
+    "scout-artifact://workflow-001/executor/account-anon-restore-existing-account/26.7.0-rc.2/execute-file.json");
   assert.equal(history.runtimeSequence, 1);
   assert.equal(history.campaignId, "account.restore.success/campaign/main");
   assert.equal(history.scenarioId, "account.restore.success");
@@ -1904,8 +1962,8 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
     CoordinatorContextTags.Observation,
   )[0]?.body ?? "";
   assert.match(historyObservation, /### RBT Execution History Ready/);
-  assert.match(historyObservation, /executor_history_ref: agents\/executor\/artifacts\/history\/001\.json/);
-  assert.match(historyObservation, /execute_file_ref: account-anon-restore-existing-account\/26\.7\.0-rc\.2\/execute-file\.json/);
+  assert.match(historyObservation, /executor_history_ref: scout-artifact:\/\/workflow-001\/executor\/history\/001\.json/);
+  assert.match(historyObservation, /execute_file_ref: scout-artifact:\/\/workflow-001\/executor\/account-anon-restore-existing-account\/26\.7\.0-rc\.2\/execute-file\.json/);
   assert.match(historyObservation, /campaign_id: account\.restore\.success\/campaign\/main/);
   assert.match(historyObservation, /scenario_id: account\.restore\.success/);
   assert.match(historyObservation, /status: completed/);
@@ -2471,8 +2529,8 @@ function roleRoots(runRoot: string, role: string): {
   logsRoot: string;
 } {
   return {
-    artifactRoot: join(runRoot, "agents", role, "artifacts"),
-    logsRoot: join(runRoot, "agents", role, "logs"),
+    artifactRoot: join(runRoot, "workflows", "workflow-001", "agents", role, "artifacts"),
+    logsRoot: join(runRoot, "workflows", "workflow-001", "agents", role, "logs"),
   };
 }
 

@@ -20,6 +20,7 @@ export const AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE = "scout_agent_respondhuma
 export const AGENT_SUBMIT_TASK_TOOL_NAMESPACE = "scout_agent_submittask";
 /** Namespace for Coordinator-owned Workflow Phase outcomes. */
 export const AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE = "scout_agent_submitphaseoutcome";
+export const AGENT_START_WORKFLOW_TOOL_NAMESPACE = "scout_agent_startworkflow";
 
 /** Maps protocol tool names to their required app-server namespace. */
 export const AGENT_TOOL_NAMESPACE_BY_NAME: Readonly<Record<string, string>> = {
@@ -29,6 +30,7 @@ export const AGENT_TOOL_NAMESPACE_BY_NAME: Readonly<Record<string, string>> = {
   RespondHumanInput: AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE,
   SubmitTask: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
   SubmitPhaseOutcome: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
+  StartWorkflow: AGENT_START_WORKFLOW_TOOL_NAMESPACE,
 };
 
 /** Set used to reject non-Scout namespaces at the app-server boundary. */
@@ -85,14 +87,32 @@ export interface SubmitPhaseOutcomeToolCall {
   outcome: WorkflowPhaseOutcome;
 }
 
+/** Confirmed user intent carried into the next Workflow, without runtime path choices. */
+export interface StartWorkflowToolCall {
+  tool: "StartWorkflow";
+  prompt: string;
+}
+
 /** Discriminated union accepted by the dynamic-tool dispatcher. */
 export type AgentDynamicToolCall =
+  | StartWorkflowToolCall
   | AssignTaskToolCall
   | SendMessageToolCall
   | RequestHumanInputToolCall
   | RespondHumanInputToolCall
   | SubmitTaskToolCall
   | SubmitPhaseOutcomeToolCall;
+
+/** Builds the Coordinator-only tool for explicit Workflow execution intent. */
+export function buildStartWorkflowDynamicTool(): AgentDynamicToolSpec {
+  return {
+    guidanceSkill: "tool-scout-start-workflow",
+    namespace: AGENT_START_WORKFLOW_TOOL_NAMESPACE,
+    name: "StartWorkflow",
+    description: "Coordinator 根据用户明确的新执行需求请求开启 Workflow；接受后立即结束当前 Turn。",
+    inputSchema: objectSchema({ prompt: { type: "string", description: "用户已确认的新执行目标与必要上下文；不是历史查看或一般讨论。" } }, ["prompt"]),
+  };
+}
 
 /** Builds the schema for assigning work to an existing worker agent. */
 export function buildAssignTaskDynamicTool(): AgentDynamicToolSpec {
@@ -216,6 +236,10 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
   const input = args as Record<string, unknown>;
 
   switch (tool) {
+    case "StartWorkflow": {
+      if (typeof input.prompt !== "string" || !input.prompt.trim()) throw new Error("StartWorkflow requires a non-empty prompt.");
+      return { tool, prompt: input.prompt };
+    }
     case "AssignTask": {
       const description = input.description;
       if (typeof description !== "string" || description.trim().length === 0) {

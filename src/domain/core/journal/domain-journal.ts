@@ -9,7 +9,7 @@ import {
 } from "../../../core/journal/index.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 import type {
-  ScoutDomainFlowChange,
+  ScoutDomainWorkflowChange,
   ScoutDomainId,
   ScoutDomainJournalEvent,
   ScoutDomainJournalFact,
@@ -18,7 +18,7 @@ import type {
 } from "../../types.js";
 
 /**
- * Owns one Domain's journal resources, event writer, and prepared Flow changes.
+ * Owns one Domain's journal resources, event writer, and prepared Workflow changes.
  * Concrete journals retain their event contracts and domain-specific projections.
  */
 export abstract class DomainJournal<
@@ -46,6 +46,7 @@ export abstract class DomainJournal<
     if (this.writer) return;
     const scope = currentRunScope();
     if (!this.activeJournal) {
+      if (!scope.workflow.snapshot()) return;
       const location = this.location(scope.workflow.journalRoot);
       this.activeJournal = existsSync(location.path) ? Journal.open(location) : Journal.create(location);
     }
@@ -82,20 +83,21 @@ export abstract class DomainJournal<
   }
 
   readAll(): JournalEvent[] {
+    if (!this.activeJournal && !currentRunScope().workflow.snapshot()) return [];
     return this.requireJournal().readAll();
   }
 
-  prepareFlow(journalRoot: string): ScoutDomainFlowChange {
+  prepareWorkflow(journalRoot: string): ScoutDomainWorkflowChange {
     if (this.failedClosures.size > 0) {
       throw new AggregateError(
         this.failedClosures.values(),
-        `Cannot prepare ${this.identity.name} Flow after journal cleanup failed.`,
+        `Cannot prepare ${this.identity.name} Workflow after journal cleanup failed.`,
       );
     }
     if (this.preparedJournals.size > 0) {
-      throw new Error(`${this.identity.name} already has a prepared Flow journal.`);
+      throw new Error(`${this.identity.name} already has a prepared Workflow journal.`);
     }
-    const previousJournal = this.requireJournal();
+    const previousJournal = this.activeJournal;
     const nextJournal = Journal.create(this.location(journalRoot));
     this.preparedJournals.add(nextJournal);
     let committed = false;
@@ -106,22 +108,23 @@ export abstract class DomainJournal<
           !this.preparedJournals.has(nextJournal)
           || this.activeJournal !== previousJournal
         ) {
-          throw new Error(`Cannot commit an inactive ${this.identity.name} Flow preparation.`);
+          throw new Error(`Cannot commit an inactive ${this.identity.name} Workflow preparation.`);
         }
         this.preparedJournals.delete(nextJournal);
-        this.previousJournals.add(previousJournal);
+        if (previousJournal) this.previousJournals.add(previousJournal);
         this.activeJournal = nextJournal;
+        this.start();
         committed = true;
       },
       abort: () => {
-        if (committed) throw new Error(`Cannot abort a committed ${this.identity.name} Flow.`);
+        if (committed) throw new Error(`Cannot abort a committed ${this.identity.name} Workflow.`);
         if (!this.preparedJournals.has(nextJournal)) return;
         this.releaseJournal(nextJournal);
         this.preparedJournals.delete(nextJournal);
       },
       releasePrevious: () => {
-        if (!committed) throw new Error(`Cannot release the current ${this.identity.name} Flow.`);
-        if (!this.previousJournals.has(previousJournal)) return;
+        if (!committed) throw new Error(`Cannot release the current ${this.identity.name} Workflow.`);
+        if (!previousJournal || !this.previousJournals.has(previousJournal)) return;
         this.releaseJournal(previousJournal);
         this.previousJournals.delete(previousJournal);
       },

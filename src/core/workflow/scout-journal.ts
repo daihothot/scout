@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { scoutJournalPaths } from "../path.js";
 import { AgentEvents } from "../../agent/events/index.js";
 import { RunEvents } from "../../run/events/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
@@ -51,7 +51,7 @@ interface PreparedScoutJournal {
   readonly checkpointSeq: number;
 }
 
-/** Owns the active Flow's scout.journal and its shared event writer. */
+/** Owns the active Workflow's scout.journal and its shared event writer. */
 export class ScoutJournal {
   private active?: Journal;
   private activeRoot?: string;
@@ -159,6 +159,7 @@ export class ScoutJournal {
   }
 
   prepare(journalRoot: string, baseline: readonly ScoutEvent[]): PreparedScoutJournal {
+    this.runId = currentRunScope().runId;
     const journal = Journal.create(this.location(journalRoot));
     this.prepared.add(journal);
     try {
@@ -189,14 +190,14 @@ export class ScoutJournal {
     if (this.closeFailures.has(prepared.journal)) {
       throw this.closeFailures.get(prepared.journal);
     }
-    const previous = this.requireActive();
+    const previous = this.active;
     this.prepared.delete(prepared.journal);
     this.active = prepared.journal;
     this.activeRoot = prepared.journalRoot;
-    this.previous.add(previous);
+    if (previous) this.previous.add(previous);
   }
 
-  /** Releases retired journals only after the Flow switch has committed. */
+  /** Releases retired journals only after the Workflow switch has committed. */
   releasePrevious(): void {
     const failures: unknown[] = [];
     for (const journal of this.previous) {
@@ -276,8 +277,7 @@ export class ScoutJournal {
     if (!this.runId) throw new Error("Workflow scout.journal Run is unavailable.");
     return {
       journalId: `${this.runId}:workflow:scout`,
-      path: join(journalRoot, "scout.journal"),
-      lockPath: join(journalRoot, ".scout.lock"),
+      ...scoutJournalPaths(journalRoot),
     };
   }
 }

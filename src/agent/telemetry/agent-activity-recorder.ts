@@ -8,6 +8,7 @@ import type {
   AgentTurnActivity,
 } from "../activity/activity-event.js";
 import { AgentEvents } from "../events/index.js";
+import { agentTelemetryLogsRoot } from "../../core/path.js";
 
 /** Records app-server activity projections into per-agent run logs. */
 export class AgentActivityRecorder {
@@ -65,16 +66,16 @@ export class AgentActivityRecorder {
   }
 
   private loggerFor(agentId: string): Logger {
-    const existing = this.activityLoggers.get(agentId);
-    if (existing) return existing;
     const scope = currentRunScope();
-    const agent = scope.agentRegistry.resolveAgent(agentId);
+    const logsRoot = agentTelemetryLogsRoot(agentId);
+    const existing = this.activityLoggers.get(logsRoot);
+    if (existing) return existing;
     const logger = new Logger({
       runId: scope.runId,
-      logsRoot: agent.mount.logsRoot,
+      logsRoot,
       fileName: "activity.log",
     });
-    this.activityLoggers.set(agentId, logger);
+    this.activityLoggers.set(logsRoot, logger);
     return logger;
   }
 }

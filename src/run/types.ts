@@ -49,7 +49,7 @@ export interface ScoutRunSummary {
   agents: Record<ScoutAgentRole, {
     mountId: string;
     mountRoot: string;
-    artifactRoot: string;
+    agentRoot: string;
     assetCommitId: string;
     assetCommitPath: string;
     preflightStatus: "passed" | "failed";

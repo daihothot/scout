@@ -62,8 +62,8 @@ test("RbtJournal owns event subscription, history projection, and lock release",
   assert.throws(() => journal.readAll(), /RBT Domain journal is unavailable/);
 });
 
-test("RbtJournal switches Flow files without retaining the previous writer target", async (t) => {
-  const scope = installTestRunScope(t, { runId: "rbt-journal-flow-boundary" });
+test("RbtJournal switches Workflow files without retaining the previous writer target", async (t) => {
+  const scope = installTestRunScope(t, { runId: "rbt-journal-workflow-boundary" });
   const journal = new RbtJournal();
   t.after(() => journal.close());
   journal.start();
@@ -72,12 +72,12 @@ test("RbtJournal switches Flow files without retaining the previous writer targe
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(1));
   const firstContents = readFileSync(firstPath, "utf8");
 
-  assert.throws(() => journal.prepareFlow(firstRoot), /Journal already exists/);
+  assert.throws(() => journal.prepareWorkflow(firstRoot), /Journal already exists/);
   assert.equal(journal.readAll().length, 1);
   assert.equal(existsSync(join(firstRoot, ".rbt-events.lock")), true);
 
-  const nextRoot = join(scope.runRoot, "next-flow");
-  const change = journal.prepareFlow(nextRoot);
+  const nextRoot = join(scope.runRoot, "next-workflow");
+  const change = journal.prepareWorkflow(nextRoot);
   assert.equal(journal.readAll().length, 1);
   assert.equal(existsSync(join(firstRoot, ".rbt-events.lock")), true);
   assert.equal(existsSync(join(nextRoot, ".rbt-events.lock")), true);
@@ -109,7 +109,7 @@ test("RbtJournal resume preserves existing events and creates a missing journal"
       });
       const initialWorkflow = scope.workflow;
       const journalRoot = initialWorkflow.journalRoot;
-      const flow = initialWorkflow.flowSnapshot();
+      const workflowState = initialWorkflow.snapshot()!;
       if (existing) {
         const initialJournal = new RbtJournal();
         context.after(() => initialJournal.close());
@@ -119,7 +119,7 @@ test("RbtJournal resume preserves existing events and creates a missing journal"
       }
       const resumedWorkflow = new Workflow({
         graphState: initialWorkflow.graph.snapshot(),
-        resume: { flow, journalRoot },
+        resume: { workflowState, journalRoot },
       });
       await initialWorkflow.stop();
       scope.clearWorkflow(initialWorkflow);
@@ -215,7 +215,7 @@ test("RbtJournal reports append failures and continues recording later events", 
   assert.equal(warnings.length, 1);
 });
 
-test("RbtDomain releases journal resources after startup failure and delegates Flow changes", async (t) => {
+test("RbtDomain releases journal resources after startup failure and delegates Workflow changes", async (t) => {
   const domain = new RbtDomain();
   const scope = installTestRunScope(t, {
     runId: "rbt-domain-journal-lifecycle",
@@ -237,10 +237,10 @@ test("RbtDomain releases journal resources after startup failure and delegates F
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(2));
   assert.deepEqual(readJournalEvents(path), domain.journal.readAll());
   const firstContents = readFileSync(path, "utf8");
-  const nextRoot = join(scope.runRoot, "next-flow");
+  const nextRoot = join(scope.runRoot, "next-workflow");
   const clearBehavior = t.mock.method(JarvisBehaviorToolStore.prototype, "clear");
-  const aborted = domain.prepareFlow(
-    { flowId: "journal-0002", status: "active", checkpointSeq: 0 },
+  const aborted = domain.prepareWorkflow(
+    { workflowId: "workflow-002", status: "active", checkpointSeq: 0 },
     nextRoot,
   );
   assert.equal(clearBehavior.mock.callCount(), 0);
@@ -248,8 +248,8 @@ test("RbtDomain releases journal resources after startup failure and delegates F
   aborted.abort();
   assert.equal(clearBehavior.mock.callCount(), 0);
   assert.deepEqual(domain.journal.aggregate(domain.journal.readAll()).histories.map((entry) => entry.runtimeSequence), [2]);
-  const change = domain.prepareFlow(
-    { flowId: "journal-0002", status: "active", checkpointSeq: 0 },
+  const change = domain.prepareWorkflow(
+    { workflowId: "workflow-002", status: "active", checkpointSeq: 0 },
     nextRoot,
   );
   change.commit();
@@ -258,7 +258,7 @@ test("RbtDomain releases journal resources after startup failure and delegates F
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(3));
   assert.equal(readFileSync(path, "utf8"), firstContents);
   assert.deepEqual(readJournalEvents(join(nextRoot, "rbt-events.jsonl")), domain.journal.readAll());
-  await domain.restore({ flowId: "journal-0002", status: "active", checkpointSeq: 0 });
+  await domain.restore({ workflowId: "workflow-002", status: "active", checkpointSeq: 0 });
   assert.deepEqual(domain.journal.aggregate(domain.journal.readAll()).histories.map((entry) => entry.runtimeSequence), [3]);
   await domain.stop();
   assert.equal(existsSync(join(nextRoot, ".rbt-events.lock")), false);

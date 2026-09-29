@@ -22,7 +22,7 @@ import {
   sha256Text,
   stableJson,
 } from "../../core/fs.js";
-import { isPathWithin } from "../../core/path.js";
+import { agentEntityPaths, isPathWithin, runAgentPaths, runPaths } from "../../core/path.js";
 import type { RunManifest } from "../persistence/index.js";
 import { assertMountPathSegment } from "../../asset-store/files/asset-paths.js";
 import {
@@ -67,7 +67,7 @@ export class EnvironmentSnapshotLoader {
       label: "run root",
       kind: "directory",
     });
-    const path = join(runRoot, "environment-rollback.json");
+    const path = runPaths(runRoot).environmentRollbackPath;
     try {
       lstatSync(path);
     } catch (error) {
@@ -84,7 +84,7 @@ export class EnvironmentSnapshotLoader {
     requireContainedPath({
       root: runRoot,
       rootReal: runRootReal,
-      path: join(runRoot, "run.json"),
+      path: runPaths(runRoot).manifestPath,
       label: "run manifest",
       kind: "file",
     });
@@ -119,11 +119,11 @@ export class EnvironmentSnapshotLoader {
         )) {
         throw new Error(`Invalid captured environment index for ${role}.`);
       }
-      const agentRoot = join(runRoot, "agents", role);
+      const paths = runAgentPaths(runRoot, role);
       for (const [ref, expected] of [
-        [entry.mountManifestRef, join(agentRoot, "mount", "mount-manifest.json")],
-        [entry.assetCommitRef, join(agentRoot, "artifacts", "asset-commit.json")],
-        [entry.preflightRef, join(agentRoot, "artifacts", "app-server-preflight.json")],
+        [entry.mountManifestRef, paths.mountManifestPath],
+        [entry.assetCommitRef, paths.assetCommitPath],
+        [entry.preflightRef, paths.preflightPath],
       ] as const) {
         requireCanonicalRunRef(resolveRunRef(runRoot, ref, "environment rollback artifact"),
           expected, `${role} rollback artifact`);
@@ -178,7 +178,7 @@ export class EnvironmentSnapshotLoader {
       throw new Error(`Run ${manifest.runId} has no persisted agent index.`);
     }
 
-    const agentsRoot = join(runRoot, "agents");
+    const agentsRoot = runPaths(runRoot).agentsRoot;
     requireContainedPath({
       root: runRoot,
       rootReal: runRootReal,
@@ -231,20 +231,13 @@ export class EnvironmentSnapshotLoader {
     }
 
     const agentRoot = join(agentsRoot, role);
-    const mountRoot = join(agentRoot, "mount");
-    const artifactRoot = join(agentRoot, "artifacts");
+    const paths = agentEntityPaths(agentRoot);
+    const { mountRoot } = paths;
     requireContainedPath({
       root: runRoot,
       rootReal: runRootReal,
       path: agentRoot,
       label: `${role} agent root`,
-      kind: "directory",
-    });
-    requireContainedPath({
-      root: runRoot,
-      rootReal: runRootReal,
-      path: join(agentRoot, "logs"),
-      label: `${role} logs root`,
       kind: "directory",
     });
 
@@ -253,17 +246,17 @@ export class EnvironmentSnapshotLoader {
     const preflightPath = resolveRunRef(runRoot, entry.preflightRef, "preflight report");
     requireCanonicalRunRef(
       mountManifestPath,
-      join(mountRoot, "mount-manifest.json"),
+      paths.mountManifestPath,
       `${role} mount manifest`,
     );
     requireCanonicalRunRef(
       assetCommitPath,
-      join(artifactRoot, "asset-commit.json"),
+      paths.assetCommitPath,
       `${role} asset commit`,
     );
     requireCanonicalRunRef(
       preflightPath,
-      join(artifactRoot, "app-server-preflight.json"),
+      paths.preflightPath,
       `${role} preflight report`,
     );
     requireContainedPath({

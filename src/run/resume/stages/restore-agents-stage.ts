@@ -1,3 +1,4 @@
+import { readAgentThreadRecord, type AgentThreadRecord } from "../../../agent/thread/agent-thread-record.js";
 import {
   closeSync,
   constants,
@@ -20,7 +21,7 @@ import type { ScoutAgent } from "../../../agent/core/scout-agent.js";
 import { resolveSynthesisRole } from "../../../core/workflow/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
-import { isPathWithin } from "../../../core/path.js";
+import { isPathWithin, runAgentPaths, runPaths } from "../../../core/path.js";
 import {
   projectRun,
   readDomainJournalProjections,
@@ -29,8 +30,9 @@ import {
 
 /**
  * Reconstructs Scout agents and reconnects them to persisted Codex threads.
- * Journal projections select the threads and copied Codex session files supply
- * the resumable rollout; the stage restores roles concurrently and stops any
+ * Agent entity records select the threads and copied Codex session files supply
+ * the resumable rollout. An unfinished Workflow must reference the same identities.
+ * The stage restores roles concurrently and stops any
  * partial restoration when one role fails. Task/context activation belongs to
  * later resume stages.
  */
@@ -43,28 +45,20 @@ export class RestoreAgentsStage implements RunStage {
     const scope = currentRunScope();
     const graphState = scope.workflow.scheduler.snapshot();
     const synthesisRole = resolveSynthesisRole(graphState).name;
-    const projection = projectRun(
+    const projection = scope.workflow.snapshot() ? projectRun(
       scope.workflow.readEvents(),
       synthesisRole,
       readDomainJournalProjections(scope.domainRegistry.list()),
-    );
+    ) : undefined;
     const roles = graphState.roles.map((role) => role.name);
-    const activeRoleNames = new Set(roles);
-    const persistedThreadIds = projection.threads
-      .filter((thread) => activeRoleNames.has(thread.agentId))
-      .map((thread) => thread.threadId);
-    const requiredRolloutThreadIds = projection.threads
-      .filter((thread) => {
-        if (!activeRoleNames.has(thread.agentId)) return false;
-        const hasThreadTurns = projection.turns.some((turn) =>
-          turn.agentId === thread.agentId && turn.threadId === thread.threadId
-        );
-        const hasTaskSteps = projection.tasks.some((task) =>
-          task.agentId === thread.agentId && task.stepIds.length > 0
-        );
-        return hasThreadTurns || hasTaskSteps;
-      })
-      .map((thread) => thread.threadId);
+    const records = new Map(roles.map((role) => [role, readAgentThreadRecord(runAgentPaths(scope.runRoot, role).agentRoot, role)]));
+    for (const thread of projection?.threads ?? []) {
+      if (records.get(thread.agentId)?.thread.threadId !== thread.threadId) {
+        throw new Error("Workflow Thread identity does not match its Agent entity: " + thread.agentId);
+      }
+    }
+    const persistedThreadIds = [...records.values()].flatMap((record) => record ? [record.thread.threadId] : []);
+    const requiredRolloutThreadIds = [...records.values()].flatMap((record) => record?.hasTurns ? [record.thread.threadId] : []);
     const rolloutPaths = locatePersistedRollouts({
       runRoot: scope.runRoot,
       threadIds: persistedThreadIds,
@@ -78,7 +72,7 @@ export class RestoreAgentsStage implements RunStage {
     );
     const settled = await Promise.allSettled(
       agents.map((agent) =>
-        this.restoreAgent(agent, projection, rolloutPaths)
+        this.restoreAgent(agent, records.get(agent.agentId), projection, rolloutPaths)
       ),
     );
     const errors = settled
@@ -115,13 +109,12 @@ export class RestoreAgentsStage implements RunStage {
    */
   private async restoreAgent(
     agent: ScoutAgent,
-    projection: RunProjection,
+    record: AgentThreadRecord | undefined,
+    projection: RunProjection | undefined,
     rolloutPaths: ReadonlyMap<string, string>,
   ): Promise<void> {
-    const thread = projection.threads.find((candidate) =>
-      candidate.agentId === agent.agentId
-    );
-    const agentTurns = projection.turns.filter((turn) =>
+    const thread = record?.thread;
+    const agentTurns = (projection?.turns ?? []).filter((turn) =>
       turn.agentId === agent.agentId
     );
     const threadTurns = thread
@@ -129,7 +122,7 @@ export class RestoreAgentsStage implements RunStage {
           turn.threadId === thread.threadId
         )
       : [];
-    const taskHasSteps = projection.tasks.some((task) =>
+    const taskHasSteps = (projection?.tasks ?? []).some((task) =>
       task.agentId === agent.agentId && task.stepIds.length > 0
     );
 
@@ -145,7 +138,7 @@ export class RestoreAgentsStage implements RunStage {
 
     const rolloutPath = rolloutPaths.get(thread.threadId);
     if (!rolloutPath) {
-      if (threadTurns.length > 0 || taskHasSteps) {
+      if (record?.hasTurns || threadTurns.length > 0 || taskHasSteps) {
         throw new Error(
           `No persisted Codex rollout found for thread ${thread.threadId}.`,
         );
@@ -199,9 +192,9 @@ export class RestoreAgentsStage implements RunStage {
 }
 
 /**
- * Maps journaled thread ids to copied Codex rollout paths beneath the run's
+ * Maps Agent thread ids to copied Codex rollout paths beneath the run's
  * Codex home. Only the first JSONL record is inspected for `session_meta`; a
- * missing rollout is fatal only for a thread whose journal has resumable work.
+ * missing rollout is fatal for a thread that has already executed a Turn.
  */
 function locatePersistedRollouts(input: {
   runRoot: string;
@@ -211,12 +204,7 @@ function locatePersistedRollouts(input: {
   if (input.threadIds.length === 0) return new Map();
 
   const runRoot = resolve(input.runRoot);
-  const codexHome = resolve(
-    runRoot,
-    "codex-home",
-    ".codex",
-  );
-  const sessionsRoot = join(codexHome, "sessions");
+  const { codexHome, codexSessionsRoot: sessionsRoot } = runPaths(runRoot);
   const requireDirectory = (path: string, label: string): void => {
     let stat;
     try {

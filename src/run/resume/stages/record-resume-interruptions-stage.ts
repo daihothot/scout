@@ -17,8 +17,9 @@ export class RecordResumeInterruptionsStage implements RunStage {
 
   /** Reconciles prior runtime, turn, and step state before other restoration. */
   async start(): Promise<void> {
-    this.recordPreviousRuntimeInterruption();
     const scope = currentRunScope();
+    if (!scope.workflow.snapshot()) return;
+    this.recordPreviousRuntimeInterruption();
     const synthesisRole = resolveSynthesisRole(scope.workflow.scheduler.snapshot()).name;
     let projection = projectRun(
       scope.workflow.readEvents(),

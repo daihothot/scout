@@ -20,6 +20,9 @@ import {
 import { AgentEvents } from "../events/index.js";
 import { attachments } from "../context/attachments.js";
 import { randomUUID } from "node:crypto";
+import { workflowRootFromJournalRoot } from "../../core/path.js";
+import { writeAgentThreadRecord } from "../thread/agent-thread-record.js";
+import { resolveAgentArtifactReferences } from "../task/artifact-references.js";
 
 /** Input contract for one app-server turn owned by a Scout agent. */
 export interface ScoutAgentTurnInput {
@@ -96,6 +99,7 @@ class AgentTurnInterruptedError extends Error {
  * interruption facts consistent for startup, telemetry, and resume.
  */
 export abstract class ScoutAgent {
+  private threadHasTurns = false;
   readonly agentId: string;
   readonly spec: AgentThreadSpec;
   protected readonly runScope: RunScope;
@@ -323,7 +327,7 @@ export abstract class ScoutAgent {
       modelProvider: this.spec.model.provider,
       reasoningEffort: this.spec.model.reasoningEffort,
       cwd: this.spec.cwd,
-      runtimeWorkspaceRoots: [this.spec.cwd],
+      runtimeWorkspaceRoots: this.runScope.workflow.snapshot() ? [workflowRootFromJournalRoot(this.runScope.workflow.journalRoot)] : [],
       approvalPolicy: this.spec.approvalPolicy,
       permissions: this.spec.permissionProfile,
       ephemeral: false,
@@ -344,6 +348,8 @@ export abstract class ScoutAgent {
       startResponse: started.response,
     };
     this.registry.bindThread(this.agentId, this.thread.threadId);
+    this.threadHasTurns = false;
+    writeAgentThreadRecord(this.agentMount.agentRoot, { version: 1, thread: this.thread, hasTurns: false });
     return this.thread;
   }
 
@@ -370,7 +376,7 @@ export abstract class ScoutAgent {
       modelProvider: this.spec.model.provider,
       reasoningEffort: this.spec.model.reasoningEffort,
       cwd: this.spec.cwd,
-      runtimeWorkspaceRoots: [this.spec.cwd],
+      runtimeWorkspaceRoots: this.runScope.workflow.snapshot() ? [workflowRootFromJournalRoot(this.runScope.workflow.journalRoot)] : [],
       approvalPolicy: this.spec.approvalPolicy,
       permissions: this.spec.permissionProfile,
       config: this.spec.config,
@@ -387,6 +393,8 @@ export abstract class ScoutAgent {
       status: "active",
     };
     this.registry.bindThread(this.agentId, this.thread.threadId);
+    this.threadHasTurns = true;
+    writeAgentThreadRecord(this.agentMount.agentRoot, { version: 1, thread: this.thread, hasTurns: true });
     const resumedAt = new Date().toISOString();
     this.eventBus.publish(AgentEvents.thread.resumed, {
       agentId: this.agentId,
@@ -448,6 +456,7 @@ export abstract class ScoutAgent {
           closeReason: reason,
         };
         this.eventBus.publish(AgentEvents.thread.closed, structuredClone(this.thread));
+        writeAgentThreadRecord(this.agentMount.agentRoot, { version: 1, thread: this.thread, hasTurns: this.threadHasTurns });
       }
     }
   }
@@ -534,6 +543,28 @@ export abstract class ScoutAgent {
       throw new Error(`Agent ${this.agentId} is stopping and cannot start another turn.`);
     }
     const invocationId = this.nextInvocationId(thread.threadId);
+    const workflowState = this.runScope.workflow.snapshot();
+    const paths = workflowState ? this.runScope.workflow.agentPaths(this.agentId) : undefined;
+    const artifacts = workflowState
+      ? this.runScope.workflow.graph.snapshot().roles.map(({ name }) => ({
+        agentId: name,
+        path: this.runScope.workflow.agentPaths(name).artifactRoot,
+        access: name === this.agentId ? "read-write" : "read",
+      }))
+      : [];
+    const executionContext = attachments.addTagBlock("workflow_context", JSON.stringify(
+      workflowState ? {
+        workflowId: workflowState.workflowId,
+        status: workflowState.status,
+        artifactRoot: paths!.artifactRoot,
+        artifacts,
+        artifactReferences: resolveAgentArtifactReferences(input.prompt, {
+          workflowId: workflowState.workflowId,
+          artifacts,
+        }),
+      }
+        : { status: "empty", instruction: "没有活动 Workflow。可交流与查看历史；开始新执行前由 Coordinator 调用 StartWorkflow，接受后立即结束当前 Turn。" },
+    ));
     const startedAt = new Date().toISOString();
     const activeTask = this.runScope.taskStore.findActiveTaskForAgent(this.agentId);
     this.eventBus.publish(AgentEvents.turn.started, {
@@ -571,7 +602,9 @@ export abstract class ScoutAgent {
     try {
       result = await this.appServer.runTurn({
         threadId: thread.threadId,
-        prompt: input.prompt,
+        prompt: `${executionContext}\n\n${input.prompt}`,
+        cwd: this.spec.cwd,
+        runtimeWorkspaceRoots: workflowState ? [workflowRootFromJournalRoot(this.runScope.workflow.journalRoot)] : [],
         model: this.spec.model.id,
         reasoningEffort: this.spec.model.reasoningEffort,
         reasoningSummary: this.spec.model.reasoningSummary,
@@ -579,7 +612,11 @@ export abstract class ScoutAgent {
         permissions: this.spec.permissionProfile,
         approvalPolicy: this.spec.approvalPolicy,
         onStatusMessage: input.onStatusMessage,
-        onTurnStarted: (turnId) => this.bindOwnedTurnId(ownership, turnId),
+        onTurnStarted: (turnId) => {
+          this.bindOwnedTurnId(ownership, turnId);
+          this.threadHasTurns = true;
+          writeAgentThreadRecord(this.agentMount.agentRoot, { version: 1, thread, hasTurns: true });
+        },
       });
     } catch (error) {
       const turnId = ownership.turnId;

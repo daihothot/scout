@@ -31,6 +31,7 @@ export class InjectResumeContextStage implements RunStage {
   /** Loads journal-derived context into interaction stores and agent runners. */
   async start(): Promise<void> {
     const scope = currentRunScope();
+    if (!scope.workflow.snapshot()) return;
     const graphState = scope.workflow.scheduler.snapshot();
     const synthesisRole = resolveSynthesisRole(graphState).name;
     const projection = projectRun(

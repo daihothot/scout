@@ -1,10 +1,10 @@
-import type { WorkflowFlowState } from "../../../core/workflow/index.js";
+import type { WorkflowState } from "../../../core/workflow/index.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 import {
   ScoutDomainId,
   type ScoutDomain,
   type ScoutDomainDescription,
-  type ScoutDomainFlowChange,
+  type ScoutDomainWorkflowChange,
 } from "../../types.js";
 import type { DomainAgentToolRegistration } from "../../agent/index.js";
 import { BaseDomainAgentBackend } from "./agent/index.js";
@@ -16,7 +16,7 @@ import { BaseDomainJournal, type BaseDomainRuntimeFact } from "./base-domain-jou
 import { BaseDomainToolCallStore } from "./base-domain-tool-call-store.js";
 import { BaseDomainExecution } from "./execution/index.js";
 
-/** Complete shared Domain runtime for one active Workflow Flow. */
+/** Complete shared Domain runtime for one active Workflow. */
 export class BaseDomain implements ScoutDomain {
   readonly description: ScoutDomainDescription = Object.freeze({
     id: ScoutDomainId.Base,
@@ -55,14 +55,14 @@ export class BaseDomain implements ScoutDomain {
   start(): void {
     if (this.started) return;
     const scope = currentRunScope();
-    const flow = scope.workflow.flowSnapshot();
+    const workflowState = scope.workflow.snapshot();
     this.journal.start();
     this.started = true;
     scope.logger.info({
       module: "domain.base",
       event: "base_domain_started",
-      message: `Started Base Domain for Workflow Flow ${flow.flowId}.`,
-      data: { flowId: flow.flowId },
+      message: "Started Base Domain.",
+      data: { workflowId: workflowState?.workflowId },
     });
   }
 
@@ -96,8 +96,12 @@ export class BaseDomain implements ScoutDomain {
     if (failures.length > 0) throw new AggregateError(failures, "Failed to stop Base Domain.");
   }
 
-  restore(flow: WorkflowFlowState): void {
-    if (flow.status === "completed") {
+  finishWorkflow(): void {
+    this.journal.close();
+  }
+
+  restore(workflowState: WorkflowState): void {
+    if (workflowState.status === "completed") {
       this.restoredFact = {
         domainId: "base",
         journalSeq: 0,
@@ -112,8 +116,8 @@ export class BaseDomain implements ScoutDomain {
     this.execution.restore(this.restoredFact);
   }
 
-  prepareFlow(_flow: WorkflowFlowState, journalRoot: string): ScoutDomainFlowChange {
-    const journalChange = this.journal.prepareFlow(journalRoot);
+  prepareWorkflow(_workflowState: WorkflowState, journalRoot: string): ScoutDomainWorkflowChange {
+    const journalChange = this.journal.prepareWorkflow(journalRoot);
     return {
       commit: () => {
         journalChange.commit();

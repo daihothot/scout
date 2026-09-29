@@ -19,8 +19,7 @@ export interface AssetCommit {
   mountId: string;
   mountRoot: string;
   runRoot: string;
-  artifactRoot: string;
-  logsRoot: string;
+  agentRoot: string;
   issues: MountMaterializationIssue[];
   readableRoots: string[];
   writableRoots: string[];

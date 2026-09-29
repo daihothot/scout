@@ -11,7 +11,7 @@ import type { AgentServerPreflightReport } from "../../types.js";
 /** Keeps portable diagnostics while dropping device-local Codex response payloads. */
 export function summarizeAgentServerPreflight(
   report: AgentServerPreflightReport,
-  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
+  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot">,
 ): AgentServerPreflightReport {
   const summary: AgentServerPreflightReport = {
     status: report.status,
@@ -96,12 +96,11 @@ function redactConfigLayer(value: unknown): unknown {
 
 function portablePreflightPath(
   path: string,
-  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
+  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot">,
 ): string {
   const normalizedPath = resolve(path);
   const roots: Array<[string, string]> = [
     [mount.mountRoot, "${SCOUT_MOUNT_ROOT}"],
-    [mount.artifactRoot, "${SCOUT_ARTIFACT_ROOT}"],
     [mount.runRoot, "${SCOUT_RUN_ROOT}"],
     [mount.scoutRoot, "${SCOUT_ROOT}"],
   ];
@@ -118,7 +117,7 @@ function portablePreflightPath(
 
 function summarizeConfigLayers(
   layers: unknown[],
-  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
+  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot">,
 ): unknown[] {
   return layers.map((layer) => {
     const object = readObjectOrUndefined(layer);
@@ -145,7 +144,7 @@ function summarizeConfigLayers(
 
 function summarizeSkillsList(
   response: unknown,
-  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
+  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot">,
 ): unknown {
   const root = readObjectOrUndefined(response);
   const data = readArrayOrUndefined(root?.data) ?? [];
@@ -249,7 +248,7 @@ function summarizePluginEntry(value: unknown): Array<{
 
 function summarizeHooksList(
   response: unknown,
-  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot" | "artifactRoot">,
+  mount: Pick<CodexMount, "scoutRoot" | "runRoot" | "mountRoot">,
 ): unknown {
   const root = readObjectOrUndefined(response);
   const data = readArrayOrUndefined(root?.data) ?? [];

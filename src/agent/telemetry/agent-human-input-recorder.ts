@@ -2,6 +2,7 @@ import type { UnsubscribeEventHandler } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
+import { agentTelemetryLogsRoot } from "../../core/path.js";
 
 /** Records Human Input request, response, and message-consumption facts. */
 export class AgentHumanInputRecorder {
@@ -50,15 +51,15 @@ export class AgentHumanInputRecorder {
 
   private write(agentId: string, event: string, data: object): void {
     const scope = currentRunScope();
-    const agent = scope.agentRegistry.resolveAgent(agentId);
-    let logger = this.loggers.get(agentId);
+    const logsRoot = agentTelemetryLogsRoot(agentId);
+    let logger = this.loggers.get(logsRoot);
     if (!logger) {
       logger = new Logger({
         runId: scope.runId,
-        logsRoot: agent.mount.logsRoot,
+        logsRoot,
         fileName: "human-input.log",
       });
-      this.loggers.set(agentId, logger);
+      this.loggers.set(logsRoot, logger);
     }
     logger.info({ module: "agent.human_input", event, agentId, data });
   }

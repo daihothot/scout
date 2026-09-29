@@ -6,6 +6,7 @@ import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { attachments } from "../context/attachments.js";
 import { AgentEvents } from "../events/index.js";
+import { agentTelemetryLogsRoot } from "../../core/path.js";
 
 /** Writes step lifecycle events to the owning agent's step log. */
 export class StepEventRecorder {
@@ -165,16 +166,16 @@ export class StepEventRecorder {
   }
 
   private loggerFor(agentId: string): Logger {
-    const existing = this.loggers.get(agentId);
-    if (existing) return existing;
     const scope = currentRunScope();
-    const agent = scope.agentRegistry.resolveAgent(agentId);
+    const logsRoot = agentTelemetryLogsRoot(agentId);
+    const existing = this.loggers.get(logsRoot);
+    if (existing) return existing;
     const logger = new Logger({
       runId: scope.runId,
-      logsRoot: agent.mount.logsRoot,
+      logsRoot,
       fileName: "steps.log",
     });
-    this.loggers.set(agentId, logger);
+    this.loggers.set(logsRoot, logger);
     return logger;
   }
 }

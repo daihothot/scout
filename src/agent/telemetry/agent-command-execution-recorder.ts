@@ -3,6 +3,7 @@ import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
 import type { AgentCommandExecutionObservedEvent } from "../command-execution/command-execution-events.js";
+import { agentTelemetryLogsRoot } from "../../core/path.js";
 
 /** Persists generic shell command facts without command return values. */
 export class AgentCommandExecutionRecorder {
@@ -28,15 +29,15 @@ export class AgentCommandExecutionRecorder {
 
   private record(command: AgentCommandExecutionObservedEvent): void {
     const scope = currentRunScope();
-    let logger = this.loggers.get(command.agentId);
+    const logsRoot = agentTelemetryLogsRoot(command.agentId);
+    let logger = this.loggers.get(logsRoot);
     if (!logger) {
-      const agent = scope.agentRegistry.resolveAgent(command.agentId);
       logger = new Logger({
         runId: scope.runId,
-        logsRoot: agent.mount.logsRoot,
+        logsRoot,
         fileName: "command-execution.log",
       });
-      this.loggers.set(command.agentId, logger);
+      this.loggers.set(logsRoot, logger);
     }
     logger.info({
       module: "agent.command_execution",

@@ -154,7 +154,7 @@ test("RBT execute-file closes failed history and attempts cleanup after a thrown
   assert.equal((await fixture.orchestrator.executeFile(call, fixture.executeFilePath)).success, false);
   assert.deepEqual(fixture.commands.slice(-2), ["behavior.scenario.deactivate", "behavior.campaign.stop"]);
   assert.deepEqual(ready, ["failed"]);
-  const history = JSON.parse(readFileSync(join(fixture.scope.environment.agents.executor.mount.artifactRoot, "history", "001.json"), "utf8"));
+  const history = JSON.parse(readFileSync(join(fixture.scope.workflow.agentPaths("executor").artifactRoot, "history", "001.json"), "utf8"));
   assert.equal(history.status, "failed");
   assert.equal(history.commands[2].status, "failed");
   assert.ok(history.endedAt);
@@ -173,7 +173,7 @@ test("RBT target loss closes local history without claiming remote cleanup succe
     await fixture.base.execution.ensureStopped(request, target.identity);
   });
   assert.equal((await fixture.orchestrator.executeFile(call, fixture.executeFilePath)).success, false);
-  const history = JSON.parse(readFileSync(join(fixture.scope.environment.agents.executor.mount.artifactRoot, "history", "001.json"), "utf8"));
+  const history = JSON.parse(readFileSync(join(fixture.scope.workflow.agentPaths("executor").artifactRoot, "history", "001.json"), "utf8"));
   assert.equal(history.status, "failed");
   assert.equal(history.commands.at(-1).request.type, "behavior.campaign.stop");
   assert.equal(history.commands.at(-1).status, "failed");
@@ -259,8 +259,7 @@ function createFixture(t: TestContext) {
   assert.ok(base instanceof BaseDomain);
   const mount: CodexMount = {
     agentId: "executor", assetCommitId: "asset", mountId: "mount", scoutRoot: scope.scoutRoot,
-    mountRoot: scope.runRoot, runRoot: scope.runRoot, artifactRoot: join(scope.runRoot, "artifact"),
-    logsRoot: join(scope.runRoot, "logs"), tempRoot: join(scope.runRoot, "tmp"), manifestPath: "unused", resourceHash: "test",
+    mountRoot: scope.runRoot, runRoot: scope.runRoot, agentRoot: join(scope.runRoot, "agents", "executor"), manifestPath: "unused", resourceHash: "test",
     issues: [], readableRoots: [], writableRoots: [], shellTools: [], mcpServers: [], customAgents: [], skills: [], plugins: [],
     agentProfile: {
       config: "test", multiAgent: false, maxThreads: 1, maxDepth: 1, customAgents: [], phases: ["execute"],
@@ -274,7 +273,7 @@ function createFixture(t: TestContext) {
     rootAccess: { mountRoots: [], readableRoots: [], writableRoots: [] },
     contextBundle: { contextBundleId: "context", runId: scope.runId, assetCommit, sharedInputs: { mountRoot: scope.runRoot, manifestPath: "unused", resourceHash: "test" } },
   });
-  const executeFilePath = join(mount.artifactRoot, "bdd", "version", "execute-file.json");
+  const executeFilePath = join(scope.workflow.agentPaths("executor").artifactRoot, "bdd", "version", "execute-file.json");
   mkdirSync(dirname(executeFilePath), { recursive: true });
   writeFileSync(executeFilePath, JSON.stringify({ commands: [
     { command: "behavior.campaign.start", payload: { campaignId: "campaign", scenarioId: "scenario" } },

@@ -70,15 +70,15 @@ test("Workflow benchmark mutations require their own root lease while reads rema
   owner.acquire();
   try {
     const prepared = owner.prepareNext();
-    owner.recordStarted(prepared.flowId);
-    assert.equal(observer.resolve("currentFlow")?.flowId, prepared.flowId);
+    owner.recordStarted(prepared.workflowId);
+    assert.equal(observer.resolve("currentWorkflow")?.workflowId, prepared.workflowId);
     assert.throws(() => observer.acquire(), /already attached/);
-    assert.throws(() => observer.recordRun(prepared.flowId), /must be acquired before mutation/);
-    assert.throws(() => observer.recordSuccess(prepared.flowId), /must be acquired before mutation/);
-    assert.throws(() => observer.recordStarted(prepared.flowId), /must be acquired before mutation/);
+    assert.throws(() => observer.recordRun(prepared.workflowId), /must be acquired before mutation/);
+    assert.throws(() => observer.recordSuccess(prepared.workflowId), /must be acquired before mutation/);
+    assert.throws(() => observer.recordStarted(prepared.workflowId), /must be acquired before mutation/);
     assert.throws(() => observer.discard(prepared), /must be acquired before mutation/);
     observer.release();
-    owner.recordSuccess(prepared.flowId);
+    owner.recordSuccess(prepared.workflowId);
   } finally {
     owner.release();
   }
@@ -87,7 +87,7 @@ test("Workflow benchmark mutations require their own root lease while reads rema
   observer.release();
 });
 
-test("Two actual processes cannot overwrite each other's uncommitted Flow directory", { timeout: 15_000 }, async (t) => {
+test("Two actual processes cannot overwrite each other's uncommitted Workflow directory", { timeout: 15_000 }, async (t) => {
   const { launch, runRoot, lockPath } = fixture(t);
   const left = launch();
   const right = launch();
@@ -100,13 +100,13 @@ test("Two actual processes cannot overwrite each other's uncommitted Flow direct
   const winner = results[0].type === "acquired" ? left : right;
   const owner = JSON.parse(readFileSync(lockPath, "utf8")) as { processId: number };
   assert.equal(owner.processId, winner.child.pid);
-  assert.equal(readFileSync(join(runRoot, "journal-0001", "holder.txt"), "utf8"), String(winner.child.pid));
+  assert.equal(readFileSync(join(runRoot, "workflows", "workflow-001", "journal", "holder.txt"), "utf8"), String(winner.child.pid));
   winner.command("release");
   assert.equal((await winner.next()).type, "released");
   assert.equal(existsSync(lockPath), false);
 });
 
-test("A SIGKILLed root owner can be reclaimed without deleting its historical Flow", { timeout: 15_000 }, async (t) => {
+test("A SIGKILLed root owner can be reclaimed without deleting its historical Workflow", { timeout: 15_000 }, async (t) => {
   const { runRoot, launch, lockPath } = fixture(t);
   const holder = launch();
   await holder.next();
@@ -119,7 +119,7 @@ test("A SIGKILLed root owner can be reclaimed without deleting its historical Fl
   next.acquire();
   try {
     assert.notEqual(readFileSync(lockPath, "utf8"), contents);
-    assert.equal(readFileSync(join(runRoot, "journal-0001", "holder.txt"), "utf8"), String(holder.child.pid));
+    assert.equal(readFileSync(join(runRoot, "workflows", "workflow-001", "journal", "holder.txt"), "utf8"), String(holder.child.pid));
     assert.equal(existsSync(`${lockPath}.reclaim`), false);
   } finally {
     next.release();
@@ -176,7 +176,7 @@ test("A delayed second stale reclaimer cannot unlink the first reclaimer's new l
   assert.equal(rejected.type, "rejected");
   assert.match(rejected.message!, /lock changed during stale recovery/);
   assert.equal(readFileSync(lockPath, "utf8"), activeOwner);
-  assert.equal(readFileSync(join(runRoot, "journal-0001", "holder.txt"), "utf8"), String(first.child.pid));
+  assert.equal(readFileSync(join(runRoot, "workflows", "workflow-001", "journal", "holder.txt"), "utf8"), String(first.child.pid));
   first.command("release");
   assert.equal((await first.next()).type, "released");
 });

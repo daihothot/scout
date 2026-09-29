@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import {
   mkdtempSync,
   mkdirSync,
+  readFileSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { AgentBuilder } from "../../src/agent/builder/agent-builder.js";
 import { AgentTimelineBackend } from "../../src/agent/backend/timeline/agent-timeline-backend.js";
 import { AgentDynamicToolBackend } from "../../src/agent/backend/dynamic-tool/agent-dynamic-tool-backend.js";
@@ -21,6 +23,7 @@ import {
   AGENT_SEND_MESSAGE_TOOL_NAMESPACE,
   AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
   AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
+  AGENT_START_WORKFLOW_TOOL_NAMESPACE,
 } from "../../src/agent/tools/agent-tools.js";
 import {
   scoutAgentPermissionProfile,
@@ -34,6 +37,7 @@ import { EventSubscriptionPriorities, InMemoryEventBus } from "../../src/core/ev
 import {
   createGraphState,
   Graph,
+  projectWorkflowState,
   Scheduler,
   Workflow,
   WorkflowBenchmarks,
@@ -340,7 +344,7 @@ test("Worker turns select one stable profile independently of write-root order",
   const codebaseRoot = join(fixture.root, "managed-codebase");
   researcherMount.writableRoots = [
     researcherMount.mountRoot,
-    researcherMount.artifactRoot,
+    currentRunScope().workflow.agentPaths("researcher").artifactRoot,
     codebaseRoot,
   ];
   prepareAgent(
@@ -551,7 +555,7 @@ test("AssignTask routes through the current Phase and skips a busy first role", 
   assert.equal(assignedTask?.phase, "audit");
   assert.match(
     assignedTask?.initialPrompt ?? "",
-    /<workflow_phase>\ncurrent_domain: test\ncurrent_phase: audit\nflow_status: active\n<\/workflow_phase>/,
+    /<workflow_phase>\ncurrent_domain: test\ncurrent_phase: audit\nworkflow_status: active\n<\/workflow_phase>/,
   );
   assert.equal(assignedTask?.initialPrompt.match(/<workflow_phase>/g)?.length, 1);
   assert.equal(firstWorker.taskRunner?.snapshot().activeTask?.taskId, "auditor-a-task-0001");
@@ -641,11 +645,11 @@ test("SubmitPhaseOutcome advances the cursor and schedules one fresh Coordinator
   assert.equal(appServer.turnInputs.length, 3);
   assert.match(
     appServer.turnInputs[1]?.prompt ?? "",
-    /<workflow_phase>\ncurrent_domain: test\ncurrent_phase: research-reviewer\nflow_status: active\n<\/workflow_phase>/,
+    /<workflow_phase>\ncurrent_domain: test\ncurrent_phase: research-reviewer\nworkflow_status: active\n<\/workflow_phase>/,
   );
   assert.match(
     appServer.turnInputs[2]?.prompt ?? "",
-    /<workflow_phase>\ncurrent_domain: test\ncurrent_phase: verify\nflow_status: active\n<\/workflow_phase>/,
+    /<workflow_phase>\ncurrent_domain: test\ncurrent_phase: verify\nworkflow_status: active\n<\/workflow_phase>/,
   );
   for (const input of appServer.turnInputs) {
     assert.equal(input.prompt?.match(/<workflow_phase>/g)?.length, 1);
@@ -706,7 +710,7 @@ test("SubmitPhaseOutcome leaves Workflow unchanged while a queued or running Tas
     for (const status of [AgentTaskStatuses.Queued, AgentTaskStatuses.Running]) {
       fixture.taskStore.updateTask("unfinished-research", (task) => ({ ...task, status }));
       const graphBefore = workflow.scheduler.snapshot();
-      const flowBefore = workflow.flowSnapshot();
+      const workflowBefore = workflow.snapshot();
       const journalBefore = workflow.readEvents();
       const benchmarksBefore = new WorkflowBenchmarks(currentRunScope().runRoot).read();
       for (const outcome of ["completed", "error"]) {
@@ -721,7 +725,7 @@ test("SubmitPhaseOutcome leaves Workflow unchanged while a queued or running Tas
         assert.match(result.contentItems[0]?.text ?? "", /unfinished-research/);
         await coordinator.runToIdle();
         assert.deepEqual(workflow.scheduler.snapshot(), graphBefore);
-        assert.deepEqual(workflow.flowSnapshot(), flowBefore);
+        assert.deepEqual(workflow.snapshot(), workflowBefore);
         assert.deepEqual(workflow.readEvents(), journalBefore);
         assert.deepEqual(new WorkflowBenchmarks(currentRunScope().runRoot).read(), benchmarksBefore);
         assert.equal(appServer.turnInputs.length, 0);
@@ -817,7 +821,7 @@ test("Rejected Phase completion keeps human input reachable through Gateway unti
     assert.equal(waiting?.dispositions.at(-1)?.kind, AgentTaskDispositionKinds.WaitingForHuman);
     assert.ok(appServer.handler);
     const graphBefore = workflow.scheduler.snapshot();
-    const flowBefore = workflow.flowSnapshot();
+    const workflowBefore = workflow.snapshot();
     const journalBefore = workflow.readEvents();
     const benchmarksBefore = new WorkflowBenchmarks(currentRunScope().runRoot).read();
     const turnsBefore = appServer.turnInputs.length;
@@ -830,7 +834,7 @@ test("Rejected Phase completion keeps human input reachable through Gateway unti
     assert.match(rejected.contentItems[0]?.text ?? "", /Cannot advance Workflow Phase/);
     await coordinator.runToIdle();
     assert.deepEqual(workflow.scheduler.snapshot(), graphBefore);
-    assert.deepEqual(workflow.flowSnapshot(), flowBefore);
+    assert.deepEqual(workflow.snapshot(), workflowBefore);
     assert.deepEqual(workflow.readEvents(), journalBefore);
     assert.deepEqual(new WorkflowBenchmarks(currentRunScope().runRoot).read(), benchmarksBefore);
     assert.equal(appServer.turnInputs.length, turnsBefore);
@@ -906,7 +910,7 @@ test("SubmitPhaseOutcome waits for a stopped Worker's in-flight Step to finish",
     assert.ok(activeStep);
     assert.ok(appServer.handler);
     const graphBefore = workflow.scheduler.snapshot();
-    const flowBefore = workflow.flowSnapshot();
+    const workflowBefore = workflow.snapshot();
     const journalBefore = workflow.readEvents();
     const benchmarksBefore = new WorkflowBenchmarks(currentRunScope().runRoot).read();
     const turnsBefore = appServer.turnInputs.length;
@@ -920,7 +924,7 @@ test("SubmitPhaseOutcome waits for a stopped Worker's in-flight Step to finish",
     assert.ok(rejected.contentItems[0]?.text.includes(activeStep.stepId));
     await coordinator.runToIdle();
     assert.deepEqual(workflow.scheduler.snapshot(), graphBefore);
-    assert.deepEqual(workflow.flowSnapshot(), flowBefore);
+    assert.deepEqual(workflow.snapshot(), workflowBefore);
     assert.deepEqual(workflow.readEvents(), journalBefore);
     assert.deepEqual(new WorkflowBenchmarks(currentRunScope().runRoot).read(), benchmarksBefore);
     assert.equal(appServer.turnInputs.length, turnsBefore);
@@ -1006,7 +1010,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
       queuedSnapshot = worker?.snapshot();
       runningStepCount = fixture.stepStore.list({ taskId: assignment.value.taskId }).filter((step) => step.status === "running").length;
       before = {
-        graph: workflow.scheduler.snapshot(), flow: workflow.flowSnapshot(), journal: workflow.readEvents(),
+        graph: workflow.scheduler.snapshot(), workflowState: workflow.snapshot()!, journal: workflow.readEvents(),
         benchmarks: new WorkflowBenchmarks(currentRunScope().runRoot).read(), turns: appServer.turnInputs.length,
       };
       rejected = handler({
@@ -1015,7 +1019,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
         tool: "SubmitPhaseOutcome", arguments: { outcome: "completed" },
       });
       after = {
-        graph: workflow.scheduler.snapshot(), flow: workflow.flowSnapshot(), journal: workflow.readEvents(),
+        graph: workflow.scheduler.snapshot(), workflowState: workflow.snapshot(), journal: workflow.readEvents(),
         benchmarks: new WorkflowBenchmarks(currentRunScope().runRoot).read(), turns: appServer.turnInputs.length,
       };
     }, { priority: EventSubscriptionPriorities.Low });
@@ -1073,7 +1077,7 @@ for (const boundary of ["phase-advanced", "settling"] as const) {
     worker.restoreTask({ task, maxTaskSequence: 1 });
     await fixture.eventBus.publishAndWait(AgentEvents.task.assigned, task, { occurredAt: now });
     workflow.scheduler.advance(boundary === "phase-advanced" ? "completed" : "error");
-    assert.equal(workflow.flowSnapshot().status, boundary === "settling" ? "settling" : "active");
+    assert.equal(workflow.snapshot()?.status, boundary === "settling" ? "settling" : "active");
     // Create the Coordinator after the transition so this test isolates admission,
     // without scheduling the independent phase/settlement tick.
     const coordinator = builder.buildCoordinator();
@@ -1083,7 +1087,7 @@ for (const boundary of ["phase-advanced", "settling"] as const) {
     const before = worker.snapshot();
     const taskBefore = fixture.taskStore.getTask(task.taskId);
     const queuedBefore = workflow.readEvents().filter((event) => AgentEvents.message.queued.is(event));
-    const expected = boundary === "settling" ? /Flow .* is settling/ : /Task .* belongs to Phase research.*current Phase is research-reviewer/;
+    const expected = boundary === "settling" ? /Workflow is settling/ : /Task .* belongs to Phase research.*current Phase is research-reviewer/;
     try {
       await assert.rejects(worker.sendMessage({
         taskId: task.taskId, message: agent.turn.message("Reopen old work"), deliveryMode: "queued",
@@ -1111,7 +1115,7 @@ for (const boundary of ["phase-advanced", "settling"] as const) {
   });
 }
 
-test("A terminal Phase outcome finishes its active Coordinator Step before preparing the next Flow", async () => {
+test("A terminal Phase outcome finishes its active Coordinator Step before entering idle runtime", async () => {
   let result: DynamicToolCallResponse | undefined;
   const appServer = createFakeAppServer({
     turnIds: ["turn-submit-terminal-phase", "turn-terminal-cleanup"],
@@ -1123,9 +1127,9 @@ test("A terminal Phase outcome finishes its active Coordinator Step before prepa
         callId: "call-submit-terminal-phase", namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
         tool: "SubmitPhaseOutcome", arguments: { outcome: "completed" },
       });
-      assert.equal(currentRunScope().workflow.flowSnapshot().status, "settling");
-      assert.equal(currentRunScope().workflow.flowSnapshot().flowId, "journal-0001");
-      assert.match(agent.turn.workflow_phase(), /flow_status: settling/);
+      assert.equal(currentRunScope().workflow.snapshot()?.status, "settling");
+      assert.equal(currentRunScope().workflow.snapshot()?.workflowId, "workflow-001");
+      assert.match(agent.turn.workflow_phase(), /workflow_status: settling/);
       assert.match(agent.turn.workflow_phase(), /只完成旧工作收尾/);
     },
   });
@@ -1169,8 +1173,7 @@ test("A terminal Phase outcome finishes its active Coordinator Step before prepa
       cycleCompleted: true,
     });
     assert.equal(workflow.scheduler.snapshot().currentPhase, "audit");
-    assert.equal(workflow.flowSnapshot().flowId, "journal-0002");
-    assert.equal(workflow.flowSnapshot().status, "active");
+    assert.equal(workflow.snapshot(), undefined);
     assert.equal(appServer.turnInputs.length, 1);
     assert.equal(readJournalEvents(oldPath).filter((event) => AgentEvents.turn.completed.is(event)).length, 1);
     assert.equal(workflow.readEvents().some((event) => AgentEvents.turn.started.is(event)), false);
@@ -1181,7 +1184,7 @@ test("A terminal Phase outcome finishes its active Coordinator Step before prepa
   }
 });
 
-test("Coordinator does not carry phase or settlement scheduling into an empty next Flow", async () => {
+test("Coordinator does not carry phase or settlement scheduling into an idle runtime", async () => {
   let handleTool!: DynamicToolCallHandler;
   const outcomes: DynamicToolCallResponse[] = [];
   let turns = 0;
@@ -1229,10 +1232,9 @@ test("Coordinator does not carry phase or settlement scheduling into an empty ne
     assert.equal(outcomes.length, 2);
     assert.equal(outcomes.every((response) => response.success), true);
     assert.deepEqual(outcomes.map((response) => JSON.parse(response.contentItems[0]?.text ?? "{}").cycleCompleted), [false, true]);
-    assert.equal(workflow.flowSnapshot().flowId, "journal-0002");
-    assert.equal(workflow.flowSnapshot().status, "active");
-    assert.equal(appServer.turnInputs.length, 2, "completed Phase Turns must not start an empty next-Flow Step");
-    assert.equal(coordinator.pendingFlowInputs().length, 0);
+    assert.equal(workflow.snapshot(), undefined);
+    assert.equal(appServer.turnInputs.length, 2, "completed Phase Turns must not start an empty next-Workflow Step");
+    assert.equal(coordinator.pendingWorkflowInputs().length, 0);
     assert.equal(readJournalEvents(oldPath).filter((event) => AgentEvents.message.consumed.is(event)
       && event.payload.messageId === "only-user").length, 1);
     assert.equal(workflow.readEvents().some((event) => AgentEvents.turn.started.is(event)), false);
@@ -1541,12 +1543,12 @@ test("ScoutAgent starts a thread, runs preflight, and binds it to registry", asy
 
   await agent.runTurn({ prompt: "check model profile" });
   assert.deepEqual({
-    prompt: appServer.turnInputs[0]?.prompt,
+    promptPreserved: appServer.turnInputs[0]?.prompt?.endsWith("check model profile"),
     model: appServer.turnInputs[0]?.model,
     reasoningEffort: appServer.turnInputs[0]?.reasoningEffort,
     reasoningSummary: appServer.turnInputs[0]?.reasoningSummary,
   }, {
-    prompt: "check model profile",
+    promptPreserved: true,
     model: "gpt-5.5",
     reasoningEffort: "high",
     reasoningSummary: "concise",
@@ -2615,14 +2617,14 @@ test("Worker SendMessage reaches Coordinator and Coordinator output reaches the 
 });
 
 for (const result of [
-  { status: "completed", finalResponse: "Flow finished." },
+  { status: "completed", finalResponse: "Workflow finished." },
   { status: "completed", finalResponse: "" },
   { status: "failed", finalResponse: "Unfinished response." },
   { status: "interrupted", finalResponse: "Interrupted response." },
 ] as const) {
   test(result.status === "interrupted"
-    ? "Coordinator retains an interrupted terminal tick for old-Flow recovery"
-    : `Coordinator prepares the next Flow after its terminal ${result.status} tick (${result.finalResponse || "no response"}) settles`, async () => {
+    ? "Coordinator retains an interrupted terminal tick for old-Workflow recovery"
+    : `Coordinator enters an idle runtime after its terminal ${result.status} tick (${result.finalResponse || "no response"}) settles`, async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     let entered!: () => void;
@@ -2637,7 +2639,7 @@ for (const result of [
         await gate;
       },
     });
-    const fixture = createAgentFixture(`coordinator-flow-${result.status}`, { appServer });
+    const fixture = createAgentFixture(`coordinator-workflow-${result.status}`, { appServer });
     const scope = currentRunScope();
     const workflow = scope.workflow;
     workflow.initialize();
@@ -2652,30 +2654,29 @@ for (const result of [
     await coordinator.startThread();
     const gateway = new InteractionGateway();
     try {
-      await gateway.submitUserMessage({ text: "Finish this Flow.", messageId: "finish-flow" });
+      await gateway.submitUserMessage({ text: "Finish this Workflow.", messageId: "finish-workflow" });
       await waitFor(() => appServer.turnInputs.length === 1);
       await terminal;
-      assert.equal(workflow.flowSnapshot().flowId, "journal-0001");
-      assert.equal(workflow.flowSnapshot().status, "settling");
+      assert.equal(workflow.snapshot()?.workflowId, "workflow-001");
+      assert.equal(workflow.snapshot()?.status, "settling");
       release();
       await coordinator.runToIdle();
       if (result.status === "interrupted") {
-        assert.equal(workflow.flowSnapshot().flowId, "journal-0001");
-        assert.equal(workflow.flowSnapshot().status, "settling");
+        assert.equal(workflow.snapshot()?.workflowId, "workflow-001");
+        assert.equal(workflow.snapshot()?.status, "settling");
         const retained = readJournalEvents(oldPath);
         assert.equal(retained.filter((event) => AgentEvents.step.interrupted.is(event)).length, 1);
         assert.equal(retained.filter((event) => AgentEvents.turn.completed.is(event)
           && event.payload.turn.status === "interrupted").length, 1);
         assert.equal(retained.filter((event) => AgentEvents.message.consumed.is(event)
-          && event.payload.messageId === "finish-flow").length, 1);
+          && event.payload.messageId === "finish-workflow").length, 1);
         assert.equal(retained.some((event) => WorkflowEvents.workflow.completed.is(event)), false);
         assert.equal(retained.some((event) => AgentEvents.coordinator.messageProduced.is(event)
           && event.payload.text === result.finalResponse), false);
         assert.equal(appServer.turnInputs.length, 1, "direct graph advancement does not request a cleanup Step");
         return;
       }
-      assert.equal(workflow.flowSnapshot().flowId, "journal-0002");
-      assert.equal(workflow.flowSnapshot().status, "active");
+      assert.equal(workflow.snapshot(), undefined);
       const oldEvents = readJournalEvents(oldPath);
       assert.equal(oldEvents.filter((event) => AgentEvents.turn.completed.is(event)).length, 1);
       assert.equal(oldEvents.filter((event) => AgentEvents.message.consumed.is(event)).length, 1);
@@ -2683,7 +2684,7 @@ for (const result of [
       assert.equal(responses.length, result.status === "completed" && result.finalResponse ? 1 : 0);
       assert.equal(workflow.readEvents().some((event) => AgentEvents.turn.completed.is(event)
         || AgentEvents.coordinator.messageProduced.is(event)), false);
-      assert.equal(appServer.turnInputs.length, 1, "no extra input or automatic Agent turn starts the Flow");
+      assert.equal(appServer.turnInputs.length, 1, "no extra input or automatic Agent turn starts the Workflow");
       assert.equal(coordinator.threadSnapshot?.threadId, "thread-test");
     } finally {
       release();
@@ -2726,7 +2727,7 @@ test("Coordinator consumes Gateway input even when ScoutJournal cannot record th
 });
 
 for (const failOldRawInput of [false, true]) {
-  test(`Coordinator carries accepted unconsumed input into its next Flow${failOldRawInput ? " when the old raw input write fails" : " in original order"}`, async (t) => {
+  test(`Coordinator consumes accepted unconsumed input with no active Workflow${failOldRawInput ? " when the old raw input write fails" : " in original order"}`, async (t) => {
     let enterFirst!: () => void;
     const firstStarted = new Promise<void>((resolve) => { enterFirst = resolve; });
     let finishFirst!: () => void;
@@ -2739,13 +2740,13 @@ for (const failOldRawInput of [false, true]) {
     let terminalResponse: DynamicToolCallResponse | undefined;
     let turns = 0;
     const appServer = createFakeAppServer({
-      turnIds: ["turn-first-flow", "turn-next-flow"],
+      turnIds: ["turn-first-workflow", "turn-next-workflow"],
       onRunTurn: async () => {
         if (++turns !== 1) return;
         enterFirst();
         await finishRequested;
         terminalResponse = await handleTool({
-          threadId: "thread-test", turnId: "turn-first-flow", callId: "finish-first-flow",
+          threadId: "thread-test", turnId: "turn-first-workflow", callId: "finish-first-workflow",
           namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE, tool: "SubmitPhaseOutcome", arguments: { outcome: "error" },
         });
         enterTerminal();
@@ -2773,7 +2774,7 @@ for (const failOldRawInput of [false, true]) {
     t.mock.method(Journal.prototype, "append", function (this: Journal, event: ScoutEvent) {
       if (failOldRawInput && this.path === oldPath
         && SystemEvents.interaction.userMessageSubmitted.is(event) && event.payload.messageId === "next-user-2") {
-        throw new Error("old Flow raw user recording failed");
+        throw new Error("old Workflow raw user recording failed");
       }
       return originalAppend.call(this, event);
     });
@@ -2782,10 +2783,10 @@ for (const failOldRawInput of [false, true]) {
       await gateway.submitUserMessage({ messageId: "first-user", text: "Finish the original work." });
       await waitFor(() => appServer.turnInputs.length === 1);
       await firstStarted;
-      await gateway.submitUserMessage({ messageId: "next-user-2", text: "Second user input for the next Flow.", source: "test-user", data: { position: 2 } });
-      await gateway.submitUserMessage({ messageId: "next-user-3", text: "Third user input for the next Flow.", source: "test-user", data: { position: 3 } });
+      await gateway.submitUserMessage({ messageId: "next-user-2", text: "Second user input for the next Workflow.", source: "test-user", data: { position: 2 } });
+      await gateway.submitUserMessage({ messageId: "next-user-3", text: "Third user input for the next Workflow.", source: "test-user", data: { position: 3 } });
       await coordinator.drainInput();
-      const pending = coordinator.pendingFlowInputs();
+      const pending = coordinator.pendingWorkflowInputs();
       assert.deepEqual(pending.map(({ delivery }) => delivery.messageId), ["next-user-2", "next-user-3"]);
       assert.equal(appServer.turnInputs.length, 1, "accepted input must not start a concurrent Coordinator Step");
       const beforeBoundary = workflow.readEvents();
@@ -2799,12 +2800,11 @@ for (const failOldRawInput of [false, true]) {
       finishFirst();
       await terminalEntered;
       assert.equal(terminalResponse?.success, true);
-      assert.equal(workflow.flowSnapshot().flowId, "journal-0001");
-      assert.equal(workflow.flowSnapshot().status, "settling");
+      assert.equal(workflow.snapshot()?.workflowId, "workflow-001");
+      assert.equal(workflow.snapshot()?.status, "settling");
       releaseTerminal();
       await coordinator.runToIdle();
-      assert.equal(workflow.flowSnapshot().flowId, "journal-0002");
-      assert.equal(workflow.flowSnapshot().status, "active");
+      assert.equal(workflow.snapshot(), undefined);
       assert.equal(appServer.turnInputs.length, 2);
       const nextPrompt = appServer.turnInputs[1]!.prompt ?? "";
       assert.doesNotMatch(appServer.turnInputs[0]!.prompt ?? "", /Second user input|Third user input/);
@@ -2812,26 +2812,13 @@ for (const failOldRawInput of [false, true]) {
       assert.ok(nextPrompt.indexOf("Third user input") > nextPrompt.indexOf("Second user input"));
       const nextEvents = workflow.readEvents();
       const oldEvents = readJournalEvents(oldPath);
-      for (const { event: original, delivery } of pending) {
-        const raw = nextEvents.find((event) => SystemEvents.interaction.userMessageSubmitted.is(event)
-          && event.payload.messageId === delivery.messageId);
-        const queued = nextEvents.find((event) => AgentEvents.message.queued.is(event)
-          && event.payload.messageId === delivery.messageId);
-        assert.ok(raw && queued);
-        assert.equal(raw.id, original.id);
-        assert.equal(raw.occurredAt, original.occurredAt);
-        assert.deepEqual(raw.payload, original.payload);
-        assert.deepEqual(queued.payload, delivery);
-        assert.equal(queued.occurredAt, delivery.queuedAt);
-        assert.ok(raw.seq < queued.seq);
+      assert.deepEqual(nextEvents, []);
+      assert.match(nextPrompt, /workflow_status: empty/);
+      for (const { delivery } of pending) {
         assert.equal(oldEvents.filter((event) => AgentEvents.message.consumed.is(event)
           && event.payload.messageId === delivery.messageId).length, 0);
-        assert.equal(nextEvents.filter((event) => AgentEvents.message.consumed.is(event)
-          && event.payload.messageId === delivery.messageId).length, 1);
       }
-      assert.deepEqual(nextEvents.filter((event) => SystemEvents.interaction.userMessageSubmitted.is(event))
-        .map((event) => event.payload.messageId), ["next-user-2", "next-user-3"]);
-      assert.equal(coordinator.pendingFlowInputs().length, 0);
+      assert.equal(coordinator.pendingWorkflowInputs().length, 0);
       assert.equal(oldEvents.filter((event) => AgentEvents.message.consumed.is(event)
         && event.payload.messageId === "first-user").length, 1);
     } finally {
@@ -2845,7 +2832,7 @@ for (const failOldRawInput of [false, true]) {
 }
 
 for (const outcome of ["completed", "error"] as const) {
-test(`Flow ${outcome} automatically releases finished Worker tasks before consuming next-Flow input`, async () => {
+test(`Workflow ${outcome} automatically releases finished Worker tasks before consuming pending input with no active Workflow`, async () => {
   let finishFirst!: () => void;
   const finishRequested = new Promise<void>((resolve) => { finishFirst = resolve; });
   let enterRelease!: () => void;
@@ -2901,7 +2888,7 @@ test(`Flow ${outcome} automatically releases finished Worker tasks before consum
     const task: AgentTaskState = {
       type: "local_agent", taskId: role + "-finished-task", taskSequence: 1,
       agentId: worker.agentId, role, phase: "research",
-      description: "Completed old Flow work", initialPrompt: "Old work", status: AgentTaskStatuses.Done,
+      description: "Completed old Workflow work", initialPrompt: "Old work", status: AgentTaskStatuses.Done,
       isBackgrounded: true, stepIds: [], dispositions: [], createdAt: now, updatedAt: now, finishedAt: now,
     };
     worker.restoreTask({ task, maxTaskSequence: 1 });
@@ -2915,25 +2902,25 @@ test(`Flow ${outcome} automatically releases finished Worker tasks before consum
   const oldPath = workflow.journalPath;
   try {
     const gateway = new InteractionGateway();
-    await gateway.submitUserMessage({ messageId: "original-user", text: "Conclude the original Flow." });
+    await gateway.submitUserMessage({ messageId: "original-user", text: "Conclude the original Workflow." });
     await waitFor(() => appServer.turnInputs.length === 1);
-    await gateway.submitUserMessage({ messageId: "next-flow-user", text: "NEXT FLOW ONLY USER INPUT" });
+    await gateway.submitUserMessage({ messageId: "next-workflow-user", text: "NEXT WORKFLOW ONLY USER INPUT" });
     await coordinator.drainInput();
     finishFirst();
     await releaseStarted;
     assert.equal(terminalResponse?.success, true);
-    assert.equal(workflow.flowSnapshot().status, "settling");
+    assert.equal(workflow.snapshot()?.status, "settling");
     assert.equal(appServer.turnInputs.length, 1, "resource cleanup does not need another Agent turn");
-    assert.equal(coordinator.pendingFlowInputs().length, 1);
+    assert.equal(coordinator.pendingWorkflowInputs().length, 1);
     finishRelease();
     await coordinator.runToIdle();
     assert.equal(fixture.taskStore.listTasks().length, 0);
     assert.ok(workers.every((worker) => worker.taskRunner === undefined));
-    assert.equal(workflow.flowSnapshot().flowId, "journal-0002");
+    assert.equal(workflow.snapshot(), undefined);
     assert.equal(new WorkflowBenchmarks(currentRunScope().runRoot).read()?.lastSuccess,
-      outcome === "completed" ? "journal-0001" : undefined);
+      outcome === "completed" ? "workflow-001" : undefined);
     assert.equal(appServer.turnInputs.length, 2);
-    assert.match(appServer.turnInputs[1]!.prompt ?? "", /NEXT FLOW ONLY USER INPUT/);
+    assert.match(appServer.turnInputs[1]!.prompt ?? "", /NEXT WORKFLOW ONLY USER INPUT/);
     const oldEvents = readJournalEvents(oldPath);
     const releases = oldEvents.filter((event) => AgentEvents.task.released.is(event));
     assert.equal(releases.length, 2);
@@ -2942,9 +2929,10 @@ test(`Flow ${outcome} automatically releases finished Worker tasks before consum
     assert.ok(completed);
     assert.ok(releases.every((event) => event.seq < completed.seq));
     assert.equal(oldEvents.some((event) => AgentEvents.message.consumed.is(event)
-      && event.payload.messageId === "next-flow-user"), false);
+      && event.payload.messageId === "next-workflow-user"), false);
     assert.equal(workflow.readEvents().filter((event) => AgentEvents.message.consumed.is(event)
-      && event.payload.messageId === "next-flow-user").length, 1);
+      && event.payload.messageId === "next-workflow-user").length, 0);
+    assert.match(appServer.turnInputs[1]!.prompt ?? "", /workflow_status: empty/);
     assert.equal(oldEvents.some((event) => AgentEvents.coordinator.messageProduced.is(event)
       && event.payload.text.includes("Coordinator turn failed")), false);
   } finally {
@@ -2958,10 +2946,10 @@ test(`Flow ${outcome} automatically releases finished Worker tasks before consum
 });
 }
 
-test("A failed Worker release retains the settling Flow and retries without losing its journal", async (t) => {
+test("A failed Worker release retains the settling Workflow and retries without losing its journal", async (t) => {
   const appServer = createFakeAppServer({ threadIds: ["thread-researcher", "thread-verifier"] });
   const graph = createTestScheduler().snapshot();
-  const fixture = createAgentFixture("flow-release-failure", {
+  const fixture = createAgentFixture("workflow-release-failure", {
     appServer, scheduler: new Scheduler(new Graph({
       ...graph,
       phases: graph.phases.map((phase, index) => index === 0
@@ -2998,17 +2986,17 @@ test("A failed Worker release retains the settling Flow and retries without losi
   try {
     workflow.scheduler.advance("completed");
     const before = new WorkflowBenchmarks(currentRunScope().runRoot).read();
-    await assert.rejects(workflow.prepareNextFlow(), /Worker release failed/);
-    assert.equal(workflow.flowSnapshot().status, "settling");
+    await assert.rejects(workflow.settleWorkflow(), /Worker release failed/);
+    assert.equal(workflow.snapshot()?.status, "settling");
     assert.equal(workflow.journalPath, oldPath);
     assert.deepEqual(new WorkflowBenchmarks(currentRunScope().runRoot).read(), before);
     assert.equal(workflow.readEvents().some((event) => WorkflowEvents.workflow.completed.is(event)), false);
     assert.equal(workers[0]?.taskRunner, undefined);
     assert.ok(workers[1]?.taskRunner);
     failed.mock.restore();
-    await workflow.prepareNextFlow();
-    assert.equal(workflow.flowSnapshot().flowId, "journal-0002");
-    assert.equal(new WorkflowBenchmarks(currentRunScope().runRoot).read()?.lastSuccess, "journal-0001");
+    await workflow.settleWorkflow();
+    assert.equal(workflow.snapshot(), undefined);
+    assert.equal(new WorkflowBenchmarks(currentRunScope().runRoot).read()?.lastSuccess, "workflow-001");
     const oldEvents = readJournalEvents(oldPath);
     assert.equal(oldEvents.filter((event) => AgentEvents.task.released.is(event)).length, 2);
     assert.equal(oldEvents.filter((event) => WorkflowEvents.workflow.completed.is(event)).length, 1);
@@ -3226,7 +3214,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
           namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
           tool: "SubmitTask",
           arguments: {
-            outcome: "## Outcome\n\n- Artifact: ${SCOUT_ARTIFACT_ROOT}/result.md",
+            outcome: `## Outcome\n\n- Artifact: ${currentRunScope().workflow.agentPaths("verifier").artifactRoot}/result.md`,
           },
         });
         submitSucceeded = result.success;
@@ -3395,16 +3383,26 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   assert.equal(submittedDisposition?.callId, "call-submit-task");
   assert.ok(appServer.turnInputs.some((turn) =>
     turn.prompt?.includes(
-      "<task-outcome>\n## Outcome\n\n- Artifact: ${SCOUT_RUN_ROOT}/verifier/artifacts/result.md\n</task-outcome>",
+      "<task-outcome>\n## Outcome\n\n- Artifact: scout-artifact://workflow-001/verifier/result.md\n</task-outcome>",
     )
   ));
+  const handoffTurn = appServer.turnInputs.find((turn) => turn.prompt?.includes(
+    "<task-outcome>\n## Outcome\n\n- Artifact: scout-artifact://workflow-001/verifier/result.md\n</task-outcome>",
+  ));
+  assert.ok(handoffTurn?.prompt);
+  const handoffContext = JSON.parse(attachments.readTagBlock(handoffTurn.prompt, "workflow_context")[0]!.body);
+  assert.deepEqual(handoffContext.artifactReferences, [{
+    ref: "scout-artifact://workflow-001/verifier/result.md",
+    path: join(currentRunScope().workflow.agentPaths("verifier").artifactRoot, "result.md"),
+  }]);
+  assert.ok(handoffContext.artifacts.every((artifact: object) => !Object.hasOwn(artifact, "referenceRoot")));
   const submittedOutcome = fixture.journal.readAll().find((event) =>
     AgentEvents.task.outcomeSubmitted.is(event)
   );
   assert.ok(submittedOutcome && AgentEvents.task.outcomeSubmitted.is(submittedOutcome));
   assert.equal(
     submittedOutcome.payload.outcome,
-    "## Outcome\n\n- Artifact: ${SCOUT_RUN_ROOT}/verifier/artifacts/result.md",
+    "## Outcome\n\n- Artifact: scout-artifact://workflow-001/verifier/result.md",
   );
   const humanResponseEvent = fixture.journal.readAll().find((event) =>
     AgentEvents.humanInput.responded.is(event)
@@ -3737,6 +3735,191 @@ test("AgentTaskStore snapshots are immutable from callers", () => {
   assert.equal(stored?.status, AgentTaskStatuses.Queued);
 });
 
+test("Coordinator opens each Workflow only after its requesting Turn and reuses the Thread with fresh execution roots", async () => {
+  let backend: AgentDynamicToolBackend;
+  let calls = 0;
+  const appServer = createFakeAppServer({
+    turnIds: ["open-1", "execute-1", "history", "open-2", "execute-2"],
+    onRunTurn: async () => {
+      const scope = currentRunScope();
+      calls += 1;
+      if (calls === 1 || calls === 4) {
+        assert.equal(scope.workflow.snapshot(), undefined);
+        const input = {
+          threadId: "thread-test", turnId: calls === 1 ? "open-1" : "open-2", callId: "request-" + calls,
+          namespace: AGENT_START_WORKFLOW_TOOL_NAMESPACE, tool: "StartWorkflow", arguments: { prompt: "Run the requested BDD." },
+        };
+        const accepted = await backend.handleDynamicToolCall(input);
+        assert.equal(accepted.success, true, JSON.stringify(accepted));
+        assert.deepEqual(await backend.handleDynamicToolCall(input), accepted);
+        const duplicate = await backend.handleDynamicToolCall({ ...input, callId: "another-request" });
+        assert.equal(duplicate.success, false);
+        assert.equal(scope.workflow.snapshot(), undefined, "the requesting Turn has no execution Workflow");
+      } else if (calls === 2) {
+        assert.equal(scope.workflow.snapshot()?.workflowId, "workflow-001");
+        scope.workflow.scheduler.advance("error");
+      } else if (calls === 3) {
+        assert.equal(scope.workflow.snapshot(), undefined, "history discussion stays empty");
+      } else {
+        assert.equal(scope.workflow.snapshot()?.workflowId, "workflow-002");
+      }
+    },
+  });
+  const fixture = createAgentFixture("explicit-workflow-start", { appServer, withoutActiveWorkflow: true });
+  backend = new AgentDynamicToolBackend();
+  const scope = currentRunScope();
+  const coordinatorAgent = new AgentBuilder().buildCoordinator();
+  await coordinatorAgent.startThread();
+  try {
+    await coordinatorAgent.sendMessage({ message: agent.turn.message("Start a new execution.") });
+    await coordinatorAgent.runToIdle();
+    assert.equal(calls, 2);
+    assert.equal(scope.workflow.snapshot(), undefined);
+    await coordinatorAgent.sendMessage({ message: agent.turn.message("Explain the historical result.") });
+    await coordinatorAgent.runToIdle();
+    assert.equal(calls, 3);
+    await coordinatorAgent.sendMessage({ message: agent.turn.message("Start another execution.") });
+    await coordinatorAgent.runToIdle();
+    assert.equal(calls, 5);
+    assert.equal(scope.workflow.snapshot()?.workflowId, "workflow-002");
+    assert.equal(appServer.threadInputs.length, 1);
+    assert.equal(coordinatorAgent.threadId, "thread-test");
+    assert.deepEqual(appServer.turnInputs.map((turn) => turn.runtimeWorkspaceRoots), [
+      [], [join(scope.runRoot, "workflows", "workflow-001")], [], [], [join(scope.runRoot, "workflows", "workflow-002")],
+    ]);
+    assert.ok(appServer.turnInputs.every((turn) => turn.cwd === fixture.mount.mountRoot));
+    const contexts = appServer.turnInputs.map((turn) => {
+      const prompt = turn.prompt ?? "";
+      const context = /<workflow_context>\s*([\s\S]*?)\s*<\/workflow_context>/.exec(prompt);
+      assert.ok(context?.[1], "each Turn receives the formal Workflow context");
+      assert.doesNotMatch(prompt, /<flow_context>|\bflow_status:|"flowId"/);
+      return JSON.parse(context[1]);
+    });
+    assert.deepEqual(contexts.map((context) => context.status), ["empty", "active", "empty", "empty", "active"]);
+    assert.deepEqual(contexts.map((context) => context.workflowId), [undefined, "workflow-001", undefined, undefined, "workflow-002"]);
+    assert.equal(contexts[0].artifactRoot, undefined);
+    assert.equal(contexts[1].artifactRoot, join(scope.runRoot, "workflows", "workflow-001", "agents", "coordinator", "artifacts"));
+    assert.equal(contexts[4].artifactRoot, join(scope.runRoot, "workflows", "workflow-002", "agents", "coordinator", "artifacts"));
+    assert.match(appServer.turnInputs[1]!.prompt ?? "", /workflow-001/);
+    assert.match(appServer.turnInputs[4]!.prompt ?? "", /workflow-002/);
+    assert.doesNotMatch(appServer.turnInputs[4]!.prompt ?? "", /workflow-001/);
+    const events = scope.workflow.readEvents();
+    assert.equal(events.filter((event) => AgentEvents.turn.started.is(event)).length, 1);
+    assert.equal(events.some((event) => AgentEvents.turn.completed.is(event) && event.payload.turn.turnId === "open-2"), false);
+  } finally {
+    await coordinatorAgent.stopAgent("test_cleanup");
+  }
+});
+
+test("resumed Workflow resolves handoff refs after a directory rename without rewriting evidence", async () => {
+  const appServer = createFakeAppServer({ turnIds: ["before-rename", "after-resume"] });
+  createAgentFixture("artifact-path-resume", { appServer });
+  const scope = currentRunScope();
+  const original = scope.workflow;
+  const graphState = original.graph.snapshot();
+  const originalRoot = dirname(original.journalRoot);
+  const relativePath = "result.json";
+  const artifactRoot = original.agentPaths("researcher").artifactRoot;
+  mkdirSync(artifactRoot, { recursive: true });
+  const ref = "scout-artifact://workflow-001/researcher/result.json";
+  const artifactContent = JSON.stringify({ executorHistoryRef: ref, recordLocator: "JR/123", refs: ["SR/456"] });
+  writeFileSync(join(artifactRoot, relativePath), artifactContent);
+  const prompt = agent.turn.task_outcome(`## Outcome\n\n- Artifact: ${ref}`);
+  const coordinator = new AgentBuilder().buildCoordinator();
+  await coordinator.startThread();
+  let resumed: Workflow | undefined;
+  try {
+    await coordinator.runTurn({ prompt });
+    await original.stop();
+    const oldJournal = readFileSync(join(originalRoot, "journal", "scout.journal"), "utf8");
+    const renamedRoot = join(scope.runRoot, "workflows", "renamed evidence");
+    renameSync(originalRoot, renamedRoot);
+    const selected = new WorkflowBenchmarks(scope.runRoot).resolve("currentWorkflow");
+    assert.ok(selected);
+    assert.equal(selected.workflowRoot, renamedRoot);
+    const journalPath = join(selected.journalRoot, "scout.journal");
+    resumed = new Workflow({
+      graphState,
+      resume: {
+        workflowState: projectWorkflowState(selected.workflowId, readJournalEvents(journalPath)),
+        journalRoot: selected.journalRoot,
+      },
+    });
+    scope.clearWorkflow(original);
+    scope.setWorkflow(resumed);
+    await resumed.start();
+    assert.equal(readFileSync(journalPath, "utf8"), oldJournal);
+    await coordinator.runTurn({ prompt });
+    assert.equal(appServer.threadInputs.length, 1);
+    assert.equal(coordinator.threadId, "thread-test");
+    const contexts = appServer.turnInputs.map((turn) => {
+      assert.ok(turn.prompt);
+      assert.ok(turn.prompt.endsWith(prompt), "business prompt is delivered verbatim");
+      return JSON.parse(attachments.readTagBlock(turn.prompt, "workflow_context")[0]!.body);
+    });
+    assert.deepEqual(contexts.map((context) => context.artifactReferences), [
+      [{ ref, path: join(artifactRoot, relativePath) }],
+      [{ ref, path: join(renamedRoot, "agents", "researcher", "artifacts", relativePath) }],
+    ]);
+    assert.equal(appServer.turnInputs[1]!.prompt?.includes(originalRoot), false);
+    assert.deepEqual(appServer.turnInputs[1]!.runtimeWorkspaceRoots, [renamedRoot]);
+    assert.equal(readFileSync(join(renamedRoot, "agents", "researcher", "artifacts", relativePath), "utf8"), artifactContent);
+    const turnPrompts = readJournalEvents(journalPath).flatMap((event) =>
+      AgentEvents.turn.started.is(event) ? [event.payload.prompt] : []
+    );
+    assert.deepEqual(turnPrompts, [prompt, prompt]);
+  } finally {
+    await coordinator.stopAgent("test_cleanup");
+    await resumed?.stop();
+  }
+});
+
+test("empty Workflow does not resolve historical refs or supply artifact access paths", async () => {
+  const appServer = createFakeAppServer();
+  createAgentFixture("idle-artifact-reference", { appServer, withoutActiveWorkflow: true });
+  const coordinator = new AgentBuilder().buildCoordinator();
+  await coordinator.startThread();
+  try {
+    const prompt = "Explain scout-artifact://workflow-001/researcher/result.json";
+    await coordinator.runTurn({ prompt });
+    const delivered = appServer.turnInputs[0]!.prompt!;
+    const context = JSON.parse(attachments.readTagBlock(delivered, "workflow_context")[0]!.body);
+    assert.equal(context.status, "empty");
+    assert.equal(context.artifactRoot, undefined);
+    assert.equal(context.artifacts, undefined);
+    assert.equal(context.artifactReferences, undefined);
+    assert.deepEqual(appServer.turnInputs[0]!.runtimeWorkspaceRoots, []);
+    assert.ok(delivered.endsWith(prompt));
+  } finally {
+    await coordinator.stopAgent("test_cleanup");
+  }
+});
+
+for (const status of ["failed", "interrupted"] as const) {
+  test(`A ${status} requesting Turn does not open a Workflow`, async () => {
+    let backend: AgentDynamicToolBackend;
+    const appServer = createFakeAppServer({ turnStatus: status, onRunTurn: async () => {
+      const result = await backend.handleDynamicToolCall({
+        threadId: "thread-test", turnId: "turn-test", callId: "request", namespace: AGENT_START_WORKFLOW_TOOL_NAMESPACE,
+        tool: "StartWorkflow", arguments: { prompt: "Start execution" },
+      });
+      assert.equal(result.success, true);
+    } });
+    createAgentFixture("failed-start-workflow-" + status, { appServer, withoutActiveWorkflow: true });
+    backend = new AgentDynamicToolBackend();
+    const coordinatorAgent = new AgentBuilder().buildCoordinator();
+    await coordinatorAgent.startThread();
+    try {
+      await coordinatorAgent.sendMessage({ message: agent.turn.message("Start execution") });
+      await coordinatorAgent.runToIdle();
+      assert.equal(currentRunScope().workflow.snapshot(), undefined);
+      assert.equal(appServer.turnInputs.length, 1);
+    } finally {
+      await coordinatorAgent.stopAgent("test_cleanup");
+    }
+  });
+}
+
 function createAgentFixture(
   name: string,
   input: {
@@ -3745,6 +3928,7 @@ function createAgentFixture(
     logger?: Logger;
     interactionPort?: RuntimeInteractionPort;
     scheduler?: Scheduler;
+    withoutActiveWorkflow?: boolean;
   } = {},
 ): {
   root: string;
@@ -3775,9 +3959,21 @@ function createAgentFixture(
   const runRoot = join(root, "run", runId);
   const manifestStore = new RunManifestStore(runRoot);
   const scheduler = input.scheduler ?? createTestScheduler();
-  const workflow = new Workflow({
-    graphState: scheduler.snapshot(),
-  });
+  const createdAt = new Date().toISOString();
+  let resume: ConstructorParameters<typeof Workflow>[0]["resume"];
+  if (!input.withoutActiveWorkflow) {
+    const benchmarks = new WorkflowBenchmarks(runRoot);
+    benchmarks.acquire();
+    const prepared = benchmarks.prepareNext();
+    const seed = Journal.create({ journalId: runId + ":workflow:scout", path: join(prepared.journalRoot, "scout.journal"), lockPath: join(prepared.journalRoot, ".scout.lock") });
+    seed.append({ id: runId + "-created", key: RunEvents.run.created, payload: { runId, scoutRoot: root, createdAt }, occurredAt: createdAt });
+    seed.append({ id: runId + "-initialized", key: WorkflowEvents.workflow.initialized, payload: { state: scheduler.snapshot(), initializedAt: createdAt }, occurredAt: createdAt });
+    seed.close();
+    benchmarks.recordStarted(prepared.workflowId);
+    benchmarks.release();
+    resume = { workflowState: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot };
+  }
+  const workflow = new Workflow({ graphState: scheduler.snapshot(), resume });
   if (releaseTestRunScope) {
     throw new Error("Test run scope was not released before creating another fixture.");
   }
@@ -3831,7 +4027,6 @@ function createAgentFixture(
   const baseDomain = new BaseDomain();
   scope.domainRegistry.register(baseDomain);
   scope.domainRegistry.register(domain);
-  const createdAt = new Date().toISOString();
   manifestStore.create({
     runId,
     scoutRoot: root,
@@ -3840,10 +4035,11 @@ function createAgentFixture(
   });
   void workflow.start();
   releaseTestRunScope = async () => {
-    await workflow.stop();
     for (const registeredDomain of scope.domainRegistry.list().reverse()) {
+      await registeredDomain.stop?.();
       scope.domainRegistry.unregister(registeredDomain);
     }
+    await workflow.stop();
     releaseScope();
   };
   const registry = scope.agentRegistry;
@@ -3918,6 +4114,7 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
       "tool-scout-send-message",
       "tool-scout-respond-human-input",
       "tool-scout-submit-phase-outcome",
+    "tool-scout-start-workflow",
       "tool-domain-probe",
     ]
     : [
@@ -3959,12 +4156,10 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
     scoutRoot: root,
     mountRoot,
     runRoot: root,
-    artifactRoot,
-    logsRoot,
-    tempRoot,
+    agentRoot: dirname(mountRoot),
     issues: [],
     readableRoots: [root],
-    writableRoots: [artifactRoot],
+    writableRoots: [],
     shellTools: [],
     mcpServers: [],
     customAgents: role === "coordinator" ? [] : ["scout-helper"],
@@ -4179,6 +4374,8 @@ function createFakeAppServer(options: {
   turnInputs: Array<{
     approvalPolicy?: ThreadStartOptions["approvalPolicy"];
     prompt?: string;
+      cwd?: string;
+      runtimeWorkspaceRoots?: string[];
     model?: string;
     reasoningEffort?: string;
     reasoningSummary?: string;
@@ -4200,6 +4397,8 @@ function createFakeAppServer(options: {
     turnInputs: [] as Array<{
       approvalPolicy?: ThreadStartOptions["approvalPolicy"];
       prompt?: string;
+      cwd?: string;
+      runtimeWorkspaceRoots?: string[];
       model?: string;
       reasoningEffort?: string;
       reasoningSummary?: string;
@@ -4315,6 +4514,8 @@ function createFakeAppServer(options: {
     },
     runTurn: async (turnInput: {
       prompt?: string;
+      cwd?: string;
+      runtimeWorkspaceRoots?: string[];
       model?: string;
       reasoningEffort?: string;
       reasoningSummary?: string;
@@ -4363,6 +4564,8 @@ function createFakeAppServer(options: {
     readonly timelineHandlerCount: number;
     turnInputs: Array<{
       prompt?: string;
+      cwd?: string;
+      runtimeWorkspaceRoots?: string[];
       model?: string;
       reasoningEffort?: string;
       reasoningSummary?: string;

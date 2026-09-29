@@ -1,11 +1,12 @@
 import { statSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { runPaths, scoutJournalPaths, scoutRunRoot } from "../../core/path.js";
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import { InMemoryEventBus } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
 import {
   resolveSynthesisRole,
-  projectWorkflowFlowState,
+  projectWorkflowState,
   Workflow,
   WorkflowBenchmarks,
   WorkflowEvents,
@@ -47,9 +48,9 @@ import { RestoreEnvironmentStage, ResumeClientsStage } from "./stages/index.js";
  * Reopens a persisted run and executes its resume lifecycle.
  *
  * The selected journal must belong to this run. A missing benchmark target
- * starts a new Flow within the same run; other journal failures are fatal.
+ * leaves the Run without an active Workflow; other journal failures are fatal.
  * Stage-owned restoration rebuilds runtime resources, then activation
- * re-enables any work represented by the selected Flow's journal projection.
+ * re-enables any work represented by the selected Workflow's journal projection.
  */
 export async function resumeRun(
   options: ResumeRunOptions,
@@ -65,15 +66,14 @@ export async function resumeRun(
     );
   }
   const scoutRoot = dirname(runDirectory);
-  const selectedFlow = new WorkflowBenchmarks(runRoot).resolve("currentFlow");
-  if (!selectedFlow) {
-    throw new Error("Workflow benchmarks do not contain a current Flow.");
-  }
-  const journalRoot = selectedFlow.journalRoot;
-  const journalPath = join(journalRoot, "scout.journal");
+  const benchmarks = new WorkflowBenchmarks(runRoot);
+  const selectedWorkflow = benchmarks.resolve("currentWorkflow");
+  const selectedWorkflowId = benchmarks.read()?.currentWorkflow;
+  const journalRoot = selectedWorkflow?.journalRoot;
+  const journalPath = journalRoot ? scoutJournalPaths(journalRoot).path : undefined;
   let persistedEvents: JournalEvent[] | undefined;
   try {
-    persistedEvents = readJournalEvents(journalPath);
+    if (journalPath) persistedEvents = readJournalEvents(journalPath);
   } catch (error) {
     if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
       throw error;
@@ -82,11 +82,11 @@ export async function resumeRun(
   if (persistedEvents) {
     const runCreated = persistedEvents.find((event) => RunEvents.run.created.is(event));
     if (!runCreated || !RunEvents.run.created.is(runCreated)) {
-      throw new Error(`Cannot resume ${manifest.runId}: Workflow Flow ${selectedFlow.flowId} is missing run.created.`);
+      throw new Error(`Cannot resume ${manifest.runId}: Workflow ${selectedWorkflowId} is missing run.created.`);
     }
     if (runCreated.payload.runId !== manifest.runId) {
       throw new Error(
-        `Cannot resume ${manifest.runId}: Workflow Flow ${selectedFlow.flowId}`
+        `Cannot resume ${manifest.runId}: Workflow ${selectedWorkflowId}`
         + ` belongs to Run ${runCreated.payload.runId}.`,
       );
     }
@@ -96,18 +96,12 @@ export async function resumeRun(
   // established runtime from missing metadata or missing evidence.
   const initializeEnvironment = manifest.agents === undefined;
   if (initializeEnvironment) {
-    if (!persistedEvents) {
-      throw new Error(
-        `Cannot initialize Run ${manifest.runId}: its environment index is missing`
-        + " and the missing Workflow journal cannot establish incomplete initialization.",
-      );
-    }
-    if (persistedEvents.some((event) => event.key.scope === "agent"
+    if ((selectedWorkflowId !== undefined && !persistedEvents) || persistedEvents?.some((event) => event.key.scope === "agent"
       || WorkflowEvents.workflow.advanced.is(event)
       || WorkflowEvents.workflow.completed.is(event))) {
       throw new Error(
         `Cannot initialize Run ${manifest.runId}: its environment index is missing`
-        + " but the Workflow journal already contains execution facts.",
+        + " and its Workflow evidence does not prove an unfinished bootstrap.",
       );
     }
   }
@@ -134,39 +128,29 @@ export async function resumeRun(
     workflow = new Workflow({
       graphState,
       resume: {
-        flow: projectWorkflowFlowState(selectedFlow.flowId, persistedEvents),
-        journalRoot,
+        workflowState: projectWorkflowState(selectedWorkflowId!, persistedEvents),
+        journalRoot: journalRoot!,
       },
     });
   } else {
     workflow = new Workflow({
       graphState: assetStore.buildWorkflow(scoutRoot, scoutConfig.workflow.profile),
-      expectedMissingFlow: selectedFlow,
-      startBaseline: [{
-        id: `run-created-${manifest.runId}`,
-        key: RunEvents.run.created,
-        payload: {
-          runId: manifest.runId,
-          scoutRoot,
-          createdAt: manifest.createdAt,
-        },
-        occurredAt: manifest.createdAt,
-      }],
+      missingWorkflowId: selectedWorkflowId,
     });
-    await interactionPort.disclose({
+    if (selectedWorkflowId) await interactionPort.disclose({
       level: "warn",
       source: "workflow.resume",
-      message: `Workflow journal ${journalPath} is missing; starting a new Flow in Run ${manifest.runId}.`,
+      message: `Workflow journal for ${selectedWorkflowId} is missing; Run ${manifest.runId} will wait without an active Workflow.`,
       data: {
         runId: manifest.runId,
-        missingFlowId: selectedFlow.flowId,
+        missingWorkflowId: selectedWorkflowId,
         missingJournalPath: journalPath,
       },
     });
   }
   const logger = new Logger({
     runId: manifest.runId,
-    logsRoot: join(runRoot, "logs"),
+    logsRoot: runPaths(runRoot).logsRoot,
   });
   const resumeStartedAt = Date.now();
   logger.info({
@@ -245,11 +229,7 @@ export async function resumeRun(
       occurredAt: readyAt,
     });
     assembly.injectResumeContextStage.activate();
-    const checkpointSeq = projectRun(
-      scope.workflow.readEvents(),
-      resolveSynthesisRole(scope.workflow.scheduler.snapshot()).name,
-      readDomainJournalProjections(scope.domainRegistry.list()),
-    ).checkpointSeq;
+    const checkpointSeq = scope.workflow.lastSeq;
     const agentIds = scope.agentRegistry.listAgents().map((agent) => agent.agentId);
     scope.logger.info({
       module: "run.lifecycle",
@@ -293,7 +273,7 @@ function resolveRunRoot(cwd: string, run: string): string {
   const direct = isAbsolute(run) ? resolve(run) : resolve(cwd, run);
   const candidates = isAbsolute(run) || run.includes("/") || run.includes("\\")
     ? [direct]
-    : [resolve(cwd, "run", run), direct];
+    : [scoutRunRoot(resolve(cwd), run), direct];
   const seen = new Set<string>();
   for (const candidate of candidates) {
     if (seen.has(candidate)) continue;
@@ -316,7 +296,7 @@ function isDirectory(path: string): boolean {
 /** Checks whether a candidate directory has the persisted run manifest marker. */
 function isRunManifest(path: string): boolean {
   try {
-    return statSync(join(path, "run.json")).isFile();
+    return statSync(runPaths(path).manifestPath).isFile();
   } catch {
     return false;
   }
@@ -333,7 +313,7 @@ function toRunSummary(environment: RunEnvironment, graphState: GraphState): Scou
     agents: mapAgents(environment, (agent) => ({
       mountId: agent.mount.mountId,
       mountRoot: agent.mount.mountRoot,
-      artifactRoot: agent.mount.artifactRoot,
+      agentRoot: agent.mount.agentRoot,
       assetCommitId: agent.assetCommit.assetCommitId,
       assetCommitPath: agent.assetCommitPath,
       preflightStatus: agent.preflight.status,

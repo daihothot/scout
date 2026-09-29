@@ -1,6 +1,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { runAgentPaths, scoutRunRoot } from "../../core/path.js";
 import {
   hashDirectory,
   sha256File,
@@ -59,7 +60,7 @@ export class MountContextBuilder {
       CodexAgentRuntimeAssetLayout.root,
     );
     const runId = normalizeRunId(options.runId);
-    const runRoot = join(scoutRoot, "run", runId);
+    const runRoot = scoutRunRoot(scoutRoot, runId);
     const agentId = sanitizeAgentId(options.agentId);
     const assetJson = new AssetJsonReader(scoutAssetsRoot);
     const config = new AssetConfig(join(scoutAssetsRoot, ScoutAssetLayout.configRoot));
@@ -80,11 +81,7 @@ export class MountContextBuilder {
       return names[0];
     })();
     const workflowProfileAsset = readWorkflowProfile(scoutRoot, workflowProfileName);
-    const agentRoot = join(runRoot, "agents", agentId);
-    const artifactRoot = join(agentRoot, "artifacts");
-    const logsRoot = join(agentRoot, "logs");
-    const tempRoot = join(agentRoot, "tmp");
-    const mountRoot = join(agentRoot, "mount");
+    const { agentRoot, mountRoot } = runAgentPaths(runRoot, agentId);
     const agentProfile = new WorkflowBuilder(workflowProfileAsset).buildAgentProfile(agentId);
     const mcpServers = assetJson.readJson(ScoutAssetLayout.mcpServers) as McpServersFile;
     const shellTools = assetJson.readJson(ScoutAssetLayout.shellTools) as {
@@ -144,16 +141,12 @@ export class MountContextBuilder {
       scoutRoot,
       runRoot,
       mountRoot,
-      artifactRoot,
-      tempRoot,
     });
     const writableRoots = resolveAgentProfileRoots({
       roots: agentProfile.writableRoots,
       scoutRoot,
       runRoot,
       mountRoot,
-      artifactRoot,
-      tempRoot,
     });
     return {
       scoutRoot,
@@ -163,9 +156,6 @@ export class MountContextBuilder {
       runRoot,
       agentId,
       agentRoot,
-      artifactRoot,
-      logsRoot,
-      tempRoot,
       mountRoot,
       agentProfile,
       profiledMcpServers,
@@ -340,15 +330,11 @@ function resolveAgentProfileRoots(input: {
   scoutRoot: string;
   runRoot: string;
   mountRoot: string;
-  artifactRoot: string;
-  tempRoot: string;
 }): string[] {
   const dynamicValues = createMountMacroValues({
     scoutRoot: input.scoutRoot,
     runRoot: input.runRoot,
     mountRoot: input.mountRoot,
-    artifactRoot: input.artifactRoot,
-    tempRoot: input.tempRoot,
     assetCommitId: "",
   });
   return uniqueStrings((input.roots ?? [])

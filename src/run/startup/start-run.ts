@@ -1,4 +1,5 @@
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
+import { runPaths, scoutRunRoot } from "../../core/path.js";
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import { InMemoryEventBus } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
@@ -43,10 +44,10 @@ export async function startRun(
   const scoutConfig = loadScoutConfig(config);
   const eventBus = new InMemoryEventBus();
   const graphState = assetStore.buildWorkflow(scoutRoot, scoutConfig.workflow.profile);
-  const runRoot = join(scoutRoot, "run", runId);
+  const runRoot = scoutRunRoot(scoutRoot, runId);
   const runtimeLogger = new Logger({
     runId,
-    logsRoot: join(runRoot, "logs"),
+    logsRoot: runPaths(runRoot).logsRoot,
   });
   const runStartedAt = Date.now();
   const workflow = new Workflow({
@@ -197,7 +198,7 @@ function toRunSummary(
     agents: mapAgents(environment, (agent) => ({
       mountId: agent.mount.mountId,
       mountRoot: agent.mount.mountRoot,
-      artifactRoot: agent.mount.artifactRoot,
+      agentRoot: agent.mount.agentRoot,
       assetCommitId: agent.assetCommit.assetCommitId,
       assetCommitPath: agent.assetCommitPath,
       preflightStatus: agent.preflight.status,

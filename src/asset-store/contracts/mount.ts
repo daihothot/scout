@@ -28,10 +28,7 @@ export interface CodexMount {
   scoutRoot: string;
   mountRoot: string;
   runRoot: string;
-  artifactRoot: string;
-  logsRoot: string;
-  /** Run-scoped writable temporary directory exposed as SCOUT_TEMP_ROOT. */
-  tempRoot: string;
+  agentRoot: string;
   issues: MountMaterializationIssue[];
   readableRoots: string[];
   writableRoots: string[];

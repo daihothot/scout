@@ -28,17 +28,21 @@ import type { AgentToolCallState } from "../../src/agent/tool-call/types.js";
 import type { AgentTaskNotAssignedEventPayload } from "../../src/agent/task/task-events.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { TaskRunner } from "../../src/agent/runner/task/task-runner.js";
-import { InMemoryEventBus } from "../../src/core/events/index.js";
+import { InMemoryEventBus, type EventBus } from "../../src/core/events/index.js";
+import { DomainEvents, type DomainAgentToolCallObservedEvent } from "../../src/domain/domain-events.js";
+import { ScoutDomainId } from "../../src/domain/types.js";
+import { RbtAgentToolCallRecorder } from "../../src/domain/domains/rbt/agent/telemetry/agent-tool-call-recorder.js";
+import { currentRunScope } from "../../src/run/run-scope.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
 test("TaskEventRecorder writes only task lifecycle facts", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-task-recorder-"));
-  const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
   const registry = installTestRunScope(t, {
     runId: "run-task-recorder",
     eventBus,
   }).agentRegistry;
+  const logsRoot = currentRunScope().workflow.agentPaths("researcher").logsRoot;
   registerAgent(registry, "researcher", logsRoot);
   const recorder = new TaskEventRecorder();
   recorder.start();
@@ -88,7 +92,7 @@ test("TaskEventRecorder writes only task lifecycle facts", async (t) => {
 
 test("TaskEventRecorder separates new tasks after a restored worker reuses its local task sequence", async (t) => {
   const scope = installTestRunScope(t, { runId: "restored-task-identity" });
-  const logsRoot = join(scope.runRoot, "agents", "researcher", "logs");
+  const logsRoot = scope.workflow.agentPaths("researcher").logsRoot;
   registerAgent(scope.agentRegistry, "researcher", logsRoot);
   const recorder = new TaskEventRecorder();
   recorder.start();
@@ -100,13 +104,13 @@ test("TaskEventRecorder separates new tasks after a restored worker reuses its l
   };
   const firstRunner = new TaskRunner({ host, taskSequence: 1 });
   const first = await firstRunner.assignTask({
-    description: "before new Flow", phase: "research", prompt: "first unique task prompt",
+    description: "before new Workflow", phase: "research", prompt: "first unique task prompt",
   });
   await firstRunner.stopTask(first.taskId);
   await firstRunner.releaseTask(first.taskId);
   const restoredRunner = new TaskRunner({ host, taskSequence: 1 });
   const second = await restoredRunner.assignTask({
-    description: "after restored Flow", phase: "research", prompt: "second unique task prompt",
+    description: "after restored Workflow", phase: "research", prompt: "second unique task prompt",
   });
   await scope.eventBus.drain(AgentEvents.task.assigned);
   await scope.eventBus.drain(AgentEvents.task.released);
@@ -124,12 +128,12 @@ test("TaskEventRecorder separates new tasks after a restored worker reuses its l
 
 test("AgentHumanInputRecorder writes one Human Input body with message identity", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-human-input-recorder-"));
-  const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
   const registry = installTestRunScope(t, {
     runId: "run-human-input-recorder",
     eventBus,
   }).agentRegistry;
+  const logsRoot = currentRunScope().workflow.agentPaths("researcher").logsRoot;
   registerAgent(registry, "researcher", logsRoot);
   const recorder = new AgentHumanInputRecorder();
   recorder.start();
@@ -161,13 +165,13 @@ test("AgentHumanInputRecorder writes one Human Input body with message identity"
 
 test("StepEventRecorder writes Worker and Coordinator step facts only to step logs", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-step-recorder-"));
-  const researcherLogsRoot = join(root, "agents", "researcher", "logs");
-  const coordinatorLogsRoot = join(root, "agents", "coordinator", "logs");
   const eventBus = new InMemoryEventBus();
   const registry = installTestRunScope(t, {
     runId: "run-step-recorder",
     eventBus,
   }).agentRegistry;
+  const researcherLogsRoot = currentRunScope().workflow.agentPaths("researcher").logsRoot;
+  const coordinatorLogsRoot = currentRunScope().workflow.agentPaths("coordinator").logsRoot;
   registerAgent(registry, "researcher", researcherLogsRoot);
   registerAgent(registry, "coordinator", coordinatorLogsRoot);
   const recorder = new StepEventRecorder();
@@ -297,12 +301,12 @@ test("StepEventRecorder writes Worker and Coordinator step facts only to step lo
 
 test("AgentToolCallRecorder aggregates one logical Tool Call lifecycle", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-tool-call-recorder-"));
-  const logsRoot = join(root, "agents", "coordinator", "logs");
   const eventBus = new InMemoryEventBus();
   const registry = installTestRunScope(t, {
     runId: "run-tool-call-recorder",
     eventBus,
   }).agentRegistry;
+  const logsRoot = currentRunScope().workflow.agentPaths("coordinator").logsRoot;
   registerAgent(registry, "coordinator", logsRoot);
   const recorder = new AgentToolCallRecorder();
   recorder.start();
@@ -354,12 +358,12 @@ test("AgentToolCallRecorder aggregates one logical Tool Call lifecycle", async (
 
 test("AgentActivityRecorder writes stable activity to the role activity log", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-activity-recorder-"));
-  const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
   const registry = installTestRunScope(t, {
     runId: "run-activity-recorder",
     eventBus,
   }).agentRegistry;
+  const logsRoot = currentRunScope().workflow.agentPaths("researcher").logsRoot;
   registerAgent(registry, "researcher", logsRoot);
   const recorder = new AgentActivityRecorder();
   recorder.start();
@@ -413,12 +417,12 @@ test("AgentActivityRecorder writes stable activity to the role activity log", as
 
 test("AgentCommandExecutionRecorder writes command facts without return values", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-command-recorder-"));
-  const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
   const registry = installTestRunScope(t, {
     runId: "run-command-recorder",
     eventBus,
   }).agentRegistry;
+  const logsRoot = currentRunScope().workflow.agentPaths("researcher").logsRoot;
   registerAgent(registry, "researcher", logsRoot);
   const recorder = new AgentCommandExecutionRecorder();
   recorder.start();
@@ -447,12 +451,12 @@ test("AgentCommandExecutionRecorder writes command facts without return values",
 
 test("AgentSubagentRecorder writes complete native subagent facts to a dedicated log", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-subagent-recorder-"));
-  const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
   const registry = installTestRunScope(t, {
     runId: "run-subagent-recorder",
     eventBus,
   }).agentRegistry;
+  const logsRoot = currentRunScope().workflow.agentPaths("researcher").logsRoot;
   registerAgent(registry, "researcher", logsRoot);
   const activityRecorder = new AgentActivityRecorder();
   const recorder = new AgentSubagentRecorder();
@@ -754,6 +758,176 @@ test("AgentThreadRecorder records Coordinator instruction assets without their b
   assert.doesNotMatch(text, /COORDINATOR_INLINE_BODY_MUST_NOT_BE_RECORDED/);
 });
 
+test("All execution telemetry recorders share entity/Workflow directory selection", async (t) => {
+  const at = "2026-09-29T00:00:00.000Z";
+  const cases = [
+    {
+      Recorder: AgentActivityRecorder,
+      file: "activity.log",
+      publish: (bus: EventBus, marker: string) => bus.publishAndWait(AgentEvents.activity.observed,
+        activity({ status: "completed", detail: marker })),
+    },
+    {
+      Recorder: AgentCommandExecutionRecorder,
+      file: "command-execution.log",
+      publish: (bus: EventBus, marker: string) => bus.publishAndWait(AgentEvents.commandExecution.observed, {
+        sourceSeq: 1, agentId: "researcher", role: "researcher", threadId: "thread-researcher",
+        turnId: marker, itemId: marker, command: marker, status: "completed", exitCode: 0, observedAt: at,
+      }),
+    },
+    {
+      Recorder: AgentHumanInputRecorder,
+      file: "human-input.log",
+      publish: (bus: EventBus, marker: string) => bus.publishAndWait(AgentEvents.humanInput.requested, {
+        requestId: marker, agentId: "researcher", taskId: "task-1", stepId: marker,
+        body: marker, requestedAt: at,
+        message: { messageId: marker, agentId: "coordinator", body: marker, queuedAt: at },
+      }),
+    },
+    {
+      Recorder: AgentSubagentRecorder,
+      file: "subagent.log",
+      publish: (bus: EventBus, marker: string) => bus.publishAndWait(AgentEvents.subagent.observed, {
+        seq: 1, agentId: "researcher", role: "researcher", threadId: "thread-researcher",
+        turnId: marker, itemId: marker, updatedAt: at, type: "subAgentActivity", kind: "started",
+        agentThreadId: "thread-child", agentPath: marker,
+      } satisfies AgentNativeSubagentEvent),
+    },
+    {
+      Recorder: AgentToolCallRecorder,
+      file: "tool-calls.log",
+      publish: (bus: EventBus, marker: string) => bus.publishAndWait(AgentEvents.toolCall.observed, {
+        toolCallId: marker, kind: "dynamic", agentId: "researcher", stepId: marker,
+        threadId: "thread-researcher", turnId: marker, itemId: marker, tool: "Inspect",
+        status: "completed", success: true, sourceSeq: 1, observedAt: at,
+      } satisfies AgentToolCallState),
+    },
+    {
+      Recorder: StepEventRecorder,
+      file: "steps.log",
+      publish: (bus: EventBus, marker: string) => bus.publishAndWait(AgentEvents.step.completed, {
+        stepId: marker, agentId: "researcher", status: "completed", prompt: "inspect",
+        finalResponse: marker, toolCallIds: [], humanInputReferences: [], startedAt: at, updatedAt: at,
+      } satisfies AgentStepState),
+    },
+    {
+      Recorder: TaskEventRecorder,
+      file: "researcher-task-0001.log",
+      publish: (bus: EventBus, marker: string) => bus.publishAndWait(AgentEvents.task.notAssigned, {
+        agentId: "researcher", role: "researcher", activeTaskId: "researcher-task-0001",
+        requestedDescription: marker, reason: "No execution requested",
+      } satisfies AgentTaskNotAssignedEventPayload),
+    },
+    {
+      Recorder: RbtAgentToolCallRecorder,
+      file: "rbt-agent-tool-call.log",
+      publish: (bus: EventBus, marker: string) => bus.publishAndWait(DomainEvents.agentToolCall.observed, {
+        domainId: ScoutDomainId.Rbt, callId: marker, agentId: "researcher", role: "researcher",
+        threadId: "thread-researcher", phase: "research", namespace: "rbt_behavior", tool: "JarvisBehavior",
+        arguments: { marker }, response: { success: true, contentItems: [{ type: "inputText", text: "{}" }] },
+        startedAt: at, completedAt: at,
+      } satisfies DomainAgentToolCallObservedEvent),
+    },
+  ];
+  for (const entry of cases) {
+    await t.test(entry.Recorder.name, async (t) => {
+      const scope = installTestRunScope(t, { runId: `routing-${entry.Recorder.name}` });
+      const agentRoot = join(scope.runRoot, "agents", "researcher");
+      const entityLogs = join(agentRoot, "logs");
+      const firstLogs = scope.workflow.agentPaths("researcher").logsRoot;
+      const secondLogs = join(scope.runRoot, "workflows", "renamed-workflow", "agents", "researcher", "logs");
+      registerAgent(scope.agentRegistry, "researcher", agentRoot);
+      const workflowState = scope.workflow.snapshot();
+      assert.ok(workflowState);
+      let selectedLogs: string | undefined;
+      // Isolate recorder selection from workflow lifecycle, which has separate integration tests.
+      t.mock.method(scope.workflow, "snapshot", () => selectedLogs ? workflowState : undefined);
+      t.mock.method(scope.workflow, "agentPaths", (agentId: string) => {
+        assert.equal(agentId, "researcher");
+        assert.ok(selectedLogs, "idle-runtime logging must not ask Workflow for paths");
+        return { logsRoot: selectedLogs, artifactRoot: join(selectedLogs, "..", "artifacts") };
+      });
+      t.mock.getter(scope, "environment", () => ({ agents: { researcher: {} } }));
+      const recorder = new entry.Recorder();
+      recorder.start();
+      t.after(() => recorder.stop());
+
+      await entry.publish(scope.eventBus, "before-workflow-marker");
+      const before = readFileSync(join(entityLogs, entry.file), "utf8");
+      assert.match(before, /before-workflow-marker/);
+      assert.equal(existsSync(join(firstLogs, entry.file)), false);
+      assert.equal(existsSync(join(agentRoot, "artifacts")), false);
+
+      selectedLogs = firstLogs;
+      await entry.publish(scope.eventBus, "first-workflow-marker");
+      const first = readFileSync(join(firstLogs, entry.file), "utf8");
+      assert.match(first, /first-workflow-marker/);
+      assert.equal(readFileSync(join(entityLogs, entry.file), "utf8"), before);
+
+      selectedLogs = undefined;
+      await entry.publish(scope.eventBus, "after-workflow-marker");
+      const after = readFileSync(join(entityLogs, entry.file), "utf8");
+      assert.match(after, /before-workflow-marker/);
+      assert.match(after, /after-workflow-marker/);
+      assert.doesNotMatch(after, /first-workflow-marker/);
+      assert.equal(readFileSync(join(firstLogs, entry.file), "utf8"), first);
+
+      // Even the same Workflow identity at a different physical path must not reuse the old logger.
+      selectedLogs = secondLogs;
+      await entry.publish(scope.eventBus, "next-path-marker");
+      const second = readFileSync(join(secondLogs, entry.file), "utf8");
+      assert.match(second, /next-path-marker/);
+      assert.doesNotMatch(second, /before-workflow-marker|after-workflow-marker|first-workflow-marker/);
+      assert.equal(readFileSync(join(firstLogs, entry.file), "utf8"), first);
+      assert.equal(readFileSync(join(entityLogs, entry.file), "utf8"), after);
+      recorder.stop();
+      await entry.publish(scope.eventBus, "after-stop-marker");
+      assert.equal(readFileSync(join(secondLogs, entry.file), "utf8"), second);
+    });
+  }
+});
+
+test("Tool Call completion and stop flushing retain the first-observed telemetry directory", async (t) => {
+  const scope = installTestRunScope(t, { runId: "tool-call-log-ownership" });
+  const agentRoot = join(scope.runRoot, "agents", "coordinator");
+  const entityLog = join(agentRoot, "logs", "tool-calls.log");
+  const workflowLog = join(scope.workflow.agentPaths("coordinator").logsRoot, "tool-calls.log");
+  registerAgent(scope.agentRegistry, "coordinator", agentRoot);
+  const workflowState = scope.workflow.snapshot();
+  let inWorkflow = false;
+  t.mock.method(scope.workflow, "snapshot", () => inWorkflow ? workflowState : undefined);
+  const recorder = new AgentToolCallRecorder();
+  recorder.start();
+  t.after(() => recorder.stop());
+  const first: AgentToolCallState = {
+    toolCallId: "empty-workflow-call", kind: "dynamic", agentId: "coordinator", stepId: "step-1",
+    threadId: "thread-1", turnId: "turn-1", itemId: "call-1", tool: "StartWorkflow",
+    status: "inProgress", sourceSeq: 1, observedAt: "2026-09-29T00:00:00.000Z",
+  };
+  await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, first);
+  assert.equal(existsSync(entityLog), false);
+  inWorkflow = true;
+  const completed = { ...first, status: "completed", success: true, sourceSeq: 2 };
+  await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, completed);
+  await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, completed);
+  const entityContents = readFileSync(entityLog, "utf8");
+  assert.equal(readEventCount(entityContents), 1);
+  assert.match(entityContents, /empty-workflow-call/);
+  assert.match(entityContents, /observationCount: 2/);
+  assert.equal(existsSync(workflowLog), false);
+
+  await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, { ...first, toolCallId: "workflow-pending-call" });
+  inWorkflow = false;
+  recorder.stop();
+  assert.equal(readFileSync(entityLog, "utf8"), entityContents);
+  const workflowContents = readFileSync(workflowLog, "utf8");
+  assert.match(workflowContents, /workflow-pending-call/);
+  assert.doesNotMatch(workflowContents, /empty-workflow-call/);
+  assert.equal(readEventCount(workflowContents), 1);
+  recorder.stop();
+  assert.equal(readFileSync(workflowLog, "utf8"), workflowContents);
+});
+
 function registerAgent(
   registry: AgentRegistry,
   agentId: string,
@@ -762,7 +936,7 @@ function registerAgent(
   registry.registerAgent({
     agentId,
     get mount() {
-      return { logsRoot };
+      return { agentRoot: logsRoot };
     },
   } as ScoutAgent);
 }

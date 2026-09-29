@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { routeAgentHook } from "../../agent/hooks/route-agent-hook.js";
 
 interface CodexToolUseInput {
@@ -97,12 +98,15 @@ function readContext(arguments_: string[]): NativeHookContext {
   };
   const runId = valueAfter("--run-id");
   const agentId = valueAfter("--agent-id");
-  const stateRoot = valueAfter("--state-root");
   const runtimeId = process.env.SCOUT_HOOK_RUNTIME_ID;
-  if (!runId || !agentId || !stateRoot) {
-    throw new Error("Codex native hook requires --run-id, --agent-id, and --state-root.");
+  if (!runId || !agentId) {
+    throw new Error("Codex native hook requires --run-id and --agent-id.");
   }
   if (!runtimeId) throw new Error("Codex native hook requires SCOUT_HOOK_RUNTIME_ID from its app-server instance.");
+  for (const id of [runtimeId, runId, agentId]) {
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error("Invalid Codex native hook identity.");
+  }
+  const stateRoot = join(tmpdir(), "scout-hooks", runtimeId, runId, agentId);
   return { runId, agentId, stateRoot, runtimeId };
 }
 

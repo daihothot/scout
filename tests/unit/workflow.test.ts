@@ -142,9 +142,9 @@ for (const outcome of ["completed", "error"] as const) {
       };
       const stored = scope.taskStore.addTask(task);
       const beforeGraph = workflow.graph.snapshot();
-      const beforeFlow = workflow.flowSnapshot();
+      const beforeWorkflow = workflow.snapshot();
       const beforeJournal = readFileSync(workflow.journalPath, "utf8");
-      const benchmarkPath = join(dirname(workflow.journalRoot), "benchmarks.json");
+      const benchmarkPath = join(scope.runRoot, "benchmarks.json");
       const beforeBenchmark = readFileSync(benchmarkPath, "utf8");
       let published = 0;
       scope.eventBus.subscribe(WorkflowEvents.workflow.advanced, () => { published += 1; });
@@ -152,7 +152,7 @@ for (const outcome of ["completed", "error"] as const) {
       if (status === AgentTaskStatuses.Queued || status === AgentTaskStatuses.Running) {
         assert.throws(() => workflow.scheduler.advance(outcome), /Cannot advance Workflow Phase research: Task phase-task/);
         assert.deepEqual(workflow.graph.snapshot(), beforeGraph);
-        assert.deepEqual(workflow.flowSnapshot(), beforeFlow);
+        assert.deepEqual(workflow.snapshot(), beforeWorkflow);
         assert.equal(readFileSync(workflow.journalPath, "utf8"), beforeJournal);
         assert.equal(readFileSync(benchmarkPath, "utf8"), beforeBenchmark);
         assert.equal(published, 0);
@@ -163,14 +163,14 @@ for (const outcome of ["completed", "error"] as const) {
       const advanced = workflow.scheduler.advance(outcome);
       assert.equal(advanced.cycleCompleted, outcome === "error");
       assert.equal(advanced.state.currentPhase, outcome === "error" ? "research" : "research-reviewer");
-      assert.equal(workflow.flowSnapshot().status, outcome === "error" ? "settling" : "active");
+      assert.equal(workflow.snapshot()?.status, outcome === "error" ? "settling" : "active");
       assert.equal(published, 1);
       assert.ok(scope.taskStore.getTask(task.taskId), "Phase advancement does not release the Task");
     });
   }
 }
 
-test("Scheduler keeps human-waiting and restored earlier-Phase Tasks on the active Flow", (t) => {
+test("Scheduler keeps human-waiting and restored earlier-Phase Tasks on the active Workflow", (t) => {
   const scope = installTestRunScope(t, { runId: "phase-guard-human-wait" });
   scope.workflow.scheduler.advance("completed");
   const now = new Date().toISOString();
@@ -187,11 +187,11 @@ test("Scheduler keeps human-waiting and restored earlier-Phase Tasks on the acti
     }],
   });
   const graph = scope.workflow.graph.snapshot();
-  const flow = scope.workflow.flowSnapshot();
+  const workflowState = scope.workflow.snapshot()!;
   for (const outcome of ["completed", "error"] as const) {
     assert.throws(() => scope.workflow.scheduler.advance(outcome), /restored-human-task \(running\)/);
     assert.deepEqual(scope.workflow.graph.snapshot(), graph);
-    assert.deepEqual(scope.workflow.flowSnapshot(), flow);
+    assert.deepEqual(scope.workflow.snapshot(), workflowState);
     assert.doesNotThrow(() => scope.workflow.assertAcceptingInput());
   }
 });
@@ -215,9 +215,9 @@ for (const status of [AgentTaskStatuses.Done, AgentTaskStatuses.Failed, AgentTas
       workerStep,
       { ...workerStep, stepId: "coordinator-step", agentId: "coordinator", taskId: undefined },
     ]);
-    const before = scope.workflow.flowSnapshot();
+    const before = scope.workflow.snapshot();
     assert.throws(() => scope.workflow.scheduler.advance("error"), /Worker Step finishing-step for Task ended-task is still running/);
-    assert.deepEqual(scope.workflow.flowSnapshot(), before);
+    assert.deepEqual(scope.workflow.snapshot(), before);
     scope.stepStore.updateStep(workerStep.stepId, (step) => ({ ...step, status: AgentStepStatuses.Completed }));
     assert.equal(scope.workflow.scheduler.advance("error").cycleCompleted, true);
     assert.equal(scope.stepStore.getStep("coordinator-step")?.status, AgentStepStatuses.Running);

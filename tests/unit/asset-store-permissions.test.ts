@@ -266,7 +266,7 @@ test("AssetStore exposes effective permission roots", () => {
 
   assert.ok(store.readableRootsForMount(mount).includes(mount.mountRoot));
   assert.equal(store.readableRootsForMount(mount).includes(fixtureRoot), false);
-  assert.ok(store.writableRootsForMount(mount).includes(mount.artifactRoot));
+  assert.equal(store.writableRootsForMount(mount).some((root) => root.startsWith(mount.runRoot)), false);
   assert.ok(store.writableRootsForMount(mount).includes(join(homedir(), ".guru", "codebase")));
 });
 

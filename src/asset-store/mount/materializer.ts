@@ -1,5 +1,6 @@
 import { chmodSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { runPaths } from "../../core/path.js";
 import {
   ensureDir,
   recreateDir,
@@ -45,9 +46,6 @@ export class MountMaterializer {
   /** Reconstructs a mount projection from a manifest without rewriting files. */
   buildReusableMount(manifest: MountManifest): CodexMount {
     const { context } = this;
-    // The temp root is runtime-only and is intentionally absent from the
-    // portable mount manifest; recreate it when a copied run reuses a mount.
-    ensureDir(context.tempRoot);
     const shellToolsById = new Map(context.profiledShellTools.map((tool) => [tool.id, tool] as const));
     return {
       agentId: context.agentId,
@@ -58,9 +56,7 @@ export class MountMaterializer {
       scoutRoot: context.scoutRoot,
       mountRoot: context.mountRoot,
       runRoot: context.runRoot,
-      artifactRoot: context.artifactRoot,
-      logsRoot: context.logsRoot,
-      tempRoot: context.tempRoot,
+      agentRoot: context.agentRoot,
       issues: manifest.issues,
       readableRoots: context.readableRoots,
       writableRoots: context.writableRoots,
@@ -90,9 +86,6 @@ export class MountMaterializer {
       runRoot,
       agentId,
       agentRoot,
-      artifactRoot,
-      logsRoot,
-      tempRoot,
       mountRoot,
       agentProfile,
       profiledMcpServers,
@@ -125,14 +118,11 @@ export class MountMaterializer {
     const resourceHash = options.persistedIdentity?.resourceHash ?? computedResourceHash;
 
     ensureDir(runRoot);
-    ensureDir(join(runRoot, "agents"));
+    ensureDir(runPaths(runRoot).agentsRoot);
     if (options.cleanRunRoot ?? true) recreateDir(agentRoot);
     else ensureDir(agentRoot);
     recreateDir(mountRoot);
     options.onMaterializationStep?.("wipe");
-    ensureDir(artifactRoot);
-    ensureDir(logsRoot);
-    ensureDir(tempRoot);
     ensureDir(join(mountRoot, ".codex"));
     ensureDir(join(mountRoot, ".codex", "agents"));
     ensureDir(join(mountRoot, ".agents", "skills"));
@@ -146,13 +136,10 @@ export class MountMaterializer {
     const builtMcpServers = new McpServerBuilder({
       mountRoot,
       assetsRoot: scoutAssetsRoot,
-      tempRoot,
       dynamicValues: createMountMacroValues({
         scoutRoot,
         runRoot,
         mountRoot,
-        artifactRoot,
-        tempRoot,
         assetCommitId,
       }),
     }).build(profiledMcpServers);
@@ -215,7 +202,6 @@ export class MountMaterializer {
     const shellBuild = new ShellToolBuilder(
       mountRoot,
       scoutAssetsRoot,
-      tempRoot,
     ).build(profiledShellTools);
     for (const builtTool of shellBuild.tools) {
       writeTextFile(builtTool.wrapperPath, builtTool.wrapperContent);
@@ -247,8 +233,6 @@ export class MountMaterializer {
       mountRoot,
       runtimeRoots: [
         { name: "mount", path: ".", access: "read" },
-        { name: "artifacts", path: relativeOrSelf(mountRoot, artifactRoot), access: "read-write" },
-        { name: "tmp", path: relativeOrSelf(mountRoot, tempRoot), access: "read-write" },
       ],
       issues: shellBuild.issues,
       resourceHash,
@@ -274,9 +258,7 @@ export class MountMaterializer {
       scoutRoot,
       mountRoot,
       runRoot,
-      artifactRoot,
-      logsRoot,
-      tempRoot,
+      agentRoot,
       issues: shellBuild.issues,
       readableRoots,
       writableRoots,

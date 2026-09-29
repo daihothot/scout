@@ -11,6 +11,7 @@ export function buildClientConfig(input: {
     writableRoots: string[];
     deniedRoots: string[];
     network: boolean;
+    workspaceRules: Record<string, "read" | "write">;
   }>>;
   model: CodexModelConfig;
   provider: CodexModelProvider;
@@ -44,6 +45,10 @@ export function buildClientConfig(input: {
     for (const root of profile.deniedRoots) rules.set(root, "deny");
     for (const [root, access] of [...rules].sort(([left], [right]) => left.localeCompare(right))) {
       lines.push(`"${escapeToml(root)}" = "${access}"`);
+    }
+    lines.push("", `[permissions.${profile.id}.filesystem.":workspace_roots"]`);
+    for (const [path, access] of Object.entries(profile.workspaceRules)) {
+      lines.push(`"${escapeToml(path)}" = "${access}"`);
     }
     lines.push(
       "",

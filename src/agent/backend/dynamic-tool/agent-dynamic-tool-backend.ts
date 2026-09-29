@@ -99,6 +99,7 @@ export class AgentDynamicToolBackend {
     caller: ScoutAgent,
   ): Promise<DynamicToolCallResponse> {
     try {
+      if (!currentRunScope().workflow.snapshot()) throw new Error("Domain execution requires an active Workflow.");
       const phase = currentRunScope().workflow.scheduler.current().name;
       const call = {
         input,
@@ -148,8 +149,8 @@ export class AgentDynamicToolBackend {
   private async handleAssignTaskToolCall(
     call: AssignTaskToolCall,
   ): Promise<AssignTaskToolResponse> {
-    if (currentRunScope().workflow.flowSnapshot().status !== "active") {
-      throw new Error("Cannot assign a new Task while the Workflow Flow is settling or completed.");
+    if (currentRunScope().workflow.snapshot()?.status !== "active") {
+      throw new Error("Cannot assign a new Task while the Workflow is settling or completed.");
     }
     const phase = currentRunScope().workflow.scheduler.current();
     const workerRole = phase.selectAvailableRole((role) => {
@@ -213,7 +214,7 @@ export class AgentDynamicToolBackend {
     };
     this.phaseOutcomeReceipts.set(caller, { threadId: delivery.threadId, turnId: delivery.turnId, callId: delivery.callId, outcome: call.outcome, response });
     if (!advanced.cycleCompleted) caller.scheduleCurrentPhaseStep();
-    else caller.scheduleFlowSettlementStep();
+    else caller.scheduleWorkflowSettlementStep();
     return structuredClone(response);
   }
 
@@ -289,6 +290,10 @@ export class AgentDynamicToolBackend {
     delivery: DynamicToolCallInput,
   ): Promise<unknown> {
     switch (call.tool) {
+      case "StartWorkflow":
+        if (!(caller instanceof CoordinatorAgent)) throw new Error("StartWorkflow is only available to the Coordinator.");
+        caller.requestWorkflowStart(delivery, call.prompt);
+        return { status: "accepted", instruction: "结束当前 Turn。Runtime 将在该 Turn 和 Step 结束后开启新 Workflow，并在下一 Turn 继续执行。" };
       case "AssignTask":
         return this.handleAssignTaskToolCall(call);
       case "SendMessage":

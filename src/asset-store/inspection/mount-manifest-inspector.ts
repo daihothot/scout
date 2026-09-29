@@ -70,16 +70,6 @@ export class MountManifestInspector {
     }
     const expectedRuntimeRoots = [
       { name: "mount", path: ".", access: "read" },
-      {
-        name: "artifacts",
-        path: relativeOrSelf(context.mountRoot, context.artifactRoot),
-        access: "read-write",
-      },
-      {
-        name: "tmp",
-        path: relativeOrSelf(context.mountRoot, context.tempRoot),
-        access: "read-write",
-      },
     ];
     if (!Array.isArray(manifest.runtimeRoots)
       || !sameValue(manifest.runtimeRoots, expectedRuntimeRoots)) {

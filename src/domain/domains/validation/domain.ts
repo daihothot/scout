@@ -135,7 +135,7 @@ export class ValidationDomain implements ScoutDomain {
     const producesResearchPack = graphRole.phases.includes("research");
     const reviewsResearchPack = graphRole.phases.includes("research-reviewer");
     const agent = scope.environment.agents[role];
-    const artifactRoot = resolve(agent.mount.artifactRoot);
+    const artifactRoot = scope.workflow.agentPaths(agent.mount.agentId).artifactRoot;
     if (!existsSync(artifactRoot)) return;
     const runRoot = resolve(scope.runRoot);
     const entries = readdirSync(artifactRoot, { withFileTypes: true })

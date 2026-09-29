@@ -31,7 +31,7 @@ export interface ResumePacketInput {
  */
 export type ResumePacketAction =
   | { type: typeof ResumeActionTypes.ContinuePhase; phase: string; instruction: string }
-  | { type: typeof ResumeActionTypes.SettleFlow; instruction: string }
+  | { type: typeof ResumeActionTypes.SettleWorkflow; instruction: string }
   | {
     type: typeof ResumeActionTypes.ResumeTask;
     task_id: string;
@@ -124,8 +124,8 @@ export function renderResumeAction(action: ResumeAction): ResumePacketAction {
   switch (action.type) {
     case ResumeActionTypes.ContinuePhase:
       return { type: action.type, phase: action.phase, instruction: "阶段推进已经提交，继续编排该 Phase；不要重复提交上一阶段 outcome。" };
-    case ResumeActionTypes.SettleFlow:
-      return { type: action.type, instruction: "Graph 终止已经提交。仅核对旧 Task、结果和中断 Step 并完成收尾；不得新建 Task、再次推进 Graph，或开始处理下一 Flow 的用户输入。" };
+    case ResumeActionTypes.SettleWorkflow:
+      return { type: action.type, instruction: "Graph 终止已经提交。仅核对旧 Task、结果和中断 Step 并完成收尾；不得新建 Task、再次推进 Graph，或开始处理下一 Workflow 的用户输入。" };
     case ResumeActionTypes.ResumeCoordinatorStep:
       return {
         type: action.type,

@@ -1,6 +1,6 @@
 import type { BaseDomainAgentToolCallObservedEvent } from "./base-domain-events.js";
 
-/** Restorable authority for Base Domain dynamic-tool results in the active Flow. */
+/** Restorable authority for Base Domain dynamic-tool results in the active Workflow. */
 export class BaseDomainToolCallStore {
   private readonly calls = new Map<string, BaseDomainAgentToolCallObservedEvent>();
 

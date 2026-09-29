@@ -7,6 +7,7 @@ import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
 import type { AgentTaskNotAssignedEventPayload } from "../task/task-events.js";
 import type { AgentTaskState } from "../task/types.js";
+import { agentTelemetryLogsRoot } from "../../core/path.js";
 
 /** Writes task lifecycle events to the owning agent's task log. */
 export class TaskEventRecorder {
@@ -137,14 +138,14 @@ export class TaskEventRecorder {
   }
 
   private loggerFor(agentId: string, taskId: string): Logger {
-    const key = `${agentId}:${taskId}`;
+    const scope = currentRunScope();
+    const logsRoot = agentTelemetryLogsRoot(agentId);
+    const key = `${logsRoot}:${taskId}`;
     const existing = this.taskLoggers.get(key);
     if (existing) return existing;
-    const scope = currentRunScope();
-    const agent = scope.agentRegistry.resolveAgent(agentId);
     const logger = new Logger({
       runId: scope.runId,
-      logsRoot: agent.mount.logsRoot,
+      logsRoot,
       fileName: `${safeTaskId(taskId)}.log`,
     });
     this.taskLoggers.set(key, logger);

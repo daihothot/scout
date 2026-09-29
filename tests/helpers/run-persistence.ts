@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
 import { AssetStore, type AssetConfig } from "../../src/asset-store/index.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
-import type { JournalEvent } from "../../src/core/journal/index.js";
+import { Journal, type JournalEvent } from "../../src/core/journal/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import {
   BaseDomain,
@@ -28,7 +28,9 @@ import {
   Graph,
   Scheduler,
   Workflow,
-  type WorkflowFlowState,
+  WorkflowBenchmarks,
+  WorkflowEvents,
+  type WorkflowState,
 } from "../../src/core/workflow/index.js";
 
 const noopLogger = {
@@ -72,8 +74,20 @@ export function createTestRunPersistence(
   const manifestStore = new RunManifestStore(runRoot);
   const scheduler = schedulerOverride ?? createTestScheduler();
   const workflowRoot = root ?? resolveTestWorkflowRoot(runRoot);
+  // This fixture explicitly seeds an active Workflow; production startup remains empty.
+  const benchmarks = new WorkflowBenchmarks(runRoot);
+  benchmarks.acquire();
+  const prepared = benchmarks.prepareNext();
+  const createdAt = new Date().toISOString();
+  const seed = Journal.create({ journalId: `${runId}:workflow:scout`, path: join(prepared.journalRoot, "scout.journal"), lockPath: join(prepared.journalRoot, ".scout.lock") });
+  seed.append({ id: `${runId}-created`, key: RunEvents.run.created, payload: { runId, scoutRoot, createdAt }, occurredAt: createdAt });
+  seed.append({ id: `${runId}-initialized`, key: WorkflowEvents.workflow.initialized, payload: { state: scheduler.snapshot(), initializedAt: createdAt }, occurredAt: createdAt });
+  seed.close();
+  benchmarks.recordStarted(prepared.workflowId);
+  benchmarks.release();
   const workflow = new Workflow({
     graphState: scheduler.snapshot(),
+    resume: { workflowState: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot },
   });
   const config = new AssetStore().config(scoutRoot);
   const scope = new RunScope({
@@ -89,7 +103,6 @@ export function createTestRunPersistence(
     terminate: async () => undefined,
   });
   const releaseScope = installRunScope(scope);
-  const createdAt = new Date().toISOString();
   manifestStore.create({ runId, scoutRoot, createdAt, checkpointSeq: 0 });
   void workflow.start();
   if (workflow.lastSeq !== 2) {
@@ -139,7 +152,7 @@ export function installTestRunScope(
     environment?: RunEnvironment;
     scheduler?: Scheduler;
     executionSystem?: ExecutionPlatformPort;
-    flowState?: WorkflowFlowState;
+    workflowState?: WorkflowState;
     terminate?(reason: string): Promise<void>;
   },
 ): RunScope {

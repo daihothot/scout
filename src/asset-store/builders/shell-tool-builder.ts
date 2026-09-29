@@ -27,7 +27,6 @@ export class ShellToolBuilder {
   constructor(
     private readonly mountRoot: string,
     private readonly assetsRoot: string,
-    private readonly tempRoot: string,
   ) {}
 
   build(contracts: ShellToolContract[]): ShellToolBuildResult {
@@ -61,7 +60,6 @@ export class ShellToolBuilder {
         wrapperContent: [
           "#!/bin/sh",
           `export PATH=${JSON.stringify(buildMountShellPath(this.mountRoot))}`,
-          `export SCOUT_TEMP_ROOT=${JSON.stringify(this.tempRoot)}`,
           "export GIT_CONFIG_COUNT=1",
           "export GIT_CONFIG_KEY_0=core.excludesFile",
           "export GIT_CONFIG_VALUE_0=/dev/null",

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 const { mkdirSync, readFileSync, renameSync, writeFileSync } = require("node:fs");
-const { dirname, resolve, sep } = require("node:path");
+const { dirname, isAbsolute, resolve, sep } = require("node:path");
 
 function main(argv) {
   const [command, ...args] = argv;
@@ -18,9 +18,9 @@ function main(argv) {
 }
 
 function writeJson(scope, args) {
-  const [relativePath, jsonFile] = args;
-  if (!relativePath || !jsonFile) usage(1);
-  const root = readRoot(scope);
+  const [flag, artifactRoot, relativePath, jsonFile] = args;
+  if (args.length !== 4 || flag !== "--artifact-root" || !relativePath || !jsonFile) usage(1);
+  const root = readRoot(artifactRoot);
   const targetPath = resolveTarget(root, relativePath);
   const jsonText = jsonFile === "-"
     ? readFileSync(0, "utf8")
@@ -35,10 +35,8 @@ function writeJson(scope, args) {
   ].join("\n"));
 }
 
-function readRoot(scope) {
-  const key = "SCOUT_ARTIFACT_ROOT";
-  const value = process.env[key] && process.env[key].trim();
-  if (!value) fail(`${key} is required.`);
+function readRoot(value) {
+  if (!value || !isAbsolute(value)) fail("--artifact-root must be the absolute artifactRoot from the current workflow_context.");
   return resolve(value);
 }
 
@@ -75,7 +73,7 @@ function usage(code) {
   const out = code === 0 ? process.stdout : process.stderr;
   out.write([
     "Usage:",
-    "  scout-json-write artifact <relative-output.json> <source.json|->",
+    "  scout-json-write artifact --artifact-root <absolute-root> <relative-output.json> <source.json|->",
     "  scout-json-write --help|-h",
     "  scout-json-write --smoke",
     "",

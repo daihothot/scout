@@ -129,7 +129,7 @@ export class WorkerAgent extends ScoutAgent {
     }
   }
 
-  /** Releases a finished binding at a Flow boundary; never discards accepted work. */
+  /** Releases a finished binding at a Workflow boundary; never discards accepted work. */
   async releaseTask(taskId: string): Promise<AgentTaskState> {
     if (this.taskChangeInProgress) throw new Error(`Worker agent ${this.agentId} is changing its task binding.`);
     const runner = this.currentTaskRunner;

@@ -4,7 +4,7 @@ import { attachments } from "../../../agent/context/attachments.js";
 import { CoordinatorContextTags } from "../../../agent/runner/coordinator/coordinator-attachments.js";
 import type { UnsubscribeEventHandler } from "../../../core/events/index.js";
 import { resolveSynthesisRole } from "../../../core/workflow/index.js";
-import type { WorkflowFlowState } from "../../../core/workflow/index.js";
+import type { WorkflowState } from "../../../core/workflow/index.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 import { RunEvents } from "../../../run/events/index.js";
 import type { ExecutionPlatformRequest } from "../../../execution/execution-command.js";
@@ -12,7 +12,7 @@ import {
   ScoutDomainId,
   type ScoutDomain,
   type ScoutDomainDescription,
-  type ScoutDomainFlowChange,
+  type ScoutDomainWorkflowChange,
 } from "../../types.js";
 import type { DomainAgentToolRegistration } from "../../agent/index.js";
 import { BaseDomain } from "../base/index.js";
@@ -163,13 +163,17 @@ export class RbtDomain implements ScoutDomain {
     }
   }
 
-  async restore(flow: WorkflowFlowState): Promise<void> {
+  finishWorkflow(): void {
+    this.journal.close();
+  }
+
+  async restore(workflowState: WorkflowState): Promise<void> {
     await this.behaviorOrchestrator.quiesce();
     this.unsubscribeRestoredHistoryReady?.();
     this.unsubscribeRestoredHistoryReady = undefined;
     this.behaviorStore.clear();
     await this.websocket.stop();
-    if (flow.status === "completed") {
+    if (workflowState.status === "completed") {
       this.behaviorOrchestrator.start();
       return;
     }
@@ -198,7 +202,7 @@ export class RbtDomain implements ScoutDomain {
         ));
         for (const history of histories) {
           if (cancelled) return;
-          const messageId = `${scope.runId}-rbt-history-${history.agentId}-${history.runtimeSequence}`;
+          const messageId = `${scope.runId}-${workflowState.workflowId}-rbt-history-${history.agentId}-${history.runtimeSequence}`;
           if (acceptedMessages.has(messageId)) continue;
           await this.deliverHistoryRef(history, history.occurredAt);
           acceptedMessages.add(messageId);
@@ -217,8 +221,8 @@ export class RbtDomain implements ScoutDomain {
     this.behaviorOrchestrator.start();
   }
 
-  prepareFlow(_flow: WorkflowFlowState, journalRoot: string): ScoutDomainFlowChange {
-    const journalChange = this.journal.prepareFlow(journalRoot);
+  prepareWorkflow(_workflowState: WorkflowState, journalRoot: string): ScoutDomainWorkflowChange {
+    const journalChange = this.journal.prepareWorkflow(journalRoot);
     return {
       commit: () => {
         journalChange.commit();
@@ -281,6 +285,8 @@ export class RbtDomain implements ScoutDomain {
 
   private async deliverHistoryRef(history: RbtExecutionHistoryReadyEvent, occurredAt: string): Promise<void> {
     const scope = currentRunScope();
+    const workflowState = scope.workflow.snapshot();
+    if (!workflowState) throw new Error("RBT history delivery requires an active Workflow.");
     const coordinatorRole = resolveSynthesisRole(scope.workflow.scheduler.snapshot()).name;
     const coordinator = scope.agentRegistry.listAgents().find((agent) => agent.role === coordinatorRole);
     if (!coordinator) return;
@@ -297,7 +303,7 @@ export class RbtDomain implements ScoutDomain {
       ].join("\n")),
       deliveryMode: "queued",
       delivery: {
-        messageId: `${scope.runId}-rbt-history-${history.agentId}-${history.runtimeSequence}`,
+        messageId: `${scope.runId}-${workflowState.workflowId}-rbt-history-${history.agentId}-${history.runtimeSequence}`,
         queuedAt: occurredAt,
       },
     });

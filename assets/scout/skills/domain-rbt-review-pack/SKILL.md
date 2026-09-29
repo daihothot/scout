@@ -106,10 +106,10 @@ Confirmation：
 先通过已挂载的 `scout-json-write` 原子写入结构化结果：
 
 ```text
-scout-json-write artifact "<bdd-id>/<version>/review-pack/review-result.json" "<prepared-review-result.json>"
+scout-json-write artifact --artifact-root "<artifactRoot>" "<bdd-id>/<version>/review-pack/review-result.json" "<prepared-review-result.json>"
 ```
 
-第一个路径相对当前 Reviewer artifact root；第二个参数是已经准备好的合法 JSON 文件。命令成功返回的 `path` 是后续报告输入，不需要调用 `--help` 探索接口。
+`<artifactRoot>` 使用当前 `workflow_context` 中的 Reviewer 路径，遵循 `AGENTS.md` 的 Workflow Context；输出路径相对该根目录，最后一个参数是已经准备好的合法 JSON 文件。命令成功返回的 `path` 是后续报告输入，不需要调用 `--help` 探索接口。
 
 通过已挂载的 `rbt-review-report` 工具调用：
 

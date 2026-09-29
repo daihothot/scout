@@ -88,7 +88,7 @@ export class AgentThreadRecorder {
     const agent = scope.agentRegistry.resolveAgent(agentId);
     const logger = new Logger({
       runId: scope.runId,
-      logsRoot: agent.mount.logsRoot,
+      logsRoot: agent.mount.agentRoot,
       fileName: "thread.log",
       summarizer: (event) => event,
     });
@@ -239,7 +239,6 @@ function summarizePortablePath(agentId: string, value: string): string {
   const runRoot = scope.runRoot;
   const roots = [
     [mount?.mountRoot, "${SCOUT_MOUNT_ROOT}"],
-    [mount?.artifactRoot, "${SCOUT_ARTIFACT_ROOT}"],
     [mount?.runRoot, "${SCOUT_RUN_ROOT}"],
     [runRoot, "${SCOUT_RUN_ROOT}"],
     [scope.scoutRoot, "${SCOUT_ROOT}"],
@@ -267,16 +266,10 @@ function summarizePortablePath(agentId: string, value: string): string {
   if (runIndex >= 0) {
     const suffix = normalized.slice(runIndex + runMarker.length);
     const mountMarker = `agents/${agentId}/mount`;
-    const artifactMarker = `agents/${agentId}/artifacts`;
     if (suffix === mountMarker || suffix.startsWith(`${mountMarker}/`)) {
       return suffix === mountMarker
         ? "${SCOUT_MOUNT_ROOT}"
         : `\${SCOUT_MOUNT_ROOT}/${suffix.slice(mountMarker.length + 1)}`;
-    }
-    if (suffix === artifactMarker || suffix.startsWith(`${artifactMarker}/`)) {
-      return suffix === artifactMarker
-        ? "${SCOUT_ARTIFACT_ROOT}"
-        : `\${SCOUT_ARTIFACT_ROOT}/${suffix.slice(artifactMarker.length + 1)}`;
     }
     return suffix ? `\${SCOUT_RUN_ROOT}/${suffix}` : "\${SCOUT_RUN_ROOT}";
   }

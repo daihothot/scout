@@ -21,10 +21,16 @@ export function readJarvisBehaviorExecuteFile(
   executeFileInput: string,
   store: JarvisBehaviorToolStore,
 ): ParsedExecuteFile {
-  const environment = currentRunScope().environment.agents[call.caller.role];
-  if (!environment) throw new Error(`RBT Agent environment is unavailable: ${call.caller.role}.`);
-  const artifactRoot = resolve(environment.mount.artifactRoot);
-  const executeFilePath = resolve(isAbsolute(executeFileInput) ? executeFileInput : join(artifactRoot, executeFileInput));
+  const workflow = currentRunScope().workflow;
+  const workflowState = workflow.snapshot();
+  if (!workflowState) throw new Error("RBT execution requires an active Workflow.");
+  const artifactRoot = workflow.agentPaths(call.caller.agentId).artifactRoot;
+  const referenceRoot = `scout-artifact://${workflowState.workflowId}/${call.caller.agentId}/`;
+  if (executeFileInput.startsWith("scout-artifact://") && !executeFileInput.startsWith(referenceRoot)) {
+    throw new Error("execute_file must reference the calling Agent in the current Workflow.");
+  }
+  const fileInput = executeFileInput.startsWith(referenceRoot) ? executeFileInput.slice(referenceRoot.length) : executeFileInput;
+  const executeFilePath = resolve(isAbsolute(fileInput) ? fileInput : join(artifactRoot, fileInput));
   const artifactRelative = relative(artifactRoot, executeFilePath);
   if (artifactRelative.length === 0
     || artifactRelative.startsWith(`..${sep}`)
@@ -80,7 +86,7 @@ export function readJarvisBehaviorExecuteFile(
     : 0;
   return {
     executeFilePath,
-    executeFileRef: artifactRelative.split(sep).join("/"),
+    executeFileRef: `${referenceRoot}${artifactRelative.split(sep).join("/")}`,
     bddId,
     targetVersion,
     runtimeSequence: store.nextRuntimeSequence(call.caller.agentId, existingMaximum),

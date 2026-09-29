@@ -301,11 +301,12 @@ for (const [event, withEnvironment] of [
       }));
     });
     t.mock.method(RunStageExecutor.prototype, "registerParallel", () => undefined);
-    let journalRoot: string | undefined;
+    let runRoot: string | undefined;
     const start = WorkflowStage.prototype.start;
     t.mock.method(WorkflowStage.prototype, "start", async function (this: WorkflowStage) {
       await start.call(this);
-      journalRoot = currentRunScope().workflow.journalRoot;
+      runRoot = currentRunScope().runRoot;
+      assert.equal(currentRunScope().workflow.snapshot(), undefined);
     });
     const info = Logger.prototype.info;
     t.mock.method(Logger.prototype, "info", function (this: Logger, input: LogInput) {
@@ -327,9 +328,9 @@ for (const [event, withEnvironment] of [
       await assert.rejects(startRun({ cwd: root, interactionPort }), (error) => error === failure);
     }
 
-    assert.ok(journalRoot);
-    assert.equal(existsSync(join(journalRoot, "scout.journal")), true);
-    assert.equal(existsSync(join(journalRoot, ".scout.lock")), false);
+    assert.ok(runRoot);
+    assert.equal(existsSync(join(runRoot, "workflows", "workflow-001")), false);
+    assert.equal(existsSync(join(runRoot, ".workflow.lock")), false);
     assert.throws(() => currentRunScope(), /No active Scout run scope/);
   });
 }

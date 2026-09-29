@@ -19,6 +19,7 @@ export class RestoreTasksStage implements RunStage {
   /** Restores bound tasks and historical results without rebinding released tasks. */
   async start(): Promise<void> {
     const scope = currentRunScope();
+    if (!scope.workflow.snapshot()) return;
     const graphState = scope.workflow.scheduler.snapshot();
     const projection = projectRun(
       scope.workflow.readEvents(),

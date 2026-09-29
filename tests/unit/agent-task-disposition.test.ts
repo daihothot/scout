@@ -116,16 +116,16 @@ test("AgentTaskStore records each disposition kind and rejects a conflicting dis
 test("Task disposition persists in Task state and stays out of Step telemetry", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-task-disposition-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
   const scope = installTestRunScope(t, {
     runId: "run-task-disposition",
     eventBus,
   });
+  const logsRoot = scope.workflow.agentPaths("researcher").logsRoot;
   scope.agentRegistry.registerAgent({
     agentId: "researcher",
     get mount() {
-      return { logsRoot };
+      return { agentRoot: logsRoot };
     },
   } as ScoutAgent);
   const taskRecorder = new TaskEventRecorder();

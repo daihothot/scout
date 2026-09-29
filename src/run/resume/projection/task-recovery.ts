@@ -24,7 +24,7 @@ export const ResumeActionTypes = {
   ResumeTask: "resume_task",
   ResumeCoordinatorStep: "resume_coordinator_step",
   ContinuePhase: "continue_phase",
-  SettleFlow: "settle_flow",
+  SettleWorkflow: "settle_workflow",
   ConsumeMessage: "consume_message",
   InspectInterruption: "inspect_interruption",
   EvaluateOutcome: "evaluate_outcome",
@@ -41,7 +41,7 @@ export type ResumeActionType =
  */
 export type ResumeAction =
   | { type: typeof ResumeActionTypes.ContinuePhase; phase: string }
-  | { type: typeof ResumeActionTypes.SettleFlow }
+  | { type: typeof ResumeActionTypes.SettleWorkflow }
   | {
     type: typeof ResumeActionTypes.ResumeTask;
     taskId: string;
@@ -124,7 +124,7 @@ export function planResumeActions(input: {
 }): ResumeAction[] {
   const actions: ResumeAction[] = input.projection.pendingMessages
     .filter((message) => message.agentId === input.agentId)
-    .filter((message) => input.projection.flowStatus === "active"
+    .filter((message) => input.projection.workflowStatus === "active"
       || !input.projection.userMessages.some((user) => user.messageId === message.messageId))
     .map((message) => ({
       type: ResumeActionTypes.ConsumeMessage,
@@ -132,8 +132,8 @@ export function planResumeActions(input: {
     }));
 
   if (input.role === input.synthesisRole) {
-    if (input.projection.flowStatus === "settling") {
-      actions.push({ type: ResumeActionTypes.SettleFlow });
+    if (input.projection.workflowStatus === "settling") {
+      actions.push({ type: ResumeActionTypes.SettleWorkflow });
     } else if (input.projection.pendingPhase !== undefined) {
       actions.push({ type: ResumeActionTypes.ContinuePhase, phase: input.projection.pendingPhase });
     }

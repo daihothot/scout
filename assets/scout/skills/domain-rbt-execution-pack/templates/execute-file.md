@@ -12,10 +12,10 @@ artifact_version: 1
 执行文件位于：
 
 ```text
-${SCOUT_ARTIFACT_ROOT}/<bdd-id>/<version>/execute-file.json
+<artifactRoot>/<bdd-id>/<version>/execute-file.json
 ```
 
-相邻的 `${SCOUT_ARTIFACT_ROOT}/<bdd-id>/<version>/execute-pack/` 保存 Agent 证据和预期。
+`<artifactRoot>` 使用当前 `workflow_context` 中的路径，遵循 `AGENTS.md` 的 Workflow Context。相邻的 `<artifactRoot>/<bdd-id>/<version>/execute-pack/` 保存 Agent 证据和预期。
 
 ## File Contract
 

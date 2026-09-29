@@ -6,8 +6,6 @@ export interface GenerateCodexConfigOptions {
   baseConfig: string;
   mountRoot: string;
   runRoot: string;
-  artifactRoot: string;
-  tempRoot: string;
   hostTempRoot: string;
   runId: string;
   assetCommitId: string;
@@ -27,8 +25,6 @@ export class CodexConfigBuilder {
       `PATH = "${escapeToml(buildMountShellPath(input.mountRoot))}"`,
       ...Object.entries(buildMountShellEnvironment({
         runRoot: input.runRoot,
-        artifactRoot: input.artifactRoot,
-        tempRoot: input.tempRoot,
         hostTempRoot: input.hostTempRoot,
         assetCommitId: input.assetCommitId,
         runId: input.runId,

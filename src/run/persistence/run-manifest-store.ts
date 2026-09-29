@@ -4,7 +4,8 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { runPaths } from "../../core/path.js";
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 
 /** Stable role identity and relative artifact references stored in a manifest. */
@@ -42,7 +43,7 @@ export class RunManifestStore {
   readonly path: string;
 
   constructor(runRoot: string) {
-    this.path = join(runRoot, "run.json");
+    this.path = runPaths(runRoot).manifestPath;
   }
 
   create(input: {

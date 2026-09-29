@@ -11,7 +11,7 @@ import {
 
 const request = { transport: "adb", platform: "android", appId: "com.example.first" };
 
-test("Base semantic launch uses isolated runtime configuration and survives a Flow state reset", async (t) => {
+test("Base semantic launch uses isolated runtime configuration and survives a Workflow state reset", async (t) => {
   const { execution, operations } = await fixture(t);
   const configuration = { ...request, parameters: { activity: "MainActivity" } };
   execution.configure(configuration);

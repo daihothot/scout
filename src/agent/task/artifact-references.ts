@@ -1,26 +1,44 @@
-import { relative, resolve, sep } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 import { isPathWithin } from "../../core/path.js";
 
-const LOCAL_ARTIFACT_ROOT = "${SCOUT_ARTIFACT_ROOT}";
-const RUN_ROOT = "${SCOUT_RUN_ROOT}";
-
-/** Rewrites local artifact macros into the portable run-root representation. */
+/** Replaces the current Agent's physical artifact path with a stable Workflow identity reference. */
 export function canonicalizeAgentArtifactReferences(
   value: string,
   input: {
-    runRoot: string;
+    workflowId: string;
+    agentId: string;
     artifactRoot: string;
   },
 ): string {
-  if (!value.includes(LOCAL_ARTIFACT_ROOT)) return value;
+  const root = resolve(input.artifactRoot);
+  return value.replaceAll(`${root}${sep}`, `scout-artifact://${input.workflowId}/${input.agentId}/`);
+}
 
-  const artifactRootRef = relative(resolve(input.runRoot), resolve(input.artifactRoot));
-  if (!isPathWithin(input.runRoot, input.artifactRoot, { allowRoot: false })) {
-    throw new Error(
-      `Agent artifact root must be a child of the run root: ${input.artifactRoot}`,
-    );
+/** Supplies current-Workflow access paths without rewriting the referenced content or granting access. */
+export function resolveAgentArtifactReferences(
+  value: string,
+  input: {
+    workflowId: string;
+    artifacts: readonly { agentId: string; path: string }[];
+  },
+): { ref: string; path: string }[] {
+  const resolved = new Map<string, string>();
+  // Quoted references may contain spaces; bare references end at text/Markdown delimiters.
+  const references = /(["'`])(scout-artifact:\/\/[^"'`\r\n]+)\1|(scout-artifact:\/\/[^\s"'`<>()\[\]{},;*]+)/g;
+  const prefix = `scout-artifact://${input.workflowId}/`;
+  for (const match of value.matchAll(references)) {
+    const ref = match[2] ?? match[3]!;
+    if (!ref.startsWith(prefix) || resolved.has(ref)) continue;
+    const location = ref.slice(prefix.length);
+    const separator = location.indexOf("/");
+    if (separator < 0) continue;
+    const artifact = input.artifacts.find(({ agentId }) => agentId === location.slice(0, separator));
+    if (!artifact) continue;
+    const relativePath = location.slice(separator + 1);
+    if (!relativePath || isAbsolute(relativePath) || /[\u0000-\u001f\u007f\\]/.test(relativePath)) continue;
+    const path = resolve(artifact.path, relativePath);
+    if (!isPathWithin(artifact.path, path, { allowRoot: false })) continue;
+    resolved.set(ref, path);
   }
-
-  const portableRoot = `${RUN_ROOT}/${artifactRootRef.split(sep).join("/")}`;
-  return value.replaceAll(LOCAL_ARTIFACT_ROOT, portableRoot);
+  return [...resolved].map(([ref, path]) => ({ ref, path }));
 }

@@ -3,6 +3,7 @@ import { Logger } from "../../../../../core/logging/index.js";
 import { DomainEvents } from "../../../../domain-events.js";
 import { ScoutDomainId } from "../../../../types.js";
 import { currentRunScope } from "../../../../../run/run-scope.js";
+import { agentTelemetryLogsRoot } from "../../../../../core/path.js";
 
 /** Writes RBT domain dynamic-tool facts to the calling Agent's telemetry log. */
 export class RbtAgentToolCallRecorder {
@@ -21,7 +22,8 @@ export class RbtAgentToolCallRecorder {
           return;
         }
         const scope = currentRunScope();
-        let logger = this.loggers.get(event.payload.agentId);
+        const logsRoot = agentTelemetryLogsRoot(event.payload.agentId);
+        let logger = this.loggers.get(logsRoot);
         if (!logger) {
           const environment = scope.environment.agents[event.payload.role];
           if (!environment) {
@@ -29,10 +31,10 @@ export class RbtAgentToolCallRecorder {
           }
           logger = new Logger({
             runId: scope.runId,
-            logsRoot: environment.mount.logsRoot,
+            logsRoot,
             fileName: "rbt-agent-tool-call.log",
           });
-          this.loggers.set(event.payload.agentId, logger);
+          this.loggers.set(logsRoot, logger);
         }
         const contentItems = event.payload.response.contentItems;
         let output: unknown = contentItems;

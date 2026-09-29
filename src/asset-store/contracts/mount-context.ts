@@ -16,10 +16,6 @@ export interface MountContext {
   runRoot: string;
   agentId: string;
   agentRoot: string;
-  artifactRoot: string;
-  logsRoot: string;
-  /** Run-scoped writable temporary directory exposed as SCOUT_TEMP_ROOT. */
-  tempRoot: string;
   mountRoot: string;
   agentProfile: AgentProfile;
   profiledMcpServers: McpServersFile;

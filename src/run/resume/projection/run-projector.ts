@@ -20,7 +20,7 @@ import type {
 import { SystemEvents } from "../../../system/events/index.js";
 import { RunEvents } from "../../events/index.js";
 import type { JournalEvent } from "../../../core/journal/index.js";
-import { WorkflowEvents, type WorkflowFlowStatus } from "../../../core/workflow/index.js";
+import { WorkflowEvents, type WorkflowStatus } from "../../../core/workflow/index.js";
 import {
   applyTaskJournalEvent,
   type ProjectedReleasedTask,
@@ -75,7 +75,7 @@ export interface ProjectedGate extends ScoutDomainGateFact {
 export interface RunProjection {
   runId: string;
   checkpointSeq: number;
-  flowStatus: WorkflowFlowStatus;
+  workflowStatus: WorkflowStatus;
   pendingPhase?: string;
   threads: AgentThreadSnapshot[];
   tasks: AgentTaskState[];
@@ -155,17 +155,17 @@ export function projectRun(
   const gates: ProjectedGate[] = [];
   const userMessages: RunProjection["userMessages"] = [];
   const coordinatorMessages: RunProjection["coordinatorMessages"] = [];
-  let flowStatus: WorkflowFlowStatus = "active";
+  let workflowStatus: WorkflowStatus = "active";
   let pendingPhase: string | undefined;
 
   for (const event of events) {
     if (WorkflowEvents.workflow.advanced.is(event)) {
-      flowStatus = event.payload.cycleCompleted ? "settling" : "active";
+      workflowStatus = event.payload.cycleCompleted ? "settling" : "active";
       pendingPhase = event.payload.cycleCompleted ? undefined : event.payload.state.currentPhase;
       continue;
     }
     if (WorkflowEvents.workflow.completed.is(event)) {
-      flowStatus = "completed";
+      workflowStatus = "completed";
       pendingPhase = undefined;
       continue;
     }
@@ -471,7 +471,7 @@ export function projectRun(
   return {
     runId: created.payload.runId,
     checkpointSeq: events[events.length - 1]?.seq ?? 0,
-    flowStatus,
+    workflowStatus,
     ...(pendingPhase === undefined ? {} : { pendingPhase }),
     threads: [...threads.values()].map((thread) => structuredClone(thread)),
     tasks: [...tasks.values()].map((task) => structuredClone(task)),

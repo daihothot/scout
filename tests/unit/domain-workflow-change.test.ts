@@ -86,7 +86,7 @@ for (const entry of [
 
     assert.deepEqual(journal.readAll(), [expected]);
     assert.equal(readFileSync(path, "utf8"), contents);
-    assert.equal(scope.workflow.flowSnapshot().status, "active");
+    assert.equal(scope.workflow.snapshot()?.status, "active");
   });
 
   test(`${entry.name} journal creates its own missing file`, (t) => {
@@ -145,22 +145,22 @@ for (const entry of [
     assert.equal(readFileSync(lockPath, "utf8"), lock);
   });
 
-  test(`${entry.name} journal prepares and aborts without replacing the current Flow`, (t) => {
-    const scope = installTestRunScope(t, { runId: `${entry.name}-flow-abort` });
+  test(`${entry.name} journal prepares and aborts without replacing the current Workflow`, (t) => {
+    const scope = installTestRunScope(t, { runId: `${entry.name}-workflow-abort` });
     const journal = entry.create(scope);
     t.after(() => journal.close());
     journal.start();
     const previousRoot = scope.workflow.journalRoot;
     const previousEvents = journal.readAll();
-    assert.throws(() => journal.prepareFlow(previousRoot), /already attached/);
+    assert.throws(() => journal.prepareWorkflow(previousRoot), /already attached/);
     assert.deepEqual(journal.readAll(), previousEvents);
 
-    const nextRoot = join(scope.runRoot, "prepared-flow");
-    const change = journal.prepareFlow(nextRoot);
+    const nextRoot = join(scope.runRoot, "prepared-workflow");
+    const change = journal.prepareWorkflow(nextRoot);
     assert.deepEqual(journal.readAll(), previousEvents);
     assert.equal(existsSync(join(previousRoot, entry.lock)), true);
     assert.equal(existsSync(join(nextRoot, entry.lock)), true);
-    assert.throws(() => journal.prepareFlow(join(scope.runRoot, "another-flow")), /already has a prepared/);
+    assert.throws(() => journal.prepareWorkflow(join(scope.runRoot, "another-workflow")), /already has a prepared/);
     assert.throws(() => change.releasePrevious(), /Cannot release the current/);
     change.abort();
     change.abort();
@@ -169,7 +169,7 @@ for (const entry of [
     assert.deepEqual(journal.readAll(), previousEvents);
     assert.throws(() => change.commit(), /inactive.*preparation/);
 
-    const retry = journal.prepareFlow(nextRoot);
+    const retry = journal.prepareWorkflow(nextRoot);
     retry.commit();
     assert.equal(existsSync(join(previousRoot, entry.lock)), true);
     assert.throws(() => retry.abort(), /Cannot abort a committed/);
@@ -181,12 +181,12 @@ for (const entry of [
   });
 
   test(`${entry.name} journal commits without closing or writing any resource`, (t) => {
-    const scope = installTestRunScope(t, { runId: `${entry.name}-flow-commit` });
+    const scope = installTestRunScope(t, { runId: `${entry.name}-workflow-commit` });
     const journal = entry.create(scope);
     t.after(() => journal.close());
     journal.start();
-    const nextRoot = join(scope.runRoot, "prepared-flow");
-    const change = journal.prepareFlow(nextRoot);
+    const nextRoot = join(scope.runRoot, "prepared-workflow");
+    const change = journal.prepareWorkflow(nextRoot);
     const close = t.mock.method(Journal.prototype, "close", () => {
       throw new Error("commit must not release journal locks");
     });
@@ -205,12 +205,12 @@ for (const entry of [
 
   for (const committed of [false, true]) {
     test(`${entry.name} journal retains ${committed ? "previous" : "prepared"} resources after close failure`, (t) => {
-      const scope = installTestRunScope(t, { runId: `${entry.name}-flow-close-${committed}` });
+      const scope = installTestRunScope(t, { runId: `${entry.name}-workflow-close-${committed}` });
       const journal = entry.create(scope);
       journal.start();
       const previousRoot = scope.workflow.journalRoot;
-      const nextRoot = join(scope.runRoot, "prepared-flow");
-      const change = journal.prepareFlow(nextRoot);
+      const nextRoot = join(scope.runRoot, "prepared-workflow");
+      const change = journal.prepareWorkflow(nextRoot);
       if (committed) change.commit();
       const failingPath = join(committed ? previousRoot : nextRoot, entry.file);
       const originalClose = Journal.prototype.close;
@@ -229,7 +229,7 @@ for (const entry of [
       assert.throws(release, (error) => error === failure);
       if (!committed) assert.throws(() => change.commit(), (error) => error === failure);
       assert.throws(
-        () => journal.prepareFlow(join(scope.runRoot, "unsafe-retry")),
+        () => journal.prepareWorkflow(join(scope.runRoot, "unsafe-retry")),
         /after journal cleanup failed/,
       );
       assert.equal(attempts, 1);
@@ -242,16 +242,16 @@ for (const entry of [
     });
   }
 
-  test(`${entry.name} journal closes prepared and retired Flow resources during shutdown`, (t) => {
-    const scope = installTestRunScope(t, { runId: `${entry.name}-flow-stop` });
+  test(`${entry.name} journal closes prepared and retired Workflow resources during shutdown`, (t) => {
+    const scope = installTestRunScope(t, { runId: `${entry.name}-workflow-stop` });
     const journal = entry.create(scope);
     journal.start();
     const firstRoot = scope.workflow.journalRoot;
-    const secondRoot = join(scope.runRoot, "second-flow");
-    const thirdRoot = join(scope.runRoot, "third-flow");
-    const committed = journal.prepareFlow(secondRoot);
+    const secondRoot = join(scope.runRoot, "second-workflow");
+    const thirdRoot = join(scope.runRoot, "third-workflow");
+    const committed = journal.prepareWorkflow(secondRoot);
     committed.commit();
-    const pending = journal.prepareFlow(thirdRoot);
+    const pending = journal.prepareWorkflow(thirdRoot);
     journal.close();
     journal.close();
     for (const root of [firstRoot, secondRoot, thirdRoot]) {
@@ -263,7 +263,7 @@ for (const entry of [
   });
 }
 
-test("Base Domain keeps runtime facts and tool calls until its prepared Flow commits", async (t) => {
+test("Base Domain keeps runtime facts and tool calls until its prepared Workflow commits", async (t) => {
   const scope = installTestRunScope(t, { runId: "base-domain-prepared-state" });
   const domain = scope.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(domain instanceof BaseDomain);
@@ -280,15 +280,15 @@ test("Base Domain keeps runtime facts and tool calls until its prepared Flow com
     completedAt: "2026-09-27T00:00:01.000Z",
   };
   await scope.eventBus.publishAndWait(BaseDomainEvents.agentToolCall.observed, call);
-  domain.restore(scope.workflow.flowSnapshot());
+  domain.restore(scope.workflow.snapshot()!);
   const previousFact = domain.runtimeFact;
   const previousCalls = domain.toolCallStore.list();
   const previousPath = join(scope.workflow.journalRoot, "base.journal");
   const previousContents = readFileSync(previousPath, "utf8");
   const stop = t.mock.method(domain.execution, "stop");
-  const nextRoot = join(scope.runRoot, "prepared-flow");
-  const flow = { flowId: "journal-0002", status: "active" as const, checkpointSeq: 0 };
-  const aborted = domain.prepareFlow(flow, nextRoot);
+  const nextRoot = join(scope.runRoot, "prepared-workflow");
+  const workflowState = { workflowId: "workflow-002", status: "active" as const, checkpointSeq: 0 };
+  const aborted = domain.prepareWorkflow(workflowState, nextRoot);
   assert.deepEqual(domain.runtimeFact, previousFact);
   assert.deepEqual(domain.toolCallStore.list(), previousCalls);
   assert.equal(stop.mock.callCount(), 0);
@@ -296,7 +296,7 @@ test("Base Domain keeps runtime facts and tool calls until its prepared Flow com
   assert.deepEqual(domain.runtimeFact, previousFact);
   assert.deepEqual(domain.toolCallStore.list(), previousCalls);
   assert.equal(stop.mock.callCount(), 0);
-  const change = domain.prepareFlow(flow, nextRoot);
+  const change = domain.prepareWorkflow(workflowState, nextRoot);
   change.commit();
   assert.deepEqual(domain.runtimeFact, { domainId: "base", journalSeq: 0, toolCalls: [] });
   assert.deepEqual(domain.toolCallStore.list(), []);

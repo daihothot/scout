@@ -489,9 +489,9 @@ test("Workflow Journal writer reports an unrecoverable event and accepts later w
   );
 });
 
-test("Workflow starts a numbered Flow while retaining the completed scout.journal", async (t) => {
+test("Workflow starts a numbered Workflow while retaining the completed scout.journal", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const scoutRoot = mkdtempSync(join(tmpdir(), "scout-flow-stage-test-"));
+  const scoutRoot = mkdtempSync(join(tmpdir(), "scout-workflow-stage-test-"));
   const persistence = createTestRunPersistence(
     t,
     "journal-workflow-replay",
@@ -520,13 +520,15 @@ test("Workflow starts a numbered Flow while retaining the completed scout.journa
   persistence.workflow.scheduler.advance("completed");
   const completed = persistence.workflow.scheduler.advance("completed");
   assert.equal(completed.cycleCompleted, true);
-  assert.equal(persistence.workflow.flowSnapshot().status, "settling");
+  assert.equal(persistence.workflow.snapshot()?.status, "settling");
   assert.ok(persistence.journal.readAll().some((event) =>
     WorkflowEvents.workflow.advanced.is(event)
   ));
   const completedJournalPath = persistence.journal.path;
 
-  await persistence.workflow.prepareNextFlow();
+  await persistence.workflow.settleWorkflow();
+  assert.equal(persistence.workflow.snapshot(), undefined);
+  await persistence.workflow.startWorkflow();
   await eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
     messageId: "workflow-replay-message",
     text: "重新执行",
@@ -535,11 +537,10 @@ test("Workflow starts a numbered Flow while retaining the completed scout.journa
   });
 
   const events = scope.workflow.readEvents();
-  assert.deepEqual(events.map((event) => event.seq), [1, 2, 3, 4]);
+  assert.deepEqual(events.map((event) => event.seq), [1, 2, 3]);
   assert.deepEqual(events.map((event) => event.key.routeKey), [
     RunEvents.run.created.routeKey,
     WorkflowEvents.workflow.initialized.routeKey,
-    RunEvents.runtime.attached.routeKey,
     SystemEvents.interaction.userMessageSubmitted.routeKey,
   ]);
   assert.equal(events.some((event) => WorkflowEvents.workflow.advanced.is(event)), false);
@@ -549,16 +550,16 @@ test("Workflow starts a numbered Flow while retaining the completed scout.journa
   assert.equal(readJournalEvents(completedJournalPath).filter((event) =>
     WorkflowEvents.workflow.completed.is(event)
   ).length, 1);
-  assert.equal(benchmarks.read()?.currentFlow, "journal-0002");
+  assert.equal(benchmarks.read()?.currentWorkflow, "workflow-002");
   assert.equal(persistence.manifestStore.read().checkpointSeq, 2);
-  assert.equal(Object.hasOwn(persistence.manifestStore.read(), "flowId"), false);
+  assert.equal(Object.hasOwn(persistence.manifestStore.read(), "workflowId"), false);
   assert.throws(
     () => Journal.open(scoutJournalLocation(scope.runId, scope.workflow.journalRoot)),
     /already attached/,
   );
 });
 
-test("Workflow blocks replay while a settling Flow retains a Task", async (t) => {
+test("Workflow blocks replay while a settling Workflow retains a Task", async (t) => {
   const eventBus = new InMemoryEventBus();
   const persistence = createTestRunPersistence(
     t,
@@ -598,13 +599,13 @@ test("Workflow blocks replay while a settling Flow retains a Task", async (t) =>
   persistence.workflow.scheduler.advance("completed");
   persistence.workflow.scheduler.advance("completed");
   persistence.workflow.scheduler.advance("completed");
-  assert.equal(persistence.workflow.flowSnapshot().status, "settling");
+  assert.equal(persistence.workflow.snapshot()?.status, "settling");
 
   await assert.rejects(
-    persistence.workflow.prepareNextFlow(),
+    persistence.workflow.settleWorkflow(),
     /unfinished Task researcher-task-0001/,
   );
-  assert.equal(persistence.workflow.flowSnapshot().status, "settling");
+  assert.equal(persistence.workflow.snapshot()?.status, "settling");
   assert.equal(persistence.journal.readAll().some((event) => WorkflowEvents.workflow.completed.is(event)), false);
   await assert.rejects(eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
     messageId: "workflow-replay-blocked-message",

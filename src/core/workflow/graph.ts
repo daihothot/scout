@@ -40,8 +40,8 @@ export class Graph {
     return advanced;
   }
 
-  /** Resets the cursor only when Workflow commits a new Flow. */
-  beginFlow(): void {
+  /** Resets the cursor only when Workflow commits a new Workflow. */
+  beginWorkflow(): void {
     this.state = createGraphState({ ...this.state, currentPhase: this.state.phases[0]!.name });
   }
 

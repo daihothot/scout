@@ -129,18 +129,14 @@ export class MountInspector {
     const shellTools = new ShellToolBuilder(
       this.context.mountRoot,
       this.context.scoutAssetsRoot,
-      this.context.tempRoot,
     ).build(this.context.profiledShellTools).tools;
     const mcpServers = new McpServerBuilder({
       mountRoot: this.context.mountRoot,
       assetsRoot: this.context.scoutAssetsRoot,
-      tempRoot: this.context.tempRoot,
       dynamicValues: createMountMacroValues({
         scoutRoot: this.context.scoutRoot,
         runRoot: this.context.runRoot,
         mountRoot: this.context.mountRoot,
-        artifactRoot: this.context.artifactRoot,
-        tempRoot: this.context.tempRoot,
         assetCommitId: this.context.assetCommitId,
         runId: this.context.runId,
       }),

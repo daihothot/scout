@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { runPaths } from "../../../core/path.js";
 import {
   createCodexAppServerClient,
   type CodexAppServerClientBundle,
@@ -68,9 +69,7 @@ export class RunAppServerStage implements RunStage {
       : readWorkflowProfile(scope.scoutRoot, scope.scoutConfig.workflow.profile)
           .profile.defaults.model;
     const runRoot = resolve(scope.runRoot);
-    const logsRoot = join(runRoot, "logs");
-    const isolatedHome = join(runRoot, "codex-home");
-    const isolatedCodexHome = join(isolatedHome, ".codex");
+    const { logsRoot, isolatedHome, codexHome: isolatedCodexHome } = runPaths(runRoot);
     mkdirSync(isolatedCodexHome, { recursive: true });
     const provider = resolveCodexModelProvider(defaultModel.provider);
     provider.prepareAuth(isolatedCodexHome);

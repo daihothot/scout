@@ -18,7 +18,7 @@ test("Base and RBT inherit journal resource operations while retaining their own
   for (const journal of [new BaseDomainJournal(), new RbtJournal()]) {
     assert.ok(journal instanceof DomainJournal);
     const prototype = Object.getPrototypeOf(journal);
-    for (const method of ["start", "stop", "append", "readAll", "prepareFlow", "close"] as const) {
+    for (const method of ["start", "stop", "append", "readAll", "prepareWorkflow", "close"] as const) {
       assert.equal(Object.hasOwn(prototype, method), false);
       assert.equal(journal[method], DomainJournal.prototype[method]);
     }
@@ -31,7 +31,7 @@ test("Base and RBT inherit journal resource operations while retaining their own
   assert.deepEqual(rbtFact, { domainId: "rbt", journalSeq: 0, histories: [] });
 });
 
-test("DomainJournal instances isolate subscriptions and Flow resources without deleting historical files", async (t) => {
+test("DomainJournal instances isolate subscriptions and Workflow resources without deleting historical files", async (t) => {
   const scope = installTestRunScope(t, { runId: "domain-journal-isolation" });
   const base = scope.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(base instanceof BaseDomain);
@@ -56,8 +56,8 @@ test("DomainJournal instances isolate subscriptions and Flow resources without d
   assert.deepEqual(baseJournal.readAll().map((event) => event.key.routeKey), [BaseDomainEvents.agentToolCall.observed.routeKey]);
   assert.deepEqual(rbtJournal.readAll().map((event) => event.key.routeKey), [RbtEvents.history.ready.routeKey]);
 
-  const nextRoot = join(scope.runRoot, "prepared-base-flow");
-  const change = baseJournal.prepareFlow(nextRoot);
+  const nextRoot = join(scope.runRoot, "prepared-base-workflow");
+  const change = baseJournal.prepareWorkflow(nextRoot);
   change.commit();
   assert.deepEqual(baseJournal.readAll(), []);
   assert.equal(rbtJournal.readAll().length, 1);

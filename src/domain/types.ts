@@ -7,7 +7,7 @@ import type {
   ScoutEvent,
 } from "../core/events/index.js";
 import type { DynamicToolCallInput } from "../agent-server/types.js";
-import type { WorkflowFlowState } from "../core/workflow/index.js";
+import type { WorkflowState } from "../core/workflow/index.js";
 import type { JournalEvent } from "../core/journal/index.js";
 import type { DomainAgentBackend } from "./agent/domain-agent-backend.js";
 
@@ -97,13 +97,13 @@ export interface ScoutDomainJournalProjection<
   aggregate?(events: readonly ScoutDomainJournalEvent[]): TRuntimeFact;
 }
 
-/** A prepared Flow boundary whose resources remain owned by its Domain. */
-export interface ScoutDomainFlowChange {
+/** A prepared Workflow boundary whose resources remain owned by its Domain. */
+export interface ScoutDomainWorkflowChange {
   /** Switches only in-memory references and state after all preparation succeeds. */
   commit(): void;
-  /** Closes uncommitted resources without changing the current Flow. */
+  /** Closes uncommitted resources without changing the current Workflow. */
   abort(): void;
-  /** Releases the previous Flow's resources after the new Flow is committed. */
+  /** Releases the previous Workflow's resources after the new Workflow is committed. */
   releasePrevious(): void;
 }
 
@@ -112,11 +112,13 @@ export interface ScoutDomain {
   readonly description: ScoutDomainDescription;
   readonly backend: DomainAgentBackend;
   readonly journal?: ScoutDomainJournalProjection;
-  prepareFlow?(
-    flow: WorkflowFlowState,
+  prepareWorkflow?(
+    workflowState: WorkflowState,
     journalRoot: string,
-  ): Promise<ScoutDomainFlowChange> | ScoutDomainFlowChange;
-  restore?(flow: WorkflowFlowState): Promise<void> | void;
+  ): Promise<ScoutDomainWorkflowChange> | ScoutDomainWorkflowChange;
+  restore?(workflowState: WorkflowState): Promise<void> | void;
+  /** Releases this Domain's completed Workflow resources without uninstalling its services. */
+  finishWorkflow?(): Promise<void> | void;
   start?(): Promise<void> | void;
   stop?(): Promise<void> | void;
 }

@@ -46,8 +46,7 @@ export class MountFilesystemInspector {
   private checkLayout(): string | undefined {
     const roots: Array<[string, string]> = [
       ["mount root", this.context.mountRoot],
-      ["artifact root", this.context.artifactRoot],
-      ["logs root", this.context.logsRoot],
+      ["agent root", this.context.agentRoot],
     ];
     for (const [name, path] of roots) {
       const stat = lstatSync(path);

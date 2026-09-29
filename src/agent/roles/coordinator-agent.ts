@@ -22,11 +22,12 @@ import { attachments } from "../context/attachments.js";
 import { agent } from "../context/agent-attachments.js";
 import { coordinator } from "../runner/coordinator/coordinator-attachments.js";
 import { resolveSynthesisRole } from "../../core/workflow/index.js";
+import type { DynamicToolCallInput } from "../../agent-server/types.js";
 
 interface CoordinatorTick {
   messages: AgentMessage[];
   workflowPhaseRequested: boolean;
-  flowSettlementRequested: boolean;
+  workflowSettlementRequested: boolean;
 }
 
 /** Coordinator role: owns orchestration messages and task assignment, not worker tasks. */
@@ -36,8 +37,9 @@ export class CoordinatorAgent extends ScoutAgent {
   private readonly inbox: AgentInbox;
   private resumeContext?: string;
   private workflowPhaseStepRequested = false;
-  private flowSettlementRequested = false;
+  private workflowSettlementRequested = false;
   private readonly userInputs = new Map<string, ScoutEvent<UserMessageSubmittedPayload>>();
+  private pendingWorkflowStart?: { threadId: string; turnId: string; callId: string; prompt: string };
 
   constructor(options: ScoutAgentOptions) {
     const scope = currentRunScope();
@@ -81,19 +83,25 @@ export class CoordinatorAgent extends ScoutAgent {
       agentId: this.agentId,
       takeTick: () => this.takeCoordinatorTick(),
       runTick: async (tick) => {
+        let completed = false;
         try {
-          await this.runCoordinatorTick(tick);
+          completed = await this.runCoordinatorTick(tick);
         } catch (error) {
-          // Keep the failed tick's report in its Flow before attempting the
+          // Keep the failed tick's report in its Workflow before attempting the
           // independent lifecycle transition.
           this.publishFailure(error);
         }
+        const request = this.pendingWorkflowStart;
+        this.pendingWorkflowStart = undefined;
         if (!this.isStopping) {
-          const previousFlowId = scope.workflow.flowSnapshot().flowId;
-          await scope.workflow.prepareNextFlow();
-          if (scope.workflow.flowSnapshot().flowId !== previousFlowId) {
-            this.flowSettlementRequested = false;
+          await scope.workflow.settleWorkflow();
+          if (!scope.workflow.snapshot()) {
+            this.workflowSettlementRequested = false;
             this.workflowPhaseStepRequested = false;
+          }
+          if (request && completed) {
+            await scope.workflow.startWorkflow();
+            await this.sendMessage({ message: agent.turn.message(request.prompt), deliveryMode: "queued" });
           }
         }
       },
@@ -106,6 +114,21 @@ export class CoordinatorAgent extends ScoutAgent {
       onError: (error) => this.publishFailure(error),
     });
     this.inbox.subscribe<UserMessageSubmittedPayload>(SystemEvents.interaction.userMessageSubmitted);
+  }
+
+  /** Accepts intent without moving the Workflow boundary inside the caller's Turn. */
+  requestWorkflowStart(delivery: DynamicToolCallInput, prompt: string): void {
+    this.assertOwnsActiveTurn(delivery);
+    if (this.runScope.workflow.snapshot()) throw new Error("Finish the active Workflow before requesting another.");
+    // Reject invalid runtime-tagged input before accepting an execution intent.
+    attachments.compose(agent.turn.message(prompt));
+    const current = this.pendingWorkflowStart;
+    if (current) {
+      if (current.threadId === delivery.threadId && current.turnId === delivery.turnId
+        && current.callId === delivery.callId && current.prompt === prompt) return;
+      throw new Error("This Turn already requested a Workflow. End the current Turn.");
+    }
+    this.pendingWorkflowStart = { threadId: delivery.threadId, turnId: delivery.turnId, callId: delivery.callId, prompt };
   }
 
   async sendMessage(input: SendAgentMessageInput): Promise<Result<void, string>> {
@@ -146,7 +169,7 @@ export class CoordinatorAgent extends ScoutAgent {
   }
 
   /** Input owned by this inbox that has not been consumed by any Step. */
-  pendingFlowInputs(): Array<{ event: ScoutEvent<UserMessageSubmittedPayload>; delivery: AgentMessage }> {
+  pendingWorkflowInputs(): Array<{ event: ScoutEvent<UserMessageSubmittedPayload>; delivery: AgentMessage }> {
     return this.pendingMessagesSnapshot().flatMap((delivery) => {
       const event = this.userInputs.get(delivery.messageId);
       return event ? [{ event: { ...event, payload: structuredClone(event.payload) }, delivery }] : [];
@@ -166,9 +189,9 @@ export class CoordinatorAgent extends ScoutAgent {
     if (!this.isStopping) this.loop.schedule();
   }
 
-  /** Schedules a terminal follow-up if automatic Flow settlement cannot finish. */
-  scheduleFlowSettlementStep(): void {
-    this.flowSettlementRequested = true;
+  /** Schedules a terminal follow-up if automatic Workflow settlement cannot finish. */
+  scheduleWorkflowSettlementStep(): void {
+    this.workflowSettlementRequested = true;
     if (!this.isStopping) this.loop.schedule();
   }
 
@@ -184,18 +207,18 @@ export class CoordinatorAgent extends ScoutAgent {
 
   private takeCoordinatorTick(): CoordinatorTick | undefined {
     const messages = this.pendingMessagesSnapshot().filter((message) =>
-      this.runScope.workflow.flowSnapshot().status === "active" || !this.userInputs.has(message.messageId)
+      this.runScope.workflow.snapshot()?.status !== "settling" || !this.userInputs.has(message.messageId)
     );
     if (
       messages.length === 0
       && !this.resumeContext
       && !this.workflowPhaseStepRequested
-      && !this.flowSettlementRequested
+      && !this.workflowSettlementRequested
     ) return undefined;
     return {
       messages,
       workflowPhaseRequested: this.workflowPhaseStepRequested,
-      flowSettlementRequested: this.flowSettlementRequested,
+      workflowSettlementRequested: this.workflowSettlementRequested,
     };
   }
 
@@ -222,7 +245,7 @@ export class CoordinatorAgent extends ScoutAgent {
     if (!this.isStopping) this.loop.schedule();
   }
 
-  private async runCoordinatorTick(tick: CoordinatorTick): Promise<void> {
+  private async runCoordinatorTick(tick: CoordinatorTick): Promise<boolean> {
     const { messages } = tick;
     const prompt = attachments.compose(
       agent.turn.workflow_phase(),
@@ -236,13 +259,13 @@ export class CoordinatorAgent extends ScoutAgent {
         this.consumeQueuedMessages(messages, step.stepId);
         this.resumeContext = undefined;
         if (tick.workflowPhaseRequested) this.workflowPhaseStepRequested = false;
-        if (tick.flowSettlementRequested) this.flowSettlementRequested = false;
+        if (tick.workflowSettlementRequested) this.workflowSettlementRequested = false;
       },
     });
     const { outcome } = result;
-    if (outcome.turn.status !== "completed") return;
+    if (outcome.turn.status !== "completed") return false;
     const text = outcome.finalResponse?.trim();
-    if (!text) return;
+    if (!text) return true;
     const produced = {
       messageId: `${outcome.turn.invocationId}-message`,
       agentId: this.agentId,
@@ -256,6 +279,7 @@ export class CoordinatorAgent extends ScoutAgent {
       produced,
       { occurredAt: produced.createdAt },
     );
+    return true;
   }
 
   private publishFailure(error: unknown): void {

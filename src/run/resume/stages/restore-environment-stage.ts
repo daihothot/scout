@@ -1,6 +1,7 @@
 import { createCodexAppServerMountPreflightBatch } from "../../../agent-server/codex/app-server-preflight.js";
 import type { AgentServerPreflightReport } from "../../../agent-server/types.js";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
+import { runAgentPaths } from "../../../core/path.js";
 import { AssetStore, type CodexMount, type MaterializeOptions } from "../../../asset-store/index.js";
 import type { ScoutAgentRole } from "../../../agent/thread/types.js";
 import { currentRunScope } from "../../run-scope.js";
@@ -93,8 +94,7 @@ export class RestoreEnvironmentStage implements RunStage {
     const plansByRole = new Map<ScoutAgentRole, EnvironmentRolePlan>();
     const inputs: EnvironmentRolePreparationInput[] = roles.map((role) => {
       const persisted = persistedByRole.get(role);
-      const agentRoot = join(runRoot, "agents", role);
-      const artifactRoot = join(agentRoot, "artifacts");
+      const paths = runAgentPaths(runRoot, role);
       const options: MaterializeOptions = {
         scoutRoot,
         runId: scope.runId,
@@ -131,11 +131,11 @@ export class RestoreEnvironmentStage implements RunStage {
         role,
         options,
         expectedMountManifestPath: persisted?.mountManifestPath
-          ?? join(agentRoot, "mount", "mount-manifest.json"),
+          ?? paths.mountManifestPath,
         assetCommitPath: persisted?.assetCommitPath
-          ?? join(artifactRoot, "asset-commit.json"),
+          ?? paths.assetCommitPath,
         preflightPath: persisted?.preflightPath
-          ?? join(artifactRoot, "app-server-preflight.json"),
+          ?? paths.preflightPath,
       };
     });
 

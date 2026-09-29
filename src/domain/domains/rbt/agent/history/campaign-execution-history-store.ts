@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join } from "node:path";
 import type { AgentJsonValue } from "../../../../../agent/tools/types.js";
 import type { UnsubscribeEventHandler } from "../../../../../core/events/index.js";
 import { currentRunScope } from "../../../../../run/run-scope.js";
@@ -35,6 +35,7 @@ interface CampaignExecutionHistory {
   status: "recording" | "completed" | "failed";
   commands: CampaignHistoryCommand[];
   artifactPath: string;
+  artifactRef: string;
 }
 
 /** Persists one runtime-owned JSON history for each RBT campaign execution. */
@@ -71,10 +72,10 @@ export class RbtCampaignExecutionHistoryStore {
       throw new Error(`RBT campaign history is already recording: ${command.campaignId}.`);
     }
     const scope = currentRunScope();
-    const environment = scope.environment.agents[command.role];
-    if (!environment) throw new Error(`RBT Agent environment is unavailable: ${command.role}.`);
+    const workflowState = scope.workflow.snapshot();
+    if (!workflowState) throw new Error("RBT history requires an active Workflow.");
     const artifactPath = join(
-      resolve(environment.mount.artifactRoot),
+      scope.workflow.agentPaths(command.agentId).artifactRoot,
       "history",
       `${String(command.runtimeSequence).padStart(3, "0")}.json`,
     );
@@ -92,6 +93,7 @@ export class RbtCampaignExecutionHistoryStore {
       status: command.status === "failed" ? "failed" : "recording",
       commands: [historyCommand(command)],
       artifactPath,
+      artifactRef: `scout-artifact://${workflowState.workflowId}/${command.agentId}/history/${String(command.runtimeSequence).padStart(3, "0")}.json`,
     };
     if (command.status !== "failed") this.active.set(key, history);
     this.write(history);
@@ -120,7 +122,7 @@ export class RbtCampaignExecutionHistoryStore {
 
   private write(history: CampaignExecutionHistory): void {
     mkdirSync(dirname(history.artifactPath), { recursive: true });
-    const { artifactPath: _artifactPath, ...artifact } = history;
+    const { artifactPath: _artifactPath, artifactRef: _artifactRef, ...artifact } = history;
     writeFileSync(history.artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
   }
 
@@ -133,7 +135,7 @@ export class RbtCampaignExecutionHistoryStore {
       throw new Error(`RBT campaign history is still recording: ${history.campaignId}.`);
     }
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
-      executorHistoryRef: relative(scope.runRoot, history.artifactPath).split(sep).join("/"),
+      executorHistoryRef: history.artifactRef,
       executeFileRef: history.executeFileRef,
       runtimeSequence: history.runtimeSequence,
       campaignId: history.campaignId,

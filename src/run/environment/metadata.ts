@@ -2,7 +2,8 @@ import { summarizeAgentServerPreflight } from "../../agent-server/codex/app-serv
 import { sha256Text, stableJson, writeJsonFile } from "../../core/fs.js";
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, linkSync, openSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
+import { runPaths } from "../../core/path.js";
 import type {
   RunAgentManifestEntry,
   RunManifest,
@@ -43,7 +44,7 @@ export class EnvironmentMetadataRollback {
     private readonly manifestStore: RunManifestStore,
     private readonly scoutRoot: string,
   ) {
-    this.recordPath = join(dirname(manifestStore.path), "environment-rollback.json");
+    this.recordPath = runPaths(dirname(manifestStore.path)).environmentRollbackPath;
   }
 
   static recoverPending(scoutRoot: string, manifestStore: RunManifestStore): void {

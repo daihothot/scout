@@ -4,7 +4,7 @@ import type {
   WorkflowPhaseOutcome,
 } from "./graph-state.js";
 
-/** Initial Graph fact persisted before a new Flow becomes active. */
+/** Initial Graph fact persisted before a new Workflow becomes active. */
 export interface WorkflowGraphInitializedEvent {
   state: GraphState;
   initializedAt: string;

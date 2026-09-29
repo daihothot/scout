@@ -140,9 +140,9 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   assert.ok(stage.rootConfig.writableRoots.includes(resolve(homedir(), ".guru", "codebase")));
   assert.equal(researcherPermissions?.id, scoutAgentPermissionProfile("researcher"));
   assert.ok(researcherPermissions?.readableRoots.includes(researcherMount));
-  assert.ok(researcherPermissions?.readableRoots.includes(coordinatorArtifact));
-  assert.ok(researcherPermissions?.writableRoots.includes(researcherArtifact));
-  assert.ok(researcherPermissions?.writableRoots.includes(researcherTemp));
+  assert.equal(researcherPermissions?.workspaceRules["agents/coordinator/artifacts"], "read");
+  assert.equal(researcherPermissions?.workspaceRules["agents/researcher/artifacts"], "write");
+  assert.equal(researcherPermissions?.writableRoots.includes(researcherTemp), false);
   if (process.platform === "darwin") {
     assert.ok(researcherPermissions?.readableRoots.includes("/System/Library/OpenSSL"));
     assert.ok(researcherPermissions?.writableRoots.includes(resolve(tmpdir())));
@@ -186,9 +186,9 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   );
   assert.match(configToml, new RegExp(escapeRegExp(`"${runsRoot}" = "deny"`)));
   assert.match(configToml, new RegExp(escapeRegExp(`"${researcherMount}" = "read"`)));
-  assert.match(configToml, new RegExp(escapeRegExp(`"${coordinatorArtifact}" = "read"`)));
-  assert.match(configToml, new RegExp(escapeRegExp(`"${researcherArtifact}" = "write"`)));
-  assert.match(configToml, new RegExp(escapeRegExp(`"${researcherTemp}" = "write"`)));
+  assert.match(configToml, /"agents\/coordinator\/artifacts" = "read"/);
+  assert.match(configToml, /"agents\/researcher\/artifacts" = "write"/);
+  assert.doesNotMatch(configToml, new RegExp(escapeRegExp(`"${researcherTemp}" = "write"`)));
   if (process.platform === "darwin") {
     assert.match(configToml, /^"\/System\/Library\/OpenSSL" = "read"$/m);
     assert.match(
@@ -214,9 +214,14 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
     runId,
     agentId: "coordinator",
   });
-  const ownArtifactFile = join(researcher.artifactRoot, "own.txt");
-  const sharedArtifactFile = join(coordinator.artifactRoot, "shared.txt");
-  const ownLogsFile = join(researcher.logsRoot, "private.log");
+  const workflowRoot = join(runRoot, "workflows", "workflow-001");
+  const researcherArtifacts = join(workflowRoot, "agents", "researcher", "artifacts");
+  const coordinatorArtifacts = join(workflowRoot, "agents", "coordinator", "artifacts");
+  const researcherLogs = join(workflowRoot, "agents", "researcher", "logs");
+  for (const root of [researcherArtifacts, coordinatorArtifacts, researcherLogs]) mkdirSync(root, { recursive: true });
+  const ownArtifactFile = join(researcherArtifacts, "own.txt");
+  const sharedArtifactFile = join(coordinatorArtifacts, "shared.txt");
+  const ownLogsFile = join(researcherLogs, "private.log");
   const historicalRunFile = join(runsRoot, "historical-run", "secret.txt");
   writeFileSync(ownArtifactFile, "own artifact\n", "utf8");
   writeFileSync(sharedArtifactFile, "shared artifact\n", "utf8");
@@ -225,7 +230,9 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   writeFileSync(historicalRunFile, "historical run\n", "utf8");
   const exec = async (
     command: string[],
-    cwd = researcher.mountRoot,
+    // Standalone command/exec expands workspace rules against cwd. Per-Turn
+    // roots with the fixed Agent mount cwd are tested through turn/start.
+    cwd = workflowRoot,
     permissionProfile: ScoutAgentPermissionProfile = scoutAgentPermissionProfile("researcher"),
   ) => stage.appServerClient.client.request(
     "command/exec",
@@ -264,11 +271,11 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
     0,
   );
   assert.notEqual(
-    (await exec(["/usr/bin/touch", join(coordinator.artifactRoot, "forbidden.txt")])).exitCode,
+    (await exec(["/usr/bin/touch", join(coordinatorArtifacts, "forbidden.txt")])).exitCode,
     0,
   );
   assert.equal(
-    (await exec(["/usr/bin/touch", join(researcher.artifactRoot, "allowed.txt")])).exitCode,
+    (await exec(["/usr/bin/touch", join(researcherArtifacts, "allowed.txt")])).exitCode,
     0,
   );
   assert.notEqual(

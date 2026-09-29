@@ -32,8 +32,6 @@ export class MountGeneratedFilesBuilder {
       context.runId,
       "--agent-id",
       context.agentId,
-      "--state-root",
-      context.tempRoot,
     ].map(quoteShellArgument).join(" ");
     return [
       {
@@ -42,8 +40,6 @@ export class MountGeneratedFilesBuilder {
           baseConfig: this.baseConfig,
           mountRoot: context.mountRoot,
           runRoot: context.runRoot,
-          artifactRoot: context.artifactRoot,
-          tempRoot: context.tempRoot,
           hostTempRoot: tmpdir(),
           runId: context.runId,
           assetCommitId: context.assetCommitId,

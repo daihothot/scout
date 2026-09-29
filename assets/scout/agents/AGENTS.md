@@ -26,14 +26,18 @@
 
 ### Workflow Context
 
-- `workflow` 定义当前 `run` 使用的 `phase` 以及允许的流转关系。
+- `Workflow Profile` 定义当前 `run` 使用的 `phase` 以及允许的流转关系。
 - `attachment` 是 Scout Runtime 随当前 `response` 注入的上下文块。
 - `<workflow_phase>` attachment 提供当前 `<domain>` 和 `<phase>`；所有 `role` 只使用其中的事实，不从 task 名称、Skill 名称、历史消息或自己的推断中补出。
+- `workflow` 是当前 `run` 按同一 Workflow Profile 开启的一次执行实例，具有独立的 `workflowId`、状态和执行证据。`workflow_status: empty` 表示当前没有活动 Workflow：可交流或查看已获授权的历史，但不能写 artifact 或派发执行任务。
+- 每次 response 的 `<workflow_context>` 提供当前 `workflowId`、本 role 的 `artifactRoot`，以及各 role 的 `artifacts` 路径。只使用本次注入的路径，不沿用前一 response 的物理路径。
+- 访问历史 artifact 时，只使用 Runtime 提供的访问路径和必要授权，不扫描历史目录或根据目录名称猜测身份。
 
 ```text
 <workflow_phase>
 current_domain: <domain>
 current_phase: <phase>
+workflow_status: <active|settling|empty>
 </workflow_phase>
 ```
 
@@ -54,19 +58,22 @@ current_phase: <phase>
 
 ```text
 <run-root>/
-└── agents/
-    ├── <role>/
-    │   ├── mount/                    【用途：当前工作目录】【权限：仅可读】
-    │   │   ├── AGENTS.md             【本文件】【用途：通用规则原件】【权限：仅可读】
-    │   │   ├── agents/
-    │   │   │   ├── coordinator.AGENTS.md 【仅 coordinator】【用途：coordinator 通用规则原件】【权限：仅可读】
-    │   │   │   └── worker.AGENTS.md      【仅 worker】【用途：worker 通用规则原件】【权限：仅可读】
-    │   │   └── .scout/skill/         【用途：当前可见 Skill 根目录】【权限：仅可读】
-    │   ├── artifacts/                【用途：正式产物和交接引用】【权限：可读可写】
-    │   └── tmp/                      【用途：工具运行临时数据】【权限：可读可写】
-    └── <other-role>/
-        └── artifacts/                【用途：读取其它 <role> 的正式交付产物】【权限：仅可读】
+├── agents/
+│   └── <role>/
+│       └── mount/                    【用途：固定的当前工作目录】【权限：仅可读】
+│           ├── AGENTS.md             【本文件】【用途：通用规则原件】【权限：仅可读】
+│           ├── agents/
+│           │   ├── coordinator.AGENTS.md 【仅 coordinator】【权限：仅可读】
+│           │   └── worker.AGENTS.md      【仅 worker】【权限：仅可读】
+│           └── .scout/skill/          【用途：当前可见 Skill 根目录】【权限：仅可读】
+└── workflows/
+    └── <当前 Workflow 目录>/             【目录名可变，不是 Workflow 身份】
+        └── agents/
+            ├── <role>/artifacts/     【用途：本 Workflow 正式产物】【权限：可读可写】
+            └── <other-role>/artifacts/ 【用途：本 Workflow 正式交付产物】【权限：仅可读】
 ```
+
+没有活动 Workflow 时不提供 artifact 路径；不得回写已完成 Workflow。工具临时文件使用宿主 `TMPDIR`，不作为持久交付引用。
 
 Scout Runtime 自动注入的规则文件，遗忘规则时可以读取：
 
@@ -229,7 +236,6 @@ Scout 通过持久产物、稳定引用和正式角色交接完成工作交付�
 - `worker.AGENTS.md` 定义所有 `worker` 共同遵循的 handoff 规则。
 - `Domain Skill` 定义 `<domain>` 中各 `role` 的交付职责、输出和交接。
 - `worker` 根据 `Domain Skill` 处理 `task`，按其输出定义生成 `artifact`，并将 `ref` 写入 `outcome`。
-- Scout Runtime 记录 `handoff` 时，将 `outcome` 中的 `ref` 规范化为 `run` 内稳定引用，并随 `outcome` 持久化和传递。
 - `coordinator` 从 `handoff` 的 `outcome` 获取 `ref`，并通过它定位对应 `artifact`。
 - 下游 `worker` 从当前 `<task>` 获取正式 `ref`，并通过它定位对应 `artifact`。
 - `coordinator` 根据 `Domain Skill` 处理 `handoff`，继续协调工作或形成面向用户的交付。

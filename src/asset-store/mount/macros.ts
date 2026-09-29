@@ -5,8 +5,6 @@ export const MountMacros = {
   ScoutRoot: "SCOUT_ROOT",
   RunRoot: "SCOUT_RUN_ROOT",
   MountRoot: "SCOUT_MOUNT_ROOT",
-  ArtifactRoot: "SCOUT_ARTIFACT_ROOT",
-  TempRoot: "SCOUT_TEMP_ROOT",
   AssetCommitId: "SCOUT_ASSET_COMMIT_ID",
   RunId: "SCOUT_RUN_ID",
 } as const;
@@ -19,8 +17,6 @@ export interface MountMacroValuesInput {
   scoutRoot: string;
   runRoot: string;
   mountRoot: string;
-  artifactRoot: string;
-  tempRoot: string;
   assetCommitId: string;
   runId?: string;
 }
@@ -31,8 +27,6 @@ export type MountMacroValues = Record<MountMacro, string | undefined>;
 /** Values exported into a shell process; Scout root is intentionally omitted. */
 export interface MountShellEnvironmentInput {
   runRoot: string;
-  artifactRoot: string;
-  tempRoot: string;
   hostTempRoot: string;
   assetCommitId: string;
   runId?: string;
@@ -44,8 +38,6 @@ export function createMountMacroValues(input: MountMacroValuesInput): MountMacro
     [MountMacros.ScoutRoot]: input.scoutRoot,
     [MountMacros.RunRoot]: input.runRoot,
     [MountMacros.MountRoot]: input.mountRoot,
-    [MountMacros.ArtifactRoot]: input.artifactRoot,
-    [MountMacros.TempRoot]: input.tempRoot,
     [MountMacros.AssetCommitId]: input.assetCommitId,
     [MountMacros.RunId]: input.runId ?? runIdFromRunRoot(input.runRoot),
   };
@@ -64,8 +56,6 @@ export function buildMountShellEnvironment(input: MountShellEnvironmentInput): R
   return {
     [MountMacros.RunId]: input.runId ?? runIdFromRunRoot(input.runRoot),
     [MountMacros.RunRoot]: input.runRoot,
-    [MountMacros.ArtifactRoot]: input.artifactRoot,
-    [MountMacros.TempRoot]: input.tempRoot,
     [MountMacros.AssetCommitId]: input.assetCommitId,
     TMPDIR: input.hostTempRoot,
     GIT_CONFIG_COUNT: "1",

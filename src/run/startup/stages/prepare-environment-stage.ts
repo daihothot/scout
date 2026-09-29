@@ -10,7 +10,7 @@ import {
   type MaterializeOptions,
 } from "../../../asset-store/index.js";
 import type { ScoutAgentRole } from "../../../agent/thread/types.js";
-import { isPathWithin } from "../../../core/path.js";
+import { isPathWithin, runAgentPaths, runPaths } from "../../../core/path.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunAgentManifestEntry } from "../../persistence/index.js";
 import type { RunAgentEnvironment, RunRootAccess } from "../../types.js";
@@ -96,7 +96,7 @@ export class PrepareEnvironmentStage implements RunStage {
     const roles = this.options.agentRoles
       ?? scope.workflow.scheduler.snapshot().roles.map((role) => role.name);
     assertMaterializationPath(scoutRoot, runRoot);
-    assertMaterializationPath(scoutRoot, join(runRoot, "agents"));
+    assertMaterializationPath(scoutRoot, runPaths(runRoot).agentsRoot);
 
     const assetStore = this.options.assetStore ?? new AssetStore();
     const progress = createMountPreparationProgress(roles);
@@ -106,9 +106,9 @@ export class PrepareEnvironmentStage implements RunStage {
     const plansByRole = new Map<ScoutAgentRole, EnvironmentRolePlan>();
     const inputs: EnvironmentRolePreparationInput[] = [];
     for (const role of roles) {
-      const agentRoot = join(runRoot, "agents", role);
+      const paths = runAgentPaths(runRoot, role);
+      const { agentRoot } = paths;
       assertMaterializationPath(scoutRoot, agentRoot);
-      const artifactRoot = join(agentRoot, "artifacts");
       const preparationOptions: MaterializeOptions = {
         scoutRoot,
         runId: scope.runId,
@@ -134,9 +134,9 @@ export class PrepareEnvironmentStage implements RunStage {
       inputs.push({
         role,
         options: preparationOptions,
-        expectedMountManifestPath: join(agentRoot, "mount", "mount-manifest.json"),
-        assetCommitPath: join(artifactRoot, "asset-commit.json"),
-        preflightPath: join(artifactRoot, "app-server-preflight.json"),
+        expectedMountManifestPath: paths.mountManifestPath,
+        assetCommitPath: paths.assetCommitPath,
+        preflightPath: paths.preflightPath,
       });
     }
 
