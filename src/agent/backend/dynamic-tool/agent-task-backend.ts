@@ -1,25 +1,25 @@
-import type { DynamicToolCallInput } from "../../agent-server/types.js";
-import { AgentEvents } from "../events/index.js";
+import type { DynamicToolCallInput } from "../../../agent-server/types.js";
+import { AgentEvents } from "../../events/index.js";
 import {
   AgentTaskStore,
   cloneAgentTaskState,
-} from "../task/agent-task-store.js";
-import type { ScoutAgent } from "../core/scout-agent.js";
-import { WorkerAgent } from "../roles/worker-agent.js";
+} from "../../task/agent-task-store.js";
+import type { ScoutAgent } from "../../core/scout-agent.js";
+import { WorkerAgent } from "../../roles/worker-agent.js";
 import {
   AgentTaskDispositionKinds,
   AgentTaskStatuses,
   type AgentTaskDisposition,
   type AgentTaskState,
-} from "../task/types.js";
-import { currentRunScope, type RunScope } from "../../run/run-scope.js";
-import { canonicalizeAgentArtifactReferences } from "../task/artifact-references.js";
+} from "../../task/types.js";
+import { currentRunScope, type RunScope } from "../../../run/run-scope.js";
+import { canonicalizeAgentArtifactReferences } from "../../task/artifact-references.js";
 import { AgentHumanInputBackend } from "./agent-human-input-backend.js";
 import type {
   RequestHumanInputToolCall,
   RespondHumanInputToolCall,
   SubmitTaskToolCall,
-} from "../tools/agent-tools.js";
+} from "../../tools/agent-tools.js";
 
 /** Result of forwarding a human-input request or response for a Worker Task. */
 export interface AgentTaskHumanInputResult extends Record<string, unknown> {
@@ -40,13 +40,13 @@ export class AgentTaskBackend {
   private readonly eventBus: RunScope["eventBus"];
   private readonly humanInputBackend: AgentHumanInputBackend;
 
-  constructor(input: { humanInputBackend?: AgentHumanInputBackend } = {}) {
+  constructor(input: { humanInputBackend: AgentHumanInputBackend }) {
     const scope = currentRunScope();
     this.registry = scope.agentRegistry;
     this.taskStore = scope.taskStore;
     this.stepStore = scope.stepStore;
     this.eventBus = scope.eventBus;
-    this.humanInputBackend = input.humanInputBackend ?? new AgentHumanInputBackend();
+    this.humanInputBackend = input.humanInputBackend;
   }
 
   async submitTask(input: {

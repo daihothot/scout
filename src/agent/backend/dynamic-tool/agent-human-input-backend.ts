@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { AgentEvents } from "../events/index.js";
-import type { AgentMessage } from "../message/types.js";
-import type { ScoutAgent } from "../core/scout-agent.js";
-import type { AgentHumanInputState } from "../human-input/agent-human-input-store.js";
-import type { RunScope } from "../../run/run-scope.js";
-import { currentRunScope } from "../../run/run-scope.js";
-import { agent } from "../context/agent-attachments.js";
-import { attachments } from "../context/attachments.js";
-import { CoordinatorAgent } from "../roles/coordinator-agent.js";
+import { AgentEvents } from "../../events/index.js";
+import type { AgentMessage } from "../../message/types.js";
+import type { ScoutAgent } from "../../core/scout-agent.js";
+import type { AgentHumanInputState } from "../../human-input/agent-human-input-store.js";
+import type { RunScope } from "../../../run/run-scope.js";
+import { currentRunScope } from "../../../run/run-scope.js";
+import { agent } from "../../context/agent-attachments.js";
+import { attachments } from "../../context/attachments.js";
+import { CoordinatorAgent } from "../../roles/coordinator-agent.js";
 
 export interface AgentHumanInputRequestResult {
   status: "accepted" | "queued";

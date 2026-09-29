@@ -1,30 +1,20 @@
 import type {
   AppServerResolvedTimelineEntry,
   AppServerTimelineEntry,
-} from "../../agent-server/codex/app-server-event-store.js";
-import { currentRunScope, type RunScope } from "../../run/run-scope.js";
-import type { ScoutAgent } from "../core/scout-agent.js";
-import { AgentTaskBackend } from "./agent-task-backend.js";
-import { AgentHumanInputBackend } from "./agent-human-input-backend.js";
+} from "../../../agent-server/codex/app-server-event-store.js";
+import { currentRunScope, type RunScope } from "../../../run/run-scope.js";
+import type { ScoutAgent } from "../../core/scout-agent.js";
 
 /**
  * Applies app-server observations to the running Step owned by an Agent.
  * Task lifecycle policy and disposition remain outside this boundary.
  */
-export class AgentStepBackend {
-  readonly task: AgentTaskBackend;
+export class AgentTimelineStepBackend {
   private readonly stepStore: RunScope["stepStore"];
 
-  constructor(input: {
-    taskBackend?: AgentTaskBackend;
-    humanInputBackend?: AgentHumanInputBackend;
-  } = {}) {
+  constructor() {
     const scope = currentRunScope();
     this.stepStore = scope.stepStore;
-    const humanInputBackend = input.humanInputBackend ?? new AgentHumanInputBackend();
-    this.task = input.taskBackend ?? new AgentTaskBackend({
-      humanInputBackend,
-    });
   }
 
   handleAppServerTimelineEntry(

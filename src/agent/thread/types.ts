@@ -2,11 +2,23 @@ import type {
   AgentJsonValue,
 } from "../tools/types.js";
 import type {
+  AppServerApprovalPolicy,
   DynamicToolSpec,
   ThreadResumeRequest,
   ThreadStartRequest,
 } from "../../agent-server/codex/app-server-client.js";
 import type { CodexModelConfig } from "../../agent-server/codex/model-config.js";
+
+/** Allow only explicit temporary permission requests; other escalation prompts stay disabled. */
+export const scoutAgentApprovalPolicy: AppServerApprovalPolicy = Object.freeze({
+  granular: Object.freeze({
+    sandbox_approval: false,
+    rules: false,
+    mcp_elicitations: false,
+    request_permissions: true,
+    skill_approval: false,
+  }),
+});
 
 /** Workflow-declared role identity that can own a Scout thread. */
 export type ScoutAgentRole = string;
@@ -27,7 +39,7 @@ export interface AgentThreadSpec {
   role: ScoutAgentRole;
   phases: ScoutAgentPhase[];
   cwd: string;
-  approvalPolicy: "never";
+  approvalPolicy: AppServerApprovalPolicy;
   permissionProfile: ScoutAgentPermissionProfile;
   contextBundleId: string;
   model: CodexModelConfig;

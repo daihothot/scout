@@ -1,7 +1,7 @@
 import {
   completeCommandExecutionApproval,
   evaluateCommandExecutionApproval,
-} from "../command-execution/approval/command-execution-approval-policy.js";
+} from "./approval/command-execution-approval-policy.js";
 import type { AgentHookInvocation, AgentHookResult } from "./types.js";
 
 /** Routes one synchronous native-hook invocation to its owning Agent consumer. */

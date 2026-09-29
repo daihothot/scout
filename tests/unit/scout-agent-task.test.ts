@@ -5,7 +5,7 @@ import {
   installTestRunScope,
 } from "../helpers/run-persistence.js";
 import assert from "node:assert/strict";
-import { AgentStepBackend } from "../../src/agent/backend/agent-step-backend.js";
+import { AgentTimelineStepBackend } from "../../src/agent/backend/timeline/agent-timeline-step-backend.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import { WorkerRunner } from "../../src/agent/runner/worker/worker-runner.js";
 import {
@@ -820,7 +820,7 @@ test("TaskRunner keeps done after task outcome delivery fails", async (t) => {
   assert.equal(harness.events.some((event) => AgentEvents.task.done.is(event)), true);
 });
 
-test("AgentStepBackend reduces app-server plan timeline entries into step state", (t) => {
+test("AgentTimelineStepBackend reduces app-server plan timeline entries into step state", (t) => {
   const eventBus = new InMemoryEventBus();
   const runId = "run-task-backend-test";
   const scope = new RunScope({
@@ -851,7 +851,7 @@ test("AgentStepBackend reduces app-server plan timeline entries into step state"
     ...current,
     stepIds: [firstStep.stepId],
   }));
-  const backend = new AgentStepBackend();
+  const backend = new AgentTimelineStepBackend();
   const firstPlan = planState("turn-1", "first", "inProgress");
   const completedFirstPlan = planState("turn-1", "first completed", "completed");
   const secondPlan = planState("turn-2", "second", "completed");

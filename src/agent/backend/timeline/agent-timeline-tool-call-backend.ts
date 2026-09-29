@@ -1,45 +1,22 @@
 import type {
   AppServerResolvedTimelineEntry,
   AppServerTimelineEntry,
-} from "../../agent-server/codex/app-server-event-store.js";
-import type { DynamicToolCallInput, DynamicToolCallResponse } from "../../agent-server/types.js";
-import { currentRunScope, type RunScope } from "../../run/run-scope.js";
-import type { ScoutAgent } from "../core/scout-agent.js";
-import { AgentEvents } from "../events/index.js";
-import type { AgentToolCallState } from "../tool-call/types.js";
-import { AgentDynamicToolBackend } from "./agent-dynamic-tool-backend.js";
-import { AgentTaskBackend } from "./agent-task-backend.js";
+} from "../../../agent-server/codex/app-server-event-store.js";
+import { currentRunScope, type RunScope } from "../../../run/run-scope.js";
+import type { ScoutAgent } from "../../core/scout-agent.js";
+import { AgentEvents } from "../../events/index.js";
+import type { AgentToolCallState } from "../../tool-call/types.js";
 
 /**
  * Converts dynamic and MCP app-server items into independent Tool Call facts.
  * Dynamic tool command execution remains owned by AgentDynamicToolBackend; this class
  * only observes the provider timeline and records the resulting fact.
  */
-export class AgentToolCallBackend {
-  readonly dynamicTool: AgentDynamicToolBackend;
+export class AgentTimelineToolCallBackend {
   private readonly scope: RunScope;
 
-  constructor(input: {
-    dynamicTool?: AgentDynamicToolBackend;
-    taskBackend?: AgentTaskBackend;
-  } = {}) {
+  constructor() {
     this.scope = currentRunScope();
-    this.dynamicTool = input.dynamicTool ?? new AgentDynamicToolBackend({
-      taskBackend: input.taskBackend ?? new AgentTaskBackend(),
-    });
-  }
-
-  start(): void {
-    this.dynamicTool.start();
-  }
-
-  stop(): void {
-    this.dynamicTool.stop();
-  }
-
-  /** Forwards incoming dynamic-tool execution to the nested execution backend. */
-  handleDynamicToolCall(input: DynamicToolCallInput): Promise<DynamicToolCallResponse> {
-    return this.dynamicTool.handleDynamicToolCall(input);
   }
 
   handleAppServerTimelineEntry(

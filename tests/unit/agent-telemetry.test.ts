@@ -568,6 +568,9 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
       activePermissionProfile: {
         id: "scout-researcher",
       },
+      approvalPolicy: { granular: {
+        sandbox_approval: false, rules: false, mcp_elicitations: false, request_permissions: true, skill_approval: false,
+      } },
     },
   };
   const startedBeforeRecording = structuredClone(started);
@@ -661,6 +664,8 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
     block.includes("event=agent.thread.restarted")
   );
   assert.ok(startedBlock);
+  assert.match(startedBlock, /request_permissions: true/);
+  assert.match(startedBlock, /sandbox_approval: false/);
   assert.ok(resumedBlock);
   assert.ok(restartedBlock);
   assert.match(startedBlock, /\ndata:/);

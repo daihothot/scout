@@ -577,6 +577,7 @@ export abstract class ScoutAgent {
         reasoningSummary: this.spec.model.reasoningSummary,
         timeoutMs: input.timeoutMs,
         permissions: this.spec.permissionProfile,
+        approvalPolicy: this.spec.approvalPolicy,
         onStatusMessage: input.onStatusMessage,
         onTurnStarted: (turnId) => this.bindOwnedTurnId(ownership, turnId),
       });

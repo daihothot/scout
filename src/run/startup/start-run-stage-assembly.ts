@@ -10,6 +10,7 @@ import {
   AppServerRootConfigStage,
   RunRuntimeStage,
   RunScopeStage,
+  RequestHubStage,
   RunStageExecutor,
   WorkflowStage,
 } from "../lifecycle/index.js";
@@ -34,6 +35,7 @@ export class StartRunStageAssembly {
 
     executor.registerSerial(
       runScopeStage,
+      new RequestHubStage(),
       new InitializeRunStage(),
       new WorkflowStage(input.workflow),
       new RunRuntimeStage("start"),

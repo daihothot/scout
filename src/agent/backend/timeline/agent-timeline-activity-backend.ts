@@ -1,21 +1,21 @@
 import type {
   AppServerResolvedTimelineEntry,
   AppServerTimelineEntry,
-} from "../../agent-server/codex/app-server-event-store.js";
-import { currentRunScope, type RunScope } from "../../run/run-scope.js";
+} from "../../../agent-server/codex/app-server-event-store.js";
+import { currentRunScope, type RunScope } from "../../../run/run-scope.js";
 import type {
   AgentActivity,
   AgentTurnActivity,
-} from "../activity/activity-event.js";
-import type { ScoutAgent } from "../core/scout-agent.js";
-import { AgentEvents } from "../events/index.js";
+} from "../../activity/activity-event.js";
+import type { ScoutAgent } from "../../core/scout-agent.js";
+import { AgentEvents } from "../../events/index.js";
 
 /**
  * Projects app-server timeline entries into activity and native subagent facts.
  * It owns no task state and only publishes observations after the caller has
  * resolved the relevant timeline item.
  */
-export class AgentActivityBackend {
+export class AgentTimelineActivityBackend {
   private readonly scope: RunScope;
 
   constructor() {

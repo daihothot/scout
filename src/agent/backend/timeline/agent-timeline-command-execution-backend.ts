@@ -1,14 +1,14 @@
 import type {
   AppServerResolvedTimelineEntry,
   AppServerTimelineEntry,
-} from "../../agent-server/codex/app-server-event-store.js";
-import { currentRunScope, type RunScope } from "../../run/run-scope.js";
-import type { ScoutAgent } from "../core/scout-agent.js";
-import { AgentEvents } from "../events/index.js";
-import type { AgentCommandExecutionObservedEvent } from "../command-execution/command-execution-events.js";
+} from "../../../agent-server/codex/app-server-event-store.js";
+import { currentRunScope, type RunScope } from "../../../run/run-scope.js";
+import type { ScoutAgent } from "../../core/scout-agent.js";
+import { AgentEvents } from "../../events/index.js";
+import type { AgentCommandExecutionObservedEvent } from "../../command-execution/command-execution-events.js";
 
 /** Publishes one generic command fact for each completed shell command. */
-export class AgentCommandExecutionBackend {
+export class AgentTimelineCommandExecutionBackend {
   private readonly scope: RunScope = currentRunScope();
 
   handleAppServerTimelineEntry(

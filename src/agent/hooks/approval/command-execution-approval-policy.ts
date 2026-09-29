@@ -7,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import type { AgentHookResult } from "../../hooks/types.js";
+import type { AgentHookResult } from "../types.js";
 
 export const MERGED_CONTENT_READ_REASON =
   "[MERGED_CONTENT_READ] one primary result is allowed per shell tool call";

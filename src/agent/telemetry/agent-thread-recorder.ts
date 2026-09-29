@@ -188,7 +188,11 @@ function summarizeThreadResponse(agentId: string, value: unknown): object {
     cwd: pathValue(response, "cwd"),
     runtimeWorkspaceRoots: pathArray(response, "runtimeWorkspaceRoots"),
     instructionSources: pathArray(response, "instructionSources"),
-    approvalPolicy: stringValue(response, "approvalPolicy"),
+    approvalPolicy: typeof response.approvalPolicy === "string"
+      ? response.approvalPolicy
+      : response.approvalPolicy && typeof response.approvalPolicy === "object"
+        ? structuredClone(response.approvalPolicy)
+        : undefined,
     ...(activePermissionProfile
       ? {
           activePermissionProfile: {

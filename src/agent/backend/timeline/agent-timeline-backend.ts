@@ -1,24 +1,23 @@
-import type { AppServerTimelineEntry } from "../../agent-server/codex/app-server-event-store.js";
-import { AgentActivityBackend } from "./agent-activity-backend.js";
-import { AgentStepBackend } from "./agent-step-backend.js";
-import { AgentToolCallBackend } from "./agent-tool-call-backend.js";
-import { AgentCommandExecutionBackend } from "./agent-command-execution-backend.js";
-import { AgentSubagentBackend } from "./agent-subagent-backend.js";
-import type { ScoutAgent } from "../core/scout-agent.js";
-import { currentRunScope, type RunScope } from "../../run/run-scope.js";
+import type { AppServerTimelineEntry } from "../../../agent-server/codex/app-server-event-store.js";
+import { AgentTimelineActivityBackend } from "./agent-timeline-activity-backend.js";
+import { AgentTimelineStepBackend } from "./agent-timeline-step-backend.js";
+import { AgentTimelineToolCallBackend } from "./agent-timeline-tool-call-backend.js";
+import { AgentTimelineCommandExecutionBackend } from "./agent-timeline-command-execution-backend.js";
+import { AgentTimelineSubagentBackend } from "./agent-timeline-subagent-backend.js";
+import type { ScoutAgent } from "../../core/scout-agent.js";
+import { currentRunScope, type RunScope } from "../../../run/run-scope.js";
 
 /**
- * Owns the run-scoped app-server subscriptions and composes the Tool Call and
- * Step backend trees. Agent construction and lifecycle orchestration are
- * intentionally left to the surrounding run stages.
+ * Owns the run-scoped Timeline subscription and dispatches observations to
+ * their projections. Tool execution and request responses use separate backends.
  */
-export class AgentBackend {
+export class AgentTimelineBackend {
   readonly registry: RunScope["agentRegistry"];
-  readonly activity: AgentActivityBackend;
-  readonly subagent: AgentSubagentBackend;
-  readonly commandExecution: AgentCommandExecutionBackend;
-  readonly step: AgentStepBackend;
-  readonly toolCall: AgentToolCallBackend;
+  readonly activity: AgentTimelineActivityBackend;
+  readonly subagent: AgentTimelineSubagentBackend;
+  readonly commandExecution: AgentTimelineCommandExecutionBackend;
+  readonly step: AgentTimelineStepBackend;
+  readonly toolCall: AgentTimelineToolCallBackend;
   private readonly scope: RunScope;
   private unsubscribeTimeline?: () => void;
 
@@ -26,39 +25,24 @@ export class AgentBackend {
     const scope = currentRunScope();
     this.scope = scope;
     this.registry = scope.agentRegistry;
-    this.activity = new AgentActivityBackend();
-    this.subagent = new AgentSubagentBackend();
-    this.commandExecution = new AgentCommandExecutionBackend();
-    this.step = new AgentStepBackend();
-    this.toolCall = new AgentToolCallBackend({
-      taskBackend: this.step.task,
-    });
+    this.activity = new AgentTimelineActivityBackend();
+    this.subagent = new AgentTimelineSubagentBackend();
+    this.commandExecution = new AgentTimelineCommandExecutionBackend();
+    this.step = new AgentTimelineStepBackend();
+    this.toolCall = new AgentTimelineToolCallBackend();
   }
 
   start(): void {
     if (this.unsubscribeTimeline) return;
-    let unsubscribeTimeline: (() => void) | undefined;
-    try {
-      this.toolCall.start();
-      unsubscribeTimeline = this.scope.appServer.onTimeline((entry) =>
-        this.handleAppServerTimelineEntry(entry)
-      );
-      this.unsubscribeTimeline = unsubscribeTimeline;
-    } catch (error) {
-      unsubscribeTimeline?.();
-      this.toolCall.stop();
-      throw error;
-    }
+    this.unsubscribeTimeline = this.scope.appServer.onTimeline((entry) =>
+      this.handleAppServerTimelineEntry(entry)
+    );
   }
 
   stop(): void {
     const unsubscribeTimeline = this.unsubscribeTimeline;
     this.unsubscribeTimeline = undefined;
-    try {
-      unsubscribeTimeline?.();
-    } finally {
-      this.toolCall.stop();
-    }
+    unsubscribeTimeline?.();
   }
 
   private handleAppServerTimelineEntry(entry: AppServerTimelineEntry): void {

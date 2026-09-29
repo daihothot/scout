@@ -7,6 +7,7 @@ import {
   OrchestratorStage,
   RunRuntimeStage,
   RunScopeStage,
+  RequestHubStage,
   RunStageExecutor,
   WorkflowStage,
   type RunStage,
@@ -48,6 +49,7 @@ export class ResumeRunStageAssembly {
 
     executor.registerSerial(
       runScopeStage,
+      new RequestHubStage(),
       new WorkflowStage(input.workflow),
       input.clientsStage,
       input.environmentStage,

@@ -1,9 +1,9 @@
 import type {
   DynamicToolCallInput,
   DynamicToolCallResponse,
-} from "../../agent-server/types.js";
-import type { ScoutAgent } from "../core/scout-agent.js";
-import { CoordinatorAgent } from "../roles/coordinator-agent.js";
+} from "../../../agent-server/types.js";
+import type { ScoutAgent } from "../../core/scout-agent.js";
+import { CoordinatorAgent } from "../../roles/coordinator-agent.js";
 import {
   type AssignTaskToolCall,
   AGENT_TOOL_NAMESPACES,
@@ -15,17 +15,13 @@ import {
   type SubmitTaskToolCall,
   type SubmitPhaseOutcomeToolCall,
   type AgentDynamicToolCall,
-} from "../tools/agent-tools.js";
-import type { AgentTaskBackend } from "./agent-task-backend.js";
-import { WorkerAgent } from "../roles/worker-agent.js";
-import { attachments } from "../context/attachments.js";
-import { agent } from "../context/agent-attachments.js";
-import { currentRunScope, type RunScope } from "../../run/run-scope.js";
-
-/** Dependencies required to dispatch agent-owned dynamic tools. */
-export interface AgentDynamicToolBackendOptions {
-  taskBackend: AgentTaskBackend;
-}
+} from "../../tools/agent-tools.js";
+import { AgentTaskBackend } from "./agent-task-backend.js";
+import { AgentHumanInputBackend } from "./agent-human-input-backend.js";
+import { WorkerAgent } from "../../roles/worker-agent.js";
+import { attachments } from "../../context/attachments.js";
+import { agent } from "../../context/agent-attachments.js";
+import { currentRunScope, type RunScope } from "../../../run/run-scope.js";
 
 type AssignTaskToolResponse =
   | {
@@ -55,12 +51,13 @@ export class AgentDynamicToolBackend {
     response: Record<string, unknown>;
   }>();
 
-  constructor(options: AgentDynamicToolBackendOptions) {
+  constructor() {
     const scope = currentRunScope();
     this.registry = scope.agentRegistry;
     this.domains = scope.domainRegistry;
     this.taskStore = scope.taskStore;
-    this.taskBackend = options.taskBackend;
+    const humanInputBackend = new AgentHumanInputBackend();
+    this.taskBackend = new AgentTaskBackend({ humanInputBackend });
   }
 
   start(): void {
@@ -111,7 +108,7 @@ export class AgentDynamicToolBackend {
           phase,
           threadId: caller.threadId,
         },
-      } satisfies import("../../domain/types.js").ScoutDomainDynamicToolCall;
+      } satisfies import("../../../domain/types.js").ScoutDomainDynamicToolCall;
       const assigned = currentRunScope().workflow.scheduler.snapshot().roles.some((role) =>
         role.name === caller.role && role.phases.includes(phase)
       );

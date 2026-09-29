@@ -8,7 +8,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AgentBuilder } from "../../src/agent/builder/agent-builder.js";
-import { AgentBackend } from "../../src/agent/backend/agent-backend.js";
+import { AgentTimelineBackend } from "../../src/agent/backend/timeline/agent-timeline-backend.js";
+import { AgentDynamicToolBackend } from "../../src/agent/backend/dynamic-tool/agent-dynamic-tool-backend.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import { AgentTaskStore } from "../../src/agent/task/agent-task-store.js";
 import { CoordinatorAgent } from "../../src/agent/roles/coordinator-agent.js";
@@ -320,6 +321,11 @@ test("Workflow Worker turns use the role permission profile", async () => {
     model_reasoning_effort: "high",
   });
   await validator.runTurn({ prompt: "Write the Research Pack Gate." });
+  assert.deepEqual(validator.spec.approvalPolicy, { granular: {
+    sandbox_approval: false, rules: false, mcp_elicitations: false, request_permissions: true, skill_approval: false,
+  } });
+  assert.deepEqual(validator.threadSnapshot?.startInput.approvalPolicy, validator.spec.approvalPolicy);
+  assert.deepEqual(appServer.turnInputs[0]?.approvalPolicy, validator.spec.approvalPolicy);
 
   assert.equal(
     appServer.turnInputs[0]?.permissions,
@@ -411,7 +417,7 @@ test("WorkerAgent keeps its bound TaskRunner and reports a rejected task assignm
   const coordinatorAgent = builder.buildCoordinator();
   await coordinatorAgent.startThread();
   const worker = builder.buildWorker("researcher") as WorkerAgent;
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   const firstAssignment = await worker.assignTask({
     taskId: "researcher-task-0001",
     description: "Research the first BDD",
@@ -516,7 +522,7 @@ test("AssignTask routes through the current Phase and skips a busy first role", 
     maxTaskSequence: 1,
   });
   await coordinatorAgent.startThread();
-  const backend = new AgentBackend();
+  const backend = new AgentDynamicToolBackend();
   backend.start();
 
   assert.ok(appServer.handler);
@@ -594,7 +600,7 @@ test("SubmitPhaseOutcome advances the cursor and schedules one fresh Coordinator
   const fixture = createAgentFixture("submit-phase-outcome", { appServer });
   const coordinatorAgent = new AgentBuilder().buildCoordinator();
   await coordinatorAgent.startThread();
-  const backend = new AgentBackend();
+  const backend = new AgentDynamicToolBackend();
   backend.start();
 
   assert.ok(appServer.handler);
@@ -656,7 +662,7 @@ test("SubmitPhaseOutcome rejects a Worker before touching Workflow state", async
   prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
   const worker = new AgentBuilder().buildWorker("researcher");
   await worker.startThread();
-  const backend = new AgentBackend();
+  const backend = new AgentDynamicToolBackend();
   backend.start();
   try {
     assert.ok(appServer.handler);
@@ -684,7 +690,7 @@ test("SubmitPhaseOutcome leaves Workflow unchanged while a queued or running Tas
   // Isolate the task barrier; real Turn admission and replay are covered above.
   t.mock.method(coordinator, "assertOwnsActiveTurn", () => {});
   await coordinator.startThread();
-  const backend = new AgentBackend();
+  const backend = new AgentDynamicToolBackend();
   backend.start();
   const now = new Date().toISOString();
   fixture.taskStore.addTask({
@@ -794,7 +800,7 @@ test("Rejected Phase completion keeps human input reachable through Gateway unti
   await coordinator.startThread();
   worker = builder.buildWorker("researcher") as WorkerAgent;
   await worker.startThread();
-  const backend = new AgentBackend();
+  const backend = new AgentDynamicToolBackend();
   backend.start();
 
   try {
@@ -883,7 +889,7 @@ test("SubmitPhaseOutcome waits for a stopped Worker's in-flight Step to finish",
   await coordinator.startThread();
   const worker = builder.buildWorker("researcher") as WorkerAgent;
   await worker.startThread();
-  const backend = new AgentBackend();
+  const backend = new AgentDynamicToolBackend();
   backend.start();
 
   try {
@@ -974,7 +980,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
   await coordinator.startThread();
   worker = builder.buildWorker("researcher") as WorkerAgent;
   await worker.startThread();
-  const backend = new AgentBackend();
+  const backend = new AgentDynamicToolBackend();
   backend.start();
   let unsubscribe: (() => void) | undefined;
 
@@ -1072,7 +1078,7 @@ for (const boundary of ["phase-advanced", "settling"] as const) {
     // without scheduling the independent phase/settlement tick.
     const coordinator = builder.buildCoordinator();
     await coordinator.startThread();
-    const backend = new AgentBackend();
+    const backend = new AgentDynamicToolBackend();
     backend.start();
     const before = worker.snapshot();
     const taskBefore = fixture.taskStore.getTask(task.taskId);
@@ -1148,7 +1154,7 @@ test("A terminal Phase outcome finishes its active Coordinator Step before prepa
   const oldPath = workflow.journalPath;
   const coordinatorAgent = new AgentBuilder().buildCoordinator();
   await coordinatorAgent.startThread();
-  const backend = new AgentBackend();
+  const backend = new AgentDynamicToolBackend();
   backend.start();
 
   try {
@@ -1211,7 +1217,7 @@ test("Coordinator does not carry phase or settlement scheduling into an empty ne
     mode: "start", attachedAt: new Date().toISOString(), processId: process.pid,
   });
   const oldPath = workflow.journalPath;
-  const backend = new AgentBackend();
+  const backend = new AgentDynamicToolBackend();
   backend.start();
   assert.ok(appServer.handler);
   handleTool = appServer.handler;
@@ -1310,7 +1316,7 @@ test("AssignTask replaces a Done binding, serializes replacement, and preserves 
   worker.restoreTask({ task: oldTask, maxTaskSequence: 7 });
   await fixture.eventBus.publishAndWait(AgentEvents.task.assigned, oldTask);
   const oldRunner = worker.taskRunner;
-  const backend = new AgentBackend();
+  const backend = new AgentDynamicToolBackend();
   backend.start();
   let releaseStarted!: () => void;
   const releasing = new Promise<void>((resolve) => { releaseStarted = resolve; });
@@ -1742,7 +1748,7 @@ test("ScoutAgent returns no goal when setting a goal fails", async () => {
   await coordinator.stopAgent("test_cleanup");
 });
 
-test("AgentBackend does not publish app-server agent message deltas as activity", () => {
+test("AgentTimelineBackend does not publish app-server agent message deltas as activity", () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-skip-agent-message-delta", []);
   const fixture = createAgentFixture("skip-agent-message-delta", { appServer, domain });
@@ -1751,7 +1757,7 @@ test("AgentBackend does not publish app-server agent message deltas as activity"
     activities.push(event.payload);
   });
   const registry = fixture.registry;
-  new AgentBackend().start();
+  new AgentTimelineBackend().start();
   const coordinator = new CoordinatorAgent(fixture.options);
   registry.registerAgent(coordinator);
   registry.bindThread(coordinator.agentId, "thread-coordinator");
@@ -1769,7 +1775,7 @@ test("AgentBackend does not publish app-server agent message deltas as activity"
   assert.deepEqual(activities, []);
 });
 
-test("AgentBackend normalizes app-server items into Agent activity", () => {
+test("AgentTimelineBackend normalizes app-server items into Agent activity", () => {
   const entry = {
     seq: 7,
     stream: "item",
@@ -1806,7 +1812,7 @@ test("AgentBackend normalizes app-server items into Agent activity", () => {
   fixture.eventBus.subscribe<AgentActivity>(AgentEvents.activity.observed, (event) => {
     activities.push(event.payload);
   });
-  new AgentBackend().start();
+  new AgentTimelineBackend().start();
 
   appServer.emitTimeline(entry);
 
@@ -1828,7 +1834,7 @@ test("AgentBackend normalizes app-server items into Agent activity", () => {
   assert.equal(JSON.stringify(activities).includes("private chain of thought"), false);
 });
 
-test("AgentBackend publishes one command fact without the command result on completion", async () => {
+test("AgentTimelineBackend publishes one command fact without the command result on completion", async () => {
   const entry = {
     seq: 11,
     stream: "item",
@@ -1864,7 +1870,7 @@ test("AgentBackend publishes one command fact without the command result on comp
   fixture.eventBus.subscribe(AgentEvents.commandExecution.observed, (event) => {
     if (AgentEvents.commandExecution.observed.is(event)) commands.push(event.payload);
   });
-  new AgentBackend().start();
+  new AgentTimelineBackend().start();
 
   appServer.emitTimeline(entry);
   await waitFor(() => commands.length === 1);
@@ -1885,7 +1891,7 @@ test("AgentBackend publishes one command fact without the command result on comp
   }]);
 });
 
-test("AgentBackend projects a failed command without its return value", async () => {
+test("AgentTimelineBackend projects a failed command without its return value", async () => {
   const entry = {
     seq: 12,
     stream: "item",
@@ -1945,7 +1951,7 @@ test("AgentBackend projects a failed command without its return value", async ()
   fixture.eventBus.subscribe(AgentEvents.commandExecution.observed, (event) => {
     if (AgentEvents.commandExecution.observed.is(event)) commands.push(event.payload);
   });
-  new AgentBackend().start();
+  new AgentTimelineBackend().start();
 
   appServer.emitTimeline(entry);
   await waitFor(() => commands.length === 1);
@@ -1956,7 +1962,7 @@ test("AgentBackend projects a failed command without its return value", async ()
   assert.equal(Object.hasOwn(commands[0] ?? {}, "aggregatedOutput"), false);
 });
 
-test("AgentBackend keeps command bodies out of Activity facts", async () => {
+test("AgentTimelineBackend keeps command bodies out of Activity facts", async () => {
   const entry = {
     seq: 13,
     stream: "item",
@@ -2014,7 +2020,7 @@ test("AgentBackend keeps command bodies out of Activity facts", async () => {
   fixture.eventBus.subscribe(AgentEvents.commandExecution.observed, (event) => {
     if (AgentEvents.commandExecution.observed.is(event)) commands.push(event.payload);
   });
-  new AgentBackend().start();
+  new AgentTimelineBackend().start();
 
   appServer.emitTimeline(entry);
   await waitFor(() => commands.length === 1);
@@ -2024,7 +2030,7 @@ test("AgentBackend keeps command bodies out of Activity facts", async () => {
   assert.equal(Object.hasOwn(commands[0] ?? {}, "aggregatedOutput"), false);
 });
 
-test("AgentBackend publishes context compaction as ordinary activity", () => {
+test("AgentTimelineBackend publishes context compaction as ordinary activity", () => {
   const entries = [
     {
       seq: 7,
@@ -2066,7 +2072,7 @@ test("AgentBackend publishes context compaction as ordinary activity", () => {
   fixture.eventBus.subscribe<AgentActivity>(AgentEvents.activity.observed, (event) => {
     activities.push(event.payload);
   });
-  new AgentBackend().start();
+  new AgentTimelineBackend().start();
 
   for (const entry of entries) appServer.emitTimeline(entry);
 
@@ -2084,7 +2090,7 @@ test("AgentBackend publishes context compaction as ordinary activity", () => {
   );
 });
 
-test("AgentBackend publishes native subagent facts without activity duplication", () => {
+test("AgentTimelineBackend publishes native subagent facts without activity duplication", () => {
   const entry = {
     seq: 8,
     stream: "item",
@@ -2147,7 +2153,7 @@ test("AgentBackend publishes native subagent facts without activity duplication"
       nativeSubagentActivities.push(event.payload);
     },
   );
-  new AgentBackend().start();
+  new AgentTimelineBackend().start();
 
   appServer.emitTimeline(entry);
 
@@ -2178,7 +2184,7 @@ test("AgentBackend publishes native subagent facts without activity duplication"
   assert.equal(activities.length, 0);
 });
 
-test("AgentBackend publishes turn lifecycle separately from item activity", () => {
+test("AgentTimelineBackend publishes turn lifecycle separately from item activity", () => {
   const started = {
     seq: 8,
     stream: "lifecycle",
@@ -2224,7 +2230,7 @@ test("AgentBackend publishes turn lifecycle separately from item activity", () =
       turnActivities.push(event.payload);
     },
   );
-  new AgentBackend().start();
+  new AgentTimelineBackend().start();
 
   appServer.emitTimeline(started);
   appServer.emitTimeline(completed);
@@ -2238,7 +2244,7 @@ test("AgentBackend publishes turn lifecycle separately from item activity", () =
   );
 });
 
-test("AgentBackend logs only health failures from an unbound app-server event burst", () => {
+test("AgentTimelineBackend logs only health failures from an unbound app-server event burst", () => {
   const appServer = createFakeAppServer();
   const logs: Array<Omit<LogEvent, "timestamp" | "level" | "runId"> & { level: string }> = [];
   const logger = createCaptureLogger(logs);
@@ -2247,7 +2253,7 @@ test("AgentBackend logs only health failures from an unbound app-server event bu
     domain: createStaticDomain("domain-app-server-log-volume", []),
     logger,
   });
-  new AgentBackend().start();
+  new AgentTimelineBackend().start();
 
   for (let seq = 1; seq <= 500; seq += 1) {
     appServer.emitTimeline({
@@ -2272,22 +2278,28 @@ test("AgentBackend logs only health failures from an unbound app-server event bu
   );
 });
 
-test("AgentBackend stop removes app-server dynamic tool and timeline handlers", () => {
+test("Timeline and Dynamic Tool backends own independent subscription lifetimes", () => {
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("agent-backend-stop", {
     appServer,
     domain: createStaticDomain("domain-agent-backend-stop", []),
   });
-  const backend = new AgentBackend();
+  const backend = new AgentTimelineBackend();
 
   backend.start();
-  assert.ok(appServer.handler);
+  assert.equal(appServer.handler, undefined);
   assert.equal(appServer.timelineHandlerCount, 1);
+  const dynamicTool = new AgentDynamicToolBackend();
+  dynamicTool.start();
+  assert.ok(appServer.handler);
 
   backend.stop();
   backend.stop();
-  assert.equal(appServer.handler, undefined);
   assert.equal(appServer.timelineHandlerCount, 0);
+  assert.ok(appServer.handler);
+  dynamicTool.stop();
+  dynamicTool.stop();
+  assert.equal(appServer.handler, undefined);
 });
 
 test("Worker child threads cannot inherit domain tool access from their registered parent", async () => {
@@ -2321,7 +2333,7 @@ test("Worker child threads cannot inherit domain tool access from their register
     createAssetCommit(researcherMount),
   );
   const researcher = new AgentBuilder().buildWorker("researcher");
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   await researcher.startThread();
 
   assert.ok(appServer.handler);
@@ -2341,7 +2353,7 @@ test("Worker child threads cannot inherit domain tool access from their register
   assert.equal(fixture.registry.resolveAgentByThreadId("thread-grandchild"), undefined);
 });
 
-test("AgentBackend passes the current Workflow Phase to a Domain tool call", async () => {
+test("AgentDynamicToolBackend passes the current Workflow Phase to a Domain tool call", async () => {
   const calls: ScoutDomainDynamicToolCall[] = [];
   const appServer = createFakeAppServer();
   const domain: ScoutDomain = {
@@ -2367,7 +2379,7 @@ test("AgentBackend passes the current Workflow Phase to a Domain tool call", asy
     createAssetCommit(researcherMount),
   );
   const researcher = new AgentBuilder().buildWorker("researcher");
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   await researcher.startThread();
 
   assert.ok(appServer.handler);
@@ -2385,7 +2397,7 @@ test("AgentBackend passes the current Workflow Phase to a Domain tool call", asy
   assert.equal(calls[0]?.caller.phase, "research");
 });
 
-test("AgentBackend routes tools across every registered Scout Domain", async () => {
+test("AgentDynamicToolBackend routes tools across every registered Scout Domain", async () => {
   const calls: ScoutDomainDynamicToolCall[] = [];
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("worker-multiple-domain-tools", { appServer });
@@ -2411,7 +2423,7 @@ test("AgentBackend routes tools across every registered Scout Domain", async () 
     createAssetCommit(researcherMount),
   );
   const researcher = new AgentBuilder().buildWorker("researcher");
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   await researcher.startThread();
 
   assert.ok(researcher.spec.dynamicTools?.some((tool) =>
@@ -2432,7 +2444,7 @@ test("AgentBackend routes tools across every registered Scout Domain", async () 
   assert.equal(calls[0]?.caller.phase, "research");
 });
 
-test("AgentBackend rejects duplicate Domain backend registrations before invoking either tool", async () => {
+test("AgentDynamicToolBackend rejects duplicate Domain backend registrations before invoking either tool", async () => {
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("duplicate-domain-backends", { appServer });
   const calls: ScoutDomainDynamicToolCall[] = [];
@@ -2457,7 +2469,7 @@ test("AgentBackend rejects duplicate Domain backend registrations before invokin
   const mount = createMount(fixture.root, "researcher");
   prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
   const researcher = new AgentBuilder().buildWorker("researcher");
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   await researcher.startThread();
   assert.ok(appServer.handler);
   const response = await appServer.handler({
@@ -2488,7 +2500,7 @@ test("Child threads cannot call Scout agent lifecycle tools", async () => {
     createAssetCommit(researcherMount),
   );
   const researcher = new AgentBuilder().buildWorker("researcher");
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   await researcher.startThread();
 
   assert.ok(appServer.handler);
@@ -2508,7 +2520,7 @@ test("Child threads cannot call Scout agent lifecycle tools", async () => {
 test("Unknown threads remain unauthorized for domain dynamic tools", async () => {
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("unknown-domain-tool-caller", { appServer });
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
 
   assert.ok(appServer.handler);
   const result = await appServer.handler({
@@ -2530,7 +2542,7 @@ test("SendMessage reports an undelivered message when the target Worker has no T
   const fixture = createAgentFixture("send-message-no-worker-runner", { appServer, domain });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
@@ -2568,7 +2580,7 @@ test("Worker SendMessage reaches Coordinator and Coordinator output reaches the 
   });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
@@ -2748,7 +2760,7 @@ for (const failOldRawInput of [false, true]) {
     await fixture.eventBus.publishAndWait(RunEvents.runtime.attached, {
       mode: "start", attachedAt: new Date().toISOString(), processId: process.pid,
     });
-    const backend = new AgentBackend();
+    const backend = new AgentDynamicToolBackend();
     backend.start();
     assert.ok(appServer.handler);
     handleTool = appServer.handler;
@@ -2871,7 +2883,7 @@ test(`Flow ${outcome} automatically releases finished Worker tasks before consum
   await fixture.eventBus.publishAndWait(RunEvents.runtime.attached, {
     mode: "start", attachedAt: new Date().toISOString(), processId: process.pid,
   });
-  const backend = new AgentBackend();
+  const backend = new AgentDynamicToolBackend();
   backend.start();
   assert.ok(appServer.handler);
   handleTool = appServer.handler;
@@ -3228,7 +3240,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
@@ -3539,7 +3551,7 @@ test("RequestHumanInput yields its Worker turn before a fast human response star
   });
   const workerMount = createMount(fixture.root, "verifier");
   const workerCommit = createAssetCommit(workerMount);
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   prepareAgent(fixture, "verifier", workerMount, workerCommit);
   const builder = new AgentBuilder();
   coordinator = builder.buildCoordinator();
@@ -3599,7 +3611,7 @@ test("AssignTask replaces a finished TaskRunner while preserving its thread and 
   const fixture = createAgentFixture("archive-task", { appServer, domain });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
@@ -3653,7 +3665,7 @@ test("removed ArchiveTask cannot be invoked by any agent", async () => {
   const fixture = createAgentFixture("archive-task-role", { appServer, domain });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const verifier = builder.buildWorker("verifier") as WorkerAgent;
@@ -3679,7 +3691,7 @@ test("SubmitTask rejects a Coordinator caller", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-worker-lifecycle-tool-role", []);
   const fixture = createAgentFixture("worker-lifecycle-tool-role", { appServer, domain });
-  new AgentBackend().start();
+  new AgentDynamicToolBackend().start();
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
 
@@ -4165,6 +4177,7 @@ function createFakeAppServer(options: {
   handler?: DynamicToolCallHandler;
   readonly timelineHandlerCount: number;
   turnInputs: Array<{
+    approvalPolicy?: ThreadStartOptions["approvalPolicy"];
     prompt?: string;
     model?: string;
     reasoningEffort?: string;
@@ -4185,6 +4198,7 @@ function createFakeAppServer(options: {
   const timelineHandlers: Array<(entry: AppServerTimelineEntry) => void> = [];
   const appServer = {
     turnInputs: [] as Array<{
+      approvalPolicy?: ThreadStartOptions["approvalPolicy"];
       prompt?: string;
       model?: string;
       reasoningEffort?: string;

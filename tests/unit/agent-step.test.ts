@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
-import { AgentToolCallBackend } from "../../src/agent/backend/agent-tool-call-backend.js";
+import { AgentTimelineToolCallBackend } from "../../src/agent/backend/timeline/agent-timeline-tool-call-backend.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import {
   AgentStepStore,
@@ -84,7 +84,7 @@ test("Tool Call backend owns provider facts and Step stores only their ids", asy
   });
   const running = step({ stepId: "tool-step", turnId: "turn-1" });
   scope.stepStore.addStep(running);
-  const toolCallBackend = new AgentToolCallBackend();
+  const toolCallBackend = new AgentTimelineToolCallBackend();
 
   const agent = { agentId: "researcher" } as ScoutAgent;
   const entry = {
@@ -136,7 +136,7 @@ test("Tool Call backend ignores Domain dynamic tools and external MCP tools", (t
   });
   const running = step({ stepId: "tool-boundary-step", turnId: "turn-1" });
   scope.stepStore.addStep(running);
-  const toolCallBackend = new AgentToolCallBackend();
+  const toolCallBackend = new AgentTimelineToolCallBackend();
   const agent = { agentId: "researcher" } as ScoutAgent;
   const entry = {
     seq: 4,
@@ -315,7 +315,7 @@ test("AgentStepStore records one durable Step reference for every Human Input ed
   }]);
 });
 
-test("Agent runners do not depend on AgentStepBackend", () => {
+test("Agent runners do not depend on AgentTimelineStepBackend", () => {
   const runnerSources = [
     "src/agent/runner/agent-runner.ts",
     "src/agent/runner/coordinator/coordinator-runner.ts",
@@ -324,7 +324,7 @@ test("Agent runners do not depend on AgentStepBackend", () => {
   ];
   for (const sourcePath of runnerSources) {
     const source = readFileSync(join(process.cwd(), sourcePath), "utf8");
-    assert.doesNotMatch(source, /AgentStepBackend|agent-step-backend|stepBackend/);
+    assert.doesNotMatch(source, /AgentTimelineStepBackend|agent-step-backend|stepBackend/);
   }
 });
 

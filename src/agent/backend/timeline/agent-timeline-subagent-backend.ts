@@ -1,14 +1,14 @@
 import type {
   AppServerResolvedTimelineEntry,
   AppServerTimelineEntry,
-} from "../../agent-server/codex/app-server-event-store.js";
-import { currentRunScope, type RunScope } from "../../run/run-scope.js";
-import type { ScoutAgent } from "../core/scout-agent.js";
-import { AgentEvents } from "../events/index.js";
-import type { AgentNativeSubagentEvent } from "../subagent/subagent-events.js";
+} from "../../../agent-server/codex/app-server-event-store.js";
+import { currentRunScope, type RunScope } from "../../../run/run-scope.js";
+import type { ScoutAgent } from "../../core/scout-agent.js";
+import { AgentEvents } from "../../events/index.js";
+import type { AgentNativeSubagentEvent } from "../../subagent/subagent-events.js";
 
 /** Projects native multi-agent timeline items into subagent facts. */
-export class AgentSubagentBackend {
+export class AgentTimelineSubagentBackend {
   private readonly scope: RunScope;
 
   constructor() {

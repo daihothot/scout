@@ -3,8 +3,7 @@ import test, { type TestContext } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentDynamicToolBackend } from "../../src/agent/backend/agent-dynamic-tool-backend.js";
-import { AgentTaskBackend } from "../../src/agent/backend/agent-task-backend.js";
+import { AgentDynamicToolBackend } from "../../src/agent/backend/dynamic-tool/agent-dynamic-tool-backend.js";
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
 import { AssetStore } from "../../src/asset-store/index.js";
@@ -39,7 +38,7 @@ test("Dynamic tool routing invokes an omitted-namespace definition for a null pr
   });
   scope.domainRegistry.register({ description: { id: ScoutDomainId.Base, name: "Base" }, backend });
 
-  const response = await new AgentDynamicToolBackend({ taskBackend: new AgentTaskBackend() })
+  const response = await new AgentDynamicToolBackend()
     .handleDynamicToolCall({
       threadId: "thread-researcher", turnId: "turn-1", callId: "call-1",
       namespace: null, tool: "Probe", arguments: {},
@@ -63,7 +62,7 @@ test("Dynamic tool routing does not match a named namespace to an omitted-namesp
   });
   scope.domainRegistry.register({ description: { id: ScoutDomainId.Base, name: "Base" }, backend });
 
-  const response = await new AgentDynamicToolBackend({ taskBackend: new AgentTaskBackend() })
+  const response = await new AgentDynamicToolBackend()
     .handleDynamicToolCall({
       threadId: "thread-researcher", turnId: "turn-1", callId: "call-1",
       namespace: "other_namespace", tool: "Probe", arguments: {},
@@ -92,7 +91,7 @@ test("Dynamic tool routing rejects null-namespace collisions across Domains befo
     scope.domainRegistry.register({ description: { id, name: id }, backend });
   }
 
-  const response = await new AgentDynamicToolBackend({ taskBackend: new AgentTaskBackend() })
+  const response = await new AgentDynamicToolBackend()
     .handleDynamicToolCall({
       threadId: "thread-researcher", turnId: "turn-1", callId: "call-1",
       namespace: null, tool: "Probe", arguments: {},

@@ -8,6 +8,7 @@ import { AgentToolCallStore } from "../agent/tool-call/agent-tool-call-store.js"
 import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
 import type { Workflow } from "../core/workflow/workflow.js";
+import type { RequestHub } from "../core/requeshub/index.js";
 import { DomainRegistry } from "../domain/index.js";
 import type { ExecutionPlatformPort } from "../execution/scout-execution-system.js";
 import type { RuntimeInteractionPort } from "../interaction/protocol/port.js";
@@ -61,6 +62,7 @@ export class RunScope {
   private activeAppServer?: CodexAppServerClient;
   private activeExecutionSystem?: ExecutionPlatformPort;
   private activeWorkflow?: Workflow;
+  private activeRequestHub?: RequestHub;
   private preparedEnvironment?: RunEnvironment;
 
   constructor(options: RunScopeOptions) {
@@ -84,6 +86,21 @@ export class RunScope {
       throw new Error("Run app-server is not available.");
     }
     return this.activeAppServer;
+  }
+
+  get requestHub(): RequestHub {
+    if (!this.activeRequestHub) throw new Error("RequestHub Service is not available.");
+    return this.activeRequestHub;
+  }
+
+  setRequestHub(requestHub: RequestHub): void {
+    if (this.activeRequestHub) throw new Error("RequestHub Service is already available.");
+    this.activeRequestHub = requestHub;
+  }
+
+  clearRequestHub(requestHub: RequestHub): void {
+    if (this.activeRequestHub !== requestHub) throw new Error("Cannot clear an inactive RequestHub Service.");
+    this.activeRequestHub = undefined;
   }
 
   get executionSystem(): ExecutionPlatformPort {

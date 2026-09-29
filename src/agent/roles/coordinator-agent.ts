@@ -1,5 +1,6 @@
 import {
   scoutAgentPermissionProfile,
+  scoutAgentApprovalPolicy,
 } from "../thread/types.js";
 import {
   ScoutAgent,
@@ -47,7 +48,7 @@ export class CoordinatorAgent extends ScoutAgent {
         role,
         phases: [...options.agentMount.agentProfile.phases],
         cwd: options.agentMount.mountRoot,
-        approvalPolicy: "never",
+        approvalPolicy: scoutAgentApprovalPolicy,
         permissionProfile: scoutAgentPermissionProfile(role),
         contextBundleId: scope.contextBundle.contextBundleId,
         model: { ...options.agentMount.agentProfile.model },

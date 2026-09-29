@@ -7,7 +7,7 @@ import {
   completeCommandExecutionApproval,
   evaluateCommandExecutionApproval,
   MERGED_CONTENT_READ_REASON,
-} from "../../src/agent/command-execution/approval/command-execution-approval-policy.js";
+} from "../../src/agent/hooks/approval/command-execution-approval-policy.js";
 import { handleCodexNativeHook } from "../../src/agent-server/codex/codex-native-hook.js";
 
 test("command approval allows discovery plus one primary result", () => {

@@ -10,6 +10,7 @@ import { buildAgentDynamicTools } from "../tools/tool-profiles.js";
 import type { DynamicToolSpec } from "../../agent-server/codex/app-server-client.js";
 import {
   scoutAgentPermissionProfile,
+  scoutAgentApprovalPolicy,
   type ScoutAgentRole,
 } from "../thread/types.js";
 import {
@@ -59,7 +60,7 @@ export class AgentBuilder {
         role,
         phases: [...profile.phases],
         cwd: options.agentMount.mountRoot,
-        approvalPolicy: "never",
+        approvalPolicy: scoutAgentApprovalPolicy,
         permissionProfile: scoutAgentPermissionProfile(role),
         contextBundleId: this.scope.contextBundle.contextBundleId,
         model: { ...profile.model },

@@ -36,6 +36,7 @@ import {
 } from "../../src/agent/step/types.js";
 import {
   scoutAgentPermissionProfile,
+  scoutAgentApprovalPolicy,
   type AgentThreadSnapshot,
   type AgentThreadSpec,
 } from "../../src/agent/thread/types.js";
@@ -94,6 +95,7 @@ import {
   OrchestratorStage,
   RunRuntimeStage,
   RunScopeStage,
+  RequestHubStage,
   RunStageExecutor,
   WorkflowStage,
   type RunStage,
@@ -2518,6 +2520,9 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     onTimeline() {
       return () => undefined;
     },
+    onServerRequest() {
+      return () => undefined;
+    },
     resolveTimelineEntry() {
       return undefined;
     },
@@ -2556,6 +2561,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   const injectResumeContextStage = new InjectResumeContextStage();
   executor.registerSerial(
     new RunScopeStage(scope),
+    new RequestHubStage(),
     new WorkflowStage(resumedWorkflow),
     new RestoreEnvironmentStage({
       preflightMount: async () => ({ status: "passed" }),
@@ -2631,7 +2637,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     reasoningEffort: "high",
     cwd: restoredResearcherMount.mountRoot,
     runtimeWorkspaceRoots: [restoredResearcherMount.mountRoot],
-    approvalPolicy: "never",
+    approvalPolicy: scoutAgentApprovalPolicy,
     permissions: scoutAgentPermissionProfile("researcher"),
     config: researcherAgent.spec.config,
     baseInstructions: researcherAgent.spec.baseInstructions,
