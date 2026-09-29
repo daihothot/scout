@@ -8,7 +8,8 @@ import {
   resolveSynthesisRole,
   projectWorkflowState,
   Workflow,
-  WorkflowBenchmarks,
+  Benchmarks,
+  ScoutBenchmarks,
   WorkflowEvents,
   type GraphState,
 } from "../../core/workflow/index.js";
@@ -66,7 +67,7 @@ export async function resumeRun(
     );
   }
   const scoutRoot = dirname(runDirectory);
-  const benchmarks = new WorkflowBenchmarks(runRoot);
+  const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
   const selectedWorkflow = benchmarks.resolve("currentWorkflow");
   const selectedWorkflowId = benchmarks.read()?.currentWorkflow;
   const journalRoot = selectedWorkflow?.journalRoot;

@@ -22,7 +22,7 @@ import { type GraphState, type WorkflowPhaseOutcome, resolveSynthesisRole } from
 import { Graph } from "./graph.js";
 import { Scheduler, type SchedulerAdvanceResult } from "./scheduler.js";
 import { ScoutJournal } from "./scout-journal.js";
-import { WorkflowBenchmarks } from "./workflow-benchmarks.js";
+import { Benchmarks, ScoutBenchmarks } from "./benchmarks/index.js";
 import { WorkflowEvents } from "./workflow-events.js";
 import { projectWorkflowState, type WorkflowState } from "./workflow-state.js";
 
@@ -36,7 +36,7 @@ export class Workflow {
   readonly graph: Graph;
   readonly scheduler: Scheduler;
   readonly scoutJournal: ScoutJournal;
-  private benchmarks?: WorkflowBenchmarks;
+  private scoutBenchmarks?: ScoutBenchmarks;
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
   private activeWorkflowState?: WorkflowState;
   private eventBus?: EventBus;
@@ -57,11 +57,11 @@ export class Workflow {
 
   async start(): Promise<void> {
     if (this.started) return;
-    if (this.benchmarks) throw new Error("Workflow still owns resources from a failed cleanup; stop it before restarting.");
+    if (this.scoutBenchmarks) throw new Error("Workflow still owns resources from a failed cleanup; stop it before restarting.");
     const scope = currentRunScope();
     this.eventBus = scope.eventBus;
-    const benchmarks = new WorkflowBenchmarks(scope.runRoot);
-    this.benchmarks = benchmarks;
+    const benchmarks = new ScoutBenchmarks(new Benchmarks(scope.runRoot));
+    this.scoutBenchmarks = benchmarks;
     const openInitialWorkflow = (): void => {
       if (this.input.missingWorkflowId) {
         if (benchmarks.read()?.currentWorkflow !== this.input.missingWorkflowId) {
@@ -101,7 +101,7 @@ export class Workflow {
     };
 
     try {
-      benchmarks.acquire();
+      benchmarks.benchmarks.acquire();
       this.scheduler.start();
       openInitialWorkflow();
       if (this.activeWorkflowState) this.scoutJournal.start();
@@ -121,8 +121,8 @@ export class Workflow {
       try {
         this.scoutJournal.stop();
         this.activeWorkflowState = undefined;
-        benchmarks.release();
-        this.benchmarks = undefined;
+        benchmarks.benchmarks.release();
+        this.scoutBenchmarks = undefined;
       } catch (closeError) {
         failures.push(closeError);
       } finally {
@@ -137,7 +137,7 @@ export class Workflow {
   }
 
   async stop(): Promise<void> {
-    if (!this.started && !this.benchmarks) return;
+    if (!this.started && !this.scoutBenchmarks) return;
     const failures: unknown[] = [];
     try {
       await this.quiesce();
@@ -149,8 +149,8 @@ export class Workflow {
     try {
       this.scoutJournal.stop();
       this.activeWorkflowState = undefined;
-      this.benchmarks?.release();
-      this.benchmarks = undefined;
+      this.scoutBenchmarks?.benchmarks.release();
+      this.scoutBenchmarks = undefined;
     } catch (error) {
       failures.push(error);
     } finally {
@@ -244,7 +244,7 @@ export class Workflow {
       }
       const terminal = [...currentEvents].reverse().find((event) => WorkflowEvents.workflow.advanced.is(event));
       if (terminal && WorkflowEvents.workflow.advanced.is(terminal) && terminal.payload.outcome === "completed") {
-        this.requireBenchmarks().recordSuccess(this.requireWorkflowState().workflowId);
+        this.requireScoutBenchmarks().recordSuccess(this.requireWorkflowState().workflowId);
       }
       try {
         for (const domain of domains) await domain.finishWorkflow?.();
@@ -370,13 +370,18 @@ export class Workflow {
     return this.activeWorkflowState ? this.scoutJournal.failed : false;
   }
 
+  /** Shared Run-local storage, available even when no Workflow execution is active. */
+  get benchmarks(): Benchmarks {
+    return this.requireScoutBenchmarks().benchmarks;
+  }
+
   private async beginNextWorkflow(
     baseline: readonly ScoutEvent[],
     domains: readonly ScoutDomain[],
   ): Promise<void> {
 
     const scope = currentRunScope();
-    const prepared = this.requireBenchmarks().prepareNext();
+    const prepared = this.requireScoutBenchmarks().prepareNext();
     let nextJournal: ReturnType<ScoutJournal["prepare"]> | undefined;
     const domainChanges: ScoutDomainWorkflowChange[] = [];
     let committed = false;
@@ -405,7 +410,7 @@ export class Workflow {
         );
         throw this.transitionFailure;
       }
-      this.requireBenchmarks().discard(prepared);
+      this.requireScoutBenchmarks().discard(prepared);
       throw error;
     };
 
@@ -426,7 +431,7 @@ export class Workflow {
           domainChanges.push(await domain.prepareWorkflow(workflowState, prepared.journalRoot));
         }
       }
-      this.requireBenchmarks().recordStarted(prepared.workflowId);
+      this.requireScoutBenchmarks().recordStarted(prepared.workflowId);
       committed = true;
       // All remaining switches are synchronous, in-memory commits; no close IO here.
       this.scoutJournal.activate(nextJournal);
@@ -482,8 +487,8 @@ export class Workflow {
     return this.activeWorkflowState;
   }
 
-  private requireBenchmarks(): WorkflowBenchmarks {
-    if (!this.benchmarks) throw new Error("Workflow Benchmarks are unavailable.");
-    return this.benchmarks;
+  private requireScoutBenchmarks(): ScoutBenchmarks {
+    if (!this.scoutBenchmarks) throw new Error("Workflow Benchmarks are unavailable.");
+    return this.scoutBenchmarks;
   }
 }

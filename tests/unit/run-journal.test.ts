@@ -22,7 +22,7 @@ import {
   EventSubscriptionPriorities,
   InMemoryEventBus,
 } from "../../src/core/events/index.js";
-import { WorkflowBenchmarks, WorkflowEvents } from "../../src/core/workflow/index.js";
+import { Benchmarks, ScoutBenchmarks, WorkflowEvents } from "../../src/core/workflow/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import { BaseDomain, ScoutDomainId } from "../../src/domain/index.js";
 import type { RunScope } from "../../src/run/run-scope.js";
@@ -499,7 +499,7 @@ test("Workflow starts a numbered Workflow while retaining the completed scout.jo
     eventBus,
     join(scoutRoot, "run", "journal-workflow-replay"),
   );
-  const benchmarks = new WorkflowBenchmarks(persistence.runRoot);
+  const benchmarks = new ScoutBenchmarks(new Benchmarks(persistence.runRoot));
   const scope = installTestRunScope(t, {
     runId: persistence.journal.runId,
     eventBus,

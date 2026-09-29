@@ -7,7 +7,7 @@ import { agent } from "../../src/agent/context/agent-attachments.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import { EventSubscriptionPriorities, InMemoryEventBus, type EventType, type ScoutEvent } from "../../src/core/events/index.js";
 import { Journal, readJournalEvents } from "../../src/core/journal/index.js";
-import { Workflow, WorkflowBenchmarks, WorkflowEvents, projectWorkflowState } from "../../src/core/workflow/index.js";
+import { Workflow, Benchmarks, ScoutBenchmarks, WorkflowEvents, projectWorkflowState } from "../../src/core/workflow/index.js";
 import { BaseDomain, DomainAgentBackend, ScoutDomainId, type ScoutDomainWorkflowChange } from "../../src/domain/index.js";
 import { RunEvents } from "../../src/run/events/index.js";
 import { WorkflowStage } from "../../src/run/lifecycle/stages/workflow-stage.js";
@@ -54,7 +54,7 @@ async function fixture(t: TestContext) {
   const workflow = scope.workflow;
   const base = scope.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(base instanceof BaseDomain);
-  const benchmarks = new WorkflowBenchmarks(scope.runRoot);
+  const benchmarks = new ScoutBenchmarks(new Benchmarks(scope.runRoot));
   const submit = (text: string) => eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
     messageId: text, text, attachment: agent.turn.message(text), submittedAt: new Date().toISOString(),
   });
@@ -106,7 +106,7 @@ test("Workflow records completion during settlement and retains it when the succ
   const priorLinks = benchmarks.read();
   let broadcasts = 0;
   eventBus.subscribe(WorkflowEvents.workflow.advanced, () => { broadcasts += 1; });
-  t.mock.method(WorkflowBenchmarks.prototype, "recordSuccess", () => { throw new Error("benchmark unavailable"); });
+  t.mock.method(ScoutBenchmarks.prototype, "recordSuccess", () => { throw new Error("benchmark unavailable"); });
   const terminalPhase = workflow.scheduler.snapshot().currentPhase;
   workflow.scheduler.advance("completed");
   assert.equal(workflow.snapshot()?.status, "settling");
@@ -158,7 +158,7 @@ test("Workflow startup failure stops Scheduler even when journal cleanup also fa
       && error.errors.includes(writeFailure) && error.errors.includes(closeFailure));
     assert.throws(() => next.scheduler.advance("completed"), /Scheduler is not started/);
     assert.throws(() => next.advanceGraph("completed"), /not accepting Graph changes/);
-    assert.throws(() => new WorkflowBenchmarks(runRoot).acquire(), /already attached/);
+    assert.throws(() => new ScoutBenchmarks(new Benchmarks(runRoot)).benchmarks.acquire(), /already attached/);
   } finally {
     write.mock.restore();
     close.mock.restore();
@@ -326,7 +326,7 @@ test("A boundary permalink failure aborts all preparations without switching act
   const links = benchmarks.read();
   await workflow.settleWorkflow();
   const oldContents = readFileSync(oldPath, "utf8");
-  const mock = t.mock.method(WorkflowBenchmarks.prototype, "recordStarted", () => { throw new Error("start permalink failed"); });
+  const mock = t.mock.method(ScoutBenchmarks.prototype, "recordStarted", () => { throw new Error("start permalink failed"); });
   await assert.rejects(workflow.startWorkflow(), /start permalink failed/);
   assert.equal(workflow.snapshot(), undefined);
   assert.equal(readFileSync(oldPath, "utf8"), oldContents);
@@ -361,7 +361,7 @@ test("An abort failure retains the prepared directory and blocks a destructive r
     cleanupOrder.push("scout.discard");
     discardScout(...args);
   });
-  const discardDirectory = t.mock.method(WorkflowBenchmarks.prototype, "discard");
+  const discardDirectory = t.mock.method(ScoutBenchmarks.prototype, "discard");
   registerPreparation(() => {
     writeFileSync(join(nextRoot, "held-resource"), "held");
     return {
@@ -373,7 +373,7 @@ test("An abort failure retains the prepared directory and blocks a destructive r
       releasePrevious() {},
     };
   });
-  t.mock.method(WorkflowBenchmarks.prototype, "recordStarted", () => { throw new Error("start failed"); });
+  t.mock.method(ScoutBenchmarks.prototype, "recordStarted", () => { throw new Error("start failed"); });
   await assert.rejects(workflow.startWorkflow(), /prepared Workflow resources/);
   assert.deepEqual(cleanupOrder, ["rbt.abort", "base.abort", "scout.discard"]);
   assert.equal(discardDirectory.mock.callCount(), 0);
@@ -411,7 +411,7 @@ test("A postcommit release failure never deletes the new Workflow or pretends to
     releaseScout();
   });
   const discardScout = t.mock.method(workflow.scoutJournal, "discard");
-  const discardDirectory = t.mock.method(WorkflowBenchmarks.prototype, "discard");
+  const discardDirectory = t.mock.method(ScoutBenchmarks.prototype, "discard");
   registerPreparation(() => ({
     commit() {}, abort() { assert.fail("a committed preparation cannot be aborted"); },
     releasePrevious() {
@@ -562,7 +562,7 @@ test("Completed Workflow resume preserves historical benchmarks and does not rep
   const { runRoot, workflow, scope, base, benchmarks, submit } = await fixture(t);
   await submit("pending-across-completion-crash");
   for (let index = 0; index < 4; index += 1) workflow.scheduler.advance("completed");
-  const success = t.mock.method(WorkflowBenchmarks.prototype, "recordSuccess", () => {
+  const success = t.mock.method(ScoutBenchmarks.prototype, "recordSuccess", () => {
     throw new Error("crash after completed fact before success permalink");
   });
   await assert.rejects(workflow.settleWorkflow(), /crash after completed fact/);
@@ -651,7 +651,7 @@ test("A Workflow stop failure keeps the root lease until its owner successfully 
     await assert.rejects(workflow.stop(), /journal still held/);
     assert.equal(existsSync(rootLock), true);
     assert.equal(existsSync(journalLock), true);
-    assert.throws(() => new WorkflowBenchmarks(runRoot).acquire(), /already attached/);
+    assert.throws(() => new ScoutBenchmarks(new Benchmarks(runRoot)).benchmarks.acquire(), /already attached/);
     await assert.rejects(workflow.start(), /still owns resources from a failed cleanup; stop it before restarting/);
     assert.equal(readFileSync(rootLock, "utf8"), rootOwner);
     assert.equal(readFileSync(journalLock, "utf8"), journalOwner);
@@ -662,9 +662,9 @@ test("A Workflow stop failure keeps the root lease until its owner successfully 
   }
   assert.equal(existsSync(rootLock), false);
   assert.equal(existsSync(journalLock), false);
-  const nextOwner = new WorkflowBenchmarks(runRoot);
-  nextOwner.acquire();
-  nextOwner.release();
+  const nextOwner = new ScoutBenchmarks(new Benchmarks(runRoot));
+  nextOwner.benchmarks.acquire();
+  nextOwner.benchmarks.release();
 });
 
 test("WorkflowStage retains the installed service after startup cleanup fails until stop succeeds", async (t) => {
@@ -686,7 +686,7 @@ test("WorkflowStage retains the installed service after startup cleanup fails un
     assert.equal(scope.workflow, next);
     assert.equal(existsSync(rootLock), true);
     await assert.rejects(stage.start(), /cleanup is pending/);
-    assert.throws(() => new WorkflowBenchmarks(runRoot).acquire(), /already attached/);
+    assert.throws(() => new ScoutBenchmarks(new Benchmarks(runRoot)).benchmarks.acquire(), /already attached/);
     replace.mock.restore();
     close.mock.restore();
     await stage.stop();
@@ -716,7 +716,7 @@ test("WorkflowStage retains a service whose stop failed and clears it only after
     await assert.rejects(stage.start(), /cleanup is pending/);
     assert.equal(scope.workflow, workflow);
     assert.equal(readFileSync(rootLock, "utf8"), originalOwner);
-    assert.throws(() => new WorkflowBenchmarks(runRoot).acquire(), /already attached/);
+    assert.throws(() => new ScoutBenchmarks(new Benchmarks(runRoot)).benchmarks.acquire(), /already attached/);
     close.mock.restore();
     await stage.stop();
     assert.throws(() => scope.workflow, /Workflow Service is not available/);

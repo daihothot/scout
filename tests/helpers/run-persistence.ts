@@ -28,7 +28,8 @@ import {
   Graph,
   Scheduler,
   Workflow,
-  WorkflowBenchmarks,
+  Benchmarks,
+  ScoutBenchmarks,
   WorkflowEvents,
   type WorkflowState,
 } from "../../src/core/workflow/index.js";
@@ -75,8 +76,8 @@ export function createTestRunPersistence(
   const scheduler = schedulerOverride ?? createTestScheduler();
   const workflowRoot = root ?? resolveTestWorkflowRoot(runRoot);
   // This fixture explicitly seeds an active Workflow; production startup remains empty.
-  const benchmarks = new WorkflowBenchmarks(runRoot);
-  benchmarks.acquire();
+  const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
+  benchmarks.benchmarks.acquire();
   const prepared = benchmarks.prepareNext();
   const createdAt = new Date().toISOString();
   const seed = Journal.create({ journalId: `${runId}:workflow:scout`, path: join(prepared.journalRoot, "scout.journal"), lockPath: join(prepared.journalRoot, ".scout.lock") });
@@ -84,7 +85,7 @@ export function createTestRunPersistence(
   seed.append({ id: `${runId}-initialized`, key: WorkflowEvents.workflow.initialized, payload: { state: scheduler.snapshot(), initializedAt: createdAt }, occurredAt: createdAt });
   seed.close();
   benchmarks.recordStarted(prepared.workflowId);
-  benchmarks.release();
+  benchmarks.benchmarks.release();
   const workflow = new Workflow({
     graphState: scheduler.snapshot(),
     resume: { workflowState: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot },

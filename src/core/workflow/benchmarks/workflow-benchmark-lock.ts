@@ -19,7 +19,7 @@ interface WorkflowLockOwner {
   acquiredAt: string;
 }
 
-/** Exclusive ownership of one Workflow root, independent of its numbered journals. */
+/** Exclusive ownership of one Run's Workflow storage, shared by all benchmark chapters. */
 export class WorkflowBenchmarkLock {
   private owner?: WorkflowLockOwner;
   private readonly reclaimPath: string;

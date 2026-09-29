@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
-import { WorkflowBenchmarks } from "../../src/core/workflow/workflow-benchmarks.js";
+import { Benchmarks, ScoutBenchmarks } from "../../src/core/workflow/benchmarks/index.js";
 
 interface FixtureMessage {
   type: string;
@@ -62,29 +62,29 @@ function fixture(t: TestContext) {
 
 test("Workflow benchmark mutations require their own root lease while reads remain available", (t) => {
   const { runRoot } = fixture(t);
-  const owner = new WorkflowBenchmarks(runRoot);
-  const observer = new WorkflowBenchmarks(runRoot);
+  const owner = new ScoutBenchmarks(new Benchmarks(runRoot));
+  const observer = new ScoutBenchmarks(new Benchmarks(runRoot));
   assert.equal(observer.read(), undefined);
   assert.throws(() => observer.prepareNext(), /must be acquired before mutation/);
-  owner.acquire();
-  owner.acquire();
+  owner.benchmarks.acquire();
+  owner.benchmarks.acquire();
   try {
     const prepared = owner.prepareNext();
     owner.recordStarted(prepared.workflowId);
     assert.equal(observer.resolve("currentWorkflow")?.workflowId, prepared.workflowId);
-    assert.throws(() => observer.acquire(), /already attached/);
+    assert.throws(() => observer.benchmarks.acquire(), /already attached/);
     assert.throws(() => observer.recordRun(prepared.workflowId), /must be acquired before mutation/);
     assert.throws(() => observer.recordSuccess(prepared.workflowId), /must be acquired before mutation/);
     assert.throws(() => observer.recordStarted(prepared.workflowId), /must be acquired before mutation/);
     assert.throws(() => observer.discard(prepared), /must be acquired before mutation/);
-    observer.release();
+    observer.benchmarks.release();
     owner.recordSuccess(prepared.workflowId);
   } finally {
-    owner.release();
+    owner.benchmarks.release();
   }
-  observer.acquire();
-  observer.release();
-  observer.release();
+  observer.benchmarks.acquire();
+  observer.benchmarks.release();
+  observer.benchmarks.release();
 });
 
 test("Two actual processes cannot overwrite each other's uncommitted Workflow directory", { timeout: 15_000 }, async (t) => {
@@ -115,14 +115,14 @@ test("A SIGKILLed root owner can be reclaimed without deleting its historical Wo
   const contents = readFileSync(lockPath, "utf8");
   holder.child.kill("SIGKILL");
   await holder.closed;
-  const next = new WorkflowBenchmarks(runRoot);
-  next.acquire();
+  const next = new ScoutBenchmarks(new Benchmarks(runRoot));
+  next.benchmarks.acquire();
   try {
     assert.notEqual(readFileSync(lockPath, "utf8"), contents);
     assert.equal(readFileSync(join(runRoot, "workflows", "workflow-001", "journal", "holder.txt"), "utf8"), String(holder.child.pid));
     assert.equal(existsSync(`${lockPath}.reclaim`), false);
   } finally {
-    next.release();
+    next.benchmarks.release();
   }
 });
 
@@ -193,7 +193,7 @@ test("Unverifiable or remote root lock owners fail closed and their files remain
   };
   for (const contents of ["", "{", JSON.stringify({ processId: -1 }), JSON.stringify(owner)]) {
     writeFileSync(lockPath, contents);
-    assert.throws(() => new WorkflowBenchmarks(runRoot).acquire(), /refusing.*recovery/);
+    assert.throws(() => new ScoutBenchmarks(new Benchmarks(runRoot)).benchmarks.acquire(), /refusing.*recovery/);
     assert.equal(readFileSync(lockPath, "utf8"), contents);
   }
 });
@@ -203,7 +203,7 @@ test("A stranded recovery guard blocks automatic acquisition even when the root 
   mkdirSync(runRoot, { recursive: true });
   const guardPath = `${lockPath}.reclaim`;
   writeFileSync(guardPath, "unverifiable interrupted reclamation");
-  assert.throws(() => new WorkflowBenchmarks(runRoot).acquire(), (error) => error instanceof Error
+  assert.throws(() => new ScoutBenchmarks(new Benchmarks(runRoot)).benchmarks.acquire(), (error) => error instanceof Error
     && error.message.includes(guardPath)
     && error.message.includes("manually verify")
     && error.message.includes("do not remove"));
@@ -226,21 +226,21 @@ test("SIGKILL during stale-owner reclamation retains its guard and fails closed 
   assert.equal((await reclaimer.next()).type, "guarded");
   reclaimer.child.kill("SIGKILL");
   await reclaimer.closed;
-  assert.throws(() => new WorkflowBenchmarks(runRoot).acquire(), /recovery guard already exists.*manually verify/);
+  assert.throws(() => new ScoutBenchmarks(new Benchmarks(runRoot)).benchmarks.acquire(), /recovery guard already exists.*manually verify/);
   assert.equal(readFileSync(lockPath, "utf8"), previous);
   assert.equal(existsSync(`${lockPath}.reclaim`), true);
 });
 
 test("A runtime whose lock token was replaced cannot mutate or unlink the replacement", (t) => {
   const { runRoot, lockPath } = fixture(t);
-  const benchmarks = new WorkflowBenchmarks(runRoot);
-  benchmarks.acquire();
+  const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
+  benchmarks.benchmarks.acquire();
   const original = readFileSync(lockPath, "utf8");
   const replacement = JSON.stringify({ ...JSON.parse(original), token: "different-owner" });
   writeFileSync(lockPath, replacement);
   assert.throws(() => benchmarks.prepareNext(), /no longer owned/);
-  assert.throws(() => benchmarks.release(), /no longer owned/);
+  assert.throws(() => benchmarks.benchmarks.release(), /no longer owned/);
   assert.equal(readFileSync(lockPath, "utf8"), replacement);
   writeFileSync(lockPath, original);
-  benchmarks.release();
+  benchmarks.benchmarks.release();
 });

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Workflow, WorkflowBenchmarks, projectWorkflowState } from "../../src/core/workflow/index.js";
+import { Workflow, Benchmarks, ScoutBenchmarks, projectWorkflowState } from "../../src/core/workflow/index.js";
 import { readJournalEvents } from "../../src/core/journal/index.js";
 import { workflowRootFromJournalRoot } from "../../src/core/path.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
@@ -26,7 +26,10 @@ test("New runtime has no active Workflow until explicitly requested; completed r
   const agentRoot = registerCoordinator(scope);
   const entityLog = join(agentRoot, "logs", "activity.log");
   t.after(async () => { await scope.workflow.stop(); rmSync(root, { recursive: true, force: true }); });
+  assert.throws(() => workflow.benchmarks, /Benchmarks are unavailable/);
   await workflow.start();
+  const sharedBenchmarks = workflow.benchmarks;
+  assert.equal(sharedBenchmarks.read("scout"), undefined);
   const recorder = new AgentActivityRecorder();
   recorder.start();
   t.after(() => recorder.stop());
@@ -46,6 +49,7 @@ test("New runtime has no active Workflow until explicitly requested; completed r
   assert.equal(existsSync(join(runRoot, "workflows", "workflow-001")), false);
 
   await workflow.startWorkflow();
+  assert.equal(workflow.benchmarks, sharedBenchmarks);
   assert.equal(workflow.snapshot()?.workflowId, "workflow-001");
   const journalRoot = workflow.journalRoot;
   assert.equal(workflowRootFromJournalRoot(journalRoot), join(runRoot, "workflows", "workflow-001"));
@@ -58,6 +62,7 @@ test("New runtime has no active Workflow until explicitly requested; completed r
   await assert.rejects(workflow.startWorkflow(), /already active/);
   workflow.scheduler.advance("error");
   await workflow.settleWorkflow();
+  assert.equal(workflow.benchmarks, sharedBenchmarks);
   assert.equal(workflow.snapshot(), undefined);
   assert.equal(existsSync(join(runRoot, "workflows", "workflow-002")), false);
   assert.equal(existsSync(join(journalRoot, ".scout.lock")), false);
@@ -69,8 +74,10 @@ test("New runtime has no active Workflow until explicitly requested; completed r
     workflowState: projectWorkflowState("workflow-001", events), journalRoot,
   } });
   await workflow.stop();
+  assert.throws(() => workflow.benchmarks, /Benchmarks are unavailable/);
   scope.clearWorkflow(workflow); scope.setWorkflow(resumed);
   await resumed.start();
+  assert.deepEqual(resumed.benchmarks.read("scout"), sharedBenchmarks.read("scout"));
   assert.equal(resumed.snapshot(), undefined);
   await scope.eventBus.publishAndWait(AgentEvents.activity.observed, {
     agentId: "coordinator", type: "reasoning", status: "completed", detail: "resumed history question",
@@ -96,7 +103,7 @@ test("An unfinished renamed Workflow resumes its identity, cursor and current ar
   initial.scheduler.advance("completed");
   const workflowState = initial.snapshot()!;
   const graphState = initial.graph.snapshot();
-  const benchmarks = new WorkflowBenchmarks(scope.runRoot);
+  const benchmarks = new ScoutBenchmarks(new Benchmarks(scope.runRoot));
   const before = readFileSync(benchmarks.path, "utf8");
   for (const domain of scope.domainRegistry.list()) await domain.finishWorkflow?.();
   await initial.stop();

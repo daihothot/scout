@@ -40,7 +40,8 @@ import {
   projectWorkflowState,
   Scheduler,
   Workflow,
-  WorkflowBenchmarks,
+  Benchmarks,
+  ScoutBenchmarks,
   WorkflowEvents,
 } from "../../src/core/workflow/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
@@ -712,7 +713,7 @@ test("SubmitPhaseOutcome leaves Workflow unchanged while a queued or running Tas
       const graphBefore = workflow.scheduler.snapshot();
       const workflowBefore = workflow.snapshot();
       const journalBefore = workflow.readEvents();
-      const benchmarksBefore = new WorkflowBenchmarks(currentRunScope().runRoot).read();
+      const benchmarksBefore = new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read();
       for (const outcome of ["completed", "error"]) {
         const result = await appServer.handler({
           threadId: coordinator.threadId ?? "", turnId: "turn-unfinished-phase",
@@ -727,7 +728,7 @@ test("SubmitPhaseOutcome leaves Workflow unchanged while a queued or running Tas
         assert.deepEqual(workflow.scheduler.snapshot(), graphBefore);
         assert.deepEqual(workflow.snapshot(), workflowBefore);
         assert.deepEqual(workflow.readEvents(), journalBefore);
-        assert.deepEqual(new WorkflowBenchmarks(currentRunScope().runRoot).read(), benchmarksBefore);
+        assert.deepEqual(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), benchmarksBefore);
         assert.equal(appServer.turnInputs.length, 0);
       }
     }
@@ -823,7 +824,7 @@ test("Rejected Phase completion keeps human input reachable through Gateway unti
     const graphBefore = workflow.scheduler.snapshot();
     const workflowBefore = workflow.snapshot();
     const journalBefore = workflow.readEvents();
-    const benchmarksBefore = new WorkflowBenchmarks(currentRunScope().runRoot).read();
+    const benchmarksBefore = new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read();
     const turnsBefore = appServer.turnInputs.length;
     const rejected = await appServer.handler({
       threadId: coordinator.threadId ?? "", turnId: "turn-reject-waiting-phase",
@@ -836,7 +837,7 @@ test("Rejected Phase completion keeps human input reachable through Gateway unti
     assert.deepEqual(workflow.scheduler.snapshot(), graphBefore);
     assert.deepEqual(workflow.snapshot(), workflowBefore);
     assert.deepEqual(workflow.readEvents(), journalBefore);
-    assert.deepEqual(new WorkflowBenchmarks(currentRunScope().runRoot).read(), benchmarksBefore);
+    assert.deepEqual(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), benchmarksBefore);
     assert.equal(appServer.turnInputs.length, turnsBefore);
 
     await new InteractionGateway().submitUserMessage({
@@ -912,7 +913,7 @@ test("SubmitPhaseOutcome waits for a stopped Worker's in-flight Step to finish",
     const graphBefore = workflow.scheduler.snapshot();
     const workflowBefore = workflow.snapshot();
     const journalBefore = workflow.readEvents();
-    const benchmarksBefore = new WorkflowBenchmarks(currentRunScope().runRoot).read();
+    const benchmarksBefore = new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read();
     const turnsBefore = appServer.turnInputs.length;
     const rejected = await appServer.handler({
       threadId: coordinator.threadId ?? "", turnId: "turn-reject-stopped-step",
@@ -926,7 +927,7 @@ test("SubmitPhaseOutcome waits for a stopped Worker's in-flight Step to finish",
     assert.deepEqual(workflow.scheduler.snapshot(), graphBefore);
     assert.deepEqual(workflow.snapshot(), workflowBefore);
     assert.deepEqual(workflow.readEvents(), journalBefore);
-    assert.deepEqual(new WorkflowBenchmarks(currentRunScope().runRoot).read(), benchmarksBefore);
+    assert.deepEqual(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), benchmarksBefore);
     assert.equal(appServer.turnInputs.length, turnsBefore);
 
     releaseWorkerTurn();
@@ -1011,7 +1012,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
       runningStepCount = fixture.stepStore.list({ taskId: assignment.value.taskId }).filter((step) => step.status === "running").length;
       before = {
         graph: workflow.scheduler.snapshot(), workflowState: workflow.snapshot()!, journal: workflow.readEvents(),
-        benchmarks: new WorkflowBenchmarks(currentRunScope().runRoot).read(), turns: appServer.turnInputs.length,
+        benchmarks: new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), turns: appServer.turnInputs.length,
       };
       rejected = handler({
         threadId: coordinator.threadId ?? "", turnId: "turn-reject-pending-revisit",
@@ -1020,7 +1021,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
       });
       after = {
         graph: workflow.scheduler.snapshot(), workflowState: workflow.snapshot(), journal: workflow.readEvents(),
-        benchmarks: new WorkflowBenchmarks(currentRunScope().runRoot).read(), turns: appServer.turnInputs.length,
+        benchmarks: new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), turns: appServer.turnInputs.length,
       };
     }, { priority: EventSubscriptionPriorities.Low });
     const sent = await worker.sendMessage({
@@ -2917,7 +2918,7 @@ test(`Workflow ${outcome} automatically releases finished Worker tasks before co
     assert.equal(fixture.taskStore.listTasks().length, 0);
     assert.ok(workers.every((worker) => worker.taskRunner === undefined));
     assert.equal(workflow.snapshot(), undefined);
-    assert.equal(new WorkflowBenchmarks(currentRunScope().runRoot).read()?.lastSuccess,
+    assert.equal(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read()?.lastSuccess,
       outcome === "completed" ? "workflow-001" : undefined);
     assert.equal(appServer.turnInputs.length, 2);
     assert.match(appServer.turnInputs[1]!.prompt ?? "", /NEXT WORKFLOW ONLY USER INPUT/);
@@ -2985,18 +2986,18 @@ test("A failed Worker release retains the settling Workflow and retries without 
   const oldPath = workflow.journalPath;
   try {
     workflow.scheduler.advance("completed");
-    const before = new WorkflowBenchmarks(currentRunScope().runRoot).read();
+    const before = new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read();
     await assert.rejects(workflow.settleWorkflow(), /Worker release failed/);
     assert.equal(workflow.snapshot()?.status, "settling");
     assert.equal(workflow.journalPath, oldPath);
-    assert.deepEqual(new WorkflowBenchmarks(currentRunScope().runRoot).read(), before);
+    assert.deepEqual(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), before);
     assert.equal(workflow.readEvents().some((event) => WorkflowEvents.workflow.completed.is(event)), false);
     assert.equal(workers[0]?.taskRunner, undefined);
     assert.ok(workers[1]?.taskRunner);
     failed.mock.restore();
     await workflow.settleWorkflow();
     assert.equal(workflow.snapshot(), undefined);
-    assert.equal(new WorkflowBenchmarks(currentRunScope().runRoot).read()?.lastSuccess, "workflow-001");
+    assert.equal(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read()?.lastSuccess, "workflow-001");
     const oldEvents = readJournalEvents(oldPath);
     assert.equal(oldEvents.filter((event) => AgentEvents.task.released.is(event)).length, 2);
     assert.equal(oldEvents.filter((event) => WorkflowEvents.workflow.completed.is(event)).length, 1);
@@ -3834,7 +3835,7 @@ test("resumed Workflow resolves handoff refs after a directory rename without re
     const oldJournal = readFileSync(join(originalRoot, "journal", "scout.journal"), "utf8");
     const renamedRoot = join(scope.runRoot, "workflows", "renamed evidence");
     renameSync(originalRoot, renamedRoot);
-    const selected = new WorkflowBenchmarks(scope.runRoot).resolve("currentWorkflow");
+    const selected = new ScoutBenchmarks(new Benchmarks(scope.runRoot)).resolve("currentWorkflow");
     assert.ok(selected);
     assert.equal(selected.workflowRoot, renamedRoot);
     const journalPath = join(selected.journalRoot, "scout.journal");
@@ -3962,15 +3963,15 @@ function createAgentFixture(
   const createdAt = new Date().toISOString();
   let resume: ConstructorParameters<typeof Workflow>[0]["resume"];
   if (!input.withoutActiveWorkflow) {
-    const benchmarks = new WorkflowBenchmarks(runRoot);
-    benchmarks.acquire();
+    const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
+    benchmarks.benchmarks.acquire();
     const prepared = benchmarks.prepareNext();
     const seed = Journal.create({ journalId: runId + ":workflow:scout", path: join(prepared.journalRoot, "scout.journal"), lockPath: join(prepared.journalRoot, ".scout.lock") });
     seed.append({ id: runId + "-created", key: RunEvents.run.created, payload: { runId, scoutRoot: root, createdAt }, occurredAt: createdAt });
     seed.append({ id: runId + "-initialized", key: WorkflowEvents.workflow.initialized, payload: { state: scheduler.snapshot(), initializedAt: createdAt }, occurredAt: createdAt });
     seed.close();
     benchmarks.recordStarted(prepared.workflowId);
-    benchmarks.release();
+    benchmarks.benchmarks.release();
     resume = { workflowState: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot };
   }
   const workflow = new Workflow({ graphState: scheduler.snapshot(), resume });

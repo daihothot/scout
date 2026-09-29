@@ -5,6 +5,6 @@ export * from "./phase.js";
 export * from "./scheduler.js";
 export * from "./scout-journal.js";
 export * from "./workflow-events.js";
-export * from "./workflow-benchmarks.js";
+export * from "./benchmarks/index.js";
 export * from "./workflow-state.js";
 export * from "./workflow.js";

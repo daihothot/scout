@@ -18,7 +18,7 @@ import { Journal, readJournalEvents } from "../../src/core/journal/index.js";
 import { Logger } from "../../src/core/logging/index.js";
 import {
   Graph,
-  WorkflowBenchmarks,
+  Benchmarks, ScoutBenchmarks,
   WorkflowEvents,
 } from "../../src/core/workflow/index.js";
 import {
@@ -149,8 +149,8 @@ test("resume selects the requested Run's benchmark even while another Run holds 
   });
   writeFileSync(repositoryBenchmarkPath, repositoryLinks);
   const otherRoot = join(fixture.root, "run", "run-other");
-  const other = new WorkflowBenchmarks(otherRoot);
-  other.acquire();
+  const other = new ScoutBenchmarks(new Benchmarks(otherRoot));
+  other.benchmarks.acquire();
   try {
     const prepared = other.prepareNext();
     other.recordStarted(prepared.workflowId);
@@ -179,7 +179,7 @@ test("resume selects the requested Run's benchmark even while another Run holds 
     assert.equal(existsSync(join(fixture.runRoot, ".workflow.lock")), false);
     assert.deepEqual(fixture.disclosures, []);
   } finally {
-    other.release();
+    other.benchmarks.release();
   }
 });
 
@@ -272,10 +272,12 @@ test("resuming an older selected Workflow updates lastRun without changing histo
   const fixture = createFixture(t);
   fixture.writeWorkflow(fixture.runId);
   const links = {
-    version: 1, currentWorkflow: "workflow-001", lastWorkflow: "workflow-099",
+    currentWorkflow: "workflow-001", lastWorkflow: "workflow-099",
     lastRun: "workflow-099", lastSuccess: "workflow-088",
   };
-  writeFileSync(fixture.benchmarks.path, JSON.stringify({ scout: links }), "utf8");
+  writeFileSync(fixture.benchmarks.path, JSON.stringify({ scout:
+    Object.fromEntries(Object.entries(links).map(([name, workflowId]) => [name, { workflowId }])),
+  }), "utf8");
   const stop = new Error("stop before external clients");
   t.mock.method(ResumeClientsStage.prototype, "start", async () => {
     assert.deepEqual(fixture.benchmarks.read(), { ...links, lastRun: "workflow-001" });
@@ -344,7 +346,7 @@ test("a failed lastRun write releases the restored Workflow's journal lock", asy
   fixture.writeWorkflow(fixture.runId);
   const failure = new Error("lastRun unavailable");
   const before = readFileSync(fixture.benchmarks.path, "utf8");
-  t.mock.method(WorkflowBenchmarks.prototype, "recordRun", () => { throw failure; });
+  t.mock.method(ScoutBenchmarks.prototype, "recordRun", () => { throw failure; });
   const clients = t.mock.method(ResumeClientsStage.prototype, "start");
   await assert.rejects(resumeRun(fixture.options), (error) => error === failure);
   assert.equal(clients.mock.callCount(), 0);
@@ -470,7 +472,7 @@ test("WorkflowStage leaves a completed resume empty without replaying its histor
   assert.equal(readFileSync(fixture.journalPath, "utf8"), before);
   assert.equal(readFileSync(fixture.manifestStore.path, "utf8"), manifestBefore);
   assert.deepEqual(fixture.benchmarks.read(), {
-    version: 1, currentWorkflow: "workflow-001", lastWorkflow: "workflow-001",
+    currentWorkflow: "workflow-001", lastWorkflow: "workflow-001",
     lastRun: "workflow-001", lastSuccess: "workflow-001",
   });
 });
@@ -659,7 +661,6 @@ for (const missing of ["directory", "file"] as const) {
     assert.equal(reachedWorkflow, true);
     assert.equal(readFileSync(fixture.manifestStore.path, "utf8"), manifestBefore);
     assert.deepEqual(fixture.benchmarks.read(), {
-      version: 1,
       currentWorkflow: "workflow-001",
       lastWorkflow: "workflow-001",
       lastRun: "workflow-001",
@@ -682,18 +683,18 @@ for (const change of ["journal-reappeared", "permalink-changed"] as const) {
   test(`missing-journal resume rejects ${change} after taking the runtime lock without overwriting the repaired Workflow`, async (t) => {
     const fixture = createFixture(t);
     const manifestBefore = readFileSync(fixture.manifestStore.path, "utf8");
-    const acquire = WorkflowBenchmarks.prototype.acquire;
+    const acquire = Benchmarks.prototype.acquire;
     let changed = false;
     let repairedPath = "";
     let repairedContents = "";
     let repairedLinks = "";
-    t.mock.method(WorkflowBenchmarks.prototype, "acquire", function (this: WorkflowBenchmarks) {
+    t.mock.method(Benchmarks.prototype, "acquire", function (this: Benchmarks) {
       if (!changed) {
         changed = true;
         // A competing runtime repairs the selection after ENOENT was observed,
         // and releases the root before the waiting resume obtains its lock.
-        const competing = new WorkflowBenchmarks(fixture.runRoot);
-        acquire.call(competing);
+        const competing = new ScoutBenchmarks(new Benchmarks(fixture.runRoot));
+        acquire.call(competing.benchmarks);
         try {
           const target = change === "permalink-changed"
             ? competing.prepareNext()
@@ -721,7 +722,7 @@ for (const change of ["journal-reappeared", "permalink-changed"] as const) {
           repairedContents = readFileSync(repairedPath, "utf8");
           repairedLinks = readFileSync(fixture.benchmarks.path, "utf8");
         } finally {
-          competing.release();
+          competing.benchmarks.release();
         }
       }
       acquire.call(this);
@@ -750,8 +751,8 @@ for (const change of ["journal-reappeared", "permalink-changed"] as const) {
 test("missing-journal resume preserves non-ENOENT failures found under its runtime lock", async (t) => {
   const fixture = createFixture(t);
   const linksBefore = readFileSync(fixture.benchmarks.path, "utf8");
-  const acquire = WorkflowBenchmarks.prototype.acquire;
-  t.mock.method(WorkflowBenchmarks.prototype, "acquire", function (this: WorkflowBenchmarks) {
+  const acquire = Benchmarks.prototype.acquire;
+  t.mock.method(Benchmarks.prototype, "acquire", function (this: Benchmarks) {
     rmSync(fixture.journalRoot, { recursive: true });
     writeFileSync(fixture.journalRoot, "the Workflow directory is no longer a directory");
     acquire.call(this);
@@ -834,14 +835,14 @@ function createFixture(t: TestContext, domain: string = "rbt") {
   // Workflow-selection fixtures represent an already indexed environment; tests of
   // interrupted initialization explicitly omit this index.
   manifestStore.update((manifest) => ({ ...manifest, agents: {} }));
-  const benchmarks = new WorkflowBenchmarks(runRoot);
-  benchmarks.acquire();
+  const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
+  benchmarks.benchmarks.acquire();
   try {
     benchmarks.prepareNext();
     benchmarks.recordStarted("workflow-001");
     benchmarks.recordSuccess("workflow-001");
   } finally {
-    benchmarks.release();
+    benchmarks.benchmarks.release();
   }
   const journalRoot = join(runRoot, "workflows", "workflow-001", "journal");
   const journalPath = join(journalRoot, "scout.journal");
