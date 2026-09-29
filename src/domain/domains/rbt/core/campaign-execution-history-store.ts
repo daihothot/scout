@@ -1,16 +1,17 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { AgentJsonValue } from "../../../../../agent/tools/types.js";
-import type { UnsubscribeEventHandler } from "../../../../../core/events/index.js";
-import { currentRunScope } from "../../../../../run/run-scope.js";
-import type { ExecutionPlatformIdentity } from "../../../../../execution/scout-execution-system.js";
+import type { AgentJsonValue } from "../../../../agent/tools/types.js";
+import type { UnsubscribeEventHandler } from "../../../../core/events/index.js";
+import { currentRunScope } from "../../../../run/run-scope.js";
+import type { ExecutionPlatformIdentity } from "../../../../execution/scout-execution-system.js";
 import {
   RbtEvents,
   type RbtBehaviorRequest,
   type RbtBehaviorResult,
   type RbtCampaignCommandEvent,
   type RbtHostCommandExecution,
-} from "../../rbt-events.js";
+} from "../rbt-events.js";
 
 interface CampaignHistoryCommand {
   sequence: number;
@@ -25,8 +26,11 @@ interface CampaignHistoryCommand {
 }
 
 interface CampaignExecutionHistory {
+  bddId: string;
+  targetVersion: string;
   runtimeSequence: number;
   executeFileRef: string;
+  executeFileDigest: string;
   campaignId: string;
   scenarioId: string;
   platform: ExecutionPlatformIdentity;
@@ -83,8 +87,11 @@ export class RbtCampaignExecutionHistoryStore {
       throw new Error(`RBT campaign execution history already exists: ${artifactPath}.`);
     }
     const history: CampaignExecutionHistory = {
+      bddId: command.bddId,
+      targetVersion: command.targetVersion,
       runtimeSequence: command.runtimeSequence,
       executeFileRef: command.executeFileRef,
+      executeFileDigest: command.executeFileDigest,
       campaignId: command.campaignId,
       scenarioId: command.scenarioId,
       platform: structuredClone(command.platform),
@@ -96,8 +103,8 @@ export class RbtCampaignExecutionHistoryStore {
       artifactRef: `scout-artifact://${workflowState.workflowId}/${command.agentId}/history/${String(command.runtimeSequence).padStart(3, "0")}.json`,
     };
     if (command.status !== "failed") this.active.set(key, history);
-    this.write(history);
-    if (command.status === "failed") await this.publishReady(command, history);
+    const digest = this.write(history);
+    if (command.status === "failed") await this.publishReady(command, history, digest);
   }
 
   private async recordCommand(command: RbtCampaignCommandEvent, closesHistory: boolean): Promise<void> {
@@ -106,7 +113,7 @@ export class RbtCampaignExecutionHistoryStore {
     if (!history) {
       throw new Error(`RBT campaign history is not active: ${command.campaignId}.`);
     }
-    if (history.executeFileRef !== command.executeFileRef) {
+    if (history.executeFileRef !== command.executeFileRef || history.executeFileDigest !== command.executeFileDigest) {
       throw new Error(`RBT campaign execute-file changed while recording: ${command.campaignId}.`);
     }
     history.commands.push(historyCommand(command));
@@ -116,27 +123,35 @@ export class RbtCampaignExecutionHistoryStore {
       history.endedAt = command.completedAt;
       this.active.delete(key);
     }
-    this.write(history);
-    if (closesHistory) await this.publishReady(command, history);
+    const digest = this.write(history);
+    if (closesHistory) await this.publishReady(command, history, digest);
   }
 
-  private write(history: CampaignExecutionHistory): void {
+  private write(history: CampaignExecutionHistory): string {
     mkdirSync(dirname(history.artifactPath), { recursive: true });
     const { artifactPath: _artifactPath, artifactRef: _artifactRef, ...artifact } = history;
-    writeFileSync(history.artifactPath, `${JSON.stringify(artifact, null, 2)}\n`, "utf8");
+    const content = `${JSON.stringify(artifact, null, 2)}\n`;
+    writeFileSync(history.artifactPath, content, "utf8");
+    return `sha256:${createHash("sha256").update(content).digest("hex")}`;
   }
 
   private async publishReady(
     command: RbtCampaignCommandEvent,
     history: CampaignExecutionHistory,
+    executorHistoryDigest: string,
   ): Promise<void> {
     const scope = currentRunScope();
     if (history.status === "recording") {
       throw new Error(`RBT campaign history is still recording: ${history.campaignId}.`);
     }
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
+      bddId: history.bddId,
+      targetVersion: history.targetVersion,
+      platform: structuredClone(history.platform),
       executorHistoryRef: history.artifactRef,
+      executorHistoryDigest,
       executeFileRef: history.executeFileRef,
+      executeFileDigest: history.executeFileDigest,
       runtimeSequence: history.runtimeSequence,
       campaignId: history.campaignId,
       scenarioId: history.scenarioId,

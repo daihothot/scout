@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdtempSync,
@@ -140,6 +141,8 @@ test("RBT restores every missing history after Agent state restoration and does 
   });
   await domain.start();
   const readyHistories = [1, 2].map((runtimeSequence) => ({
+    bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
+    executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
     executorHistoryRef: `agents/executor/artifacts/history/00${runtimeSequence}.json`,
     executeFileRef: "account/1.0/execute-file.json",
     runtimeSequence,
@@ -217,6 +220,8 @@ test("RBT recovery skips persisted queued and consumed delivery identities", asy
   const occurredAt = "2026-09-27T00:00:01.000Z";
   for (const runtimeSequence of [1, 2, 3]) {
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
+      bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
+      executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
       executorHistoryRef: `history/${runtimeSequence}.json`,
       executeFileRef: "account/1.0/execute-file.json",
       runtimeSequence,
@@ -298,6 +303,8 @@ test("RBT history delivery separates identical sequence numbers across Workflows
   for (const workflowId of ["workflow-001", "workflow-002"]) {
     assert.equal(scope.workflow.snapshot()?.workflowId, workflowId);
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
+      bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
+      executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
       executorHistoryRef: `scout-artifact://${workflowId}/executor/history/001.json`,
       executeFileRef: `scout-artifact://${workflowId}/executor/execute-file.json`,
       runtimeSequence: 1, campaignId: "same-campaign", scenarioId: "same-scenario",
@@ -328,6 +335,8 @@ test("RBT repeated restore replaces the previous pending history subscription", 
   });
   await domain.start();
   const history = {
+    bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
+    executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
     executorHistoryRef: "history/1.json",
     executeFileRef: "account/1.0/execute-file.json",
     runtimeSequence: 1,
@@ -370,6 +379,8 @@ test("RBT cancels restored history delivery on stop, completed restore, and Work
       });
       await domain.start();
       await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
+        bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
+        executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
         executorHistoryRef: "history/1.json",
         executeFileRef: "account/1.0/execute-file.json",
         runtimeSequence: 1,
@@ -419,6 +430,8 @@ test("RBT stops an in-flight history replay before delivering the next history",
   await domain.start();
   for (const runtimeSequence of [1, 2]) {
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
+      bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
+      executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
       executorHistoryRef: `history/${runtimeSequence}.json`,
       executeFileRef: "account/1.0/execute-file.json",
       runtimeSequence,
@@ -464,6 +477,8 @@ test("RBT restored history delivery failures reject runtime ready and can be ret
   });
   await domain.start();
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
+    bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
+    executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
     executorHistoryRef: "history/1.json",
     executeFileRef: "account/1.0/execute-file.json",
     runtimeSequence: 1,
@@ -1934,6 +1949,15 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
     version: "6000.0.80f1",
   });
   assert.equal(history.status, "completed");
+  const recorded = domain.journal.aggregate(domain.journal.readAll()).histories.at(-1)!;
+  assert.equal(recorded.bddId, "account-anon-restore-existing-account");
+  assert.equal(recorded.targetVersion, "26.7.0-rc.2");
+  assert.deepEqual(recorded.platform, history.platform);
+  assert.equal(recorded.executeFileDigest, `sha256:${createHash("sha256").update(readFileSync(executeFilePath)).digest("hex")}`);
+  assert.equal(recorded.executorHistoryDigest, `sha256:${createHash("sha256").update(readFileSync(join(historyRoot, "001.json"))).digest("hex")}`);
+  const benchmark = scope.workflow.benchmarks.read("rbt", ["bddCatalog", recorded.bddId, recorded.targetVersion, "history", "lastExecutionSuccess"]);
+  assert.ok(benchmark && typeof benchmark === "object" && !Array.isArray(benchmark));
+  assert.equal(benchmark.workflowId, "workflow-001");
   assert.equal("artifactType" in history, false);
   assert.equal("artifactVersion" in history, false);
   assert.equal("runId" in history, false);

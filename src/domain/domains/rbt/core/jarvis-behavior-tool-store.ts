@@ -1,6 +1,7 @@
 export interface JarvisBehaviorExecutionState {
   executeFilePath: string;
   executeFileRef: string;
+  executeFileDigest: string;
   bddId: string;
   targetVersion: string;
   runtimeSequence: number;

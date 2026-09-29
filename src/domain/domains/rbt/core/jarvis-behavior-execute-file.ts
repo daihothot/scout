@@ -224,6 +224,7 @@ export class JarvisBehaviorExecuteFileRunner {
       bddId: executeFile.bddId,
       targetVersion: executeFile.targetVersion,
       executeFileRef: executeFile.executeFileRef,
+      executeFileDigest: executeFile.executeFileDigest,
       runtimeSequence: executeFile.runtimeSequence,
       campaignId: executeFile.campaignId,
       scenarioId: executeFile.scenarioId,

@@ -4,3 +4,4 @@ export * from "./jarvis-behavior-execute-file.js";
 export * from "./jarvis-behavior-execute-file-reader.js";
 export * from "./jarvis-behavior-websocket-linker.js";
 export * from "./jarvis-behavior-tool-store.js";
+export * from "./campaign-execution-history-store.js";

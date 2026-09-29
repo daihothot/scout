@@ -43,6 +43,8 @@ test("RbtJournal owns event subscription, history projection, and lock release",
     journalSeq: 1,
     updatedAt: event.occurredAt,
     histories: [{ ...history(1), occurredAt: event.occurredAt }],
+    executionPacks: [],
+    reviews: [],
   });
   assert.equal(scope.workflow.readEvents().some((entry) => RbtEvents.history.ready.is(entry)), false);
 
@@ -268,6 +270,8 @@ test("RbtDomain releases journal resources after startup failure and delegates W
 
 function history(runtimeSequence: number): RbtExecutionHistoryReadyEvent {
   return {
+    bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
+    executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
     executorHistoryRef: `run://executor/history-${runtimeSequence}.json`,
     executeFileRef: "run://executor/execute-file.json",
     runtimeSequence,

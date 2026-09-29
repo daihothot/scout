@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -16,7 +17,7 @@ import { JarvisBehaviorToolStore } from "../../src/domain/domains/rbt/core/jarvi
 import { ExecutionEvents, type ExecutionPlatformPort } from "../../src/execution/index.js";
 import { HostCommandExecutor } from "../../src/host/host-command-executor.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
-import { RbtCampaignExecutionHistoryStore } from "../../src/domain/domains/rbt/agent/history/campaign-execution-history-store.js";
+import { RbtCampaignExecutionHistoryStore } from "../../src/domain/domains/rbt/core/campaign-execution-history-store.js";
 
 test("RBT serializes initial shared connection and command segments without duplicate launch", async (t) => {
   const fixture = createFixture(t);
@@ -158,6 +159,24 @@ test("RBT execute-file closes failed history and attempts cleanup after a thrown
   assert.equal(history.status, "failed");
   assert.equal(history.commands[2].status, "failed");
   assert.ok(history.endedAt);
+});
+
+test("RBT history identifies the executed bytes even when the execute-file changes during execution", async (t) => {
+  const fixture = createFixture(t);
+  const histories = new RbtCampaignExecutionHistoryStore();
+  histories.start();
+  t.after(() => histories.stop());
+  const original = readFileSync(fixture.executeFilePath);
+  fixture.onCommand = async (command) => {
+    if (command === "behavior.registry.manifest") writeFileSync(fixture.executeFilePath, "changed after runtime accepted the file");
+  };
+  let recordedDigest: string | undefined;
+  fixture.scope.eventBus.subscribe(RbtEvents.history.ready, (event) => {
+    if (RbtEvents.history.ready.is(event)) recordedDigest = event.payload.executeFileDigest;
+  });
+  assert.equal((await fixture.orchestrator.executeFile(call, fixture.executeFilePath)).success, true);
+  assert.equal(recordedDigest, `sha256:${createHash("sha256").update(original).digest("hex")}`);
+  assert.notEqual(recordedDigest, `sha256:${createHash("sha256").update(readFileSync(fixture.executeFilePath)).digest("hex")}`);
 });
 
 test("RBT target loss closes local history without claiming remote cleanup succeeded", async (t) => {

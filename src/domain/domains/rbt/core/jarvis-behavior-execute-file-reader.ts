@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AgentJsonValue } from "../../../../agent/tools/types.js";
@@ -46,8 +47,11 @@ export function readJarvisBehaviorExecuteFile(
   if (!bddId || !targetVersion) throw new Error("execute_file path has an empty BDD or version segment.");
 
   let value: unknown;
+  let executeFileDigest: string;
   try {
-    value = JSON.parse(readFileSync(executeFilePath, "utf8"));
+    const content = readFileSync(executeFilePath);
+    value = JSON.parse(content.toString("utf8"));
+    executeFileDigest = `sha256:${createHash("sha256").update(content).digest("hex")}`;
   } catch (error) {
     throw new Error(`execute_file is not readable JSON: ${String(error)}`);
   }
@@ -87,6 +91,7 @@ export function readJarvisBehaviorExecuteFile(
   return {
     executeFilePath,
     executeFileRef: `${referenceRoot}${artifactRelative.split(sep).join("/")}`,
+    executeFileDigest,
     bddId,
     targetVersion,
     runtimeSequence: store.nextRuntimeSequence(call.caller.agentId, existingMaximum),

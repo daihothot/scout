@@ -20,7 +20,6 @@ import {
   jarvisBehaviorAgentTool,
   RbtDomainAgentBackend,
   RbtAgentToolCallRecorder,
-  RbtCampaignExecutionHistoryStore,
   JarvisBehaviorTool,
   JarvisWebSocketTool,
 } from "./agent/index.js";
@@ -29,11 +28,14 @@ import {
   JarvisBehaviorExecuteFileRunner,
   JarvisBehaviorOrchestrator,
   JarvisBehaviorToolStore,
+  RbtCampaignExecutionHistoryStore,
   JarvisBehaviorWebSocketLinker,
 } from "./core/index.js";
 import { loadRbtConfig, type RbtConfig } from "./config/index.js";
 import { RbtEvents, type RbtExecutionHistoryReadyEvent } from "./rbt-events.js";
 import { RbtJournal } from "./rbt-journal.js";
+import { RbtArtifactRecorder } from "./artifacts/rbt-artifact-recorder.js";
+import { RbtBenchmarks } from "./rbt-benchmarks.js";
 
 export interface RbtDomainRuntimeOptions {
   executable?: string;
@@ -49,6 +51,8 @@ export class RbtDomain implements ScoutDomain {
     name: "Scout Runtime Behavioral Test Domain",
   });
   readonly journal = new RbtJournal();
+  readonly benchmarks = new RbtBenchmarks();
+  private readonly artifactRecorder = new RbtArtifactRecorder(this.journal);
   private readonly toolCallRecorder = new RbtAgentToolCallRecorder();
   private readonly campaignHistoryStore = new RbtCampaignExecutionHistoryStore();
   private readonly behaviorStore = new JarvisBehaviorToolStore();
@@ -128,6 +132,8 @@ export class RbtDomain implements ScoutDomain {
     try {
       this.activeConfig = loadRbtConfig(scope.config);
       this.journal.start();
+      this.benchmarks.start();
+      this.artifactRecorder.start();
       this.backend.register("execute", this.agentTools.executeBehavior);
       this.registeredAgentTools.push({
         phase: "execute",
@@ -242,6 +248,8 @@ export class RbtDomain implements ScoutDomain {
       await this.behaviorOrchestrator.quiesce();
       const failures: unknown[] = [];
       for (const release of [
+        () => this.artifactRecorder.stop(),
+        () => this.benchmarks.stop(),
         () => this.journal.stop(),
         () => {
           this.unsubscribeHistoryReady?.();

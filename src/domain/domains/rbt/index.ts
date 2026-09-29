@@ -5,6 +5,8 @@ export * from "./rbt-journal.js";
 export * from "./core/index.js";
 export * from "./agent/index.js";
 export * from "./config/index.js";
+export * from "./rbt-benchmarks.js";
+export * from "./artifacts/index.js";
 
 import type { ScoutDomain } from "../../types.js";
 import { RbtDomain } from "./rbt-domain.js";

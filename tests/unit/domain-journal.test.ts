@@ -28,7 +28,7 @@ test("Base and RBT inherit journal resource operations while retaining their own
   const baseFact = new BaseDomainJournal().aggregate([]);
   const rbtFact = new RbtJournal().aggregate([]);
   assert.deepEqual(baseFact, { domainId: "base", journalSeq: 0, toolCalls: [] });
-  assert.deepEqual(rbtFact, { domainId: "rbt", journalSeq: 0, histories: [] });
+  assert.deepEqual(rbtFact, { domainId: "rbt", journalSeq: 0, histories: [], executionPacks: [], reviews: [] });
 });
 
 test("DomainJournal instances isolate subscriptions and Workflow resources without deleting historical files", async (t) => {
@@ -48,6 +48,8 @@ test("DomainJournal instances isolate subscriptions and Workflow resources witho
     response: { success: true, contentItems: [] }, startedAt: occurredAt, completedAt: occurredAt,
   } satisfies BaseDomainAgentToolCallObservedEvent;
   const history = {
+    bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
+    executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
     executorHistoryRef: "history/1.json", executeFileRef: "execute/1.json", runtimeSequence: 1,
     campaignId: "campaign-1", scenarioId: "scenario-1", status: "completed", agentId: "executor", role: "executor",
   } satisfies RbtExecutionHistoryReadyEvent;

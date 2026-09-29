@@ -55,6 +55,8 @@ for (const entry of [
       key: RbtEvents.history.ready,
       occurredAt: "2026-09-27T00:00:01.000Z",
       payload: {
+        bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
+        executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
         executorHistoryRef: "history/1.json",
         executeFileRef: "execute/1.json",
         runtimeSequence: 1,
