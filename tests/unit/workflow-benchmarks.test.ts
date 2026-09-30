@@ -11,7 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import test from "node:test";
-import { Benchmarks, ScoutBenchmarks } from "../../src/core/workflow/benchmarks/index.js";
+import { Benchmarks } from "../../src/core/benchmarks/index.js";
+import { ScoutBenchmarks } from "../../src/core/benchmarks/scout-benchmarks.js";
 
 test("Different Runs keep their Workflow directories, permalinks and locks inside their own Run root", (t) => {
   const scoutRoot = mkdtempSync(join(tmpdir(), "scout-workflow-isolated-runs-"));

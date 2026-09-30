@@ -1,7 +1,7 @@
 import type { UnsubscribeEventHandler } from "../../../core/events/index.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 import { SystemEvents } from "../../../system/events/index.js";
-import { DomainBenchmarks } from "../../core/workflow/benchmarks/index.js";
+import { DomainBenchmarks } from "../../core/benchmarks/index.js";
 import { ScoutDomainId } from "../../types.js";
 import { RbtEvents } from "./rbt-events.js";
 import type { RbtCampaignCommandEvent, RbtExecutionHistoryReadyEvent } from "./rbt-events.js";

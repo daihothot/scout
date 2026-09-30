@@ -4,15 +4,8 @@ import { runPaths, scoutJournalPaths, scoutRunRoot } from "../../core/path.js";
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import { InMemoryEventBus } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
-import {
-  resolveSynthesisRole,
-  projectWorkflowState,
-  Workflow,
-  Benchmarks,
-  ScoutBenchmarks,
-  WorkflowEvents,
-  type GraphState,
-} from "../../core/workflow/index.js";
+import { resolveSynthesisRole, projectWorkflowState, Workflow, WorkflowEvents, type GraphState } from "../../core/workflow/index.js";
+import { Benchmarks, ScoutBenchmarks } from "../../core/benchmarks/index.js";
 import { readJournalEvents, type JournalEvent } from "../../core/journal/index.js";
 import { AssetStore, readWorkflowProfile } from "../../asset-store/index.js";
 import {

@@ -23,16 +23,8 @@ import {
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import type { RunEnvironment } from "../../src/run/types.js";
 import type { ExecutionPlatformPort } from "../../src/execution/scout-execution-system.js";
-import {
-  createGraphState,
-  Graph,
-  Scheduler,
-  Workflow,
-  Benchmarks,
-  ScoutBenchmarks,
-  WorkflowEvents,
-  type WorkflowState,
-} from "../../src/core/workflow/index.js";
+import { createGraphState, Graph, Scheduler, Workflow, WorkflowEvents, type WorkflowState } from "../../src/core/workflow/index.js";
+import { Benchmarks, ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
 
 const noopLogger = {
   debug: () => undefined,

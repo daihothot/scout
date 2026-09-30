@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { runPaths, workflowPaths } from "../../path.js";
-import { WorkflowBenchmarkLock } from "./workflow-benchmark-lock.js";
+import { runPaths, workflowPaths } from "../path.js";
+import { ScoutBenchmarkLock } from "./scout-benchmark-lock.js";
 import type {
   BenchmarkNode, BenchmarkObject, BenchmarkReferenceNode, BenchmarkValue,
   BenchmarkWorkflowReference, BenchmarkWrite, WorkflowLocation,
@@ -12,14 +12,14 @@ export class Benchmarks {
   readonly runRoot: string;
   readonly path: string;
   private readonly workflowsRoot: string;
-  private readonly lock: WorkflowBenchmarkLock;
+  private readonly lock: ScoutBenchmarkLock;
 
   constructor(runRoot: string) {
     this.runRoot = resolve(runRoot);
     const paths = runPaths(this.runRoot);
     this.path = paths.benchmarksPath;
     this.workflowsRoot = paths.workflowsRoot;
-    this.lock = new WorkflowBenchmarkLock(paths.workflowLockPath);
+    this.lock = new ScoutBenchmarkLock(paths.workflowLockPath);
   }
 
   /** Workflow owns this lease throughout the runtime, including its empty state. */

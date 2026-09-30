@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Workflow, Benchmarks, ScoutBenchmarks, projectWorkflowState } from "../../src/core/workflow/index.js";
+import { Workflow, projectWorkflowState } from "../../src/core/workflow/index.js";
+import { Benchmarks, ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
 import { readJournalEvents } from "../../src/core/journal/index.js";
 import { workflowRootFromJournalRoot } from "../../src/core/path.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";

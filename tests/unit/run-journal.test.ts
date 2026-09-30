@@ -22,7 +22,8 @@ import {
   EventSubscriptionPriorities,
   InMemoryEventBus,
 } from "../../src/core/events/index.js";
-import { Benchmarks, ScoutBenchmarks, WorkflowEvents } from "../../src/core/workflow/index.js";
+import { WorkflowEvents } from "../../src/core/workflow/index.js";
+import { Benchmarks, ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import { BaseDomain, ScoutDomainId } from "../../src/domain/index.js";
 import type { RunScope } from "../../src/run/run-scope.js";

@@ -16,11 +16,8 @@ import { AgentEvents } from "../../src/agent/events/index.js";
 import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
 import { Journal, readJournalEvents } from "../../src/core/journal/index.js";
 import { Logger } from "../../src/core/logging/index.js";
-import {
-  Graph,
-  Benchmarks, ScoutBenchmarks,
-  WorkflowEvents,
-} from "../../src/core/workflow/index.js";
+import { Graph, WorkflowEvents } from "../../src/core/workflow/index.js";
+import { Benchmarks, ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
 import {
   NoopRuntimeInteractionPort,
   type RuntimeDisclosureEvent,

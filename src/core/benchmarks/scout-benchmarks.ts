@@ -6,7 +6,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { workflowPaths, runPaths } from "../../path.js";
+import { workflowPaths, runPaths } from "../path.js";
 import { Benchmarks } from "./benchmarks.js";
 import type { BenchmarkObject, WorkflowLocation } from "./types.js";
 

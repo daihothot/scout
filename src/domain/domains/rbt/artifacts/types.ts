@@ -1,4 +1,4 @@
-import type { BenchmarkWorkflowReference } from "../../../../core/workflow/benchmarks/index.js";
+import type { BenchmarkWorkflowReference } from "../../../../core/benchmarks/index.js";
 
 /** Content identity at the time a fact was recorded; path is relative to an Agent artifact root. */
 export interface RbtArtifactReference extends BenchmarkWorkflowReference {

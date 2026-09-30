@@ -34,16 +34,8 @@ import {
 import type { AgentTurnCompletedEvent } from "../../src/agent/thread/turn-events.js";
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
 import { EventSubscriptionPriorities, InMemoryEventBus } from "../../src/core/events/index.js";
-import {
-  createGraphState,
-  Graph,
-  projectWorkflowState,
-  Scheduler,
-  Workflow,
-  Benchmarks,
-  ScoutBenchmarks,
-  WorkflowEvents,
-} from "../../src/core/workflow/index.js";
+import { createGraphState, Graph, projectWorkflowState, Scheduler, Workflow, WorkflowEvents } from "../../src/core/workflow/index.js";
+import { Benchmarks, ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type {
   DynamicToolCallHandler,

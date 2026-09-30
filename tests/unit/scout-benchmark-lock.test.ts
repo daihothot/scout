@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
-import { Benchmarks, ScoutBenchmarks } from "../../src/core/workflow/benchmarks/index.js";
+import { Benchmarks } from "../../src/core/benchmarks/index.js";
+import { ScoutBenchmarks } from "../../src/core/benchmarks/scout-benchmarks.js";
 
 interface FixtureMessage {
   type: string;
@@ -27,7 +28,7 @@ function fixture(t: TestContext) {
   });
   const launch = (mode = "hold") => {
     const child = spawn(process.execPath, [
-      fileURLToPath(new URL("../fixtures/workflow-benchmark-lock-process.js", import.meta.url)),
+      fileURLToPath(new URL("../fixtures/scout-benchmark-lock-process.js", import.meta.url)),
       runRoot,
       mode,
     ], { stdio: ["pipe", "pipe", "pipe"] });

@@ -3,7 +3,7 @@ import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 
 const [runRoot, mode] = process.argv.slice(2);
-if (!runRoot) throw new Error("Missing Workflow lock fixture root.");
+if (!runRoot) throw new Error("Missing Scout benchmark lock fixture root.");
 
 function announce(type: string, message?: string): void {
   fs.writeSync(1, `${JSON.stringify({ type, message, processId: process.pid })}\n`);
@@ -39,7 +39,8 @@ if (mode === "pause-before-reclaim" || mode === "pause-before-publish" || mode =
   syncBuiltinESMExports();
 }
 
-const { Benchmarks, ScoutBenchmarks } = await import("../../src/core/workflow/benchmarks/index.js");
+const { Benchmarks } = await import("../../src/core/benchmarks/index.js");
+const { ScoutBenchmarks } = await import("../../src/core/benchmarks/scout-benchmarks.js");
 const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
 announce("ready");
 if (waitForCommand() !== "acquire") throw new Error("Acquisition was not requested.");

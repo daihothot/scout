@@ -1,6 +1,6 @@
-import { currentRunScope } from "../../../../run/run-scope.js";
-import type { BenchmarkWrite } from "../../../../core/workflow/benchmarks/index.js";
-import type { ScoutDomainId } from "../../../types.js";
+import { currentRunScope } from "../../../run/run-scope.js";
+import type { BenchmarkWrite } from "../../../core/benchmarks/index.js";
+import type { ScoutDomainId } from "../../types.js";
 
 /** Domain chapter ownership and a single submission path; business fields belong to subclasses. */
 export abstract class DomainBenchmarks {

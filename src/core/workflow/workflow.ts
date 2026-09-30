@@ -22,7 +22,7 @@ import { type GraphState, type WorkflowPhaseOutcome, resolveSynthesisRole } from
 import { Graph } from "./graph.js";
 import { Scheduler, type SchedulerAdvanceResult } from "./scheduler.js";
 import { ScoutJournal } from "./scout-journal.js";
-import { Benchmarks, ScoutBenchmarks } from "./benchmarks/index.js";
+import { Benchmarks, ScoutBenchmarks } from "../benchmarks/index.js";
 import { WorkflowEvents } from "./workflow-events.js";
 import { projectWorkflowState, type WorkflowState } from "./workflow-state.js";
 

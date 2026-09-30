@@ -4,7 +4,7 @@ export * from "./domain-events.js";
 export * from "./domain-registry.js";
 export * from "./agent/index.js";
 export * from "./core/journal/index.js";
-export * from "./core/workflow/benchmarks/index.js";
+export * from "./core/benchmarks/index.js";
 export * from "./domains/base/index.js";
 
 import { DomainAgentBackend } from "./agent/index.js";

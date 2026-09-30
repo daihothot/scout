@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { hostname } from "node:os";
 
-interface WorkflowLockOwner {
+interface ScoutBenchmarkLockOwner {
   version: 1;
   hostId: string;
   processId: number;
@@ -19,9 +19,9 @@ interface WorkflowLockOwner {
   acquiredAt: string;
 }
 
-/** Exclusive ownership of one Run's Workflow storage, shared by all benchmark chapters. */
-export class WorkflowBenchmarkLock {
-  private owner?: WorkflowLockOwner;
+/** Exclusive ownership of one Run's benchmark and Workflow storage, shared by all chapters. */
+export class ScoutBenchmarkLock {
+  private owner?: ScoutBenchmarkLockOwner;
   private readonly reclaimPath: string;
 
   constructor(readonly path: string) {
@@ -48,7 +48,7 @@ export class WorkflowBenchmarkLock {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    const owner: WorkflowLockOwner = {
+    const owner: ScoutBenchmarkLockOwner = {
       version: 1,
       hostId: hostname(),
       processId: process.pid,
@@ -63,7 +63,7 @@ export class WorkflowBenchmarkLock {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       }
-      let previous: WorkflowLockOwner;
+      let previous: ScoutBenchmarkLockOwner;
       try {
         previous = this.readOwner(this.path);
       } catch (error) {
@@ -83,7 +83,7 @@ export class WorkflowBenchmarkLock {
         recoveryInProgress();
       }
       try {
-        let current: WorkflowLockOwner | undefined;
+        let current: ScoutBenchmarkLockOwner | undefined;
         try {
           current = this.readOwner(this.path);
         } catch (error) {
@@ -132,7 +132,7 @@ export class WorkflowBenchmarkLock {
     this.owner = undefined;
   }
 
-  private assertDead(owner: WorkflowLockOwner): void {
+  private assertDead(owner: ScoutBenchmarkLockOwner): void {
     if (owner.hostId !== hostname()) {
       throw new Error(`Workflow root ${this.path} is locked by host ${owner.hostId} process ${owner.processId}; refusing remote-owner recovery.`);
     }
@@ -147,7 +147,7 @@ export class WorkflowBenchmarkLock {
     throw new Error(`Workflow root ${this.path} is already attached to process ${owner.processId} on host ${owner.hostId}.`);
   }
 
-  private readOwner(path: string): WorkflowLockOwner {
+  private readOwner(path: string): ScoutBenchmarkLockOwner {
     const stat = lstatSync(path);
     if (!stat.isFile() || stat.isSymbolicLink()) {
       throw new Error(`Workflow lock must be a regular file; refusing automatic recovery: ${path}`);
@@ -167,10 +167,10 @@ export class WorkflowBenchmarkLock {
       || !("acquiredAt" in owner) || typeof owner.acquiredAt !== "string" || !Number.isFinite(Date.parse(owner.acquiredAt))) {
       throw new Error(`Invalid Workflow lock owner; refusing automatic recovery: ${path}`);
     }
-    return owner as WorkflowLockOwner;
+    return owner as ScoutBenchmarkLockOwner;
   }
 
-  private publish(path: string, owner: WorkflowLockOwner): void {
+  private publish(path: string, owner: ScoutBenchmarkLockOwner): void {
     const temporaryPath = `${path}.${owner.token}.tmp`;
     try {
       const fd = openSync(temporaryPath, "wx", 0o600);

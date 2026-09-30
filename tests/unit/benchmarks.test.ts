@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { Benchmarks, type BenchmarkObject, type BenchmarkValue } from "../../src/core/workflow/benchmarks/index.js";
+import { Benchmarks, type BenchmarkObject, type BenchmarkValue } from "../../src/core/benchmarks/index.js";
 
 function fixture(t: TestContext): Benchmarks {
   const root = mkdtempSync(join(tmpdir(), "scout-benchmark-nodes-"));
