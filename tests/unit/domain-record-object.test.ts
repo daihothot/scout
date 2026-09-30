@@ -5,6 +5,7 @@ import test from "node:test";
 import { readJournalEvents } from "../../src/core/journal/index.js";
 import { RecordableObject } from "../../src/core/record/index.js";
 import { ScoutRecordObject } from "../../src/core/record/scout-record-object.js";
+import { RequestHubRecordObject } from "../../src/core/requeshub/request-hub-record-object.js";
 import {
   BaseDomain,
   BaseDomainEvents,
@@ -17,7 +18,7 @@ import { RbtEvents, RbtRecordObject, type RbtExecutionHistoryReadyEvent } from "
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
 test("Base and RBT inherit journal resource operations while retaining their own projections", () => {
-  for (const record of [new ScoutRecordObject()]) {
+  for (const record of [new ScoutRecordObject(), new RequestHubRecordObject()]) {
     assert.ok(record instanceof RecordableObject);
     assert.equal(record.prepareWorkflow, RecordableObject.prototype.prepareWorkflow);
   }
