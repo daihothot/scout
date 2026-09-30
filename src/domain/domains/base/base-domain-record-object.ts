@@ -3,10 +3,10 @@ import {
   projectBaseExecutionEvent,
   type BaseDomainExecutionState,
 } from "./execution/base-domain-execution-state.js";
-import { DomainJournal } from "../../core/journal/index.js";
+import { DomainRecordObject } from "../../core/record/index.js";
 import {
   ScoutDomainId,
-  type ScoutDomainJournalEvent,
+  type ScoutDomainRecordEvent,
   type ScoutDomainRuntimeFact,
 } from "../../types.js";
 import {
@@ -22,7 +22,7 @@ export interface BaseDomainRuntimeFact extends ScoutDomainRuntimeFact {
 }
 
 /** Declares Base events and rebuilds its execution and tool-call facts. */
-export class BaseDomainJournal extends DomainJournal<BaseDomainRuntimeFact> {
+export class BaseDomainRecordObject extends DomainRecordObject<BaseDomainRuntimeFact> {
   readonly eventTypes = [
     ExecutionEvents.execution.identifyCompleted,
     ExecutionEvents.execution.launchCompleted,
@@ -43,7 +43,7 @@ export class BaseDomainJournal extends DomainJournal<BaseDomainRuntimeFact> {
     return undefined;
   }
 
-  aggregate(events: readonly ScoutDomainJournalEvent[]): BaseDomainRuntimeFact {
+  aggregate(events: readonly ScoutDomainRecordEvent[]): BaseDomainRuntimeFact {
     const fact: BaseDomainRuntimeFact = {
       domainId: "base",
       journalSeq: 0,

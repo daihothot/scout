@@ -10,7 +10,7 @@ export class AgentsStage implements RunStage {
 
   async start(): Promise<void> {
     const builder = new AgentBuilder();
-    const graphState = currentRunScope().workflow.scheduler.snapshot();
+    const graphState = currentRunScope().workflow.graph.snapshot();
     const coordinatorRole = resolveSynthesisRole(graphState).name;
     const roles = graphState.roles.map((role) => role.name);
     const agents = roles.map((role) =>
@@ -51,7 +51,7 @@ export class AgentsStage implements RunStage {
   private async stopAgents(reason: string): Promise<void> {
     const agents = currentRunScope().agentRegistry.listAgents();
     const coordinatorRole = resolveSynthesisRole(
-      currentRunScope().workflow.scheduler.snapshot(),
+      currentRunScope().workflow.graph.snapshot(),
     ).name;
     const coordinator = agents.find((agent) =>
       agent.role === coordinatorRole

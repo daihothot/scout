@@ -6,3 +6,4 @@ export * from "./restore-agents-stage.js";
 export * from "./restore-domain-stage.js";
 export * from "./restore-tasks-stage.js";
 export * from "./record-resume-interruptions-stage.js";
+export * from "./restore-workflow-stage.js";

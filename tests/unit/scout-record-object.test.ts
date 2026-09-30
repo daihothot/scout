@@ -7,15 +7,15 @@ import { AssetStore } from "../../src/asset-store/index.js";
 import { InMemoryEventBus, type ScoutEvent } from "../../src/core/events/index.js";
 import { Journal } from "../../src/core/journal/index.js";
 import { Logger } from "../../src/core/logging/index.js";
-import { ScoutJournal } from "../../src/core/workflow/scout-journal.js";
+import { ScoutRecordObject } from "../../src/core/record/scout-record-object.js";
 import { WorkflowEvents } from "../../src/core/workflow/workflow-events.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import { RunEvents } from "../../src/run/events/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { installRunScope, RunScope } from "../../src/run/run-scope.js";
 
-test("ScoutJournal records Workflow facts explicitly once, not again on broadcast", async (t) => {
-  const { scout, eventBus } = createScoutJournal(t);
+test("ScoutRecordObject records Workflow facts explicitly once, not again on broadcast", async (t) => {
+  const { scout, eventBus } = createScoutRecordObject(t);
   const state = {
     domain: "rbt",
     workflowProfile: "rbt",
@@ -59,8 +59,8 @@ test("ScoutJournal records Workflow facts explicitly once, not again on broadcas
   assert.equal(scout.lastSeq, 3);
 });
 
-test("ScoutJournal explicit write failures are retried, disclosed, and remain retryable", (t) => {
-  const { scout, eventBus } = createScoutJournal(t);
+test("ScoutRecordObject explicit write failures are retried, disclosed, and remain retryable", (t) => {
+  const { scout, eventBus } = createScoutRecordObject(t);
   const append = Journal.prototype.append;
   const failure = new Error("injected append failure");
   let unavailable = true;
@@ -87,15 +87,15 @@ test("ScoutJournal explicit write failures are retried, disclosed, and remain re
   assert.equal(disclosed, 2);
 });
 
-test("ScoutJournal create accepts the Run baseline before strict Workflow initialization", (t) => {
-  const { scout } = createScoutJournal(t, [runCreated()]);
+test("ScoutRecordObject create accepts the Run baseline before strict Workflow initialization", (t) => {
+  const { scout } = createScoutRecordObject(t, [runCreated()]);
   assert.equal(scout.lastSeq, 1);
   assert.equal(scout.readAll()[0]?.id, "run-created");
-  assert.equal(scout.hasPreparedJournals, false);
+  assert.equal(scout.hasPreparedRecords, false);
 });
 
-test("ScoutJournal activation only swaps handles and releases the previous journal separately", (t) => {
-  const { scout, root } = createScoutJournal(t);
+test("ScoutRecordObject activation only swaps handles and releases the previous journal separately", (t) => {
+  const { scout, root } = createScoutRecordObject(t);
   const oldRoot = scout.journalRoot;
   const oldPath = scout.path;
   const close = Journal.prototype.close;
@@ -104,13 +104,13 @@ test("ScoutJournal activation only swaps handles and releases the previous journ
     if (this.path === oldPath) oldCloses += 1;
     return close.call(this);
   });
-  const prepared = scout.prepare(join(root, "workflow-002"), [runCreated()]);
-  assert.equal(scout.hasPreparedJournals, true);
+  const prepared = scout.prepareWorkflow(join(root, "workflow-002"), [runCreated()]);
+  assert.equal(scout.hasPreparedRecords, true);
 
-  scout.activate(prepared);
+  prepared.commit();
 
   assert.equal(scout.journalRoot, prepared.journalRoot);
-  assert.equal(scout.hasPreparedJournals, false);
+  assert.equal(scout.hasPreparedRecords, false);
   assert.equal(oldCloses, 0);
   assert.equal(existsSync(join(oldRoot, ".scout.lock")), true);
   assert.equal(scout.write({ ...runCreated(), id: "next" }).seq, 2);
@@ -120,44 +120,46 @@ test("ScoutJournal activation only swaps handles and releases the previous journ
   assert.equal(existsSync(join(oldRoot, ".scout.lock")), false);
 });
 
-test("ScoutJournal discard retains failed close ownership and never mistakes a later no-op for release", (t) => {
-  const fixture = createScoutJournal(t);
+test("ScoutRecordObject discard retains failed close ownership and never mistakes a later no-op for release", (t) => {
+  const fixture = createScoutRecordObject(t);
   const { scout, root } = fixture;
   const activeRoot = scout.journalRoot;
-  const prepared = scout.prepare(join(root, "workflow-002"), []);
+  const prepared = scout.prepareWorkflow(join(root, "workflow-002"), []);
   const failure = new Error("lock release failed after Journal became closed");
   let closes = 0;
-  t.mock.method(prepared.journal, "close", () => {
+  const close = Journal.prototype.close;
+  t.mock.method(Journal.prototype, "close", function (this: Journal) {
+    if (this.path !== join(prepared.journalRoot, "scout.journal")) return close.call(this);
     closes += 1;
     if (closes === 1) throw failure;
   });
   fixture.expectCloseFailure = true;
 
-  assert.throws(() => scout.discard(prepared), (error) => error === failure);
-  assert.equal(scout.hasPreparedJournals, true);
-  assert.throws(() => scout.discard(prepared), (error) => error === failure);
-  assert.throws(() => scout.activate(prepared), (error) => error === failure);
+  assert.throws(() => prepared.abort(), (error) => error === failure);
+  assert.equal(scout.hasPreparedRecords, true);
+  assert.throws(() => prepared.abort(), (error) => error === failure);
+  assert.throws(() => prepared.commit(), (error) => error === failure);
   assert.equal(closes, 1);
   assert.throws(() => scout.stop(), AggregateError);
   assert.equal(existsSync(join(activeRoot, ".scout.lock")), false);
-  assert.equal(scout.hasPreparedJournals, true);
+  assert.equal(scout.hasPreparedRecords, true);
   assert.equal(closes, 1);
 });
 
-test("ScoutJournal prepare failure closes the candidate and leaves the active journal usable", (t) => {
-  const { scout, root } = createScoutJournal(t);
+test("ScoutRecordObject prepare failure closes the candidate and leaves the active journal usable", (t) => {
+  const { scout, root } = createScoutRecordObject(t);
   const failure = new Error("baseline write failure");
   t.mock.method(Journal.prototype, "replaceAll", () => { throw failure; });
   const nextRoot = join(root, "workflow-002");
 
-  assert.throws(() => scout.prepare(nextRoot, []), (error) => error === failure);
-  assert.equal(scout.hasPreparedJournals, false);
+  assert.throws(() => scout.prepareWorkflow(nextRoot, []), (error) => error === failure);
+  assert.equal(scout.hasPreparedRecords, false);
   assert.equal(existsSync(join(nextRoot, ".scout.lock")), false);
   assert.equal(scout.write(runCreated()).seq, 1);
 });
 
-test("ScoutJournal prepare retains a candidate whose baseline and close both failed", (t) => {
-  const fixture = createScoutJournal(t);
+test("ScoutRecordObject prepare retains a candidate whose baseline and close both failed", (t) => {
+  const fixture = createScoutRecordObject(t);
   const { scout, root } = fixture;
   const nextRoot = join(root, "workflow-002");
   const appendFailure = new Error("baseline failure");
@@ -175,18 +177,18 @@ test("ScoutJournal prepare retains a candidate whose baseline and close both fai
   });
   fixture.expectCloseFailure = true;
 
-  assert.throws(() => scout.prepare(nextRoot, []), (error) => {
+  assert.throws(() => scout.prepareWorkflow(nextRoot, []), (error) => {
     assert.ok(error instanceof AggregateError);
     assert.deepEqual(error.errors, [appendFailure, closeFailure]);
     return true;
   });
-  assert.equal(scout.hasPreparedJournals, true);
+  assert.equal(scout.hasPreparedRecords, true);
   assert.throws(() => scout.stop(), AggregateError);
   assert.equal(failedCloses, 1);
 });
 
-test("ScoutJournal retains a failed retired close without changing the newly active journal", (t) => {
-  const fixture = createScoutJournal(t);
+test("ScoutRecordObject retains a failed retired close without changing the newly active journal", (t) => {
+  const fixture = createScoutRecordObject(t);
   const { scout, root } = fixture;
   const oldPath = scout.path;
   const close = Journal.prototype.close;
@@ -200,8 +202,8 @@ test("ScoutJournal retains a failed retired close without changing the newly act
     return close.call(this);
   });
   fixture.expectCloseFailure = true;
-  const prepared = scout.prepare(join(root, "workflow-002"), []);
-  scout.activate(prepared);
+  const prepared = scout.prepareWorkflow(join(root, "workflow-002"), []);
+  prepared.commit();
 
   assert.throws(() => scout.releasePrevious(), AggregateError);
   assert.throws(() => scout.releasePrevious(), AggregateError);
@@ -212,7 +214,7 @@ test("ScoutJournal retains a failed retired close without changing the newly act
   assert.equal(existsSync(join(prepared.journalRoot, ".scout.lock")), false);
 });
 
-function createScoutJournal(t: TestContext, baseline?: readonly ScoutEvent[]) {
+function createScoutRecordObject(t: TestContext, baseline?: readonly ScoutEvent[]) {
   const root = mkdtempSync(join(tmpdir(), "scout-journal-owned-"));
   const runId = "scout-journal-test";
   const runRoot = join(root, "run", runId);
@@ -229,7 +231,7 @@ function createScoutJournal(t: TestContext, baseline?: readonly ScoutEvent[]) {
     terminate: async () => undefined,
   });
   const release = installRunScope(scope);
-  const scout = new ScoutJournal();
+  const scout = new ScoutRecordObject();
   scout.create(join(root, "workflow-001"), baseline);
   scout.start();
   const fixture = { root, eventBus, scout, expectCloseFailure: false };

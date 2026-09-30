@@ -6,7 +6,7 @@ import {
   type ExecutionPlatformRequest,
   type ExecutionSelectionIdentity,
 } from "../../../../execution/index.js";
-import type { BaseDomainRuntimeFact } from "../base-domain-journal.js";
+import type { BaseDomainRuntimeFact } from "../base-domain-record-object.js";
 import {
   projectBaseExecutionEvent,
   sameExecutionSelection,

@@ -91,6 +91,11 @@ export function scoutJournalPaths(journalRoot: string) {
   };
 }
 
+/** Recording file locations are always relative to the selected Workflow journal root. */
+export function recordObjectPaths(journalRoot: string, fileName: string, lockFileName: string) {
+  return { path: join(journalRoot, fileName), lockPath: join(journalRoot, lockFileName) };
+}
+
 /** Selects execution telemetry storage without creating or retaining a Workflow. */
 export function agentTelemetryLogsRoot(agentId: string): string {
   const scope = currentRunScope();

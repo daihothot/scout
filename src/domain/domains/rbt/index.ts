@@ -1,7 +1,7 @@
 /** Runtime Behavioral Test domain lifecycle and campaign facts. */
 export * from "./rbt-domain.js";
 export * from "./rbt-events.js";
-export * from "./rbt-journal.js";
+export * from "./rbt-record-object.js";
 export * from "./core/index.js";
 export * from "./agent/index.js";
 export * from "./config/index.js";

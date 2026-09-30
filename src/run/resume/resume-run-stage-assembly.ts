@@ -9,10 +9,9 @@ import {
   RunScopeStage,
   RequestHubStage,
   RunStageExecutor,
-  WorkflowStage,
   type RunStage,
 } from "../lifecycle/index.js";
-import type { Workflow } from "../../core/workflow/index.js";
+import type { Workflow, WorkflowResumeInput } from "../../core/workflow/index.js";
 import type { RunScope } from "../run-scope.js";
 import {
   ResumeClientsStage,
@@ -21,6 +20,7 @@ import {
   RestoreTasksStage,
   InjectResumeContextStage,
   RecordResumeInterruptionsStage,
+  RestoreWorkflowStage,
 } from "./stages/index.js";
 
 /**
@@ -41,6 +41,8 @@ export class ResumeRunStageAssembly {
     executor: RunStageExecutor;
     runScope: RunScope;
     workflow: Workflow;
+    recovery?: WorkflowResumeInput;
+    missingWorkflowId?: string;
     clientsStage: ResumeClientsStage;
     environmentStage: RunStage;
   }) {
@@ -49,8 +51,8 @@ export class ResumeRunStageAssembly {
 
     executor.registerSerial(
       runScopeStage,
+      new RestoreWorkflowStage(input.workflow, input.recovery, input.missingWorkflowId),
       new RequestHubStage(),
-      new WorkflowStage(input.workflow),
       input.clientsStage,
       input.environmentStage,
       new ExecutionStage(),

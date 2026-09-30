@@ -10,6 +10,7 @@ import {
   runAgentPaths,
   runPaths,
   scoutJournalPaths,
+  recordObjectPaths,
   scoutRunRoot,
   scoutRunsRoot,
 } from "../../src/core/path.js";
@@ -95,6 +96,9 @@ test("Workflow evidence paths follow physical directory names without interpreti
     assert.deepEqual(scoutJournalPaths(journalRoot), {
       path: join(journalRoot, "scout.journal"),
       lockPath: join(journalRoot, ".scout.lock"),
+    });
+    assert.deepEqual(recordObjectPaths(journalRoot, "base.journal", ".base.lock"), {
+      path: join(journalRoot, "base.journal"), lockPath: join(journalRoot, ".base.lock"),
     });
   }
 });

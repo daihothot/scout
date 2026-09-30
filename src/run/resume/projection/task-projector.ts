@@ -1,6 +1,6 @@
 import type { AgentTaskState } from "../../../agent/task/types.js";
 import { AgentEvents } from "../../../agent/events/index.js";
-import type { JournalEvent } from "../../../core/journal/index.js";
+import type { RecordEvent } from "../../../core/record/index.js";
 
 /** Historical result retained after its Worker releases the runtime binding. */
 export interface ProjectedReleasedTask {
@@ -13,10 +13,10 @@ export interface ProjectedReleasedTask {
  * Returns whether the event belongs to task projection; release detaches the
  * task without changing its result. Step lifecycle facts are projected separately.
  */
-export function applyTaskJournalEvent(
+export function applyTaskRecordEvent(
   tasks: Map<string, AgentTaskState>,
   releasedTasks: Map<string, ProjectedReleasedTask>,
-  event: JournalEvent,
+  event: RecordEvent,
 ): boolean {
   const requireTaskPhase = (task: AgentTaskState): void => {
     if (typeof task.phase !== "string" || task.phase.length === 0) {

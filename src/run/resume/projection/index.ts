@@ -4,6 +4,7 @@
  * remain owned by resume lifecycle stages.
  */
 export * from "./task-recovery.js";
+export * from "./run-recovery.js";
 export * from "./run-projector.js";
 export * from "./task-projector.js";
 export * from "./workflow-projector.js";

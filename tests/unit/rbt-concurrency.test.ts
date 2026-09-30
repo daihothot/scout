@@ -8,7 +8,7 @@ import type { CodexMount } from "../../src/asset-store/contracts/mount.js";
 import type { AssetCommit } from "../../src/asset-store/contracts/asset-commit.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { BaseDomain, ScoutDomainId, type ScoutDomainDynamicToolCall } from "../../src/domain/index.js";
-import { JarvisWebSocketTool, RbtEvents } from "../../src/domain/domains/rbt/index.js";
+import { JarvisWebSocketTool, RbtArtifact, RbtEvents } from "../../src/domain/domains/rbt/index.js";
 import { JarvisBehaviorOrchestrator } from "../../src/domain/domains/rbt/core/jarvis-behavior-orchestrator.js";
 import { JarvisBehaviorWebSocketLinker } from "../../src/domain/domains/rbt/core/jarvis-behavior-websocket-linker.js";
 import { JarvisBehaviorCommandRunner, type BehaviorCommandExecution } from "../../src/domain/domains/rbt/core/jarvis-behavior-command-runner.js";
@@ -142,6 +142,9 @@ test("RBT execute-file releases its command queue between campaign commands", { 
 
 test("RBT execute-file closes failed history and attempts cleanup after a thrown command", async (t) => {
   const fixture = createFixture(t);
+  const artifact = new RbtArtifact();
+  artifact.start();
+  t.after(() => artifact.stop());
   const histories = new RbtCampaignExecutionHistoryStore();
   histories.start();
   t.after(() => histories.stop());
@@ -163,6 +166,9 @@ test("RBT execute-file closes failed history and attempts cleanup after a thrown
 
 test("RBT history identifies the executed bytes even when the execute-file changes during execution", async (t) => {
   const fixture = createFixture(t);
+  const artifact = new RbtArtifact();
+  artifact.start();
+  t.after(() => artifact.stop());
   const histories = new RbtCampaignExecutionHistoryStore();
   histories.start();
   t.after(() => histories.stop());
@@ -181,6 +187,9 @@ test("RBT history identifies the executed bytes even when the execute-file chang
 
 test("RBT target loss closes local history without claiming remote cleanup succeeded", async (t) => {
   const fixture = createFixture(t);
+  const artifact = new RbtArtifact();
+  artifact.start();
+  t.after(() => artifact.stop());
   const histories = new RbtCampaignExecutionHistoryStore();
   histories.start();
   t.after(() => histories.stop());

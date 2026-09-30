@@ -68,6 +68,15 @@ export interface RbtExecutionHistoryReadyEvent {
   role: ScoutAgentRole;
 }
 
+/** File identity emitted once after a Campaign execution history is finalized. */
+export interface RbtCampaignExecutionHistoryFileEvent {
+  agentId: string;
+  role: ScoutAgentRole;
+  runtimeSequence: number;
+  executorHistoryRef: string;
+  executorHistoryDigest: string;
+}
+
 /** A formal Executor handoff whose artifact identity was captured by the Domain. */
 export interface RbtExecutionPackSubmittedEvent {
   bddId: string;
@@ -96,6 +105,7 @@ export const RbtEvents = defineEventCatalog("domain.rbt", {
     end: event<RbtCampaignCommandEvent>(),
   },
   history: {
+    campaignExecutionHistory: event<RbtCampaignExecutionHistoryFileEvent>(),
     ready: event<RbtExecutionHistoryReadyEvent>(),
   },
   artifact: {

@@ -48,7 +48,7 @@ export class AgentDynamicToolBackend {
     turnId: string;
     callId: string;
     outcome: SubmitPhaseOutcomeToolCall["outcome"];
-    response: Record<string, unknown>;
+    response: Promise<Record<string, unknown>>;
   }>();
 
   constructor() {
@@ -100,7 +100,7 @@ export class AgentDynamicToolBackend {
   ): Promise<DynamicToolCallResponse> {
     try {
       if (!currentRunScope().workflow.snapshot()) throw new Error("Domain execution requires an active Workflow.");
-      const phase = currentRunScope().workflow.scheduler.current().name;
+      const phase = currentRunScope().workflow.graph.current().name;
       const call = {
         input,
         caller: {
@@ -110,7 +110,7 @@ export class AgentDynamicToolBackend {
           threadId: caller.threadId,
         },
       } satisfies import("../../../domain/types.js").ScoutDomainDynamicToolCall;
-      const assigned = currentRunScope().workflow.scheduler.snapshot().roles.some((role) =>
+      const assigned = currentRunScope().workflow.graph.snapshot().roles.some((role) =>
         role.name === caller.role && role.phases.includes(phase)
       );
       if (!assigned) {
@@ -152,7 +152,7 @@ export class AgentDynamicToolBackend {
     if (currentRunScope().workflow.snapshot()?.status !== "active") {
       throw new Error("Cannot assign a new Task while the Workflow is settling or completed.");
     }
-    const phase = currentRunScope().workflow.scheduler.current();
+    const phase = currentRunScope().workflow.graph.current();
     const workerRole = phase.selectAvailableRole((role) => {
       const candidate = this.registry.findAgent(role);
       return candidate instanceof WorkerAgent && candidate.canAcceptTask();
@@ -190,11 +190,11 @@ export class AgentDynamicToolBackend {
     };
   }
 
-  private handleSubmitPhaseOutcomeToolCall(
+  private async handleSubmitPhaseOutcomeToolCall(
     call: SubmitPhaseOutcomeToolCall,
     caller: ScoutAgent,
     delivery: DynamicToolCallInput,
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     if (!(caller instanceof CoordinatorAgent)) {
       throw new Error("SubmitPhaseOutcome is only available to the Coordinator agent.");
     }
@@ -202,20 +202,40 @@ export class AgentDynamicToolBackend {
     const receipt = this.phaseOutcomeReceipts.get(caller);
     if (receipt?.threadId === delivery.threadId && receipt.turnId === delivery.turnId) {
       if (receipt.callId === delivery.callId && receipt.outcome === call.outcome) {
-        return structuredClone(receipt.response);
+        return structuredClone(await receipt.response);
       }
       throw new Error("This Coordinator turn already submitted a Phase outcome; continue in the next Phase's turn.");
     }
-    const advanced = currentRunScope().workflow.scheduler.advance(call.outcome);
-    const response = {
-      status: "accepted",
-      currentPhase: advanced.state.currentPhase,
-      cycleCompleted: advanced.cycleCompleted,
-    };
+    // Install the receipt before yielding so duplicate delivery joins the same
+    // transaction rather than advancing another Phase while completion waits.
+    const response = Promise.resolve().then(async () => {
+      const workflow = currentRunScope().workflow;
+      const progression = await workflow.advance(call.outcome);
+      if (progression.status === "not_advanced") {
+        if (this.phaseOutcomeReceipts.get(caller)?.response === response) this.phaseOutcomeReceipts.delete(caller);
+        return {
+          status: "not_advanced",
+          reason: progression.reason,
+          message: "Unread user input is waiting. The Phase has not advanced. End this response; read the user input in the next Turn, reassess, and submit a Phase outcome only if still appropriate.",
+        };
+      }
+      const advanced = progression.result;
+      if (!advanced.cycleCompleted) caller.scheduleCurrentPhaseStep();
+      return {
+        status: "accepted",
+        currentPhase: advanced.cycleCompleted ? "none" : advanced.state.currentPhase,
+        cycleCompleted: advanced.cycleCompleted,
+        workflowStatus: workflow.snapshot()?.status ?? "empty",
+        ...(advanced.cycleCompleted ? { message: "Workflow completed. Any exit transaction errors are reported as system errors and do not undo completion. End this response. Start another Workflow only for an explicit new user execution request." } : {}),
+      };
+    });
     this.phaseOutcomeReceipts.set(caller, { threadId: delivery.threadId, turnId: delivery.turnId, callId: delivery.callId, outcome: call.outcome, response });
-    if (!advanced.cycleCompleted) caller.scheduleCurrentPhaseStep();
-    else caller.scheduleWorkflowSettlementStep();
-    return structuredClone(response);
+    try {
+      return structuredClone(await response);
+    } catch (error) {
+      if (this.phaseOutcomeReceipts.get(caller)?.response === response) this.phaseOutcomeReceipts.delete(caller);
+      throw error;
+    }
   }
 
   private async handleSubmitTaskToolCall(

@@ -12,8 +12,9 @@ import { buildResumePacket } from "../packet/index.js";
 import {
   planResumeActions,
   projectRun,
-  readDomainJournalProjections,
+  readDomainRecordProjections,
   ResumeActionTypes,
+  recoverPendingMessages,
 } from "../projection/index.js";
 
 /**
@@ -32,13 +33,15 @@ export class InjectResumeContextStage implements RunStage {
   async start(): Promise<void> {
     const scope = currentRunScope();
     if (!scope.workflow.snapshot()) return;
-    const graphState = scope.workflow.scheduler.snapshot();
+    const graphState = scope.workflow.graph.snapshot();
     const synthesisRole = resolveSynthesisRole(graphState).name;
     const projection = projectRun(
       scope.workflow.readEvents(),
       synthesisRole,
-      readDomainJournalProjections(scope.domainRegistry.list()),
+      readDomainRecordProjections(scope.domainRegistry.list()),
     );
+    const pendingMessages = recoverPendingMessages(projection, synthesisRole);
+    const terminal = projection.workflowStatus !== "active";
     scope.toolCallStore.restore(projection.toolCalls);
     scope.stepStore.restore(projection.steps);
     scope.humanInputStore.restore(projection.humanInputRequests);
@@ -87,11 +90,11 @@ export class InjectResumeContextStage implements RunStage {
         acceptedMessages: projection.messageDeliveries.filter((message) =>
           message.agentId === worker.agentId
         ),
-        pendingMessages: projection.pendingMessages.filter((message) =>
+        pendingMessages: pendingMessages.filter((message) =>
           message.agentId === worker.agentId
         ),
       });
-      if (!task) continue;
+      if (!task || terminal) continue;
       const resumeActions = planResumeActions({
         projection,
         agentId: worker.agentId,
@@ -125,16 +128,17 @@ export class InjectResumeContextStage implements RunStage {
       role: synthesisRole,
       synthesisRole,
     });
-    this.activateCoordinator = coordinatorResumeActions.length > 0;
+    this.activateCoordinator = coordinatorResumeActions.length > 0 || (terminal && pendingMessages.some((message) =>
+      message.agentId === coordinator.agentId && projection.userMessages.some((user) => user.messageId === message.messageId)));
     this.coordinator.restoreState({
       userInputs: scope.workflow.readEvents().filter((event) => SystemEvents.interaction.userMessageSubmitted.is(event)),
       acceptedMessages: projection.messageDeliveries.filter((message) =>
         message.agentId === coordinator.agentId
       ),
-      pendingMessages: projection.pendingMessages.filter((message) =>
+      pendingMessages: pendingMessages.filter((message) =>
         message.agentId === coordinator.agentId
       ),
-      resumeContext: buildResumePacket({
+      resumeContext: terminal ? "" : buildResumePacket({
         projection,
         agentId: coordinator.agentId,
         role: synthesisRole,

@@ -58,10 +58,10 @@ export const agent = {
       const workflowState = scope.workflow.snapshot();
       return attachments.addTagBlock(AgentContextTags.WorkflowPhase, [
         `current_domain: ${scope.workflow.graph.snapshot().domain}`,
-        `current_phase: ${workflowState ? scope.workflow.scheduler.snapshot().currentPhase : "none"}`,
+        `current_phase: ${workflowState ? scope.workflow.graph.snapshot().currentPhase : "none"}`,
         `workflow_status: ${workflowState?.status ?? "empty"}`,
         ...(workflowState?.status === "settling"
-          ? ["Graph 已终止：只完成旧工作收尾；不得新建 Task 或再次推进 Graph。收尾后进入无活动 Workflow 状态，再判断待消费用户输入是否要求新执行。"]
+          ? ["Graph 已终止，Runtime 正在完成 Workflow 事务；不得新建 Task、再次推进 Graph 或代替 Runtime 收尾。"]
           : []),
         ...(!workflowState ? ["无活动 Workflow。仅交流或查看历史；明确的新执行需求由 Coordinator 调用 StartWorkflow，接受后结束本次 response。"] : []),
       ].join("\n"));

@@ -31,6 +31,7 @@ family:tool.scout.dynamic.coordinator.**
 - Worker 的 `done` 只表示交回一轮 handoff，不代表领域目标或当前 phase 已完成；任务资源释放也不改变该业务判断。
 - Coordinator 根据当前 phase 的 task 结果、超时、异常和人工信息判断结果，然后用 `SubmitPhaseOutcome` 提交 `completed` 或 `error`，不另行提交任务归档操作。
 - `SubmitPhaseOutcome` 将结果交给 Scout Runtime；接受后立即结束当前 response，等待下一次 Coordinator response。不要在同一 response 中自行处理下一个 phase。
+- 接受结果若为 `cycleCompleted: true`，表示 Workflow 已完毕；当前 Turn 的后续回复属于空白期，不再执行该 Workflow 的收尾工作，也不自行启动新 Workflow。
 - 不改写 Worker 的专业结论；只能判断 handoff 是否满足当前 Domain Skill 和当前 phase 的消费条件，并如实报告缺口、限制或失败。
 
 ## 5. Human Input and Synthesis

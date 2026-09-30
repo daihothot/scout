@@ -15,14 +15,14 @@ import type {
   ScoutDomain,
   ScoutDomainArtifactFact,
   ScoutDomainGateFact,
-  ScoutDomainJournalProjection,
+  ScoutDomainRecordProjection,
 } from "../../../domain/types.js";
 import { SystemEvents } from "../../../system/events/index.js";
 import { RunEvents } from "../../events/index.js";
-import type { JournalEvent } from "../../../core/journal/index.js";
+import type { RecordEvent } from "../../../core/record/index.js";
 import { WorkflowEvents, type WorkflowStatus } from "../../../core/workflow/index.js";
 import {
-  applyTaskJournalEvent,
+  applyTaskRecordEvent,
   type ProjectedReleasedTask,
 } from "./task-projector.js";
 
@@ -82,6 +82,8 @@ export interface RunProjection {
   releasedTasks: ProjectedReleasedTask[];
   messageDeliveries: AgentMessage[];
   pendingMessages: AgentMessage[];
+  consumedMessageIds: string[];
+  messageSequences: Array<{ messageId: string; journalSeq: number }>;
   humanInputRequests: ProjectedHumanInputRequest[];
   turns: ProjectedTurn[];
   steps: AgentStepState[];
@@ -105,19 +107,19 @@ export interface RunProjection {
 }
 
 /** One Domain-owned projection paired with the events from that Domain's journal. */
-export interface DomainJournalProjectionInput {
-  readonly journal: ScoutDomainJournalProjection;
-  readonly events: JournalEvent[];
+export interface DomainRecordProjectionInput {
+  readonly recordObject: ScoutDomainRecordProjection;
+  readonly events: RecordEvent[];
 }
 
-export function readDomainJournalProjections(
+export function readDomainRecordProjections(
   domains: readonly ScoutDomain[],
-): DomainJournalProjectionInput[] {
+): DomainRecordProjectionInput[] {
   return domains.flatMap((domain) => {
-    if (!domain.journal?.readAll) return [];
+    if (!domain.recordObject?.readAll) return [];
     return [{
-      journal: domain.journal,
-      events: domain.journal.readAll(),
+      recordObject: domain.recordObject,
+      events: domain.recordObject.readAll(),
     }];
   });
 }
@@ -129,9 +131,9 @@ export function readDomainJournalProjections(
  * than inventing state. It is read-only with respect to the journal.
  */
 export function projectRun(
-  events: JournalEvent[],
+  events: RecordEvent[],
   synthesisRole: string,
-  domainJournals: readonly DomainJournalProjectionInput[] = [],
+  domainJournals: readonly DomainRecordProjectionInput[] = [],
 ): RunProjection {
   const created = events.find((event) => RunEvents.run.created.is(event));
   if (!created || !RunEvents.run.created.is(created)) {
@@ -219,7 +221,7 @@ export function projectRun(
       threads.set(event.payload.agentId, structuredClone(event.payload));
       continue;
     }
-    if (applyTaskJournalEvent(tasks, releasedTasks, event)) {
+    if (applyTaskRecordEvent(tasks, releasedTasks, event)) {
       if (AgentEvents.task.outcomeSubmitted.is(event)) {
         outcomes.push({
           taskId: event.payload.task.taskId,
@@ -432,7 +434,7 @@ export function projectRun(
 
   for (const domainJournal of domainJournals) {
     for (const event of domainJournal.events) {
-      const domainFact = domainJournal.journal.project(event, event.seq);
+      const domainFact = domainJournal.recordObject.project(event, event.seq);
       if (domainFact?.kind === "artifact") {
         artifacts.push({
           ...structuredClone(domainFact.payload),
@@ -477,21 +479,9 @@ export function projectRun(
     tasks: [...tasks.values()].map((task) => structuredClone(task)),
     releasedTasks: [...releasedTasks.values()].map((task) => structuredClone(task)),
     messageDeliveries: [...queuedMessages.values()].map((message) => structuredClone(message)),
+    consumedMessageIds: [...consumedMessages],
+    messageSequences: [...recoverableMessageSeq].map(([messageId, journalSeq]) => ({ messageId, journalSeq })),
     pendingMessages: [
-      ...userMessages
-        .filter((message) =>
-          !queuedMessages.has(message.messageId)
-          && !consumedMessages.has(message.messageId)
-        )
-        .map((message) => ({
-          seq: message.seq,
-          message: {
-            messageId: message.messageId,
-            agentId: synthesisRole,
-            body: message.attachment,
-            queuedAt: message.acceptedAt,
-          },
-        })),
       ...[...recoverableMessages.values()]
         .filter((message) => {
           if (consumedMessages.has(message.messageId)) return false;

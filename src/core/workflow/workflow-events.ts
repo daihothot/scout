@@ -19,9 +19,20 @@ export interface WorkflowGraphAdvancedEvent {
   advancedAt: string;
 }
 
-/** Durable Workflow Graph and completion facts owned by scout.journal. */
+/** An awaited runtime boundary, not a durable or replayable Workflow fact. */
+export interface WorkflowBoundaryEvent {
+  workflowId: string;
+  journalRoot: string;
+}
+
+/** Awaited runtime boundaries and durable Graph/completion facts owned by Scout. */
 export const WorkflowEvents = defineEventCatalog("system", {
   workflow: {
+    preparing: event<WorkflowBoundaryEvent>(),
+    committing: event<WorkflowBoundaryEvent>(),
+    aborting: event<WorkflowBoundaryEvent>(),
+    releasingPrevious: event<WorkflowBoundaryEvent>(),
+    releasing: event<WorkflowBoundaryEvent>(),
     initialized: event<WorkflowGraphInitializedEvent>(),
     advanced: event<WorkflowGraphAdvancedEvent>(),
     completed: event<{ completedAt: string }>(),

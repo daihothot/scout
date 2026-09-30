@@ -47,11 +47,7 @@ import {
 import type { ScoutConfig } from "../../src/system/config/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { EnvironmentMetadataRollback, EnvironmentSnapshotLoader } from "../../src/run/environment/index.js";
-import {
-  createTestScheduler,
-  createTestRunPersistence,
-  installTestRunScope,
-} from "../helpers/run-persistence.js";
+import { createDefaultTestGraph, createTestRunPersistence, installTestRunScope } from "../helpers/run-persistence.js";
 
 const scoutRoot = process.cwd();
 const linkedFixtureRoots: string[] = [];
@@ -75,7 +71,7 @@ test("PrepareEnvironmentStage materializes, preflights, and commits every agent 
 
   await stage.start();
 
-  const roles = createTestScheduler().snapshot().roles.map((role) => role.name);
+  const roles = createDefaultTestGraph().snapshot().roles.map((role) => role.name);
   assert.deepEqual(preflightedAgents.sort(), [...roles].sort());
   assert.deepEqual(Object.keys(stage.agents).sort(), [...roles].sort());
   for (const role of roles) {
@@ -158,12 +154,12 @@ test("PrepareEnvironmentStage reports six rebuild units per role", async (t) => 
     snapshot.phase === "running" && snapshot.descriptor.progress,
   );
   assert.ok(rebuildingSnapshots.every((snapshot) =>
-    snapshot.totalUnits === createTestScheduler().snapshot().roles.map((role) => role.name).length * 6
+    snapshot.totalUnits === createDefaultTestGraph().snapshot().roles.map((role) => role.name).length * 6
   ));
   const final = snapshots.at(-1);
   assert.ok(final);
   assert.equal(final.phase, "done");
-  assert.equal(final.totalUnits, createTestScheduler().snapshot().roles.map((role) => role.name).length * 6);
+  assert.equal(final.totalUnits, createDefaultTestGraph().snapshot().roles.map((role) => role.name).length * 6);
   assert.equal(final.completedUnits, final.totalUnits);
   for (let index = 1; index < snapshots.length; index += 1) {
     assert.ok(snapshots[index]!.completedUnits >= snapshots[index - 1]!.completedUnits);
@@ -192,7 +188,7 @@ test("PrepareEnvironmentStage collects every role before reporting a failed pref
 
   await assert.rejects(stage.start(), /preflight failed/);
 
-  const roles = createTestScheduler().snapshot().roles.map((role) => role.name);
+  const roles = createDefaultTestGraph().snapshot().roles.map((role) => role.name);
   assert.deepEqual(preflightedAgents.sort(), [...roles].sort());
   assert.equal(stage.prepared, true);
   assert.ok(Object.values(stage.agents).every((agent) =>
@@ -626,7 +622,7 @@ test("RestoreEnvironmentStage rebuilds only damaged roles and is idempotent", as
     preflightMount: async () => ({ status: "passed" }),
   }).start();
 
-  const roles = createTestScheduler().snapshot().roles.map((role) => role.name);
+  const roles = createDefaultTestGraph().snapshot().roles.map((role) => role.name);
   const sentinels = new Map<string, string>();
   const mountTimes = new Map<string, number>();
   for (const role of roles) {
@@ -749,9 +745,7 @@ test("RestoreEnvironmentStage follows current GraphState roles and retains remov
   };
   writeFileSync(workflowPath, JSON.stringify(workflow, null, 2) + "\n", "utf8");
 
-  const workflowRuntime = new Workflow({
-    graphState: new AssetStore().buildWorkflow(fixtureRoot, "validation"),
-  });
+  const workflowRuntime = new Workflow(new AssetStore().buildWorkflow(fixtureRoot, "validation"));
   const resumed = installExistingEnvironmentScope(
     fixtureRoot,
     runId,
@@ -892,7 +886,7 @@ test("RestoreEnvironmentStage self-heals a partial mount without rebuilding comp
   }).start();
   const final = finalProgress.progress.at(-1);
   assert.ok(final);
-  assert.equal(final.totalUnits, createTestScheduler().snapshot().roles.map((role) => role.name).length);
+  assert.equal(final.totalUnits, createDefaultTestGraph().snapshot().roles.map((role) => role.name).length);
   assert.equal(final.descriptor.status.detail, "Mount · ready · 4/4 reusable");
   assert.ok(finalProgress.progress.every((snapshot) => !snapshot.descriptor.progress));
   assert.equal(readFileSync(coordinatorSentinel, "utf8"), "preserve\n");
@@ -911,7 +905,7 @@ for (const crashAt of ["wipe", "before-index", "after-index"] as const) {
     const runRoot = join(fixtureRoot, "run", runId);
     const coordinator = initial.scope.environment.agents.coordinator;
     const previousHash = coordinator.mount.resourceHash;
-    const roles = initial.scope.workflow.scheduler.snapshot().roles.map((role) => role.name);
+    const roles = initial.scope.workflow.graph.snapshot().roles.map((role) => role.name);
     initial.release();
     t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
     const drift = crashAt !== "wipe";
@@ -968,7 +962,7 @@ for (const invalid of ["json", "run", "role", "ref", "identity", "symlink", "anc
   test(`Environment rollback rejects ${invalid} before any repair write`, async (t) => {
     const { fixtureRoot, runtime } = await prepareLinkedEnvironment(t, `rollback-${invalid}`);
     const { manifestStore, runRoot } = runtime.scope;
-    const roles = runtime.scope.workflow.scheduler.snapshot().roles.map((role) => role.name);
+    const roles = runtime.scope.workflow.graph.snapshot().roles.map((role) => role.name);
     const snapshot = new EnvironmentSnapshotLoader({
       scoutRoot: fixtureRoot, runRoot, manifest: manifestStore.read(), roles,
     }).load();
@@ -1040,7 +1034,7 @@ test("Environment rollback refuses to overwrite pending evidence and leaves ordi
     scoutRoot: fixtureRoot,
     runRoot,
     manifest: manifestStore.read(),
-    roles: runtime.scope.workflow.scheduler.snapshot().roles.map((role) => role.name),
+    roles: runtime.scope.workflow.graph.snapshot().roles.map((role) => role.name),
   });
   const snapshot = loader.load();
   const rollback = new EnvironmentMetadataRollback(snapshot, manifestStore, fixtureRoot);

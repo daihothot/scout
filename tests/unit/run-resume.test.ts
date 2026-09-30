@@ -1,3 +1,5 @@
+import { StartWorkflowStage } from "../../src/run/startup/stages/start-workflow-stage.js";
+import { RestoreWorkflowStage } from "../../src/run/resume/stages/restore-workflow-stage.js";
 import { writeAgentThreadRecord } from "../../src/agent/thread/agent-thread-record.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -63,6 +65,7 @@ import {
   projectRun as projectRunEvents,
   ResumeActionTypes,
   TaskRecoveryCheckpoints,
+  recoverPendingMessages,
 } from "../../src/run/resume/projection/index.js";
 import {
   currentRunScope,
@@ -98,14 +101,9 @@ import {
   RunScopeStage,
   RequestHubStage,
   RunStageExecutor,
-  WorkflowStage,
   type RunStage,
 } from "../../src/run/lifecycle/index.js";
-import {
-  createTestRunPersistence,
-  createTestScheduler,
-  installTestRunScope,
-} from "../helpers/run-persistence.js";
+import { createTestRunPersistence, createDefaultTestGraph, installTestRunScope, createTestWorkflowAsset } from "../helpers/run-persistence.js";
 
 test("Run projection rebuilds pending messages, human gate and interrupted turn", () => {
   const events = journalEvents(
@@ -163,8 +161,10 @@ test("Run projection rebuilds pending messages, human gate and interrupted turn"
   );
   const projection = projectRun(events);
 
+  assert.equal(projection.pendingMessages.some((message) => message.messageId === "user-message-unqueued"), false,
+    "projection contains facts, not synthesized recovery delivery");
   assert.deepEqual(
-    projection.pendingMessages.map((message) => message.messageId),
+    recoverPendingMessages(projection, "coordinator").map((message) => message.messageId),
     ["user-message-unqueued", "message-2", "human-1-request"],
   );
   assert.deepEqual(
@@ -1038,7 +1038,7 @@ test("Coordinator resume packet uses its own interrupted Step prompt only", () =
 
 for (const nextStepStarted of [false, true]) {
   test(`Phase handoff recovery ${nextStepStarted ? "resumes the started Step" : "wakes the committed Phase without another input"}`, () => {
-    const graph = createTestScheduler().snapshot();
+    const graph = createDefaultTestGraph().snapshot();
     const oldStep = {
       ...agentStepState({ agentId: "coordinator", stepId: "old-phase-step" }),
       taskId: undefined,
@@ -1064,7 +1064,7 @@ for (const nextStepStarted of [false, true]) {
 }
 
 test("Settling recovery separates old work from deferred user input", () => {
-  const graph = createTestScheduler().snapshot();
+  const graph = createDefaultTestGraph().snapshot();
   const projection = projectRun(journalEvents(
     scoutEvent(SystemEvents.interaction.userMessageSubmitted, {
       messageId: "next-workflow-input", text: "next workflow only", attachment: agent.turn.message("next workflow only"),
@@ -1082,8 +1082,6 @@ test("Settling recovery separates old work from deferred user input", () => {
   assert.deepEqual(planResumeActions({
     projection, agentId: "coordinator", role: "coordinator", synthesisRole: "coordinator",
   }), [
-    { type: ResumeActionTypes.ConsumeMessage, messageId: "old-worker-message" },
-    { type: ResumeActionTypes.SettleWorkflow },
   ]);
   const packet = buildPlannedResumePacket({
     projection, agentId: "coordinator", role: "coordinator", assetCommitId: "coordinator-assets",
@@ -1619,8 +1617,8 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
     });
     const first = await initialAgent.runTurn({ prompt: "first Workflow" });
     const firstWorkflowPath = initialScope.workflow.journalPath;
-    initialScope.workflow.scheduler.advance("error");
-    await initialScope.workflow.settleWorkflow();
+    await initialScope.workflow.advance("error");
+
     assert.equal(initialScope.workflow.snapshot(), undefined);
     await initialScope.workflow.startWorkflow();
     assert.equal(projectRun(initialScope.workflow.readEvents()).turns.length, 0);
@@ -1642,13 +1640,12 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
     for (let restore = 0; restore < 2; restore += 1) {
       const restoredThread = projectRun(events).threads[0];
       assert.ok(restoredThread);
-      const workflow = new Workflow({
+      const workflow = new Workflow(createTestWorkflowAsset(graphState));
+      const workflowRecovery = {
         graphState,
-        resume: {
-          workflowState: projectWorkflowState(workflowId, events),
-          journalRoot,
-        },
-      });
+        workflowState: projectWorkflowState(workflowId, events),
+        journalRoot
+      };
       const scope = new RunScope({
         runId, scoutRoot: fixtureRoot, runRoot: initialScope.runRoot,
         config: initialScope.config, logger: noopLogger(), eventBus: new InMemoryEventBus(),
@@ -1660,6 +1657,7 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
       const release = installRunScope(scope);
       try {
         await workflow.start();
+        workflow.restore(workflowRecovery);
         const restoredAgent = new RestorableMessageAgent();
         scope.agentRegistry.registerAgent(restoredAgent);
         await restoredAgent.resumeThread({ thread: restoredThread, rolloutPath: "/unused-test-rollout" });
@@ -1830,7 +1828,7 @@ test("Resume activation wakes a committed next Phase after the previous Coordina
   writePersistedRollout({ scoutRoot: fixture.fixtureRoot, runId: fixture.scope.runId, threadId: thread.threadId });
   const step = { ...agentStepState({ agentId: "coordinator", stepId: "completed-old-phase" }), taskId: undefined };
   await fixture.scope.eventBus.publishAndWait(AgentEvents.step.started, step);
-  fixture.scope.workflow.scheduler.advance("completed");
+  await fixture.scope.workflow.advance("completed");
   await fixture.scope.eventBus.publishAndWait(AgentEvents.step.completed, { ...step, status: AgentStepStatuses.Completed });
   const restoreAgents = new RestoreAgentsStage();
   await restoreAgents.start();
@@ -1877,7 +1875,7 @@ test("RestoreAgentsStage restarts a journaled thread that Codex never persisted"
   const startedRoles: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
-      const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>
+      const role = createDefaultTestGraph().snapshot().roles.map((role) => role.name).find((candidate) =>
         options.cwd.includes(`${candidate}/mount`)
       ) ?? "unknown";
       startedRoles.push(role);
@@ -1928,7 +1926,7 @@ test("RestoreAgentsStage restarts a journaled thread that Codex never persisted"
   const stage = new RestoreAgentsStage();
   await stage.start();
 
-  assert.deepEqual(startedRoles.sort(), createTestScheduler().snapshot().roles.map((role) => role.name).sort());
+  assert.deepEqual(startedRoles.sort(), createDefaultTestGraph().snapshot().roles.map((role) => role.name).sort());
   assert.equal(
     noCodexRecord.scope.agentRegistry.resolveAgent("researcher").threadId,
     `new-thread-${"researcher"}`,
@@ -1954,7 +1952,7 @@ test(`RestoreAgentsStage resumes Agent entity memory with ${completedWorkflow ? 
       if (options.cwd.includes(`${"researcher"}/mount`)) {
         throw new Error("zero-turn persisted thread must not cold-start");
       }
-      const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>
+      const role = createDefaultTestGraph().snapshot().roles.map((role) => role.name).find((candidate) =>
         options.cwd.includes(`${candidate}/mount`)
       ) ?? "unknown";
       const threadId = `new-thread-${role}`;
@@ -2002,8 +2000,8 @@ test(`RestoreAgentsStage resumes Agent entity memory with ${completedWorkflow ? 
   let oldEvidence: string | undefined;
   if (completedWorkflow) {
     oldJournalPath = zeroTurn.scope.workflow.journalPath;
-    zeroTurn.scope.workflow.scheduler.advance("error");
-    await zeroTurn.scope.workflow.settleWorkflow();
+    await zeroTurn.scope.workflow.advance("error");
+
     assert.equal(zeroTurn.scope.workflow.snapshot(), undefined);
     oldEvidence = readFileSync(oldJournalPath, "utf8");
   }
@@ -2028,7 +2026,7 @@ test("RestoreAgentsStage restarts a current zero-turn thread after an older turn
   const startedRoles: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
-      const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>
+      const role = createDefaultTestGraph().snapshot().roles.map((role) => role.name).find((candidate) =>
         options.cwd.includes(`${candidate}/mount`)
       ) ?? "unknown";
       startedRoles.push(role);
@@ -2259,9 +2257,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   const runRoot = join(fixtureRoot, "run", runId);
   const initialManifestStore = new RunManifestStore(runRoot);
   const initialEventBus = new InMemoryEventBus();
-  const initialWorkflow = new Workflow({
-    graphState: createTestScheduler("validation").snapshot(),
-  });
+  const initialWorkflow = new Workflow(createTestWorkflowAsset(createDefaultTestGraph("validation").snapshot()));
   const initialScope = new RunScope({
     runId,
     scoutRoot: fixtureRoot,
@@ -2566,13 +2562,12 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     runId,
     logger: noopLogger(),
   });
-  const resumedWorkflow = new Workflow({
-    graphState: createTestScheduler("validation").snapshot(),
-    resume: {
-      workflowState: resumeWorkflow,
-      journalRoot: resumeJournalRoot,
-    },
-  });
+  const resumedWorkflow = new Workflow(createTestWorkflowAsset(createDefaultTestGraph("validation").snapshot()));
+  const resumedWorkflowRecovery = {
+    graphState: createDefaultTestGraph("validation").snapshot(),
+    workflowState: resumeWorkflow,
+    journalRoot: resumeJournalRoot
+  };
   const scope = new RunScope({
     runId,
     scoutRoot: fixtureRoot,
@@ -2588,8 +2583,8 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   const injectResumeContextStage = new InjectResumeContextStage();
   executor.registerSerial(
     new RunScopeStage(scope),
+    new RestoreWorkflowStage(resumedWorkflow, resumedWorkflowRecovery),
     new RequestHubStage(),
-    new WorkflowStage(resumedWorkflow),
     new RestoreEnvironmentStage({
       preflightMount: async () => ({ status: "passed" }),
     }),
@@ -2634,9 +2629,9 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   assert.equal("assetCommitId" in restoredManifest, false);
   assert.deepEqual(
     Object.keys(restoredManifest.agents ?? {}).sort(),
-    createTestScheduler().snapshot().roles.map((role) => role.name).sort(),
+    createDefaultTestGraph().snapshot().roles.map((role) => role.name).sort(),
   );
-  for (const role of createTestScheduler().snapshot().roles.map((role) => role.name)) {
+  for (const role of createDefaultTestGraph().snapshot().roles.map((role) => role.name)) {
     const restoredAgent = scope.environment.agents[role];
     const entry = restoredManifest.agents?.[role];
     assert.ok(entry);
@@ -2762,9 +2757,7 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
   const runId = "run-start-failure";
   const runRoot = join(fixtureRoot, "run", runId);
   const eventBus = new InMemoryEventBus();
-  const workflow = new Workflow({
-    graphState: createTestScheduler().snapshot(),
-  });
+  const workflow = new Workflow(createTestWorkflowAsset(createDefaultTestGraph().snapshot()));
   const executor = new RunStageExecutor({
     runId,
     logger: noopLogger(),
@@ -2789,7 +2782,7 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
   executor.registerSerial(
     new RunScopeStage(scope),
     new InitializeRunStage(),
-    new WorkflowStage(workflow),
+    new StartWorkflowStage(workflow),
     failingStage,
   );
 
@@ -2864,7 +2857,7 @@ async function assertThreadRestoreFailure(
   const resumedThreadIds: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
-      const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>
+      const role = createDefaultTestGraph().snapshot().roles.map((role) => role.name).find((candidate) =>
         options.cwd.includes(`${candidate}/mount`)
       ) ?? "unknown";
       startedRoles.push(role);

@@ -1,9 +1,5 @@
 import test, { type TestContext } from "node:test";
-import {
-  createTestRunPersistence,
-  createTestScheduler,
-  installTestRunScope,
-} from "../helpers/run-persistence.js";
+import { createTestRunPersistence, createDefaultTestGraph, installTestRunScope, createTestGraph } from "../helpers/run-persistence.js";
 import assert from "node:assert/strict";
 import { AgentTimelineStepBackend } from "../../src/agent/backend/timeline/agent-timeline-step-backend.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
@@ -56,7 +52,7 @@ import { AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE } from "../../src/agent/tools/
 import type { AgentMessage } from "../../src/agent/message/types.js";
 import { attachments } from "../../src/agent/context/attachments.js";
 import { AgenticLoop } from "../../src/agent/core/agentic-loop.js";
-import { Graph, Scheduler } from "../../src/core/workflow/index.js";
+import { Graph } from "../../src/core/workflow/index.js";
 
 test("TaskRunner runs one bounded correction turn and fails visibly when both turns omit disposition", async (t) => {
   let turnCount = 0;
@@ -1082,7 +1078,7 @@ async function createHarness(t: TestContext, input: {
   const scope = installTestRunScope(t, {
     runId: "worker-runner-harness",
     eventBus,
-    scheduler: new Scheduler(new Graph({ ...createTestScheduler().snapshot(), currentPhase: "verify" })),
+    runtimeGraph: createTestGraph({ ...createDefaultTestGraph().snapshot(), currentPhase: "verify" }),
   });
   const events: ScoutEvent[] = [];
   const terminalTasks: AgentTaskState[] = [];

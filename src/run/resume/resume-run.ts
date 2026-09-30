@@ -4,10 +4,11 @@ import { runPaths, scoutJournalPaths, scoutRunRoot } from "../../core/path.js";
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import { InMemoryEventBus } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
-import { resolveSynthesisRole, projectWorkflowState, Workflow, WorkflowEvents, type GraphState } from "../../core/workflow/index.js";
-import { Benchmarks, ScoutBenchmarks } from "../../core/benchmarks/index.js";
-import { readJournalEvents, type JournalEvent } from "../../core/journal/index.js";
-import { AssetStore, readWorkflowProfile } from "../../asset-store/index.js";
+import { resolveSynthesisRole, projectWorkflowState, Workflow, WorkflowEvents, type GraphState, type WorkflowResumeInput } from "../../core/workflow/index.js";
+import { ScoutBenchmarks } from "../../core/benchmarks/index.js";
+import { Benchmarks } from "../../core/benchmarks/index.js";
+import { RecordableObject, type RecordEvent } from "../../core/record/index.js";
+import { AssetStore } from "../../asset-store/index.js";
 import {
   NoopRuntimeInteractionPort,
   type RuntimeDisclosureEvent,
@@ -32,7 +33,7 @@ import type {
 import {
   projectGraphState,
   projectRun,
-  readDomainJournalProjections,
+  readDomainRecordProjections,
 } from "./projection/index.js";
 import { ResumeRunStageAssembly } from "./resume-run-stage-assembly.js";
 import { PrepareEnvironmentStage } from "../startup/stages/prepare-environment-stage.js";
@@ -65,9 +66,9 @@ export async function resumeRun(
   const selectedWorkflowId = benchmarks.read()?.currentWorkflow;
   const journalRoot = selectedWorkflow?.journalRoot;
   const journalPath = journalRoot ? scoutJournalPaths(journalRoot).path : undefined;
-  let persistedEvents: JournalEvent[] | undefined;
+  let persistedEvents: RecordEvent[] | undefined;
   try {
-    if (journalPath) persistedEvents = readJournalEvents(journalPath);
+    if (journalPath) persistedEvents = RecordableObject.readFile(journalPath);
   } catch (error) {
     if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
       throw error;
@@ -103,10 +104,11 @@ export async function resumeRun(
   const config = assetStore.config(scoutRoot);
   const scoutConfig = loadScoutConfig(config);
   const eventBus = new InMemoryEventBus();
-  let workflow: Workflow;
+  const selectedProfile = assetStore.buildWorkflow(scoutRoot, scoutConfig.workflow.profile);
+  const workflow = new Workflow(selectedProfile);
+  let recovery: WorkflowResumeInput | undefined;
   if (persistedEvents) {
     const graphState = projectGraphState(persistedEvents);
-    const selectedProfile = readWorkflowProfile(scoutRoot, scoutConfig.workflow.profile);
     if (selectedProfile.name !== graphState.workflowProfile) {
       throw new Error(
         `Cannot resume ${manifest.runId} with Workflow Profile ${selectedProfile.name};`
@@ -119,18 +121,12 @@ export async function resumeRun(
         + ` the persisted GraphState requires ${graphState.domain}.`,
       );
     }
-    workflow = new Workflow({
+    recovery = {
       graphState,
-      resume: {
-        workflowState: projectWorkflowState(selectedWorkflowId!, persistedEvents),
-        journalRoot: journalRoot!,
-      },
-    });
+      workflowState: projectWorkflowState(selectedWorkflowId!, persistedEvents),
+      journalRoot: journalRoot!,
+    };
   } else {
-    workflow = new Workflow({
-      graphState: assetStore.buildWorkflow(scoutRoot, scoutConfig.workflow.profile),
-      missingWorkflowId: selectedWorkflowId,
-    });
     if (selectedWorkflowId) await interactionPort.disclose({
       level: "warn",
       source: "workflow.resume",
@@ -178,6 +174,8 @@ export async function resumeRun(
     executor,
     runScope,
     workflow,
+    recovery,
+    missingWorkflowId: persistedEvents ? undefined : selectedWorkflowId,
     clientsStage: new ResumeClientsStage({ allowMissingHome: initializeEnvironment }),
     environmentStage: initializeEnvironment
       ? new PrepareEnvironmentStage()
@@ -245,7 +243,7 @@ export async function resumeRun(
         checkpointSeq,
       },
     } satisfies RuntimeDisclosureEvent);
-    return toRunSummary(scope.environment, scope.workflow.scheduler.snapshot());
+    return toRunSummary(scope.environment, scope.workflow.graph.snapshot());
   } catch (error) {
     await assembly.executor.terminate("startup_failed");
     try {

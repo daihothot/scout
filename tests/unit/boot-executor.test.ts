@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   RunStageExecutor,
-  WorkflowStage,
   type RunStage,
 } from "../../src/run/lifecycle/index.js";
+import { StartWorkflowStage } from "../../src/run/startup/stages/start-workflow-stage.js";
 import { Logger, type LogInput, type LogLevel } from "../../src/core/logging/index.js";
 import { startRun } from "../../src/run/startup/start-run.js";
 import { PrepareEnvironmentStage } from "../../src/run/startup/stages/prepare-environment-stage.js";
@@ -302,8 +302,8 @@ for (const [event, withEnvironment] of [
     });
     t.mock.method(RunStageExecutor.prototype, "registerParallel", () => undefined);
     let runRoot: string | undefined;
-    const start = WorkflowStage.prototype.start;
-    t.mock.method(WorkflowStage.prototype, "start", async function (this: WorkflowStage) {
+    const start = StartWorkflowStage.prototype.start;
+    t.mock.method(StartWorkflowStage.prototype, "start", async function (this: StartWorkflowStage) {
       await start.call(this);
       runRoot = currentRunScope().runRoot;
       assert.equal(currentRunScope().workflow.snapshot(), undefined);

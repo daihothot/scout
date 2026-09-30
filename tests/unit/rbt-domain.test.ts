@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { WorkflowEvents } from "../../src/core/workflow/index.js";
 import type { ShellToolContract } from "../../src/asset-store/contracts/resources.js";
 import { attachments } from "../../src/agent/context/attachments.js";
 import { CoordinatorContextTags } from "../../src/agent/runner/coordinator/coordinator-attachments.js";
@@ -20,7 +21,7 @@ import { AgentEvents } from "../../src/agent/events/index.js";
 import type { SendAgentMessageInput } from "../../src/agent/task/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { Result } from "../../src/core/result.js";
-import { createGraphState, Graph, Scheduler } from "../../src/core/workflow/index.js";
+import { createGraphState, Graph } from "../../src/core/workflow/index.js";
 import {
   JarvisWebSocketTool,
   RbtDomain,
@@ -47,7 +48,7 @@ import type { ScoutDomainDynamicToolCall } from "../../src/domain/types.js";
 import type { RunEnvironment } from "../../src/run/types.js";
 import { currentRunScope, type RunScope } from "../../src/run/run-scope.js";
 import { RunEvents } from "../../src/run/events/index.js";
-import { installTestRunScope } from "../helpers/run-persistence.js";
+import { installTestRunScope, createTestGraph } from "../helpers/run-persistence.js";
 
 test("RBT Domain exposes behavior execution and final platform shutdown by Phase", async (t) => {
   const eventBus = new InMemoryEventBus();
@@ -57,7 +58,7 @@ test("RBT Domain exposes behavior execution and final platform shutdown by Phase
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
   });
   await domain.start();
   t.after(() => domain.stop());
@@ -85,13 +86,13 @@ test("RBT Domain exposes behavior execution and final platform shutdown by Phase
 test("RBT schema follows execute roles, including renamed workers and a reviewer without codebase access", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain();
-  const graph = rbtScheduler(eventBus).snapshot();
-  const scheduler = new Scheduler(new Graph({
+  const graph = rbtGraph(eventBus).snapshot();
+  const runtimeGraph = createTestGraph({
     ...graph,
     roles: graph.roles.map((role) => ({ ...role, name: role.name === "executor" ? "operator" : role.name })),
     phases: graph.phases.map((phase) => ({ ...phase, roles: phase.roles.map((role) => role === "executor" ? "operator" : role) })),
-  }));
-  const scope = installTestRunScope(t, { runId: "renamed-rbt-worker", scoutRoot: process.cwd(), eventBus, domain, scheduler, executionSystem: fakeExecutionSystem() });
+  });
+  const scope = installTestRunScope(t, { runId: "renamed-rbt-worker", scoutRoot: process.cwd(), eventBus, domain, runtimeGraph, executionSystem: fakeExecutionSystem() });
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
   scope.setEnvironment(rbtEnvironment(scope.runId, {
     operator: { ...roleRoots(scope.runRoot, "operator"), readableRoots: [codebaseRoot], shellTools: [] },
@@ -113,12 +114,12 @@ test("RBT schema follows execute roles, including renamed workers and a reviewer
 test("RBT rejects conflicting schema bindings across execute roles", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain();
-  const graph = rbtScheduler(eventBus).snapshot();
-  const scheduler = new Scheduler(new Graph({
+  const graph = rbtGraph(eventBus).snapshot();
+  const runtimeGraph = createTestGraph({
     ...graph, roles: [...graph.roles, { name: "operator", phases: ["execute"] }],
     phases: graph.phases.map((phase) => phase.name === "execute" ? { ...phase, roles: [...phase.roles, "operator"] } : phase),
-  }));
-  const scope = installTestRunScope(t, { runId: "ambiguous-rbt-schema", scoutRoot: process.cwd(), eventBus, domain, scheduler, executionSystem: fakeExecutionSystem() });
+  });
+  const scope = installTestRunScope(t, { runId: "ambiguous-rbt-schema", scoutRoot: process.cwd(), eventBus, domain, runtimeGraph, executionSystem: fakeExecutionSystem() });
   scope.setEnvironment(rbtEnvironment(scope.runId, Object.fromEntries(["executor", "operator"].map((role) => [role, {
     ...roleRoots(scope.runRoot, role), readableRoots: [installBehaviorSchema(join(scope.runRoot, role))], shellTools: [],
   }]))));
@@ -156,7 +157,7 @@ test("RBT restores every missing history after Agent state restoration and does 
   for (const history of readyHistories) {
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, history, { occurredAt });
   }
-  const beforeRestore = domain.journal.readAll();
+  const beforeRestore = domain.recordObject.readAll();
   await domain.restore(scope.workflow.snapshot()!);
   assert.deepEqual(scope.agentRegistry.listAgents(), []);
 
@@ -189,7 +190,7 @@ test("RBT restores every missing history after Agent state restoration and does 
   assert.ok(deliveries.every((delivery) => delivery.deliveryMode === "queued"));
   assert.match(deliveries[0]!.message, /campaign_id: campaign-1/);
   assert.match(deliveries[1]!.message, /campaign_id: campaign-2/);
-  assert.deepEqual(domain.journal.readAll(), beforeRestore);
+  assert.deepEqual(domain.recordObject.readAll(), beforeRestore);
   assert.equal(scope.workflow.readEvents().filter((event) => AgentEvents.message.queued.is(event)).length, 2);
   assert.equal(scope.workflow.readEvents().some((event) => RbtEvents.history.ready.is(event)), false);
 
@@ -314,8 +315,8 @@ test("RBT history delivery separates identical sequence numbers across Workflows
     await scope.eventBus.publishAndWait(RunEvents.runtime.ready, { mode: "resume", readyAt: new Date().toISOString() });
     assert.equal(accepted.size, workflowId === "workflow-001" ? 1 : 2, "restore must not redeliver accepted history");
     if (workflowId === "workflow-001") {
-      scope.workflow.scheduler.advance("error");
-      await scope.workflow.settleWorkflow();
+      await scope.workflow.advance("error");
+
       await scope.workflow.startWorkflow();
     }
   }
@@ -368,8 +369,8 @@ test("RBT repeated restore replaces the previous pending history subscription", 
   ]);
 });
 
-test("RBT cancels restored history delivery on stop, completed restore, and Workflow commit", async (t) => {
-  for (const boundary of ["stop", "completed_restore", "workflow_commit"] as const) {
+test("RBT cancels restored history delivery on stop, completed restore, Workflow finish and commit", async (t) => {
+  for (const boundary of ["stop", "completed_restore", "workflow_finish", "workflow_commit"] as const) {
     await t.test(boundary, async (context) => {
       const domain = new RbtDomain();
       const scope = installTestRunScope(context, {
@@ -404,13 +405,16 @@ test("RBT cancels restored history delivery on stop, completed restore, and Work
         await domain.stop();
       } else if (boundary === "completed_restore") {
         await domain.restore({ ...scope.workflow.snapshot()!, status: "completed" });
+      } else if (boundary === "workflow_finish") {
+        domain.finishWorkflow();
       } else {
-        const change = domain.prepareWorkflow(
-          { workflowId: "workflow-002", status: "active", checkpointSeq: 0 },
-          join(scope.runRoot, "next-workflow"),
-        );
-        change.commit();
-        change.releasePrevious();
+        const prepareScout = scope.workflow.scoutRecordObject.prepareWorkflow.bind(scope.workflow.scoutRecordObject);
+        // This test isolates restored RBT delivery cancellation, not Agent baseline creation.
+        t.mock.method(scope.workflow.scoutRecordObject, "prepareWorkflow", (root: string) => prepareScout(root, []));
+        const boundary = { workflowId: "workflow-002", journalRoot: join(scope.runRoot, "next-workflow") };
+        await scope.eventBus.publishAndWait(WorkflowEvents.workflow.preparing, boundary);
+        await scope.eventBus.publishAndWait(WorkflowEvents.workflow.committing, boundary);
+        await scope.eventBus.publishAndWait(WorkflowEvents.workflow.releasingPrevious, boundary);
       }
       await scope.eventBus.publishAndWait(RunEvents.runtime.ready, {
         mode: "resume", readyAt: new Date().toISOString(),
@@ -810,7 +814,7 @@ test("RBT hides ExecutionPlatform from Executor", async (t) => {
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   scope.setEnvironment(rbtEnvironment(scope.runId, {
@@ -858,7 +862,7 @@ test("RBT Reviewer shuts down the restored session using only operation, even wh
     runRoot: join(root, "run"),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       identity,
       onIdentify: (request) => requests.push({ operation: "identify", request: request ?? {} }),
@@ -876,7 +880,7 @@ test("RBT Reviewer shuts down the restored session using only operation, even wh
     if (DomainEvents.agentToolCall.observed.is(event)) specializedCalls.push(event.payload.callId);
   });
   baseDomain(scope).start();
-  baseDomain(scope).journal.append(eventBus.publish(
+  baseDomain(scope).recordObject.write(eventBus.publish(
     ExecutionEvents.execution.launchCompleted,
     {
       correlationId: "restored-launch",
@@ -944,7 +948,7 @@ test("JarvisBehavior prepares Play Mode without an Agent UnityPipeline call", as
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       onLaunch: () => {
         writeFileSync(markerPath, [
@@ -998,7 +1002,7 @@ test("JarvisBehavior reports Play Mode readiness timeout before WebSocket connec
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       onLaunch: () => {
         writeFileSync(markerPath, ["status", "editor_status", "editor_play"].join("\n") + "\n");
@@ -1094,7 +1098,7 @@ test("RBT Domain derives Android launch parameters from the identified target", 
     runRoot: join(root, "run"),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       identity: { type: "android", version: "16" },
       onLaunch: (request) => requests.push(request ?? {}),
@@ -1160,7 +1164,7 @@ test("RBT Execute and Review share one launched target across Phase tools", asyn
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       identity: { type: "android", version: "17" },
       onLaunch: (launchRequest) => launches.push(launchRequest ?? {}),
@@ -1233,7 +1237,7 @@ test("RBT Android Review reconnects a restored launched target without identify 
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       identity,
       onIdentify: () => operations.push("identify"),
@@ -1248,7 +1252,7 @@ test("RBT Android Review reconnects a restored launched target without identify 
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   baseDomain(scope).start();
-  baseDomain(scope).journal.append(eventBus.publish(
+  baseDomain(scope).recordObject.write(eventBus.publish(
     ExecutionEvents.execution.launchCompleted,
     {
       correlationId: "restored-launch",
@@ -1311,7 +1315,7 @@ test("RBT Review does not identify or launch a missing Domain target", async (t)
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       identity: { type: "android", version: "17" },
       onIdentify: () => operations.push("identify"),
@@ -1375,7 +1379,7 @@ test("RBT Review link failure does not stop the shared Domain target", async (t)
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       identity,
       onIdentify: () => operations.push("identify"),
@@ -1384,7 +1388,7 @@ test("RBT Review link failure does not stop the shared Domain target", async (t)
     }),
   });
   baseDomain(scope).start();
-  baseDomain(scope).journal.append(eventBus.publish(
+  baseDomain(scope).recordObject.write(eventBus.publish(
     ExecutionEvents.execution.launchCompleted,
     {
       correlationId: "restored-launch-for-review-failure",
@@ -1459,7 +1463,7 @@ test("RBT Domain stops a target after link failure so the next attempt relaunche
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       identity: { type: "android", version: "16" },
       onLaunch: () => lifecycle.push("launch"),
@@ -1510,7 +1514,7 @@ test("RBT Execute link failure does not shut down an already running shared targ
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       identity: { type: "android", version: "34" },
       onLaunch: () => lifecycle.push("launch"),
@@ -1560,7 +1564,7 @@ test("RBT Execute link failure preserves a fresh target reused by another caller
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       identity: { type: "android", version: "34" },
       onLaunch: () => lifecycle.push("launch"),
@@ -1632,7 +1636,7 @@ test("JarvisBehavior reports an unavailable human-prepared Unity Editor", async 
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       launchFailure: {
         code: "transport_unavailable",
@@ -1677,7 +1681,7 @@ test("JarvisBehavior blocks RBT while the Unity Editor is compiling", async (t) 
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       launchFailure: {
         code: "unity_editor_compiling",
@@ -1737,7 +1741,7 @@ test("JarvisBehavior blocks RBT during Unity domain reload and version changes",
         scoutRoot: process.cwd(),
         eventBus,
         domain,
-        scheduler: rbtScheduler(eventBus),
+        runtimeGraph: rbtGraph(eventBus),
         executionSystem: fakeExecutionSystem({
           launchFailure: { code: item.code, message: item.message },
         }),
@@ -1778,7 +1782,7 @@ test("JarvisBehavior blocks an unavailable Unity Editor state", async (t) => {
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem({
       launchFailure: {
         code: "unity_editor_unavailable",
@@ -1823,7 +1827,7 @@ test("RBT Agent tool-call recorder consumes the shared Domain event", async (t) 
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
   });
   const roots = roleRoots(scope.runRoot, "executor");
   scope.setEnvironment(rbtEnvironment(scope.runId, {
@@ -1868,7 +1872,7 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
@@ -1949,7 +1953,7 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
     version: "6000.0.80f1",
   });
   assert.equal(history.status, "completed");
-  const recorded = domain.journal.aggregate(domain.journal.readAll()).histories.at(-1)!;
+  const recorded = domain.recordObject.aggregate(domain.recordObject.readAll()).histories.at(-1)!;
   assert.equal(recorded.bddId, "account-anon-restore-existing-account");
   assert.equal(recorded.targetVersion, "26.7.0-rc.2");
   assert.deepEqual(recorded.platform, history.platform);
@@ -1992,7 +1996,7 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
   assert.match(historyObservation, /scenario_id: account\.restore\.success/);
   assert.match(historyObservation, /status: completed/);
 
-  assert.equal("journal" in domain, true);
+  assert.equal("recordObject" in domain, true);
 
   const replay = await domain.backend.handleDynamicToolCall(dynamicCall({
     callId: "call-execute-file-replay",
@@ -2011,6 +2015,8 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
   assert.equal(replayHistory.runtimeSequence, 2);
   assert.equal(replayHistory.executeFileRef, history.executeFileRef);
   assert.deepEqual(replayHistory.platform, history.platform);
+  assert.equal(coordinatorMessages.length, 2);
+  assert.deepEqual(domain.recordObject.aggregate(domain.recordObject.readAll()).histories.map((fact) => fact.runtimeSequence), [1, 2]);
 });
 
 test("RBT execute-file rejects an array-shaped evidenceCapture before Runtime", async (t) => {
@@ -2021,7 +2027,7 @@ test("RBT execute-file rejects an array-shaped evidenceCapture before Runtime", 
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
@@ -2066,7 +2072,7 @@ test("RBT execute-file preflights every registry identity before campaign mutati
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
@@ -2147,7 +2153,7 @@ test("RBT execute-file continues the sequence when campaign history publication 
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
@@ -2212,7 +2218,7 @@ test("RBT campaign history continues after the greatest existing runtime sequenc
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
@@ -2251,7 +2257,7 @@ test("RBT execute-file performs cleanup after a command failure and closes faile
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
@@ -2306,7 +2312,7 @@ test("RBT dynamic-tool backend rejects a tool that is not registered for the cal
     runId: "run-rbt-unregistered-phase-tool",
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
   });
 
   return domain.backend.handleDynamicToolCall(dynamicCall({
@@ -2332,7 +2338,7 @@ test("RBT Domain rejects mutating behavior commands from a review role", async (
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
   });
   const roots = roleRoots(scope.runRoot, "reviewer");
   scope.setEnvironment(rbtEnvironment(scope.runId, {
@@ -2369,7 +2375,7 @@ test("RBT Reviewer queries a campaign using the Executor-bound schema without co
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem(),
   });
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
@@ -2430,7 +2436,7 @@ test("RBT Domain projects a Runtime error without exposing its result envelope",
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "reviewer");
@@ -2499,7 +2505,7 @@ test("RBT Behavior reconnects and retries one read-only query after a disconnect
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    scheduler: rbtScheduler(eventBus),
+    runtimeGraph: rbtGraph(eventBus),
     executionSystem: fakeExecutionSystem(),
   });
   const roots = roleRoots(scope.runRoot, "executor");
@@ -2531,8 +2537,8 @@ test("RBT Behavior reconnects and retries one read-only query after a disconnect
   assert.equal(hostOperations.filter((operation) => operation === "call").length, 2);
 });
 
-function rbtScheduler(_eventBus: InMemoryEventBus): Scheduler {
-  return new Scheduler(new Graph(createGraphState({
+function rbtGraph(_eventBus: InMemoryEventBus): Graph {
+  return createTestGraph(createGraphState({
     domain: "rbt",
     workflowProfile: "rbt",
     phases: [
@@ -2545,7 +2551,7 @@ function rbtScheduler(_eventBus: InMemoryEventBus): Scheduler {
       { name: "reviewer", phases: ["review"] },
     ],
     currentPhase: "execute",
-  })));
+  }));
 }
 
 function roleRoots(runRoot: string, role: string): {

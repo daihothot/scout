@@ -24,7 +24,7 @@ import { currentRunScope } from "../../run-scope.js";
 import { isPathWithin, runAgentPaths, runPaths } from "../../../core/path.js";
 import {
   projectRun,
-  readDomainJournalProjections,
+  readDomainRecordProjections,
   type RunProjection,
 } from "../projection/index.js";
 
@@ -43,12 +43,12 @@ export class RestoreAgentsStage implements RunStage {
   /** Builds all role agents and restores each role's persisted thread state. */
   async start(): Promise<void> {
     const scope = currentRunScope();
-    const graphState = scope.workflow.scheduler.snapshot();
+    const graphState = scope.workflow.graph.snapshot();
     const synthesisRole = resolveSynthesisRole(graphState).name;
     const projection = scope.workflow.snapshot() ? projectRun(
       scope.workflow.readEvents(),
       synthesisRole,
-      readDomainJournalProjections(scope.domainRegistry.list()),
+      readDomainRecordProjections(scope.domainRegistry.list()),
     ) : undefined;
     const roles = graphState.roles.map((role) => role.name);
     const records = new Map(roles.map((role) => [role, readAgentThreadRecord(runAgentPaths(scope.runRoot, role).agentRoot, role)]));
@@ -162,7 +162,7 @@ export class RestoreAgentsStage implements RunStage {
   private async stopAgents(reason: string): Promise<void> {
     const agents = currentRunScope().agentRegistry.listAgents();
     const synthesisRole = resolveSynthesisRole(
-      currentRunScope().workflow.scheduler.snapshot(),
+      currentRunScope().workflow.graph.snapshot(),
     ).name;
     const coordinator = agents.find((agent) =>
       agent.role === synthesisRole

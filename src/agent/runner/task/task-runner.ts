@@ -134,7 +134,7 @@ export class TaskRunner {
     if (workflowState?.status !== "active") {
       throw new Error(`Cannot queue message for Task ${task.taskId}: Workflow is ${workflowState?.status ?? "empty"}.`);
     }
-    const phase = workflow.scheduler.current().name;
+    const phase = workflow.graph.current().name;
     if (task.phase !== phase) {
       throw new Error(`Cannot queue message: Task ${task.taskId} belongs to Phase ${task.phase}; current Phase is ${phase}.`);
     }

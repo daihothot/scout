@@ -1,35 +1,27 @@
-import {
-  createGraphState,
-  SynthesisPhase,
-  type GraphState,
-} from "../../core/workflow/index.js";
+import { join, resolve } from "node:path";
+import { SynthesisPhase } from "../../core/workflow/graph-state.js";
+import { sha256File } from "../../core/fs.js";
+import { parseWorkflowProfile, workflowProfilePath } from "../assets/workflow-profiles.js";
+import { ScoutAssetLayout } from "../assets/asset-layout.js";
+import { AssetJsonReader } from "../files/asset-json-reader.js";
 import type { WorkflowProfileAsset } from "../contracts/workflow-profile.js";
 import type { AgentProfile } from "../contracts/profile.js";
 
-/** Builds the initial runtime graph from one validated Workflow Profile. */
+/** Builds a validated, identified Asset without creating runtime state. */
+export function buildWorkflow(scoutRoot: string, name: string): WorkflowProfileAsset {
+  const path = workflowProfilePath(scoutRoot, name);
+  const workflowRoot = join(resolve(scoutRoot), "assets", "scout", ScoutAssetLayout.workflowsRoot);
+  return {
+    name,
+    sourcePath: `${ScoutAssetLayout.workflowsRoot}/${name}.json`,
+    hash: sha256File(path),
+    profile: parseWorkflowProfile(new AssetJsonReader(workflowRoot).readJson(`${name}.json`), path),
+  };
+}
+
+/** Builds role profiles from one validated Workflow Asset. */
 export class WorkflowBuilder {
   constructor(private readonly asset: WorkflowProfileAsset) {}
-
-  build(): GraphState {
-    const workerPhases = Object.entries(this.asset.profile.phases.workers);
-    const roles = Object.entries(this.asset.profile.roles).map(([name, role]) => ({
-      name,
-      phases: name === "coordinator" ? [SynthesisPhase] : role.phases ?? [],
-    }));
-    return createGraphState({
-      domain: this.asset.profile.domain,
-      workflowProfile: this.asset.name,
-      phases: workerPhases.map(([name, phase]) => ({
-        name,
-        edges: phase.edges,
-        roles: roles
-          .filter((role) => role.phases.includes(name))
-          .map((role) => role.name),
-      })),
-      roles,
-      currentPhase: workerPhases[0]![0],
-    });
-  }
 
   /** Builds the effective runtime profile for one Workflow-declared role. */
   buildAgentProfile(roleName: string): AgentProfile {

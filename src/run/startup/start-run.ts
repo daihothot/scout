@@ -43,16 +43,14 @@ export async function startRun(
   const config = assetStore.config(scoutRoot);
   const scoutConfig = loadScoutConfig(config);
   const eventBus = new InMemoryEventBus();
-  const graphState = assetStore.buildWorkflow(scoutRoot, scoutConfig.workflow.profile);
+  const workflowAsset = assetStore.buildWorkflow(scoutRoot, scoutConfig.workflow.profile);
   const runRoot = scoutRunRoot(scoutRoot, runId);
   const runtimeLogger = new Logger({
     runId,
     logsRoot: runPaths(runRoot).logsRoot,
   });
   const runStartedAt = Date.now();
-  const workflow = new Workflow({
-    graphState,
-  });
+  const workflow = new Workflow(workflowAsset);
   const manifestStore = new RunManifestStore(runRoot);
   runtimeLogger.info({
     module: "run.lifecycle",
@@ -126,7 +124,7 @@ export async function startRun(
     if (runScopeStage.scopeCreated && runScopeStage.scope.hasEnvironment) {
       return toRunSummary(
         runScopeStage.scope.environment,
-        workflow.scheduler.snapshot(),
+        workflow.graph.snapshot(),
         "failed",
       );
     }
@@ -167,7 +165,7 @@ export async function startRun(
       },
     });
 
-    return toRunSummary(scope.environment, scope.workflow.scheduler.snapshot(), "passed");
+    return toRunSummary(scope.environment, scope.workflow.graph.snapshot(), "passed");
   } catch (error) {
     await executor.terminate("startup_failed");
     try {

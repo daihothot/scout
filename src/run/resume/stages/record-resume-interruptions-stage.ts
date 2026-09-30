@@ -3,7 +3,7 @@ import { AgentStepStatuses } from "../../../agent/step/types.js";
 import { RunEvents } from "../../events/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
-import { projectRun, readDomainJournalProjections } from "../projection/index.js";
+import { projectRun, readDomainRecordProjections } from "../projection/index.js";
 import { resolveSynthesisRole } from "../../../core/workflow/index.js";
 
 /**
@@ -20,11 +20,11 @@ export class RecordResumeInterruptionsStage implements RunStage {
     const scope = currentRunScope();
     if (!scope.workflow.snapshot()) return;
     this.recordPreviousRuntimeInterruption();
-    const synthesisRole = resolveSynthesisRole(scope.workflow.scheduler.snapshot()).name;
+    const synthesisRole = resolveSynthesisRole(scope.workflow.graph.snapshot()).name;
     let projection = projectRun(
       scope.workflow.readEvents(),
       synthesisRole,
-      readDomainJournalProjections(scope.domainRegistry.list()),
+      readDomainRecordProjections(scope.domainRegistry.list()),
     );
     scope.stepStore.restore(projection.steps);
     for (const turn of projection.turns.filter((candidate) => !candidate.completedAt)) {
@@ -45,7 +45,7 @@ export class RecordResumeInterruptionsStage implements RunStage {
     projection = projectRun(
       scope.workflow.readEvents(),
       synthesisRole,
-      readDomainJournalProjections(scope.domainRegistry.list()),
+      readDomainRecordProjections(scope.domainRegistry.list()),
     );
     const interruptionReason = "previous_runtime_ended_before_step_completion";
     for (const step of projection.steps) {
@@ -72,7 +72,7 @@ export class RecordResumeInterruptionsStage implements RunStage {
     projection = projectRun(
       scope.workflow.readEvents(),
       synthesisRole,
-      readDomainJournalProjections(scope.domainRegistry.list()),
+      readDomainRecordProjections(scope.domainRegistry.list()),
     );
     if (projection.checkpointSeq !== scope.workflow.lastSeq) {
       throw new Error(`Run projection did not consume journal tail for ${projection.runId}.`);

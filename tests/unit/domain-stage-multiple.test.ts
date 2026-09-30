@@ -14,7 +14,7 @@ import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import { DomainStage } from "../../src/run/lifecycle/stages/domain-stage.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { installRunScope, RunScope } from "../../src/run/run-scope.js";
-import { createTestScheduler } from "../helpers/run-persistence.js";
+import { createDefaultTestGraph, createTestWorkflowAsset } from "../helpers/run-persistence.js";
 
 test("DomainStage registers Base and the selected business Domain before startup and stops in reverse", async (t) => {
   const scope = installDomainStageScope(t);
@@ -161,12 +161,10 @@ function installDomainStageScope(t: TestContext, domain = ScoutDomainId.Rbt): Ru
     scoutRoot: root,
     runRoot,
     config: new AssetStore().config(root),
-    workflow: new Workflow({
-      graphState: {
-        ...createTestScheduler().snapshot(),
+    workflow: new Workflow(createTestWorkflowAsset({
+        ...createDefaultTestGraph().snapshot(),
         domain,
-      },
-    }),
+      })),
     manifestStore: new RunManifestStore(runRoot),
     logger: new Logger({ runId, logsRoot: join(runRoot, "logs") }),
     eventBus: new InMemoryEventBus(),

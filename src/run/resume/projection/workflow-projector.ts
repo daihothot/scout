@@ -3,10 +3,10 @@ import {
   WorkflowEvents,
   type GraphState,
 } from "../../../core/workflow/index.js";
-import type { JournalEvent } from "../../../core/journal/index.js";
+import type { RecordEvent } from "../../../core/record/index.js";
 
 /** Restores the latest complete GraphState from the Run Journal. */
-export function projectGraphState(events: readonly JournalEvent[]): GraphState {
+export function projectGraphState(events: readonly RecordEvent[]): GraphState {
   let state: GraphState | undefined;
   for (const event of events) {
     if (WorkflowEvents.workflow.initialized.is(event)) {

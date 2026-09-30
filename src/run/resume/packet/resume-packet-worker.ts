@@ -4,6 +4,7 @@ import {
 import { AgentStepStatuses } from "../../../agent/step/types.js";
 import { inferTaskRecoveryCheckpoint } from "../projection/task-recovery.js";
 import { projectedStepsForTask } from "../projection/run-projector.js";
+import { recoverPendingMessages } from "../projection/run-recovery.js";
 import {
   boundedText,
   renderArtifact,
@@ -23,11 +24,12 @@ export function buildWorkerResumePacket(
   input: ResumePacketInput,
 ): ResumePacket {
   const task = input.projection.tasks.find((candidate) => candidate.agentId === input.agentId);
-  const pendingMessages = input.projection.pendingMessages.filter((message) =>
+  const deliveries = recoverPendingMessages(input.projection, input.synthesisRole);
+  const pendingMessages = deliveries.filter((message) =>
     message.agentId === input.agentId
   );
   const allPendingMessageIds = new Set(
-    input.projection.pendingMessages.map((message) => message.messageId),
+    deliveries.map((message) => message.messageId),
   );
   const checkpoint = inferTaskRecoveryCheckpoint(input.projection, task);
   const requests = task

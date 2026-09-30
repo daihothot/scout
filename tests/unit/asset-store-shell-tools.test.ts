@@ -1,3 +1,4 @@
+import { Workflow } from "../../src/core/workflow/workflow.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -21,7 +22,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   AssetStore,
-  readWorkflowProfile,
+  buildWorkflow,
   inspectCodexMount,
   materializeCodexMount,
   prepareCodexMount,
@@ -51,8 +52,10 @@ test("Workflow Profiles retain one Domain and reject plural or invalid selection
   const original = JSON.parse(readFileSync(profilePath, "utf8")) as Mutable<WorkflowProfile>;
   writeFileSync(profilePath, JSON.stringify({ ...original, domain: "rbt" }));
 
-  assert.equal(readWorkflowProfile(fixtureRoot, "validation").profile.domain, "rbt");
-  const graph = new AssetStore().buildWorkflow(fixtureRoot, "validation");
+  assert.equal(buildWorkflow(fixtureRoot, "validation").profile.domain, "rbt");
+  const asset = new AssetStore().buildWorkflow(fixtureRoot, "validation");
+  assert.equal(Object.hasOwn(asset, "currentPhase"), false);
+  const graph = new Workflow(asset).graph.snapshot();
   assert.equal(graph.domain, "rbt");
   assert.ok(Object.isFrozen(graph));
   const input = { ...graph, domain: "rbt" };
@@ -62,12 +65,12 @@ test("Workflow Profiles retain one Domain and reject plural or invalid selection
 
   for (const domain of [undefined, "", [], ["rbt"], ["rbt", "validation"], "RBT"]) {
     writeFileSync(profilePath, JSON.stringify({ ...original, domain }));
-    assert.throws(() => readWorkflowProfile(fixtureRoot, "validation"), /domain/);
+    assert.throws(() => buildWorkflow(fixtureRoot, "validation"), /domain/);
   }
   const { domain: removedDomain, ...withoutDomain } = original;
   void removedDomain;
   writeFileSync(profilePath, JSON.stringify({ ...withoutDomain, domains: ["validation"] }));
-  assert.throws(() => readWorkflowProfile(fixtureRoot, "validation"), /unknown top-level field\(s\): domains/);
+  assert.throws(() => buildWorkflow(fixtureRoot, "validation"), /unknown top-level field\(s\): domains/);
   const { domain: removedGraphDomain, ...withoutGraphDomain } = graph;
   void removedGraphDomain;
   assert.throws(

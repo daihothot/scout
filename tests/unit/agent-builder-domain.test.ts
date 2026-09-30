@@ -1,3 +1,4 @@
+import type { WorkflowState } from "../../src/core/workflow/workflow-state.js";
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -34,8 +35,9 @@ import {
 import type { AgentTurnCompletedEvent } from "../../src/agent/thread/turn-events.js";
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
 import { EventSubscriptionPriorities, InMemoryEventBus } from "../../src/core/events/index.js";
-import { createGraphState, Graph, projectWorkflowState, Scheduler, Workflow, WorkflowEvents } from "../../src/core/workflow/index.js";
-import { Benchmarks, ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
+import { createGraphState, Graph, projectWorkflowState, Workflow, WorkflowEvents } from "../../src/core/workflow/index.js";
+import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
+import { Benchmarks } from "../../src/core/benchmarks/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type {
   DynamicToolCallHandler,
@@ -98,7 +100,7 @@ import { SystemEvents } from "../../src/system/events/index.js";
 import type { LogEvent, Logger } from "../../src/core/logging/index.js";
 import { WorkerAgent } from "../../src/agent/roles/worker-agent.js";
 import type { RunLifecycleSnapshot } from "../../src/run/lifecycle/index.js";
-import { createTestScheduler } from "../helpers/run-persistence.js";
+import { createDefaultTestGraph, createTestGraph, createTestWorkflowAsset } from "../helpers/run-persistence.js";
 import {
   AgentTaskDispositionKinds,
   AgentTaskStatuses,
@@ -263,7 +265,7 @@ test("AgentBuilder unions and deduplicates Domain tools across a Worker's Phases
 });
 
 test("AgentBuilder creates an arbitrary Workflow role as a generic Worker", () => {
-  const scheduler = new Scheduler(new Graph(createGraphState({
+  const runtimeGraph = createTestGraph(createGraphState({
     domain: "test",
     workflowProfile: "dynamic-role-test",
     phases: [{
@@ -276,8 +278,8 @@ test("AgentBuilder creates an arbitrary Workflow role as a generic Worker", () =
       { name: "auditor", phases: ["audit"] },
     ],
     currentPhase: "audit",
-  })));
-  const fixture = createAgentFixture("builder-dynamic-worker", { scheduler });
+  }));
+  const fixture = createAgentFixture("builder-dynamic-worker", { runtimeGraph });
   const auditorMount = createMount(fixture.root, "auditor");
   auditorMount.agentProfile.phases = ["audit"];
   prepareAgent(fixture, "auditor", auditorMount, createAssetCommit(auditorMount));
@@ -469,7 +471,7 @@ test("WorkerAgent keeps its bound TaskRunner and reports a rejected task assignm
 
 test("AssignTask routes through the current Phase and skips a busy first role", async () => {
   const appServer = createFakeAppServer();
-  const scheduler = new Scheduler(new Graph(createGraphState({
+  const runtimeGraph = createTestGraph(createGraphState({
     domain: "test",
     workflowProfile: "phase-routing-test",
     phases: [{
@@ -483,10 +485,10 @@ test("AssignTask routes through the current Phase and skips a busy first role", 
       { name: "auditor-b", phases: ["audit"] },
     ],
     currentPhase: "audit",
-  })));
+  }));
   const fixture = createAgentFixture("assign-task-phase-routing", {
     appServer,
-    scheduler,
+    runtimeGraph,
   });
   const firstMount = createMount(fixture.root, "auditor-a");
   const secondMount = createMount(fixture.root, "auditor-b");
@@ -579,10 +581,11 @@ test("SubmitPhaseOutcome advances the cursor and schedules one fresh Coordinator
         namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
         tool: "SubmitPhaseOutcome", arguments: { outcome: "completed" },
       };
-      const accepted = await appServer.handler(input);
+      const [accepted, duplicate] = await Promise.all([appServer.handler(input), appServer.handler(input)]);
+      assert.deepEqual(duplicate, accepted, "concurrent identical delivery must join the same Phase transaction");
       outcomes.push(accepted);
       assert.equal(accepted.success, true);
-      const cursor = currentRunScope().workflow.scheduler.snapshot();
+      const cursor = currentRunScope().workflow.graph.snapshot();
       assert.deepEqual(await appServer.handler(input), accepted, "identical delivery must replay its receipt");
       for (const rejected of [
         { ...input, callId: "second-advance" },
@@ -590,7 +593,7 @@ test("SubmitPhaseOutcome advances the cursor and schedules one fresh Coordinator
         { ...input, turnId: "stale-turn" },
       ]) {
         assert.equal((await appServer.handler(rejected)).success, false);
-        assert.deepEqual(currentRunScope().workflow.scheduler.snapshot(), cursor);
+        assert.deepEqual(currentRunScope().workflow.graph.snapshot(), cursor);
       }
     },
   });
@@ -610,7 +613,7 @@ test("SubmitPhaseOutcome advances the cursor and schedules one fresh Coordinator
     arguments: { outcome: "completed" },
   });
   assert.equal(beforeTurn.success, false);
-  assert.equal(currentRunScope().workflow.scheduler.snapshot().currentPhase, "research");
+  assert.equal(currentRunScope().workflow.graph.snapshot().currentPhase, "research");
   await new InteractionGateway().submitUserMessage({ messageId: "advance-phases", text: "Complete the first two Phases." });
   await coordinatorAgent.runToIdle();
   const afterTurn = await appServer.handler({
@@ -629,11 +632,13 @@ test("SubmitPhaseOutcome advances the cursor and schedules one fresh Coordinator
     status: "accepted",
     currentPhase: "research-reviewer",
     cycleCompleted: false,
+    workflowStatus: "active",
   });
   assert.deepEqual(JSON.parse(second.contentItems[0]?.text ?? "{}"), {
     status: "accepted",
     currentPhase: "verify",
     cycleCompleted: false,
+    workflowStatus: "active",
   });
   assert.equal(appServer.turnInputs.length, 3);
   assert.match(
@@ -652,6 +657,167 @@ test("SubmitPhaseOutcome advances the cursor and schedules one fresh Coordinator
   backend.stop();
 });
 
+test("SubmitPhaseOutcome combines event and inbox draining for user input arriving during advance", async (t) => {
+  let enterTurn!: () => void;
+  const turnStarted = new Promise<void>((resolve) => { enterTurn = resolve; });
+  let beginAdvance!: () => void;
+  const advanceRequested = new Promise<void>((resolve) => { beginAdvance = resolve; });
+  let enterTool!: () => void;
+  const toolEntered = new Promise<void>((resolve) => { enterTool = resolve; });
+  let releaseOutcome!: () => void;
+  const outcomeGate = new Promise<void>((resolve) => { releaseOutcome = resolve; });
+  let releaseUser!: () => void;
+  const userGate = new Promise<void>((resolve) => { releaseUser = resolve; });
+  let enterUser!: () => void;
+  const userEntered = new Promise<void>((resolve) => { enterUser = resolve; });
+  let enterInbox!: () => void;
+  const inboxEntered = new Promise<void>((resolve) => { enterInbox = resolve; });
+  let releaseInbox!: () => void;
+  const inboxGate = new Promise<void>((resolve) => { releaseInbox = resolve; });
+  const responses: DynamicToolCallResponse[] = [];
+  const appServer = createFakeAppServer({
+    turnIds: ["turn-before-input", "turn-consider-input", "turn-next-phase"],
+    onRunTurn: async () => {
+      const index = appServer.turnInputs.length - 1;
+      if (index > 1) return;
+      if (index === 0) { enterTurn(); await advanceRequested; enterTool(); }
+      assert.ok(appServer.handler);
+      responses.push(await appServer.handler({
+        threadId: "thread-test", turnId: index === 0 ? "turn-before-input" : "turn-consider-input",
+        callId: `submit-after-input-${index}`, namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
+        tool: "SubmitPhaseOutcome", arguments: { outcome: "completed" },
+      }));
+    },
+  });
+  const fixture = createAgentFixture("human-input-during-advance", { appServer });
+  const workflow = currentRunScope().workflow;
+  const coordinator = new AgentBuilder().buildCoordinator();
+  await coordinator.startThread();
+  const backend = new AgentDynamicToolBackend();
+  backend.start();
+  const originalDrain = coordinator.drainInput.bind(coordinator);
+  t.mock.method(coordinator, "drainInput", async () => { enterInbox(); await inboxGate; await originalDrain(); });
+  fixture.eventBus.subscribe(AgentEvents.task.outcomeSubmitted, async () => { await outcomeGate; });
+  fixture.eventBus.subscribe(SystemEvents.interaction.userMessageSubmitted, async (event) => {
+    if (SystemEvents.interaction.userMessageSubmitted.is(event) && event.payload.messageId === "during-advance-user") {
+      enterUser(); await userGate;
+    }
+  }, { priority: EventSubscriptionPriorities.Critical });
+  const at = new Date().toISOString();
+  const task: AgentTaskState = { type: "local_agent", taskId: "human-loop-task", taskSequence: 1,
+    agentId: "researcher", role: "researcher", phase: "research", description: "Completed work", initialPrompt: "Work",
+    status: AgentTaskStatuses.Done, isBackgrounded: true, stepIds: [], dispositions: [], createdAt: at, updatedAt: at };
+  const outcome = fixture.eventBus.publishAndWait(AgentEvents.task.outcomeSubmitted, {
+    task, stepId: "human-loop-step", outcome: "Done", submittedAt: at,
+  });
+  let userDelivery: Promise<void> | undefined;
+  try {
+    const gateway = new InteractionGateway();
+    await gateway.submitUserMessage({ messageId: "initial-user", text: "Complete research." });
+    await turnStarted;
+    beginAdvance();
+    await toolEntered;
+    userDelivery = gateway.submitUserMessage({ messageId: "during-advance-user", text: "Please reconsider before proceeding." });
+    await userEntered;
+    releaseOutcome();
+    await outcome;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(workflow.graph.snapshot().currentPhase, "research");
+    assert.equal(responses.length, 0, "the user event must finish before the Phase can advance");
+    releaseUser();
+    await userDelivery;
+    await inboxEntered;
+    assert.equal(workflow.graph.snapshot().currentPhase, "research");
+    assert.equal(responses.length, 0, "event completion alone does not finish inbox delivery");
+    releaseInbox();
+    await coordinator.runToIdle();
+    assert.equal(responses.length, 2);
+    assert.ok(responses.every((response) => response.success));
+    assert.deepEqual(JSON.parse(responses[0]!.contentItems[0]?.text ?? "{}").status, "not_advanced");
+    assert.equal(JSON.parse(responses[1]!.contentItems[0]?.text ?? "{}").status, "accepted");
+    assert.equal(appServer.turnInputs.length, 3);
+    assert.match(appServer.turnInputs[1]!.prompt ?? "", /Please reconsider before proceeding/);
+    assert.match(appServer.turnInputs[1]!.prompt ?? "", /current_phase: research\nworkflow_status: active/);
+    assert.match(appServer.turnInputs[2]!.prompt ?? "", /current_phase: research-reviewer/);
+    const events = workflow.readEvents();
+    const consumed = events.find((event) => AgentEvents.message.consumed.is(event)
+      && event.payload.messageId === "during-advance-user");
+    const advanced = events.find((event) => WorkflowEvents.workflow.advanced.is(event));
+    assert.ok(consumed && advanced);
+    assert.ok(consumed.seq < advanced.seq);
+    assert.equal(events.filter((event) => WorkflowEvents.workflow.advanced.is(event)).length, 1);
+  } finally {
+    beginAdvance(); releaseOutcome(); releaseUser(); releaseInbox();
+    await Promise.allSettled([outcome, userDelivery]);
+    await coordinator.stopAgent("test_cleanup");
+    backend.stop();
+  }
+});
+
+test("Input arriving during inbox drain defers advance without automatically retrying after the next Turn", async (t) => {
+  let enterInbox!: () => void;
+  const inboxEntered = new Promise<void>((resolve) => { enterInbox = resolve; });
+  let releaseInbox!: () => void;
+  const inboxGate = new Promise<void>((resolve) => { releaseInbox = resolve; });
+  let enterUser!: () => void;
+  const userEntered = new Promise<void>((resolve) => { enterUser = resolve; });
+  let releaseUser!: () => void;
+  const userGate = new Promise<void>((resolve) => { releaseUser = resolve; });
+  let response: DynamicToolCallResponse | undefined;
+  const appServer = createFakeAppServer({
+    turnIds: ["turn-before-late-input", "turn-read-late-input"],
+    onRunTurn: async () => {
+      if (appServer.turnInputs.length !== 1) return;
+      assert.ok(appServer.handler);
+      response = await appServer.handler({
+        threadId: "thread-test", turnId: "turn-before-late-input", callId: "submit-before-late-input",
+        namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE, tool: "SubmitPhaseOutcome", arguments: { outcome: "completed" },
+      });
+    },
+  });
+  const fixture = createAgentFixture("human-input-during-inbox-drain", { appServer });
+  const workflow = currentRunScope().workflow;
+  const coordinator = new AgentBuilder().buildCoordinator();
+  await coordinator.startThread();
+  const backend = new AgentDynamicToolBackend();
+  backend.start();
+  const originalDrain = coordinator.drainInput.bind(coordinator);
+  t.mock.method(coordinator, "drainInput", async () => { enterInbox(); await inboxGate; await originalDrain(); });
+  fixture.eventBus.subscribe(SystemEvents.interaction.userMessageSubmitted, async (event) => {
+    if (SystemEvents.interaction.userMessageSubmitted.is(event) && event.payload.messageId === "late-user") {
+      enterUser(); await userGate;
+    }
+  }, { priority: EventSubscriptionPriorities.Critical });
+  let userDelivery: Promise<void> | undefined;
+  try {
+    const gateway = new InteractionGateway();
+    await gateway.submitUserMessage({ messageId: "initial-user", text: "Continue research." });
+    await inboxEntered;
+    userDelivery = gateway.submitUserMessage({ messageId: "late-user", text: "Hold the next Phase for my confirmation." });
+    await userEntered;
+    releaseInbox();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(Boolean(response), false, "newly admitted input must finish delivery before the commit check");
+    assert.equal(workflow.graph.snapshot().currentPhase, "research");
+    releaseUser();
+    await userDelivery;
+    await coordinator.runToIdle();
+    assert.equal(response?.success, true);
+    assert.equal(JSON.parse(response?.contentItems[0]?.text ?? "{}").status, "not_advanced");
+    assert.equal(appServer.turnInputs.length, 2);
+    assert.match(appServer.turnInputs[1]!.prompt ?? "", /Hold the next Phase for my confirmation/);
+    assert.equal(coordinator.pendingWorkflowInputs().length, 0);
+    assert.equal(workflow.graph.snapshot().currentPhase, "research");
+    assert.equal(workflow.snapshot()?.status, "active");
+    assert.equal(workflow.readEvents().some((event) => WorkflowEvents.workflow.advanced.is(event)), false);
+  } finally {
+    releaseInbox(); releaseUser();
+    await Promise.allSettled([userDelivery]);
+    await coordinator.stopAgent("test_cleanup");
+    backend.stop();
+  }
+});
+
 test("SubmitPhaseOutcome rejects a Worker before touching Workflow state", async () => {
   const appServer = createFakeAppServer();
   const fixture = createAgentFixture("phase-outcome-worker", { appServer });
@@ -664,7 +830,7 @@ test("SubmitPhaseOutcome rejects a Worker before touching Workflow state", async
   try {
     assert.ok(appServer.handler);
     const workflow = currentRunScope().workflow;
-    const before = workflow.scheduler.snapshot();
+    const before = workflow.graph.snapshot();
     const result = await appServer.handler({
       threadId: worker.threadId!, turnId: "worker-turn", callId: "worker-phase-outcome",
       namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
@@ -672,7 +838,7 @@ test("SubmitPhaseOutcome rejects a Worker before touching Workflow state", async
     });
     assert.equal(result.success, false);
     assert.match(result.contentItems[0]?.text ?? "", /only available to the Coordinator/);
-    assert.deepEqual(workflow.scheduler.snapshot(), before);
+    assert.deepEqual(workflow.graph.snapshot(), before);
   } finally {
     await worker.stopAgent("test_cleanup");
     backend.stop();
@@ -702,7 +868,7 @@ test("SubmitPhaseOutcome leaves Workflow unchanged while a queued or running Tas
     assert.ok(appServer.handler);
     for (const status of [AgentTaskStatuses.Queued, AgentTaskStatuses.Running]) {
       fixture.taskStore.updateTask("unfinished-research", (task) => ({ ...task, status }));
-      const graphBefore = workflow.scheduler.snapshot();
+      const graphBefore = workflow.graph.snapshot();
       const workflowBefore = workflow.snapshot();
       const journalBefore = workflow.readEvents();
       const benchmarksBefore = new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read();
@@ -717,7 +883,7 @@ test("SubmitPhaseOutcome leaves Workflow unchanged while a queued or running Tas
         assert.match(result.contentItems[0]?.text ?? "", /Cannot advance Workflow Phase/);
         assert.match(result.contentItems[0]?.text ?? "", /unfinished-research/);
         await coordinator.runToIdle();
-        assert.deepEqual(workflow.scheduler.snapshot(), graphBefore);
+        assert.deepEqual(workflow.graph.snapshot(), graphBefore);
         assert.deepEqual(workflow.snapshot(), workflowBefore);
         assert.deepEqual(workflow.readEvents(), journalBefore);
         assert.deepEqual(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), benchmarksBefore);
@@ -735,7 +901,7 @@ test("SubmitPhaseOutcome leaves Workflow unchanged while a queued or running Tas
     });
     await coordinator.runToIdle();
     assert.equal(accepted.success, true);
-    assert.equal(workflow.scheduler.snapshot().currentPhase, "research-reviewer");
+    assert.equal(workflow.graph.snapshot().currentPhase, "research-reviewer");
     assert.equal(fixture.taskStore.getTask("unfinished-research")?.status, AgentTaskStatuses.Done);
     assert.equal(appServer.turnInputs.length, 1);
   } finally {
@@ -813,7 +979,7 @@ test("Rejected Phase completion keeps human input reachable through Gateway unti
     assert.equal(waiting?.status, AgentTaskStatuses.Running);
     assert.equal(waiting?.dispositions.at(-1)?.kind, AgentTaskDispositionKinds.WaitingForHuman);
     assert.ok(appServer.handler);
-    const graphBefore = workflow.scheduler.snapshot();
+    const graphBefore = workflow.graph.snapshot();
     const workflowBefore = workflow.snapshot();
     const journalBefore = workflow.readEvents();
     const benchmarksBefore = new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read();
@@ -826,7 +992,7 @@ test("Rejected Phase completion keeps human input reachable through Gateway unti
     assert.equal(rejected.success, false);
     assert.match(rejected.contentItems[0]?.text ?? "", /Cannot advance Workflow Phase/);
     await coordinator.runToIdle();
-    assert.deepEqual(workflow.scheduler.snapshot(), graphBefore);
+    assert.deepEqual(workflow.graph.snapshot(), graphBefore);
     assert.deepEqual(workflow.snapshot(), workflowBefore);
     assert.deepEqual(workflow.readEvents(), journalBefore);
     assert.deepEqual(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), benchmarksBefore);
@@ -853,7 +1019,7 @@ test("Rejected Phase completion keeps human input reachable through Gateway unti
     });
     await coordinator.runToIdle();
     assert.equal(accepted.success, true);
-    assert.equal(workflow.scheduler.snapshot().currentPhase, "research-reviewer");
+    assert.equal(workflow.graph.snapshot().currentPhase, "research-reviewer");
     assert.equal(fixture.taskStore.getTask(assignment.value.taskId)?.status, AgentTaskStatuses.Done);
   } finally {
     await worker.stopAgent("test_cleanup");
@@ -902,7 +1068,7 @@ test("SubmitPhaseOutcome waits for a stopped Worker's in-flight Step to finish",
     const activeStep = fixture.stepStore.list({ taskId: assignment.value.taskId }).find((step) => step.status === "running");
     assert.ok(activeStep);
     assert.ok(appServer.handler);
-    const graphBefore = workflow.scheduler.snapshot();
+    const graphBefore = workflow.graph.snapshot();
     const workflowBefore = workflow.snapshot();
     const journalBefore = workflow.readEvents();
     const benchmarksBefore = new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read();
@@ -916,7 +1082,7 @@ test("SubmitPhaseOutcome waits for a stopped Worker's in-flight Step to finish",
     assert.match(rejected.contentItems[0]?.text ?? "", /Cannot advance Workflow Phase/);
     assert.ok(rejected.contentItems[0]?.text.includes(activeStep.stepId));
     await coordinator.runToIdle();
-    assert.deepEqual(workflow.scheduler.snapshot(), graphBefore);
+    assert.deepEqual(workflow.graph.snapshot(), graphBefore);
     assert.deepEqual(workflow.snapshot(), workflowBefore);
     assert.deepEqual(workflow.readEvents(), journalBefore);
     assert.deepEqual(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), benchmarksBefore);
@@ -934,7 +1100,7 @@ test("SubmitPhaseOutcome waits for a stopped Worker's in-flight Step to finish",
     });
     await coordinator.runToIdle();
     assert.equal(accepted.success, true);
-    assert.equal(workflow.scheduler.snapshot().currentPhase, "research-reviewer");
+    assert.equal(workflow.graph.snapshot().currentPhase, "research-reviewer");
     assert.equal(fixture.taskStore.getTask(assignment.value.taskId)?.status, AgentTaskStatuses.Stopped);
   } finally {
     releaseWorkerTurn();
@@ -1003,7 +1169,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
       queuedSnapshot = worker?.snapshot();
       runningStepCount = fixture.stepStore.list({ taskId: assignment.value.taskId }).filter((step) => step.status === "running").length;
       before = {
-        graph: workflow.scheduler.snapshot(), workflowState: workflow.snapshot()!, journal: workflow.readEvents(),
+        graph: workflow.graph.snapshot(), workflowState: workflow.snapshot()!, journal: workflow.readEvents(),
         benchmarks: new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), turns: appServer.turnInputs.length,
       };
       rejected = handler({
@@ -1012,7 +1178,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
         tool: "SubmitPhaseOutcome", arguments: { outcome: "completed" },
       });
       after = {
-        graph: workflow.scheduler.snapshot(), workflowState: workflow.snapshot(), journal: workflow.readEvents(),
+        graph: workflow.graph.snapshot(), workflowState: workflow.snapshot(), journal: workflow.readEvents(),
         benchmarks: new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), turns: appServer.turnInputs.length,
       };
     }, { priority: EventSubscriptionPriorities.Low });
@@ -1040,7 +1206,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
     });
     await coordinator.runToIdle();
     assert.equal(accepted.success, true);
-    assert.equal(workflow.scheduler.snapshot().currentPhase, "research-reviewer");
+    assert.equal(workflow.graph.snapshot().currentPhase, "research-reviewer");
   } finally {
     unsubscribe?.();
     await worker.stopAgent("test_cleanup");
@@ -1049,11 +1215,14 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
   }
 });
 
-for (const boundary of ["phase-advanced", "settling"] as const) {
-  test(`Worker rejects follow-up work on a Done Task after ${boundary}`, async () => {
+for (const boundary of ["phase-advanced", "completed-with-release-failure"] as const) {
+  test(`Worker rejects follow-up work on a Done Task after ${boundary}`, async (t) => {
     const appServer = createFakeAppServer({ threadIds: ["thread-researcher", "thread-coordinator"] });
     const fixture = createAgentFixture(`done-task-message-${boundary}`, { appServer });
     const workflow = currentRunScope().workflow;
+    const base = fixture.domainRegistry.get(ScoutDomainId.Base);
+    assert.ok(base instanceof BaseDomain);
+    base.start();
     const mount = createMount(fixture.root, "researcher");
     prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
     const builder = new AgentBuilder();
@@ -1069,8 +1238,15 @@ for (const boundary of ["phase-advanced", "settling"] as const) {
     };
     worker.restoreTask({ task, maxTaskSequence: 1 });
     await fixture.eventBus.publishAndWait(AgentEvents.task.assigned, task, { occurredAt: now });
-    workflow.scheduler.advance(boundary === "phase-advanced" ? "completed" : "error");
-    assert.equal(workflow.snapshot()?.status, boundary === "settling" ? "settling" : "active");
+    if (boundary === "completed-with-release-failure") {
+      t.mock.method(worker, "releaseTask", async () => { throw new Error("Release not ready"); });
+      const advanced = await workflow.advance("error");
+      assert.equal(advanced.status, "advanced");
+      assert.equal(advanced.result.cycleCompleted, true);
+    } else {
+      await workflow.advance("completed");
+    }
+    assert.equal(workflow.snapshot()?.status, boundary === "completed-with-release-failure" ? undefined : "active");
     // Create the Coordinator after the transition so this test isolates admission,
     // without scheduling the independent phase/settlement tick.
     const coordinator = builder.buildCoordinator();
@@ -1080,7 +1256,7 @@ for (const boundary of ["phase-advanced", "settling"] as const) {
     const before = worker.snapshot();
     const taskBefore = fixture.taskStore.getTask(task.taskId);
     const queuedBefore = workflow.readEvents().filter((event) => AgentEvents.message.queued.is(event));
-    const expected = boundary === "settling" ? /Workflow is settling/ : /Task .* belongs to Phase research.*current Phase is research-reviewer/;
+    const expected = boundary === "completed-with-release-failure" ? /Workflow is empty/ : /Task .* belongs to Phase research.*current Phase is research-reviewer/;
     try {
       await assert.rejects(worker.sendMessage({
         taskId: task.taskId, message: agent.turn.message("Reopen old work"), deliveryMode: "queued",
@@ -1108,25 +1284,28 @@ for (const boundary of ["phase-advanced", "settling"] as const) {
   });
 }
 
-test("A terminal Phase outcome finishes its active Coordinator Step before entering idle runtime", async () => {
+for (const permalinkFails of [false, true]) {
+test(`A terminal Phase outcome completes before its Coordinator Step ends${permalinkFails ? " despite a permalink error" : ""}`, async (t) => {
   let result: DynamicToolCallResponse | undefined;
   const appServer = createFakeAppServer({
     turnIds: ["turn-submit-terminal-phase", "turn-terminal-cleanup"],
     onRunTurn: async () => {
       if (appServer.turnInputs.length !== 1) return;
       assert.ok(appServer.handler);
-      result = await appServer.handler({
+      const delivery = {
         threadId: "thread-test", turnId: "turn-submit-terminal-phase",
         callId: "call-submit-terminal-phase", namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
         tool: "SubmitPhaseOutcome", arguments: { outcome: "completed" },
-      });
-      assert.equal(currentRunScope().workflow.snapshot()?.status, "settling");
-      assert.equal(currentRunScope().workflow.snapshot()?.workflowId, "workflow-001");
-      assert.match(agent.turn.workflow_phase(), /workflow_status: settling/);
-      assert.match(agent.turn.workflow_phase(), /只完成旧工作收尾/);
+      };
+      const responses = await Promise.all([appServer.handler(delivery), appServer.handler(delivery)]);
+      result = responses[0];
+      assert.deepEqual(responses[1], result);
+      assert.deepEqual(await appServer.handler(delivery), result);
+      assert.equal(currentRunScope().workflow.snapshot(), undefined);
+      assert.match(agent.turn.workflow_phase(), /workflow_status: empty/);
     },
   });
-  const scheduler = new Scheduler(new Graph(createGraphState({
+  const runtimeGraph = createTestGraph(createGraphState({
     domain: "test",
     workflowProfile: "terminal-phase-test",
     phases: [{
@@ -1139,8 +1318,8 @@ test("A terminal Phase outcome finishes its active Coordinator Step before enter
       { name: "auditor", phases: ["audit"] },
     ],
     currentPhase: "audit",
-  })));
-  const fixture = createAgentFixture("submit-terminal-phase-outcome", { appServer, scheduler });
+  }));
+  const fixture = createAgentFixture("submit-terminal-phase-outcome", { appServer, runtimeGraph });
   const workflow = currentRunScope().workflow;
   const base = fixture.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(base instanceof BaseDomain);
@@ -1149,6 +1328,9 @@ test("A terminal Phase outcome finishes its active Coordinator Step before enter
     mode: "start", attachedAt: new Date().toISOString(), processId: process.pid,
   });
   const oldPath = workflow.journalPath;
+  const errors: unknown[] = [];
+  fixture.eventBus.subscribe(SystemEvents.interaction.disclosureRequested, ({ payload }) => { errors.push(payload); });
+  if (permalinkFails) t.mock.method(ScoutBenchmarks.prototype, "recordSuccess", () => { throw new Error("success permalink failed"); });
   const coordinatorAgent = new AgentBuilder().buildCoordinator();
   await coordinatorAgent.startThread();
   const backend = new AgentDynamicToolBackend();
@@ -1160,15 +1342,20 @@ test("A terminal Phase outcome finishes its active Coordinator Step before enter
     await coordinatorAgent.runToIdle();
 
     assert.ok(result);
-    assert.deepEqual(JSON.parse(result.contentItems[0]?.text ?? "{}"), {
-      status: "accepted",
-      currentPhase: "audit",
-      cycleCompleted: true,
-    });
-    assert.equal(workflow.scheduler.snapshot().currentPhase, "audit");
+    const receipt = JSON.parse(result.contentItems[0]?.text ?? "{}");
+    assert.equal(receipt.status, "accepted");
+    assert.equal(receipt.currentPhase, "none");
+    assert.equal(receipt.cycleCompleted, true);
+    assert.equal(receipt.workflowStatus, "empty");
+    assert.match(receipt.message, /Workflow completed/);
+    assert.equal(workflow.graph.snapshot().currentPhase, "audit");
     assert.equal(workflow.snapshot(), undefined);
+    assert.equal(errors.length, permalinkFails ? 1 : 0);
+    if (permalinkFails) assert.match(JSON.stringify(errors), /success permalink failed/);
     assert.equal(appServer.turnInputs.length, 1);
-    assert.equal(readJournalEvents(oldPath).filter((event) => AgentEvents.turn.completed.is(event)).length, 1);
+    assert.equal(readJournalEvents(oldPath).filter((event) => WorkflowEvents.workflow.advanced.is(event)).length, 1);
+    assert.equal(readJournalEvents(oldPath).filter((event) => WorkflowEvents.workflow.completed.is(event)).length, 1);
+    assert.equal(readJournalEvents(oldPath).filter((event) => AgentEvents.turn.completed.is(event)).length, 0);
     assert.equal(workflow.readEvents().some((event) => AgentEvents.turn.started.is(event)), false);
   } finally {
     await coordinatorAgent.stopAgent("test_cleanup");
@@ -1176,6 +1363,7 @@ test("A terminal Phase outcome finishes its active Coordinator Step before enter
     base.stop();
   }
 });
+}
 
 test("Coordinator does not carry phase or settlement scheduling into an idle runtime", async () => {
   let handleTool!: DynamicToolCallHandler;
@@ -1192,7 +1380,7 @@ test("Coordinator does not carry phase or settlement scheduling into an idle run
       }));
     },
   });
-  const scheduler = new Scheduler(new Graph(createGraphState({
+  const runtimeGraph = createTestGraph(createGraphState({
     domain: "test", workflowProfile: "two-phase-test",
     phases: [
       { name: "research", edges: { completed: "audit", error: null }, roles: ["researcher"] },
@@ -1203,8 +1391,8 @@ test("Coordinator does not carry phase or settlement scheduling into an idle run
       { name: "researcher", phases: ["research", "audit"] },
     ],
     currentPhase: "research",
-  })));
-  const fixture = createAgentFixture("coordinator-combined-phase-outcomes", { appServer, scheduler });
+  }));
+  const fixture = createAgentFixture("coordinator-combined-phase-outcomes", { appServer, runtimeGraph });
   const workflow = currentRunScope().workflow;
   const base = fixture.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(base instanceof BaseDomain);
@@ -2616,7 +2804,7 @@ for (const result of [
   { status: "interrupted", finalResponse: "Interrupted response." },
 ] as const) {
   test(result.status === "interrupted"
-    ? "Coordinator retains an interrupted terminal tick for old-Workflow recovery"
+    ? "Interrupted Coordinator dialog does not reopen a completed Workflow"
     : `Coordinator enters an idle runtime after its terminal ${result.status} tick (${result.finalResponse || "no response"}) settles`, async () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -2627,7 +2815,9 @@ for (const result of [
       finalResponse: result.finalResponse,
       onRunTurn: async () => {
         const workflow = currentRunScope().workflow;
-        assert.equal(workflow.scheduler.advance("error").cycleCompleted, true);
+        const advanced = await workflow.advance("error");
+        assert.equal(advanced.status, "advanced");
+        assert.equal(advanced.result.cycleCompleted, true);
         entered();
         await gate;
       },
@@ -2650,20 +2840,18 @@ for (const result of [
       await gateway.submitUserMessage({ text: "Finish this Workflow.", messageId: "finish-workflow" });
       await waitFor(() => appServer.turnInputs.length === 1);
       await terminal;
-      assert.equal(workflow.snapshot()?.workflowId, "workflow-001");
-      assert.equal(workflow.snapshot()?.status, "settling");
+      assert.equal(workflow.snapshot(), undefined);
       release();
       await coordinator.runToIdle();
       if (result.status === "interrupted") {
-        assert.equal(workflow.snapshot()?.workflowId, "workflow-001");
-        assert.equal(workflow.snapshot()?.status, "settling");
+        assert.equal(workflow.snapshot(), undefined);
         const retained = readJournalEvents(oldPath);
-        assert.equal(retained.filter((event) => AgentEvents.step.interrupted.is(event)).length, 1);
+        assert.equal(retained.filter((event) => AgentEvents.step.interrupted.is(event)).length, 0);
         assert.equal(retained.filter((event) => AgentEvents.turn.completed.is(event)
-          && event.payload.turn.status === "interrupted").length, 1);
+          && event.payload.turn.status === "interrupted").length, 0);
         assert.equal(retained.filter((event) => AgentEvents.message.consumed.is(event)
           && event.payload.messageId === "finish-workflow").length, 1);
-        assert.equal(retained.some((event) => WorkflowEvents.workflow.completed.is(event)), false);
+        assert.equal(retained.some((event) => WorkflowEvents.workflow.completed.is(event)), true);
         assert.equal(retained.some((event) => AgentEvents.coordinator.messageProduced.is(event)
           && event.payload.text === result.finalResponse), false);
         assert.equal(appServer.turnInputs.length, 1, "direct graph advancement does not request a cleanup Step");
@@ -2671,10 +2859,10 @@ for (const result of [
       }
       assert.equal(workflow.snapshot(), undefined);
       const oldEvents = readJournalEvents(oldPath);
-      assert.equal(oldEvents.filter((event) => AgentEvents.turn.completed.is(event)).length, 1);
+      assert.equal(oldEvents.filter((event) => AgentEvents.turn.completed.is(event)).length, 0);
       assert.equal(oldEvents.filter((event) => AgentEvents.message.consumed.is(event)).length, 1);
       const responses = oldEvents.filter((event) => AgentEvents.coordinator.messageProduced.is(event));
-      assert.equal(responses.length, result.status === "completed" && result.finalResponse ? 1 : 0);
+      assert.equal(responses.length, 0, "post-boundary dialog must not be backfilled into Workflow evidence");
       assert.equal(workflow.readEvents().some((event) => AgentEvents.turn.completed.is(event)
         || AgentEvents.coordinator.messageProduced.is(event)), false);
       assert.equal(appServer.turnInputs.length, 1, "no extra input or automatic Agent turn starts the Workflow");
@@ -2687,7 +2875,7 @@ for (const result of [
   });
 }
 
-test("Coordinator consumes Gateway input even when ScoutJournal cannot record that input", async (t) => {
+test("Coordinator consumes Gateway input even when ScoutRecordObject cannot record that input", async (t) => {
   const appServer = createFakeAppServer({ finalResponse: "Received without depending on the journal." });
   const fixture = createAgentFixture("coordinator-input-journal-failure", { appServer });
   const workflow = currentRunScope().workflow;
@@ -2720,7 +2908,7 @@ test("Coordinator consumes Gateway input even when ScoutJournal cannot record th
 });
 
 for (const failOldRawInput of [false, true]) {
-  test(`Coordinator consumes accepted unconsumed input with no active Workflow${failOldRawInput ? " when the old raw input write fails" : " in original order"}`, async (t) => {
+  test(`Coordinator defers advancement and reconsiders user input in the same Workflow${failOldRawInput ? " when raw input recording fails" : " in original order"}`, async (t) => {
     let enterFirst!: () => void;
     const firstStarted = new Promise<void>((resolve) => { enterFirst = resolve; });
     let finishFirst!: () => void;
@@ -2730,18 +2918,30 @@ for (const failOldRawInput of [false, true]) {
     let releaseTerminal!: () => void;
     const terminalGate = new Promise<void>((resolve) => { releaseTerminal = resolve; });
     let handleTool!: DynamicToolCallHandler;
+    let deferredResponse: DynamicToolCallResponse | undefined;
     let terminalResponse: DynamicToolCallResponse | undefined;
     let turns = 0;
     const appServer = createFakeAppServer({
-      turnIds: ["turn-first-workflow", "turn-next-workflow"],
+      turnIds: ["turn-first-workflow", "turn-reconsider-input"],
       onRunTurn: async () => {
-        if (++turns !== 1) return;
+        if (++turns === 2) {
+          terminalResponse = await handleTool({
+            threadId: "thread-test", turnId: "turn-reconsider-input", callId: "finish-after-reconsideration",
+            namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE, tool: "SubmitPhaseOutcome", arguments: { outcome: "error" },
+          });
+          return;
+        }
+        if (turns !== 1) return;
         enterFirst();
         await finishRequested;
-        terminalResponse = await handleTool({
+        const delivery = {
           threadId: "thread-test", turnId: "turn-first-workflow", callId: "finish-first-workflow",
-          namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE, tool: "SubmitPhaseOutcome", arguments: { outcome: "error" },
-        });
+          namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE, tool: "SubmitPhaseOutcome", arguments: { outcome: "completed" },
+        };
+        const [response, duplicate] = await Promise.all([handleTool(delivery), handleTool(delivery)]);
+        deferredResponse = response;
+        assert.deepEqual(duplicate, response);
+        assert.deepEqual(await handleTool({ ...delivery, callId: "same-turn-retry" }), response);
         enterTerminal();
         await terminalGate;
       },
@@ -2792,11 +2992,19 @@ for (const failOldRawInput of [false, true]) {
       assert.equal(failures.length, failOldRawInput ? 1 : 0);
       finishFirst();
       await terminalEntered;
-      assert.equal(terminalResponse?.success, true);
-      assert.equal(workflow.snapshot()?.workflowId, "workflow-001");
-      assert.equal(workflow.snapshot()?.status, "settling");
+      assert.equal(deferredResponse?.success, true);
+      const deferred = JSON.parse(deferredResponse?.contentItems[0]?.text ?? "{}");
+      assert.equal(deferred.status, "not_advanced");
+      assert.equal(deferred.reason, "pending_user_input");
+      assert.match(deferred.message, /End this response/);
+      assert.deepEqual(workflow.graph.snapshot(), createDefaultTestGraph().snapshot());
+      assert.equal(workflow.snapshot()?.status, "active");
+      assert.equal(workflow.readEvents().some((event) => WorkflowEvents.workflow.advanced.is(event)), false);
+      assert.equal(workflow.readEvents().some((event) => WorkflowEvents.workflow.completed.is(event)), false);
       releaseTerminal();
       await coordinator.runToIdle();
+      assert.equal(terminalResponse?.success, true);
+      assert.equal(JSON.parse(terminalResponse?.contentItems[0]?.text ?? "{}").status, "accepted");
       assert.equal(workflow.snapshot(), undefined);
       assert.equal(appServer.turnInputs.length, 2);
       const nextPrompt = appServer.turnInputs[1]!.prompt ?? "";
@@ -2806,11 +3014,17 @@ for (const failOldRawInput of [false, true]) {
       const nextEvents = workflow.readEvents();
       const oldEvents = readJournalEvents(oldPath);
       assert.deepEqual(nextEvents, []);
-      assert.match(nextPrompt, /workflow_status: empty/);
+      assert.match(nextPrompt, /current_phase: research\nworkflow_status: active/);
+      const advanced = oldEvents.find((event) => WorkflowEvents.workflow.advanced.is(event));
+      assert.ok(advanced && WorkflowEvents.workflow.advanced.is(advanced));
+      assert.equal(advanced.payload.outcome, "error", "reconsideration may change the proposed outcome");
       for (const { delivery } of pending) {
-        assert.equal(oldEvents.filter((event) => AgentEvents.message.consumed.is(event)
-          && event.payload.messageId === delivery.messageId).length, 0);
+        const consumed = oldEvents.filter((event) => AgentEvents.message.consumed.is(event)
+          && event.payload.messageId === delivery.messageId);
+        assert.equal(consumed.length, 1);
+        assert.ok(consumed[0]!.seq < advanced.seq);
       }
+      assert.equal(oldEvents.filter((event) => WorkflowEvents.workflow.advanced.is(event)).length, 1);
       assert.equal(coordinator.pendingWorkflowInputs().length, 0);
       assert.equal(oldEvents.filter((event) => AgentEvents.message.consumed.is(event)
         && event.payload.messageId === "first-user").length, 1);
@@ -2825,7 +3039,7 @@ for (const failOldRawInput of [false, true]) {
 }
 
 for (const outcome of ["completed", "error"] as const) {
-test(`Workflow ${outcome} automatically releases finished Worker tasks before consuming pending input with no active Workflow`, async () => {
+test(`Workflow ${outcome} consumes pending user input before deciding completion and releasing finished Workers`, async () => {
   let finishFirst!: () => void;
   const finishRequested = new Promise<void>((resolve) => { finishFirst = resolve; });
   let enterRelease!: () => void;
@@ -2833,6 +3047,7 @@ test(`Workflow ${outcome} automatically releases finished Worker tasks before co
   let finishRelease!: () => void;
   const releaseGate = new Promise<void>((resolve) => { finishRelease = resolve; });
   let handleTool!: DynamicToolCallHandler;
+  let deferredResponse: DynamicToolCallResponse | undefined;
   let terminalResponse: DynamicToolCallResponse | undefined;
   let turns = 0;
   const appServer = createFakeAppServer({
@@ -2841,20 +3056,25 @@ test(`Workflow ${outcome} automatically releases finished Worker tasks before co
     onRunTurn: async () => {
       if (++turns === 1) {
         await finishRequested;
-        terminalResponse = await handleTool({
+        deferredResponse = await handleTool({
           threadId: "thread-coordinator", turnId: "turn-original", callId: "terminal-with-finished-tasks",
+          namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE, tool: "SubmitPhaseOutcome", arguments: { outcome },
+        });
+      } else if (turns === 2) {
+        terminalResponse = await handleTool({
+          threadId: "thread-coordinator", turnId: "turn-next-input", callId: "terminal-after-user-input",
           namespace: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE, tool: "SubmitPhaseOutcome", arguments: { outcome },
         });
       }
     },
   });
-  const graph = createTestScheduler().snapshot();
+  const graph = createDefaultTestGraph().snapshot();
   const fixture = createAgentFixture(`coordinator-terminal-release-${outcome}`, {
-    appServer, scheduler: new Scheduler(new Graph({
+    appServer, runtimeGraph: createTestGraph({
       ...graph,
       phases: graph.phases.map((phase, index) => index === 0
         ? { ...phase, edges: { ...phase.edges, completed: null } } : phase),
-    })),
+    }),
   });
   const workflow = currentRunScope().workflow;
   const base = fixture.domainRegistry.get(ScoutDomainId.Base);
@@ -2901,12 +3121,15 @@ test(`Workflow ${outcome} automatically releases finished Worker tasks before co
     await coordinator.drainInput();
     finishFirst();
     await releaseStarted;
-    assert.equal(terminalResponse?.success, true);
-    assert.equal(workflow.snapshot()?.status, "settling");
-    assert.equal(appServer.turnInputs.length, 1, "resource cleanup does not need another Agent turn");
-    assert.equal(coordinator.pendingWorkflowInputs().length, 1);
+    assert.equal(deferredResponse?.success, true);
+    assert.equal(JSON.parse(deferredResponse?.contentItems[0]?.text ?? "{}").status, "not_advanced");
+    assert.equal(Boolean(terminalResponse), false, "the tool cannot acknowledge completion before release finishes");
+    assert.equal(workflow.snapshot()?.status, "completed");
+    assert.equal(appServer.turnInputs.length, 2, "the second Turn reads user input before deciding completion");
+    assert.equal(coordinator.pendingWorkflowInputs().length, 0);
     finishRelease();
     await coordinator.runToIdle();
+    assert.equal(terminalResponse?.success, true);
     assert.equal(fixture.taskStore.listTasks().length, 0);
     assert.ok(workers.every((worker) => worker.taskRunner === undefined));
     assert.equal(workflow.snapshot(), undefined);
@@ -2921,11 +3144,14 @@ test(`Workflow ${outcome} automatically releases finished Worker tasks before co
     const completed = oldEvents.find((event) => WorkflowEvents.workflow.completed.is(event));
     assert.ok(completed);
     assert.ok(releases.every((event) => event.seq < completed.seq));
-    assert.equal(oldEvents.some((event) => AgentEvents.message.consumed.is(event)
-      && event.payload.messageId === "next-workflow-user"), false);
+    const consumed = oldEvents.find((event) => AgentEvents.message.consumed.is(event)
+      && event.payload.messageId === "next-workflow-user");
+    const advanced = oldEvents.find((event) => WorkflowEvents.workflow.advanced.is(event));
+    assert.ok(consumed && advanced);
+    assert.ok(consumed.seq < advanced.seq);
     assert.equal(workflow.readEvents().filter((event) => AgentEvents.message.consumed.is(event)
       && event.payload.messageId === "next-workflow-user").length, 0);
-    assert.match(appServer.turnInputs[1]!.prompt ?? "", /workflow_status: empty/);
+    assert.match(appServer.turnInputs[1]!.prompt ?? "", /workflow_status: active/);
     assert.equal(oldEvents.some((event) => AgentEvents.coordinator.messageProduced.is(event)
       && event.payload.text.includes("Coordinator turn failed")), false);
   } finally {
@@ -2939,15 +3165,15 @@ test(`Workflow ${outcome} automatically releases finished Worker tasks before co
 });
 }
 
-test("A failed Worker release retains the settling Workflow and retries without losing its journal", async (t) => {
+test("A failed Worker release preserves completion, releases peers and blocks the next Workflow", async (t) => {
   const appServer = createFakeAppServer({ threadIds: ["thread-researcher", "thread-verifier"] });
-  const graph = createTestScheduler().snapshot();
+  const graph = createDefaultTestGraph().snapshot();
   const fixture = createAgentFixture("workflow-release-failure", {
-    appServer, scheduler: new Scheduler(new Graph({
+    appServer, runtimeGraph: createTestGraph({
       ...graph,
       phases: graph.phases.map((phase, index) => index === 0
         ? { ...phase, edges: { ...phase.edges, completed: null } } : phase),
-    })),
+    }),
   });
   const workflow = currentRunScope().workflow;
   const base = fixture.domainRegistry.get(ScoutDomainId.Base);
@@ -2976,22 +3202,27 @@ test("A failed Worker release retains the settling Workflow and retries without 
   }
   const failed = t.mock.method(workers[1]!, "releaseTask", async () => { throw new Error("Worker release failed"); });
   const oldPath = workflow.journalPath;
+  const errors: unknown[] = [];
+  fixture.eventBus.subscribe(SystemEvents.interaction.disclosureRequested, ({ payload }) => { errors.push(payload); });
   try {
-    workflow.scheduler.advance("completed");
+    const advanced = await workflow.advance("completed");
+    assert.equal(advanced.status, "advanced");
+    assert.equal(advanced.result.cycleCompleted, true);
     const before = new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read();
-    await assert.rejects(workflow.settleWorkflow(), /Worker release failed/);
-    assert.equal(workflow.snapshot()?.status, "settling");
-    assert.equal(workflow.journalPath, oldPath);
+    await assert.rejects(workflow.startWorkflow(), /resource release failed/);
+    assert.equal(workflow.snapshot(), undefined);
+    assert.equal(workflow.graph.completedOutcome, "completed");
     assert.deepEqual(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), before);
-    assert.equal(workflow.readEvents().some((event) => WorkflowEvents.workflow.completed.is(event)), false);
+    assert.equal(errors.length, 1);
+    assert.match(JSON.stringify(errors), /Worker release failed/);
     assert.equal(workers[0]?.taskRunner, undefined);
     assert.ok(workers[1]?.taskRunner);
     failed.mock.restore();
-    await workflow.settleWorkflow();
+
     assert.equal(workflow.snapshot(), undefined);
     assert.equal(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read()?.lastSuccess, "workflow-001");
     const oldEvents = readJournalEvents(oldPath);
-    assert.equal(oldEvents.filter((event) => AgentEvents.task.released.is(event)).length, 2);
+    assert.equal(oldEvents.filter((event) => AgentEvents.task.released.is(event)).length, 1);
     assert.equal(oldEvents.filter((event) => WorkflowEvents.workflow.completed.is(event)).length, 1);
   } finally {
     failed.mock.restore();
@@ -3217,7 +3448,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   const domain = createStaticDomain("domain-worker-lifecycle-tools", []);
   const fixture = createAgentFixture("worker-lifecycle-tools", {
     appServer, domain,
-    scheduler: new Scheduler(new Graph({ ...createTestScheduler().snapshot(), currentPhase: "verify" })),
+    runtimeGraph: createTestGraph({ ...createDefaultTestGraph().snapshot(), currentPhase: "verify" }),
   });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
@@ -3538,7 +3769,7 @@ test("RequestHumanInput yields its Worker turn before a fast human response star
   };
   const fixture = createAgentFixture("worker-fast-human-response", {
     appServer,
-    scheduler: new Scheduler(new Graph({ ...createTestScheduler().snapshot(), currentPhase: "verify" })),
+    runtimeGraph: createTestGraph({ ...createDefaultTestGraph().snapshot(), currentPhase: "verify" }),
   });
   const workerMount = createMount(fixture.root, "verifier");
   const workerCommit = createAssetCommit(workerMount);
@@ -3750,7 +3981,7 @@ test("Coordinator opens each Workflow only after its requesting Turn and reuses 
         assert.equal(scope.workflow.snapshot(), undefined, "the requesting Turn has no execution Workflow");
       } else if (calls === 2) {
         assert.equal(scope.workflow.snapshot()?.workflowId, "workflow-001");
-        scope.workflow.scheduler.advance("error");
+        await scope.workflow.advance("error");
       } else if (calls === 3) {
         assert.equal(scope.workflow.snapshot(), undefined, "history discussion stays empty");
       } else {
@@ -3761,6 +3992,7 @@ test("Coordinator opens each Workflow only after its requesting Turn and reuses 
   const fixture = createAgentFixture("explicit-workflow-start", { appServer, withoutActiveWorkflow: true });
   backend = new AgentDynamicToolBackend();
   const scope = currentRunScope();
+  scope.domainRegistry.get(ScoutDomainId.Base)!.start!();
   const coordinatorAgent = new AgentBuilder().buildCoordinator();
   await coordinatorAgent.startThread();
   try {
@@ -3823,6 +4055,7 @@ test("resumed Workflow resolves handoff refs after a directory rename without re
   let resumed: Workflow | undefined;
   try {
     await coordinator.runTurn({ prompt });
+    const state = original.snapshot()!;
     await original.stop();
     const oldJournal = readFileSync(join(originalRoot, "journal", "scout.journal"), "utf8");
     const renamedRoot = join(scope.runRoot, "workflows", "renamed evidence");
@@ -3831,16 +4064,11 @@ test("resumed Workflow resolves handoff refs after a directory rename without re
     assert.ok(selected);
     assert.equal(selected.workflowRoot, renamedRoot);
     const journalPath = join(selected.journalRoot, "scout.journal");
-    resumed = new Workflow({
-      graphState,
-      resume: {
-        workflowState: projectWorkflowState(selected.workflowId, readJournalEvents(journalPath)),
-        journalRoot: selected.journalRoot,
-      },
-    });
+    resumed = new Workflow(createTestWorkflowAsset(graphState));
     scope.clearWorkflow(original);
     scope.setWorkflow(resumed);
     await resumed.start();
+    resumed.restore({ graphState, workflowState: state, journalRoot: selected.journalRoot });
     assert.equal(readFileSync(journalPath, "utf8"), oldJournal);
     await coordinator.runTurn({ prompt });
     assert.equal(appServer.threadInputs.length, 1);
@@ -3920,7 +4148,7 @@ function createAgentFixture(
     domain?: ScoutDomain;
     logger?: Logger;
     interactionPort?: RuntimeInteractionPort;
-    scheduler?: Scheduler;
+    runtimeGraph?: Graph;
     withoutActiveWorkflow?: boolean;
   } = {},
 ): {
@@ -3951,22 +4179,23 @@ function createAgentFixture(
   const runId = `run-${name}`;
   const runRoot = join(root, "run", runId);
   const manifestStore = new RunManifestStore(runRoot);
-  const scheduler = input.scheduler ?? createTestScheduler();
+  const runtimeGraph = input.runtimeGraph ?? createDefaultTestGraph();
   const createdAt = new Date().toISOString();
-  let resume: ConstructorParameters<typeof Workflow>[0]["resume"];
+  let resume: { workflowState: WorkflowState; journalRoot: string } | undefined;
   if (!input.withoutActiveWorkflow) {
     const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
     benchmarks.benchmarks.acquire();
     const prepared = benchmarks.prepareNext();
     const seed = Journal.create({ journalId: runId + ":workflow:scout", path: join(prepared.journalRoot, "scout.journal"), lockPath: join(prepared.journalRoot, ".scout.lock") });
     seed.append({ id: runId + "-created", key: RunEvents.run.created, payload: { runId, scoutRoot: root, createdAt }, occurredAt: createdAt });
-    seed.append({ id: runId + "-initialized", key: WorkflowEvents.workflow.initialized, payload: { state: scheduler.snapshot(), initializedAt: createdAt }, occurredAt: createdAt });
+    seed.append({ id: runId + "-initialized", key: WorkflowEvents.workflow.initialized, payload: { state: runtimeGraph.snapshot(), initializedAt: createdAt }, occurredAt: createdAt });
     seed.close();
     benchmarks.recordStarted(prepared.workflowId);
     benchmarks.benchmarks.release();
     resume = { workflowState: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot };
   }
-  const workflow = new Workflow({ graphState: scheduler.snapshot(), resume });
+  const workflow = new Workflow(createTestWorkflowAsset(runtimeGraph.snapshot()));
+  const workflowRecovery = resume ? { graphState: runtimeGraph.snapshot(), ...resume } : undefined;
   if (releaseTestRunScope) {
     throw new Error("Test run scope was not released before creating another fixture.");
   }
@@ -4027,6 +4256,7 @@ function createAgentFixture(
     checkpointSeq: 0,
   });
   void workflow.start();
+  if (workflowRecovery) workflow.restore(workflowRecovery);
   releaseTestRunScope = async () => {
     for (const registeredDomain of scope.domainRegistry.list().reverse()) {
       await registeredDomain.stop?.();

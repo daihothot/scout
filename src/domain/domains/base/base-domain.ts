@@ -1,10 +1,11 @@
-import type { WorkflowState } from "../../../core/workflow/index.js";
+import { WorkflowEvents } from "../../../core/workflow/workflow-events.js";
+import type { WorkflowState } from "../../../core/workflow/workflow-state.js";
+import { EventSubscriptionPriorities } from "../../../core/events/index.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 import {
   ScoutDomainId,
   type ScoutDomain,
   type ScoutDomainDescription,
-  type ScoutDomainWorkflowChange,
 } from "../../types.js";
 import type { DomainAgentToolRegistration } from "../../agent/index.js";
 import { BaseDomainAgentBackend } from "./agent/index.js";
@@ -12,7 +13,7 @@ import {
   ExecutionPlatformTool,
   executionPlatformAgentTool,
 } from "./agent/tools/index.js";
-import { BaseDomainJournal, type BaseDomainRuntimeFact } from "./base-domain-journal.js";
+import { BaseDomainRecordObject, type BaseDomainRuntimeFact } from "./base-domain-record-object.js";
 import { BaseDomainToolCallStore } from "./base-domain-tool-call-store.js";
 import { BaseDomainExecution } from "./execution/index.js";
 
@@ -22,7 +23,7 @@ export class BaseDomain implements ScoutDomain {
     id: ScoutDomainId.Base,
     name: "Scout Base Domain",
   });
-  readonly journal = new BaseDomainJournal();
+  readonly recordObject = new BaseDomainRecordObject();
   readonly toolCallStore = new BaseDomainToolCallStore();
   readonly execution: BaseDomainExecution;
   readonly backend: BaseDomainAgentBackend;
@@ -35,6 +36,7 @@ export class BaseDomain implements ScoutDomain {
     toolCalls: [],
   };
   private started = false;
+  private unsubscribeWorkflowCommit?: () => void;
 
   constructor() {
     const scope = currentRunScope();
@@ -56,7 +58,12 @@ export class BaseDomain implements ScoutDomain {
     if (this.started) return;
     const scope = currentRunScope();
     const workflowState = scope.workflow.snapshot();
-    this.journal.start();
+    this.recordObject.start();
+    this.unsubscribeWorkflowCommit = scope.eventBus.subscribe(WorkflowEvents.workflow.committing, () => {
+      this.restoredFact = { domainId: "base", journalSeq: 0, toolCalls: [] };
+      this.toolCallStore.clear();
+      this.execution.stop();
+    }, { priority: EventSubscriptionPriorities.Normal });
     this.started = true;
     scope.logger.info({
       module: "domain.base",
@@ -71,10 +78,11 @@ export class BaseDomain implements ScoutDomain {
     this.started = false;
     const failures: unknown[] = [];
     for (const release of [
-      () => this.journal.stop(),
+      () => { this.unsubscribeWorkflowCommit?.(); this.unsubscribeWorkflowCommit = undefined; },
+      () => this.recordObject.stop(),
       () => this.execution.stop(),
       () => this.toolCallStore.clear(),
-      () => this.journal.close(),
+      () => this.recordObject.close(),
     ]) {
       try {
         release();
@@ -97,7 +105,7 @@ export class BaseDomain implements ScoutDomain {
   }
 
   finishWorkflow(): void {
-    this.journal.close();
+    this.recordObject.releaseWorkflow();
   }
 
   restore(workflowState: WorkflowState): void {
@@ -111,27 +119,9 @@ export class BaseDomain implements ScoutDomain {
       this.execution.stop();
       return;
     }
-    this.restoredFact = this.journal.aggregate(this.journal.readAll());
+    this.restoredFact = this.recordObject.aggregate(this.recordObject.readAll());
     this.toolCallStore.restore(this.restoredFact.toolCalls);
     this.execution.restore(this.restoredFact);
-  }
-
-  prepareWorkflow(_workflowState: WorkflowState, journalRoot: string): ScoutDomainWorkflowChange {
-    const journalChange = this.journal.prepareWorkflow(journalRoot);
-    return {
-      commit: () => {
-        journalChange.commit();
-        this.restoredFact = {
-          domainId: "base",
-          journalSeq: 0,
-          toolCalls: [],
-        };
-        this.toolCallStore.clear();
-        this.execution.stop();
-      },
-      abort: () => journalChange.abort(),
-      releasePrevious: () => journalChange.releasePrevious(),
-    };
   }
 
   close(): void {

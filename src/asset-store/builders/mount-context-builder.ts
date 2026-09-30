@@ -37,9 +37,8 @@ import {
   listScoutSkillPaths,
   resolveScoutSkillsForPhases,
 } from "../assets/skill-catalog.js";
-import { readWorkflowProfile } from "../assets/workflow-profiles.js";
 import type { WorkflowProfileAsset } from "../contracts/workflow-profile.js";
-import { WorkflowBuilder } from "./workflow-builder.js";
+import { buildWorkflow, WorkflowBuilder } from "./workflow-builder.js";
 import { SynthesisPhase } from "../../core/workflow/index.js";
 import { loadScoutConfig, scoutConfigPath } from "../../system/config/index.js";
 
@@ -80,7 +79,7 @@ export class MountContextBuilder {
       }
       return names[0];
     })();
-    const workflowProfileAsset = readWorkflowProfile(scoutRoot, workflowProfileName);
+    const workflowProfileAsset = buildWorkflow(scoutRoot, workflowProfileName);
     const { agentRoot, mountRoot } = runAgentPaths(runRoot, agentId);
     const agentProfile = new WorkflowBuilder(workflowProfileAsset).buildAgentProfile(agentId);
     const mcpServers = assetJson.readJson(ScoutAssetLayout.mcpServers) as McpServersFile;

@@ -3,40 +3,47 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { readJournalEvents } from "../../src/core/journal/index.js";
+import { RecordableObject } from "../../src/core/record/index.js";
+import { ScoutRecordObject } from "../../src/core/record/scout-record-object.js";
 import {
   BaseDomain,
   BaseDomainEvents,
-  BaseDomainJournal,
-  DomainJournal,
+  BaseDomainRecordObject,
+  DomainRecordObject,
   ScoutDomainId,
   type BaseDomainAgentToolCallObservedEvent,
 } from "../../src/domain/index.js";
-import { RbtEvents, RbtJournal, type RbtExecutionHistoryReadyEvent } from "../../src/domain/domains/rbt/index.js";
+import { RbtEvents, RbtRecordObject, type RbtExecutionHistoryReadyEvent } from "../../src/domain/domains/rbt/index.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
 test("Base and RBT inherit journal resource operations while retaining their own projections", () => {
-  for (const journal of [new BaseDomainJournal(), new RbtJournal()]) {
-    assert.ok(journal instanceof DomainJournal);
+  for (const record of [new ScoutRecordObject()]) {
+    assert.ok(record instanceof RecordableObject);
+    assert.equal(record.prepareWorkflow, RecordableObject.prototype.prepareWorkflow);
+  }
+  for (const journal of [new BaseDomainRecordObject(), new RbtRecordObject()]) {
+    assert.ok(journal instanceof DomainRecordObject);
+    assert.ok(journal instanceof RecordableObject);
     const prototype = Object.getPrototypeOf(journal);
-    for (const method of ["start", "stop", "append", "readAll", "prepareWorkflow", "close"] as const) {
+    for (const method of ["start", "stop", "write", "readAll", "prepareWorkflow", "close"] as const) {
       assert.equal(Object.hasOwn(prototype, method), false);
-      assert.equal(journal[method], DomainJournal.prototype[method]);
+      assert.equal(journal[method], DomainRecordObject.prototype[method]);
     }
     assert.equal(Object.hasOwn(prototype, "project"), true);
     assert.equal(Object.hasOwn(prototype, "aggregate"), true);
   }
-  const baseFact = new BaseDomainJournal().aggregate([]);
-  const rbtFact = new RbtJournal().aggregate([]);
+  const baseFact = new BaseDomainRecordObject().aggregate([]);
+  const rbtFact = new RbtRecordObject().aggregate([]);
   assert.deepEqual(baseFact, { domainId: "base", journalSeq: 0, toolCalls: [] });
   assert.deepEqual(rbtFact, { domainId: "rbt", journalSeq: 0, histories: [], executionPacks: [], reviews: [] });
 });
 
-test("DomainJournal instances isolate subscriptions and Workflow resources without deleting historical files", async (t) => {
+test("DomainRecordObject instances isolate subscriptions and Workflow resources without deleting historical files", async (t) => {
   const scope = installTestRunScope(t, { runId: "domain-journal-isolation" });
   const base = scope.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(base instanceof BaseDomain);
-  const baseJournal = base.journal;
-  const rbtJournal = new RbtJournal();
+  const baseJournal = base.recordObject;
+  const rbtJournal = new RbtRecordObject();
   t.after(() => rbtJournal.close());
   rbtJournal.start();
   rbtJournal.start();
@@ -78,7 +85,7 @@ test("DomainJournal instances isolate subscriptions and Workflow resources witho
   assert.deepEqual(baseJournal.readAll(), []);
   assert.equal(rbtJournal.readAll().length, 2);
   // stop detaches the observer; explicit writes still use the owned journal.
-  baseJournal.append(stoppedEvent);
+  baseJournal.write(stoppedEvent);
   baseJournal.start();
   await scope.eventBus.publishAndWait(BaseDomainEvents.agentToolCall.observed, { ...call, callId: "call-3" }, { occurredAt });
   assert.equal(baseJournal.readAll().length, 2);

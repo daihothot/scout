@@ -27,7 +27,7 @@ import type { Logger } from "../../src/core/logging/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
 import {
   createTestRunPersistence,
-  createTestScheduler,
+  createDefaultTestGraph,
 } from "../helpers/run-persistence.js";
 
 const scoutRoot = process.cwd();
@@ -46,7 +46,7 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
   const runId = "boot-agents-test";
   const startedThreads: string[] = [];
   const appServer = createAppServer((options) => {
-    const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>
+    const role = createDefaultTestGraph().snapshot().roles.map((role) => role.name).find((candidate) =>
       options.cwd.includes(`${candidate}/mount`)
     ) ?? "unknown";
     const threadId = `thread-${role}`;
@@ -90,7 +90,7 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
   ]);
   assert.deepEqual(
     scope.agentRegistry.listAgents().map((agent) => agent.role).sort(),
-    createTestScheduler().snapshot().roles.map((role) => role.name).sort(),
+    createDefaultTestGraph().snapshot().roles.map((role) => role.name).sort(),
   );
   assert.ok(scope.agentRegistry.listAgents().every((agent) =>
     agent.threadSnapshot?.startInput.ephemeral === false
@@ -125,7 +125,7 @@ test("AgentsStage closes started threads when another Agent fails to start", asy
   );
   const runId = "boot-agents-failure-test";
   const appServer = createAppServer((options) => {
-    const role = createTestScheduler().snapshot().roles.map((role) => role.name).find((candidate) =>
+    const role = createDefaultTestGraph().snapshot().roles.map((role) => role.name).find((candidate) =>
       options.cwd.includes(`${candidate}/mount`)
     ) ?? "unknown";
     if (role === "validator") throw new Error("validator thread failed");

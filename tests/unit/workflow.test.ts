@@ -10,25 +10,25 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
-  readWorkflowProfile,
+  buildWorkflow,
 } from "../../src/asset-store/index.js";
 import { WorkflowBuilder } from "../../src/asset-store/builders/workflow-builder.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import {
   Phase,
-  Scheduler,
+  Workflow,
   WorkflowEvents,
 } from "../../src/core/workflow/index.js";
 import { AgentTaskDispositionKinds, AgentTaskStatuses, type AgentTaskState } from "../../src/agent/task/types.js";
 import { AgentStepStatuses, type AgentStepState } from "../../src/agent/step/types.js";
 import { projectGraphState } from "../../src/run/resume/projection/index.js";
-import { createTestRunPersistence, installTestRunScope } from "../helpers/run-persistence.js";
+import { createTestRunPersistence, installTestRunScope, createDefaultTestGraph, createTestGraph } from "../helpers/run-persistence.js";
 import {
   createDomainRuntime,
   DomainAgentBackend,
   ScoutDomainId,
 } from "../../src/domain/index.js";
-import { RbtDomain, RbtDomainAgentBackend, RbtJournal } from "../../src/domain/domains/rbt/index.js";
+import { RbtDomain, RbtDomainAgentBackend, RbtRecordObject } from "../../src/domain/domains/rbt/index.js";
 import { ValidationDomain } from "../../src/domain/domains/validation/index.js";
 
 const scoutRoot = process.cwd();
@@ -40,11 +40,59 @@ const profilePath = join(
   "rbt.json",
 );
 
+test("Workflow Asset stays static while each Graph independently owns its cursor", () => {
+  const asset = buildWorkflow(scoutRoot, "rbt");
+  const before = structuredClone(asset);
+  assert.equal(Object.hasOwn(asset, "currentPhase"), false);
+  assert.equal(Object.hasOwn(asset.profile, "currentPhase"), false);
+  const first = new Workflow(asset);
+  const second = new Workflow(asset);
+  const initial = first.graph.initialSnapshot();
+  const advanced = first.graph.advance("completed");
+  assert.notEqual(advanced.state.currentPhase, initial.currentPhase);
+  assert.deepEqual(second.graph.snapshot(), initial);
+  assert.deepEqual(asset, before);
+  first.graph.restore(initial);
+  assert.deepEqual(first.graph.snapshot(), initial);
+  assert.throws(() => first.graph.restore({ ...initial, currentPhase: "unknown" }), /not declared/);
+  assert.throws(() => first.graph.restore({ ...initial, domain: "other" }), /definition differs/);
+  assert.deepEqual(first.graph.snapshot(), initial);
+});
+
+test("Graph owns terminal outcomes, distinguishes return edges and restores the same conclusion", () => {
+  const graph = createDefaultTestGraph();
+  assert.equal(graph.advance("completed").cycleCompleted, false);
+  assert.equal(graph.advance("error").cycleCompleted, false);
+  assert.equal(graph.snapshot().currentPhase, "research");
+  assert.equal(graph.completedOutcome, undefined);
+  const active = graph.snapshot();
+  assert.throws(() => graph.restore(active, "completed"), /does not select a terminal edge/);
+  assert.deepEqual(graph.snapshot(), active);
+  assert.equal(graph.completedOutcome, undefined);
+
+  assert.equal(graph.advance("error").cycleCompleted, true);
+  assert.equal(graph.completedOutcome, "error");
+  assert.throws(() => graph.advance("completed"), /completed Workflow Graph/);
+  const restored = createDefaultTestGraph();
+  restored.restore(graph.snapshot(), graph.completedOutcome);
+  assert.equal(restored.completedOutcome, "error");
+  assert.throws(() => restored.previewAdvance("error"), /completed Workflow Graph/);
+  restored.initializeGraph();
+  assert.equal(restored.completedOutcome, undefined);
+  assert.equal(restored.advance("completed").cycleCompleted, false);
+
+  const successful = createDefaultTestGraph();
+  for (let index = 0; index < 4; index += 1) successful.advance("completed");
+  restored.restore(successful.snapshot(), successful.completedOutcome);
+  assert.equal(restored.completedOutcome, "completed");
+  assert.throws(() => restored.advance("error"), /completed Workflow Graph/);
+});
+
 test("Domain Runtime is selected by the GraphState domain identifier", async () => {
   const rbt = await createDomainRuntime(ScoutDomainId.Rbt);
   assert.ok(rbt instanceof RbtDomain);
   assert.ok(rbt.backend instanceof DomainAgentBackend);
-  assert.equal(typeof rbt.journal.readAll, "function");
+  assert.equal(typeof rbt.recordObject.readAll, "function");
   const validation = await createDomainRuntime(ScoutDomainId.Validation);
   assert.ok(validation instanceof ValidationDomain);
   assert.ok(validation.backend instanceof DomainAgentBackend);
@@ -72,13 +120,13 @@ test("Domain loading validates backend methods instead of Domain forwarding meth
 });
 
 test("Domain loading validates the Journal read contract", async () => {
-  const descriptor = Object.getOwnPropertyDescriptor(RbtJournal.prototype, "readAll");
-  Object.defineProperty(RbtJournal.prototype, "readAll", { value: "invalid", configurable: true });
+  const descriptor = Object.getOwnPropertyDescriptor(RbtRecordObject.prototype, "readAll");
+  Object.defineProperty(RbtRecordObject.prototype, "readAll", { value: "invalid", configurable: true });
   try {
     await assert.rejects(createDomainRuntime(ScoutDomainId.Rbt), /invalid Domain journal/);
   } finally {
-    if (descriptor) Object.defineProperty(RbtJournal.prototype, "readAll", descriptor);
-    else Reflect.deleteProperty(RbtJournal.prototype, "readAll");
+    if (descriptor) Object.defineProperty(RbtRecordObject.prototype, "readAll", descriptor);
+    else Reflect.deleteProperty(RbtRecordObject.prototype, "readAll");
   }
 });
 
@@ -97,7 +145,7 @@ test("Phase selects the first available role in declaration order", () => {
   assert.equal(phase.selectAvailableRole(() => false), undefined);
 });
 
-test("Scheduler persists graph initialization and restores the latest Phase", (t) => {
+test("Workflow persists Graph initialization and restores the latest Phase", async (t) => {
   const eventBus = new InMemoryEventBus();
   const persistence = createTestRunPersistence(
     t,
@@ -110,7 +158,8 @@ test("Scheduler persists graph initialization and restores the latest Phase", (t
     runId: journal.runId, eventBus, workflow, manifestStore: persistence.manifestStore,
   });
 
-  const advanced = workflow.scheduler.advance("completed");
+  const advanced = await workflow.advance("completed");
+  assert.equal(advanced.status, "advanced");
   const events = journal.readAll();
   const initialized = events.find((event) =>
     WorkflowEvents.workflow.initialized.is(event)
@@ -124,14 +173,17 @@ test("Scheduler persists graph initialization and restores the latest Phase", (t
   assert.equal(transition.payload.previousPhase, "research");
   assert.equal(transition.payload.outcome, "completed");
   assert.equal(transition.payload.cycleCompleted, false);
-  assert.equal(advanced.state.currentPhase, "research-reviewer");
+  assert.equal(advanced.result.state.currentPhase, "research-reviewer");
   assert.equal(projectGraphState(events).currentPhase, "research-reviewer");
 });
 
 for (const outcome of ["completed", "error"] as const) {
   for (const status of Object.values(AgentTaskStatuses)) {
-    test(`Scheduler ${outcome} checks ${status} Task execution without implicitly releasing it`, (t) => {
-      const scope = installTestRunScope(t, { runId: `phase-guard-${outcome}-${status}` });
+    test(`Workflow ${outcome} checks ${status} Task execution without implicitly releasing it`, async (t) => {
+      const graph = createDefaultTestGraph().snapshot();
+      const runtimeGraph = createTestGraph({ ...graph, phases: graph.phases.map((phase, index) => index === 0
+        ? { ...phase, edges: { ...phase.edges, error: "research-reviewer" } } : phase) });
+      const scope = installTestRunScope(t, { runId: `phase-guard-${outcome}-${status}`, runtimeGraph });
       const workflow = scope.workflow;
       const now = new Date().toISOString();
       const task: AgentTaskState = {
@@ -150,7 +202,7 @@ for (const outcome of ["completed", "error"] as const) {
       scope.eventBus.subscribe(WorkflowEvents.workflow.advanced, () => { published += 1; });
 
       if (status === AgentTaskStatuses.Queued || status === AgentTaskStatuses.Running) {
-        assert.throws(() => workflow.scheduler.advance(outcome), /Cannot advance Workflow Phase research: Task phase-task/);
+        await assert.rejects(async () => await workflow.advance(outcome), /Cannot advance Workflow Phase research: Task phase-task/);
         assert.deepEqual(workflow.graph.snapshot(), beforeGraph);
         assert.deepEqual(workflow.snapshot(), beforeWorkflow);
         assert.equal(readFileSync(workflow.journalPath, "utf8"), beforeJournal);
@@ -160,19 +212,20 @@ for (const outcome of ["completed", "error"] as const) {
         scope.taskStore.updateTask(task.taskId, (current) => ({ ...current, status: AgentTaskStatuses.Done }));
       }
 
-      const advanced = workflow.scheduler.advance(outcome);
-      assert.equal(advanced.cycleCompleted, outcome === "error");
-      assert.equal(advanced.state.currentPhase, outcome === "error" ? "research" : "research-reviewer");
-      assert.equal(workflow.snapshot()?.status, outcome === "error" ? "settling" : "active");
+      const advanced = await workflow.advance(outcome);
+      assert.equal(advanced.status, "advanced");
+      assert.equal(advanced.result.cycleCompleted, false);
+      assert.equal(advanced.result.state.currentPhase, "research-reviewer");
+      assert.equal(workflow.snapshot()?.status, "active");
       assert.equal(published, 1);
       assert.ok(scope.taskStore.getTask(task.taskId), "Phase advancement does not release the Task");
     });
   }
 }
 
-test("Scheduler keeps human-waiting and restored earlier-Phase Tasks on the active Workflow", (t) => {
+test("Workflow keeps human-waiting and restored earlier-Phase Tasks on the active Workflow", async (t) => {
   const scope = installTestRunScope(t, { runId: "phase-guard-human-wait" });
-  scope.workflow.scheduler.advance("completed");
+  await scope.workflow.advance("completed");
   const now = new Date().toISOString();
   scope.taskStore.addTask({
     type: "local_agent", taskId: "restored-human-task", taskSequence: 1,
@@ -189,7 +242,7 @@ test("Scheduler keeps human-waiting and restored earlier-Phase Tasks on the acti
   const graph = scope.workflow.graph.snapshot();
   const workflowState = scope.workflow.snapshot()!;
   for (const outcome of ["completed", "error"] as const) {
-    assert.throws(() => scope.workflow.scheduler.advance(outcome), /restored-human-task \(running\)/);
+    await assert.rejects(async () => await scope.workflow.advance(outcome), /restored-human-task \(running\)/);
     assert.deepEqual(scope.workflow.graph.snapshot(), graph);
     assert.deepEqual(scope.workflow.snapshot(), workflowState);
     assert.doesNotThrow(() => scope.workflow.assertAcceptingInput());
@@ -197,8 +250,11 @@ test("Scheduler keeps human-waiting and restored earlier-Phase Tasks on the acti
 });
 
 for (const status of [AgentTaskStatuses.Done, AgentTaskStatuses.Failed, AgentTaskStatuses.Stopped]) {
-  test(`Scheduler waits for a ${status} Task's running Step but not the Coordinator Step`, (t) => {
-    const scope = installTestRunScope(t, { runId: `phase-guard-step-${status}` });
+  test(`Workflow waits for a ${status} Task's running Step but not the Coordinator Step`, async (t) => {
+    const graph = createDefaultTestGraph().snapshot();
+    const runtimeGraph = createTestGraph({ ...graph, phases: graph.phases.map((phase, index) => index === 0
+      ? { ...phase, edges: { ...phase.edges, error: "research-reviewer" } } : phase) });
+    const scope = installTestRunScope(t, { runId: `phase-guard-step-${status}`, runtimeGraph });
     const now = new Date().toISOString();
     scope.taskStore.addTask({
       type: "local_agent", taskId: "ended-task", taskSequence: 1,
@@ -216,10 +272,12 @@ for (const status of [AgentTaskStatuses.Done, AgentTaskStatuses.Failed, AgentTas
       { ...workerStep, stepId: "coordinator-step", agentId: "coordinator", taskId: undefined },
     ]);
     const before = scope.workflow.snapshot();
-    assert.throws(() => scope.workflow.scheduler.advance("error"), /Worker Step finishing-step for Task ended-task is still running/);
+    await assert.rejects(async () => await scope.workflow.advance("error"), /Worker Step finishing-step for Task ended-task is still running/);
     assert.deepEqual(scope.workflow.snapshot(), before);
     scope.stepStore.updateStep(workerStep.stepId, (step) => ({ ...step, status: AgentStepStatuses.Completed }));
-    assert.equal(scope.workflow.scheduler.advance("error").cycleCompleted, true);
+    const advanced = await scope.workflow.advance("error");
+    assert.equal(advanced.status, "advanced");
+    assert.equal(advanced.result.cycleCompleted, false);
     assert.equal(scope.stepStore.getStep("coordinator-step")?.status, AgentStepStatuses.Running);
   });
 }
@@ -250,7 +308,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     withEntry.phases.entry = "research";
     writeFileSync(targetPath, JSON.stringify(withEntry), "utf8");
     assert.throws(
-      () => readWorkflowProfile(fixtureRoot, "invalid"),
+      () => buildWorkflow(fixtureRoot, "invalid"),
       /unknown phases field\(s\): entry/,
     );
 
@@ -260,7 +318,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     withSuccess.phases.workers.execute!.edges.success = "review";
     writeFileSync(targetPath, JSON.stringify(withSuccess), "utf8");
     assert.throws(
-      () => readWorkflowProfile(fixtureRoot, "invalid"),
+      () => buildWorkflow(fixtureRoot, "invalid"),
       /unknown phases\.workers\.execute\.edges field\(s\): success/,
     );
 
@@ -270,7 +328,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     withUnknownTarget.phases.workers.execute!.edges.completed = "missing";
     writeFileSync(targetPath, JSON.stringify(withUnknownTarget), "utf8");
     assert.throws(
-      () => readWorkflowProfile(fixtureRoot, "invalid"),
+      () => buildWorkflow(fixtureRoot, "invalid"),
       /references unknown Worker Phase missing/,
     );
 
@@ -283,7 +341,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
       };
       writeFileSync(targetPath, JSON.stringify(withReservedWorkerPhase), "utf8");
       assert.throws(
-        () => readWorkflowProfile(fixtureRoot, "invalid"),
+        () => buildWorkflow(fixtureRoot, "invalid"),
         new RegExp(`cannot declare reserved Phase ${reservedPhase}`),
       );
     }
@@ -294,7 +352,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     coordinatorWithPhase.roles.coordinator.phases = ["execute"];
     writeFileSync(targetPath, JSON.stringify(coordinatorWithPhase), "utf8");
     assert.throws(
-      () => readWorkflowProfile(fixtureRoot, "invalid"),
+      () => buildWorkflow(fixtureRoot, "invalid"),
       /roles\.coordinator cannot declare phases/,
     );
 
@@ -304,7 +362,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     delete withoutDefaultResource.resources["common-inspection"]!.default;
     withoutDefaultResource.resources["common-inspection"]!.phases = ["Synthesis"];
     writeFileSync(targetPath, JSON.stringify(withoutDefaultResource), "utf8");
-    assert.doesNotThrow(() => readWorkflowProfile(fixtureRoot, "invalid"));
+    assert.doesNotThrow(() => buildWorkflow(fixtureRoot, "invalid"));
 
     const withTwoDefaultResources = structuredClone(original) as {
       resources: Record<string, { default?: true }>;
@@ -312,7 +370,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     withTwoDefaultResources.resources["rbt-execution"]!.default = true;
     writeFileSync(targetPath, JSON.stringify(withTwoDefaultResources), "utf8");
     assert.throws(
-      () => readWorkflowProfile(fixtureRoot, "invalid"),
+      () => buildWorkflow(fixtureRoot, "invalid"),
       /at most one global default Resource Park; found 2/,
     );
 
@@ -322,7 +380,7 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
     withUnknownResourcePhase.resources["rbt-execution"]!.phases.push("missing");
     writeFileSync(targetPath, JSON.stringify(withUnknownResourcePhase), "utf8");
     assert.throws(
-      () => readWorkflowProfile(fixtureRoot, "invalid"),
+      () => buildWorkflow(fixtureRoot, "invalid"),
       /resources\.rbt-execution references unknown Phase missing/,
     );
   } finally {
@@ -352,7 +410,7 @@ test("WorkflowBuilder inherits the default Resource Park when its Phase scope al
   writeFileSync(targetPath, JSON.stringify(profile), "utf8");
 
   try {
-    const asset = readWorkflowProfile(fixtureRoot, "fallback");
+    const asset = buildWorkflow(fixtureRoot, "fallback");
     const agentProfile = new WorkflowBuilder(asset).buildAgentProfile("fallback-worker");
     assert.deepEqual(agentProfile.resourceParks, ["common-inspection"]);
     assert.deepEqual(agentProfile.shellTools, [
@@ -390,7 +448,7 @@ test("WorkflowBuilder rejects a role Phase with no projected Resource Park", () 
   writeFileSync(targetPath, JSON.stringify(profile), "utf8");
 
   try {
-    const asset = readWorkflowProfile(fixtureRoot, "missing-resource");
+    const asset = buildWorkflow(fixtureRoot, "missing-resource");
     assert.throws(
       () => new WorkflowBuilder(asset).buildAgentProfile("unbound-worker"),
       /role unbound-worker has no Resource Park for Phase unbound/,

@@ -1,3 +1,4 @@
+import { Workflow } from "../../src/core/workflow/workflow.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -56,7 +57,7 @@ test("every Scout Skill projects the runtime metadata needed by its mount", () =
 });
 
 test("RBT roles receive only their Execution Pack and Signal responsibilities", () => {
-  const graph = new AssetStore().buildWorkflow(scoutRoot, "rbt");
+  const graph = new Workflow(new AssetStore().buildWorkflow(scoutRoot, "rbt")).graph.snapshot();
   const catalog = buildScoutSkillCatalog({
     assetsRoot,
     skillPaths: listScoutSkillPaths(assetsRoot),

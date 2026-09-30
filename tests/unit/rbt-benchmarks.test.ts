@@ -5,14 +5,16 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { AgentEvents } from "../../src/agent/events/index.js";
+import type { ScoutEvent } from "../../src/core/events/index.js";
 import type { AgentTaskOutcomeSubmission } from "../../src/agent/task/task-events.js";
 import { Workflow } from "../../src/core/workflow/index.js";
+import { Journal } from "../../src/core/journal/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import {
   RbtDomain, RbtEvents, type RbtCampaignCommandEvent, type RbtExecutionHistoryReadyEvent,
-  type RbtBenchmarkEntry,
+  type RbtBenchmarkEntry, type RbtCampaignExecutionHistoryFileEvent, type RbtExecutionPackSubmittedEvent,
 } from "../../src/domain/domains/rbt/index.js";
-import { installTestRunScope } from "../helpers/run-persistence.js";
+import { installTestRunScope, createTestWorkflowAsset } from "../helpers/run-persistence.js";
 
 const bddId = "firebase-fallback";
 const targetVersion = "26.9.0";
@@ -70,7 +72,7 @@ async function fixture(t: TestContext) {
     await scope.eventBus.publishAndWait(RbtEvents.campaign.end, {
       ...command, sequence: 2, request: { ...command.request, type: "behavior.campaign.stop" }, status: options.status ?? "completed",
     });
-    const history = domain.journal.aggregate(domain.journal.readAll()).histories.at(-1)!;
+    const history = domain.recordObject.aggregate(domain.recordObject.readAll()).histories.at(-1)!;
     return { command, history };
   };
   const executionHandoff = (agentId = "operator", bdd = bddId, version = targetVersion) => handoff("execute", agentId, [
@@ -98,10 +100,11 @@ test("RBT indexes actual execution identity and formal Packs; Task done alone is
   assert.equal(f.entry(), undefined);
   const { command, history } = await f.execute();
   const entry = f.entry()!;
-  assert.equal(entry.history.lastRun?.workflowId, "workflow-001");
-  assert.equal(entry.history.lastRun?.platform.type, "unity-editor");
-  assert.equal(entry.history.lastExecutionSuccess?.executeFile.digest, command.executeFileDigest);
-  assert.equal(entry.history.lastExecutionSuccess?.executorHistory.digest, history.executorHistoryDigest);
+  assert.deepEqual(entry.history.lastRun, { workflowId: "workflow-001" });
+  assert.deepEqual(entry.history.lastExecutionSuccess, { workflowId: "workflow-001" });
+  assert.equal(history.platform.type, "unity-editor");
+  assert.equal(history.executeFileDigest, command.executeFileDigest);
+  assert.equal(history.executorHistoryDigest, `sha256:${createHash("sha256").update(readFileSync(join(f.scope.workflow.agentPaths("operator").artifactRoot, "history/001.json"))).digest("hex")}`);
   assert.equal(f.entry(bddId, "2022.3"), undefined, "platform version is not the SDK key");
   assert.equal(entry.history.lastExecutionPack, undefined);
   assert.equal(entry.statistics, undefined);
@@ -109,7 +112,8 @@ test("RBT indexes actual execution identity and formal Packs; Task done alone is
   await f.scope.eventBus.publishAndWait(AgentEvents.task.done, executionHandoff.task);
   assert.equal(f.entry()!.history.lastExecutionPack, undefined);
   await f.submit(executionHandoff);
-  const pack = f.entry()!.history.lastExecutionPack!;
+  assert.deepEqual(f.entry()!.history.lastExecutionPack, { workflowId: "workflow-001" });
+  const pack = f.domain.recordObject.aggregate(f.domain.recordObject.readAll()).executionPacks.at(-1)!.pack;
   assert.equal(pack.path, `${bddId}/${targetVersion}/execute-pack`);
   assert.equal(pack.executeFile.digest, command.executeFileDigest);
   const digest = execFileSync(process.execPath, [join(process.cwd(), "assets/scout/tools/scout-artifact-digest.cjs"),
@@ -119,13 +123,16 @@ test("RBT indexes actual execution identity and formal Packs; Task done alone is
   const result = f.review(history);
   await f.submit(result.input);
   const reviewed = f.entry()!;
-  assert.equal(reviewed.history.lastReviewerPack?.result, "pass");
-  assert.equal(reviewed.history.lastReviewSuccess?.agentId, "operator");
-  assert.equal(reviewed.history.lastReviewSuccess?.digest, pack.digest);
-  assert.equal(reviewed.history.lastReviewSuccess?.reviewerPack.agentId, "auditor");
+  assert.deepEqual(reviewed.history.lastReviewerPack, { workflowId: "workflow-001" });
+  assert.deepEqual(reviewed.history.lastReviewSuccess, { workflowId: "workflow-001" });
+  const reviewFact = f.domain.recordObject.aggregate(f.domain.recordObject.readAll()).reviews.at(-1)!;
+  assert.equal(reviewFact.pack.result, "pass");
+  assert.equal(reviewFact.pack.executionPack.agentId, "operator");
+  assert.equal(reviewFact.pack.executionPack.digest, pack.digest);
+  assert.equal(reviewFact.pack.agentId, "auditor");
   assert.deepEqual(reviewed.statistics?.passedPlatforms, ["unity-editor"]);
   assert.deepEqual(f.warnings, []);
-  const facts = f.domain.journal.aggregate(f.domain.journal.readAll());
+  const facts = f.domain.recordObject.aggregate(f.domain.recordObject.readAll());
   assert.equal(facts.executionPacks.length, 1);
   assert.equal(facts.reviews.length, 1);
   assert.equal(f.scope.workflow.readEvents().some((event) => RbtEvents.artifact.reviewSubmitted.is(event)), false);
@@ -139,17 +146,164 @@ test("Failed execution and non-passing Review retain historical success pointers
   const success = f.entry()!;
   const failed = await f.execute({ agentId: "failed-operator", platform: "android", status: "failed" });
   await f.submit(f.executionHandoff("failed-operator"));
-  assert.equal(f.entry()!.history.lastRun?.platform.type, "android");
+  assert.deepEqual(f.entry()!.history.lastRun, { workflowId: "workflow-001" });
+  assert.equal(failed.history.platform.type, "android");
   assert.deepEqual(f.entry()!.history.lastExecutionSuccess, success.history.lastExecutionSuccess);
   for (const [statuses, expected] of [[ ["warning"], "attention" ], [ ["warning", "not_match"], "fail" ]] as const) {
     const review = f.review(failed.history, [...statuses]);
     await f.submit(review.input);
-    assert.equal(f.entry()!.history.lastReviewerPack?.result, expected);
+    assert.equal(f.domain.recordObject.aggregate(f.domain.recordObject.readAll()).reviews.at(-1)!.pack.result, expected);
     assert.deepEqual(f.entry()!.history.lastReviewSuccess, success.history.lastReviewSuccess);
     assert.deepEqual(f.entry()!.statistics, success.statistics);
   }
   assert.deepEqual(f.warnings, []);
 });
+
+test("RBT reads formal files even when Outcome has no references or contradicts their facts", async (t) => {
+  const f = await fixture(t);
+  const manualWrite = t.mock.method(f.domain.recordObject, "write", () => { throw new Error("Artifact producers must publish events, not manually record them."); });
+  const { history } = await f.execute();
+  await f.submit(f.handoff("execute", "operator", ""));
+  const reviewed = f.review(history);
+  reviewed.input.outcome = "status: failed; platform: android; bdd: invented; version: 99; pack_ref: /not/a/pack";
+  await f.submit(reviewed.input);
+  assert.deepEqual(f.entry()!.history, {
+    lastRun: { workflowId: "workflow-001" }, lastExecutionSuccess: { workflowId: "workflow-001" },
+    lastExecutionPack: { workflowId: "workflow-001" }, lastReviewerPack: { workflowId: "workflow-001" },
+    lastReviewSuccess: { workflowId: "workflow-001" },
+  });
+  assert.deepEqual(f.entry()!.statistics?.passedPlatforms, ["unity-editor"]);
+  assert.equal(f.entry("invented", "99"), undefined);
+  const facts = f.domain.recordObject.aggregate(f.domain.recordObject.readAll());
+  assert.equal(facts.executionPacks.length, 1);
+  assert.equal(facts.reviews.length, 1);
+  assert.equal(facts.reviews[0]!.pack.result, "pass");
+  assert.equal(manualWrite.mock.callCount(), 0);
+  assert.deepEqual(f.warnings, []);
+});
+
+test("Each finalized execution publishes one history, including failures and repeated execute-files", async (t) => {
+  const f = await fixture(t);
+  const notifications: string[] = [];
+  const histories: RbtExecutionHistoryReadyEvent[] = [];
+  f.scope.eventBus.subscribe<RbtCampaignExecutionHistoryFileEvent>(RbtEvents.history.campaignExecutionHistory, (event) => { notifications.push(event.payload.executorHistoryRef); });
+  f.scope.eventBus.subscribe<RbtExecutionHistoryReadyEvent>(RbtEvents.history.ready, (event) => { histories.push(event.payload); });
+  for (const sequence of [1, 2, 3]) await f.execute({ sequence, status: sequence === 3 ? "failed" : "completed" });
+  assert.equal(notifications.length, 3);
+  assert.deepEqual(histories.map((history) => [history.runtimeSequence, history.status]), [[1, "completed"], [2, "completed"], [3, "failed"]]);
+  assert.equal(new Set(notifications).size, 3);
+  await f.scope.eventBus.publishAndWait(RbtEvents.history.campaignExecutionHistory, histories[2]!);
+  assert.equal(histories.length, 3, "repeated file notification must not publish the same execution again");
+  assert.equal(f.domain.recordObject.aggregate(f.domain.recordObject.readAll()).histories.length, 3);
+  assert.deepEqual(f.warnings, []);
+});
+
+test("Execution history status, platform and BDD identity are read from the finalized file", async (t) => {
+  const f = await fixture(t);
+  const content = JSON.stringify({
+    runtimeSequence: 1, executeFileRef: f.ref("operator", `${bddId}/${targetVersion}/execute-file.json`),
+    executeFileDigest: `sha256:${"a".repeat(64)}`, campaignId: "campaign", scenarioId: "scenario",
+    platform: { type: "android", version: "15" }, status: "failed",
+  });
+  f.write("operator", "history/001.json", content);
+  await f.scope.eventBus.publishAndWait(RbtEvents.history.campaignExecutionHistory, {
+    agentId: "operator", role: "operator", runtimeSequence: 1, executorHistoryRef: f.ref("operator", "history/001.json"),
+    executorHistoryDigest: `sha256:${createHash("sha256").update(content).digest("hex")}`,
+    status: "completed", platform: { type: "unity-editor", version: "fake" }, bddId: "invented", targetVersion: "99",
+  });
+  const history = f.domain.recordObject.aggregate(f.domain.recordObject.readAll()).histories[0]!;
+  assert.equal(history.status, "failed");
+  assert.deepEqual(history.platform, { type: "android", version: "15" });
+  assert.equal(history.bddId, bddId);
+  assert.equal(history.targetVersion, targetVersion);
+  assert.deepEqual(f.entry()!.history.lastRun, { workflowId: "workflow-001" });
+  assert.equal(f.entry()!.history.lastExecutionSuccess, undefined);
+  assert.equal(f.entry("invented", "99"), undefined);
+  assert.deepEqual(f.warnings, []);
+});
+
+test("One Agent can submit multiple formal BDD and version files without Outcome path selection", async (t) => {
+  const f = await fixture(t);
+  const first = await f.execute();
+  const second = await f.execute({ version: "26.10.0", sequence: 2 });
+  const third = await f.execute({ bdd: "other-bdd", sequence: 3 });
+  await f.submit(f.handoff("execute", "operator", "Execution artifacts are ready."));
+  const reviews = [first, second, third].map(({ history }) => f.review(history));
+  reviews[0]!.input.outcome = "审查完成。";
+  await f.submit(reviews[0]!.input);
+  for (const [bdd, version] of [[bddId, targetVersion], [bddId, "26.10.0"], ["other-bdd", targetVersion]]) {
+    assert.deepEqual(f.entry(bdd, version)!.history.lastReviewSuccess, { workflowId: "workflow-001" });
+    assert.deepEqual(f.entry(bdd, version)!.statistics?.passedPlatforms, ["unity-editor"]);
+  }
+  const facts = f.domain.recordObject.aggregate(f.domain.recordObject.readAll());
+  assert.equal(facts.executionPacks.length, 3);
+  assert.equal(facts.reviews.length, 3);
+  await f.submit(reviews[0]!.input);
+  assert.equal(f.domain.recordObject.aggregate(f.domain.recordObject.readAll()).reviews.length, 3);
+  assert.deepEqual(f.warnings, []);
+});
+
+test("Subscriber failure does not cause already published Artifact facts to be published again", async (t) => {
+  const f = await fixture(t);
+  await f.execute();
+  await f.execute({ bdd: "other-bdd", sequence: 2 });
+  let failOnce = true;
+  const dispatch = f.scope.eventBus.subscribe<RbtExecutionPackSubmittedEvent>(RbtEvents.artifact.executionPackSubmitted, (event) => {
+    if (event.payload.bddId === "other-bdd" && failOnce) { failOnce = false; throw new Error("subscriber unavailable"); }
+  });
+  const input = f.handoff("execute", "operator", "Ready");
+  await f.submit(input);
+  dispatch();
+  await f.submit(input);
+  const facts = f.domain.recordObject.aggregate(f.domain.recordObject.readAll());
+  assert.equal(facts.executionPacks.filter((fact) => fact.bddId === bddId).length, 1);
+  assert.equal(facts.executionPacks.filter((fact) => fact.bddId === "other-bdd").length, 1);
+  assert.equal(f.warnings.length, 1);
+});
+
+test("A failed execution in the next Workflow keeps earlier execution and review success pointers", async (t) => {
+  const f = await fixture(t);
+  const first = await f.execute();
+  await f.submit(f.handoff("execute", "operator", ""));
+  await f.submit(f.review(first.history).input);
+  await f.scope.workflow.advance("error");
+
+  await f.scope.workflow.startWorkflow();
+  const second = await f.execute({ platform: "android", status: "failed" });
+  await f.submit(f.handoff("execute", "operator", "success"));
+  await f.submit(f.review(second.history, ["not_match"]).input);
+  const entry = f.entry()!;
+  assert.deepEqual(entry.history.lastRun, { workflowId: "workflow-002" });
+  assert.deepEqual(entry.history.lastExecutionSuccess, { workflowId: "workflow-001" });
+  assert.deepEqual(entry.history.lastExecutionPack, { workflowId: "workflow-002" });
+  assert.deepEqual(entry.history.lastReviewerPack, { workflowId: "workflow-002" });
+  assert.deepEqual(entry.history.lastReviewSuccess, { workflowId: "workflow-001" });
+  assert.deepEqual(entry.statistics?.passedPlatforms, ["unity-editor"]);
+  assert.deepEqual(f.warnings, []);
+});
+
+for (const corruption of ["recording", "missing-platform", "wrong-reference", "digest-mismatch"] as const) {
+  test(`An invalid ${corruption} history notification does not publish a historical fact`, async (t) => {
+    const f = await fixture(t);
+    const value: Record<string, unknown> = {
+      runtimeSequence: 1, executeFileRef: f.ref("operator", `${bddId}/${targetVersion}/execute-file.json`),
+      executeFileDigest: `sha256:${"a".repeat(64)}`, campaignId: "campaign", scenarioId: "scenario",
+      platform: { type: "unity-editor", version: "2022.3" }, status: "completed",
+    };
+    if (corruption === "recording") value.status = "recording";
+    if (corruption === "missing-platform") value.platform = null;
+    if (corruption === "wrong-reference") value.executeFileRef = "scout-artifact://another-workflow/operator/bdd/version/execute-file.json";
+    const content = JSON.stringify(value);
+    f.write("operator", "history/001.json", content);
+    await f.scope.eventBus.publishAndWait(RbtEvents.history.campaignExecutionHistory, {
+      agentId: "operator", role: "operator", runtimeSequence: 1, executorHistoryRef: f.ref("operator", "history/001.json"),
+      executorHistoryDigest: corruption === "digest-mismatch" ? `sha256:${"b".repeat(64)}` : `sha256:${createHash("sha256").update(content).digest("hex")}`,
+    });
+    assert.equal(f.domain.recordObject.aggregate(f.domain.recordObject.readAll()).histories.length, 0);
+    assert.equal(f.entry(), undefined);
+    assert.equal(f.warnings.length, 1);
+  });
+}
 
 test("Passed platforms accumulate across Workflows and deduplicate without mixing SDK versions or BDDs", async (t) => {
   const f = await fixture(t);
@@ -159,8 +313,8 @@ test("Passed platforms accumulate across Workflows and deduplicate without mixin
   const firstPack = f.entry()!.history.lastReviewSuccess;
   const oldJournal = f.scope.workflow.journalRoot;
   const oldContents = readFileSync(join(oldJournal, "rbt-events.jsonl"), "utf8");
-  f.scope.workflow.scheduler.advance("error");
-  await f.scope.workflow.settleWorkflow();
+  await f.scope.workflow.advance("error");
+
   assert.deepEqual(f.entry()!.history.lastReviewSuccess, firstPack);
   await f.scope.workflow.startWorkflow();
   for (const [agentId, platform] of [["android-first", "android"], ["android-second", "android"], ["editor", "unity-editor"]]) {
@@ -174,7 +328,8 @@ test("Passed platforms accumulate across Workflows and deduplicate without mixin
   await f.submit(f.executionHandoff("new-sdk", bddId, "26.10.0"));
   await f.submit(f.review(otherVersion.history).input);
   const otherBdd = await f.execute({ agentId: "another-bdd", bdd: "other-bdd" });
-  assert.equal(f.entry("other-bdd")!.history.lastExecutionSuccess?.executeFile.digest, otherBdd.history.executeFileDigest);
+  assert.deepEqual(f.entry("other-bdd")!.history.lastExecutionSuccess, { workflowId: "workflow-002" });
+  assert.equal(otherBdd.history.executeFileDigest, otherBdd.command.executeFileDigest);
   assert.equal(f.entry("other-bdd")!.statistics, undefined);
   assert.deepEqual(f.entry(bddId, "26.10.0")!.statistics?.passedPlatforms, ["unity-editor"]);
   assert.deepEqual(f.entry()!.statistics?.passedPlatforms, ["unity-editor", "android"]);
@@ -204,7 +359,7 @@ for (const corruption of ["execute-file", "execute-pack", "history", "bdd", "cam
     writeFileSync(review.path, JSON.stringify(review.value));
     await f.submit(review.input);
     assert.deepEqual(f.scope.workflow.benchmarks.read("rbt"), before);
-    assert.equal(f.domain.journal.aggregate(f.domain.journal.readAll()).reviews.length, 0);
+    assert.equal(f.domain.recordObject.aggregate(f.domain.recordObject.readAll()).reviews.length, 0);
     assert.equal(f.warnings.length, 1);
   });
 }
@@ -217,20 +372,24 @@ test("Benchmark write failure warns without turning a successful execution or ha
   const failed = t.mock.method(f.scope.workflow.benchmarks, "submit", () => { throw new Error("disk full"); });
   await f.submit(f.review(history).input);
   assert.equal(readFileSync(f.scope.workflow.benchmarks.path, "utf8"), before);
-  assert.equal(f.domain.journal.aggregate(f.domain.journal.readAll()).reviews.length, 1, "source fact survives index failure");
+  assert.equal(f.domain.recordObject.aggregate(f.domain.recordObject.readAll()).reviews.length, 1, "source fact survives index failure");
   assert.match(f.warnings[0]!, /disk full/);
   failed.mock.restore();
   await f.submit(f.review(history).input);
   assert.deepEqual(f.entry()!.statistics?.passedPlatforms, ["unity-editor"]);
 });
 
-test("RBT journal failure never announces an undurable Pack fact to Benchmarks", async (t) => {
+test("Artifact facts have independent recording and benchmark consumers when the journal fails", async (t) => {
   const f = await fixture(t);
   await f.execute();
-  const before = f.scope.workflow.benchmarks.read("rbt");
-  const failed = t.mock.method(f.domain.journal, "append", () => { throw new Error("journal unavailable"); });
+  const originalAppend = Journal.prototype.append;
+  const failed = t.mock.method(Journal.prototype, "append", function (this: Journal, event: ScoutEvent) {
+    if (RbtEvents.artifact.executionPackSubmitted.is(event)) throw new Error("journal unavailable");
+    return originalAppend.call(this, event);
+  });
   await f.submit(f.executionHandoff());
-  assert.deepEqual(f.scope.workflow.benchmarks.read("rbt"), before);
+  assert.deepEqual(f.entry()!.history.lastExecutionPack, { workflowId: "workflow-001" });
+  assert.equal(f.domain.recordObject.aggregate(f.domain.recordObject.readAll()).executionPacks.length, 0);
   assert.match(f.warnings[0]!, /journal unavailable/);
   failed.mock.restore();
 });
@@ -257,9 +416,10 @@ test("RBT restore, duplicate handoff and directory rename preserve manually edit
   await original.stop();
   const renamed = join(dirname(oldRoot), "firebase renamed history");
   renameSync(oldRoot, renamed);
-  resumed = new Workflow({ graphState, resume: { workflowState: state, journalRoot: join(renamed, "journal") } });
+  resumed = new Workflow(createTestWorkflowAsset(graphState));
   f.scope.clearWorkflow(original); f.scope.setWorkflow(resumed);
   await resumed.start();
+  resumed.restore({ graphState, workflowState: state, journalRoot: join(renamed, "journal") });
   await f.domain.start();
   await f.domain.restore(state);
   assert.deepEqual(resumed.benchmarks.read("rbt"), manual);

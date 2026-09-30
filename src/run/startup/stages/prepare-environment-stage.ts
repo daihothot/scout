@@ -94,7 +94,7 @@ export class PrepareEnvironmentStage implements RunStage {
     const scoutRoot = resolve(scope.scoutRoot);
     const runRoot = resolve(scope.runRoot);
     const roles = this.options.agentRoles
-      ?? scope.workflow.scheduler.snapshot().roles.map((role) => role.name);
+      ?? scope.workflow.graph.snapshot().roles.map((role) => role.name);
     assertMaterializationPath(scoutRoot, runRoot);
     assertMaterializationPath(scoutRoot, runPaths(runRoot).agentsRoot);
 
@@ -201,7 +201,7 @@ export class PrepareEnvironmentStage implements RunStage {
     const environment = new RunEnvironmentBuilder(assetStore).build({
       runId: scope.runId,
       agents,
-      graphState: scope.workflow.scheduler.snapshot(),
+      graphState: scope.workflow.graph.snapshot(),
     });
     this.preparedRootAccess = environment.rootAccess;
     scope.setEnvironment(environment);

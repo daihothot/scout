@@ -144,18 +144,10 @@ export class RbtCampaignExecutionHistoryStore {
     if (history.status === "recording") {
       throw new Error(`RBT campaign history is still recording: ${history.campaignId}.`);
     }
-    await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
-      bddId: history.bddId,
-      targetVersion: history.targetVersion,
-      platform: structuredClone(history.platform),
+    await scope.eventBus.publishAndWait(RbtEvents.history.campaignExecutionHistory, {
       executorHistoryRef: history.artifactRef,
       executorHistoryDigest,
-      executeFileRef: history.executeFileRef,
-      executeFileDigest: history.executeFileDigest,
       runtimeSequence: history.runtimeSequence,
-      campaignId: history.campaignId,
-      scenarioId: history.scenarioId,
-      status: history.status,
       agentId: command.agentId,
       role: command.role,
     }, { occurredAt: command.completedAt });

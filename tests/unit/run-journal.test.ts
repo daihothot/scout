@@ -23,7 +23,8 @@ import {
   InMemoryEventBus,
 } from "../../src/core/events/index.js";
 import { WorkflowEvents } from "../../src/core/workflow/index.js";
-import { Benchmarks, ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
+import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
+import { Benchmarks } from "../../src/core/benchmarks/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import { BaseDomain, ScoutDomainId } from "../../src/domain/index.js";
 import type { RunScope } from "../../src/run/run-scope.js";
@@ -40,7 +41,7 @@ import {
 import { projectRun as projectRunEvents } from "../../src/run/resume/projection/index.js";
 import {
   createTestRunPersistence,
-  createTestScheduler,
+  createDefaultTestGraph,
   installTestRunScope,
 } from "../helpers/run-persistence.js";
 
@@ -150,7 +151,7 @@ test("Journal repairs an incomplete tail before the next append", async (t) => {
     id: "event-2",
     key: WorkflowEvents.workflow.initialized,
     payload: {
-      state: createTestScheduler().snapshot(),
+      state: createDefaultTestGraph().snapshot(),
       initializedAt: "2026-07-22T00:00:00.000Z",
     },
     occurredAt: "2026-07-22T00:00:00.000Z",
@@ -516,18 +517,19 @@ test("Workflow starts a numbered Workflow while retaining the completed scout.jo
     attachedAt: "2026-07-24T00:00:00.000Z",
     processId: process.pid,
   });
-  persistence.workflow.scheduler.advance("completed");
-  persistence.workflow.scheduler.advance("completed");
-  persistence.workflow.scheduler.advance("completed");
-  const completed = persistence.workflow.scheduler.advance("completed");
-  assert.equal(completed.cycleCompleted, true);
-  assert.equal(persistence.workflow.snapshot()?.status, "settling");
-  assert.ok(persistence.journal.readAll().some((event) =>
+  await persistence.workflow.advance("completed");
+  await persistence.workflow.advance("completed");
+  await persistence.workflow.advance("completed");
+  const completedJournalPath = persistence.journal.path;
+  const completed = await persistence.workflow.advance("completed");
+  assert.equal(completed.status, "advanced");
+  assert.equal(completed.result.cycleCompleted, true);
+  assert.equal(persistence.workflow.snapshot(), undefined);
+  assert.ok(readJournalEvents(completedJournalPath).some((event) =>
     WorkflowEvents.workflow.advanced.is(event)
   ));
-  const completedJournalPath = persistence.journal.path;
 
-  await persistence.workflow.settleWorkflow();
+
   assert.equal(persistence.workflow.snapshot(), undefined);
   await persistence.workflow.startWorkflow();
   await eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
@@ -560,7 +562,7 @@ test("Workflow starts a numbered Workflow while retaining the completed scout.jo
   );
 });
 
-test("Workflow blocks replay while a settling Workflow retains a Task", async (t) => {
+test("Workflow completion follows live Graph and runtime facts, not a stale journal Task projection", async (t) => {
   const eventBus = new InMemoryEventBus();
   const persistence = createTestRunPersistence(
     t,
@@ -575,6 +577,7 @@ test("Workflow blocks replay while a settling Workflow retains a Task", async (t
     manifestStore: persistence.manifestStore,
   });
   baseDomain(scope).start();
+  const journalPath = persistence.workflow.journalPath;
   t.after(() => baseDomain(scope).close());
   await eventBus.publishAndWait(RunEvents.runtime.attached, {
     mode: "start",
@@ -596,26 +599,23 @@ test("Workflow blocks replay while a settling Workflow retains a Task", async (t
     createdAt: "2026-07-24T00:00:01.000Z",
     updatedAt: "2026-07-24T00:00:01.000Z",
   });
-  persistence.workflow.scheduler.advance("completed");
-  persistence.workflow.scheduler.advance("completed");
-  persistence.workflow.scheduler.advance("completed");
-  persistence.workflow.scheduler.advance("completed");
-  assert.equal(persistence.workflow.snapshot()?.status, "settling");
-
-  await assert.rejects(
-    persistence.workflow.settleWorkflow(),
-    /unfinished Task researcher-task-0001/,
-  );
-  assert.equal(persistence.workflow.snapshot()?.status, "settling");
-  assert.equal(persistence.journal.readAll().some((event) => WorkflowEvents.workflow.completed.is(event)), false);
-  await assert.rejects(eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
+  await persistence.workflow.advance("completed");
+  await persistence.workflow.advance("completed");
+  await persistence.workflow.advance("completed");
+  const completed = await persistence.workflow.advance("completed");
+  assert.equal(completed.status, "advanced");
+  assert.equal(completed.result.cycleCompleted, true);
+  assert.equal(persistence.workflow.graph.completedOutcome, "completed");
+  assert.equal(persistence.workflow.snapshot(), undefined);
+  assert.equal(readJournalEvents(journalPath).some((event) => WorkflowEvents.workflow.completed.is(event)), true);
+  await eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
     messageId: "workflow-replay-blocked-message",
     text: "重新执行",
     attachment: agent.turn.message("重新执行"),
     submittedAt: "2026-07-24T00:01:00.000Z",
-  }), /not ready to accept input/);
+  });
   assert.equal(
-    persistence.journal.readAll().some((event) =>
+    readJournalEvents(journalPath).some((event) =>
       SystemEvents.interaction.userMessageSubmitted.is(event)
       && event.payload.messageId === "workflow-replay-blocked-message"
     ),

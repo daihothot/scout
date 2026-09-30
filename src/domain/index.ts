@@ -3,7 +3,7 @@ export * from "./types.js";
 export * from "./domain-events.js";
 export * from "./domain-registry.js";
 export * from "./agent/index.js";
-export * from "./core/journal/index.js";
+export * from "./core/record/index.js";
 export * from "./core/benchmarks/index.js";
 export * from "./domains/base/index.js";
 
@@ -54,8 +54,7 @@ export async function createDomainRuntime(domainId: ScoutDomainId): Promise<Scou
   }
   const candidate = domain as ScoutDomain;
   if (
-    (candidate.prepareWorkflow !== undefined && typeof candidate.prepareWorkflow !== "function")
-    || (candidate.restore !== undefined && typeof candidate.restore !== "function")
+    (candidate.restore !== undefined && typeof candidate.restore !== "function")
     || (candidate.start !== undefined && typeof candidate.start !== "function")
     || (candidate.stop !== undefined && typeof candidate.stop !== "function")
   ) {
@@ -71,7 +70,7 @@ export async function createDomainRuntime(domainId: ScoutDomainId): Promise<Scou
   ) {
     throw new Error(`Workflow domain ${domainId} returned an invalid Domain backend.`);
   }
-  const journal = candidate.journal;
+  const journal = candidate.recordObject;
   if (
     journal !== undefined
     && (

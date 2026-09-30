@@ -4,6 +4,7 @@ import {
   TaskRecoveryCheckpoints,
 } from "../projection/task-recovery.js";
 import { projectedStepsForTask } from "../projection/run-projector.js";
+import { recoverPendingMessages } from "../projection/run-recovery.js";
 import {
   boundedText,
   renderArtifact,
@@ -24,12 +25,13 @@ export function buildCoordinatorResumePacket(
 ): ResumePacket {
   const openTasks = input.projection.tasks;
   const openTaskIds = new Set(openTasks.map((task) => task.taskId));
-  const pendingMessages = input.projection.pendingMessages.filter((message) =>
+  const deliveries = recoverPendingMessages(input.projection, input.synthesisRole);
+  const pendingMessages = deliveries.filter((message) =>
     message.agentId === input.agentId
   );
   const pendingMessageIds = new Set(pendingMessages.map((message) => message.messageId));
   const allPendingMessageIds = new Set(
-    input.projection.pendingMessages.map((message) => message.messageId),
+    deliveries.map((message) => message.messageId),
   );
 
   const renderTasks = (): Array<Record<string, unknown>> => [

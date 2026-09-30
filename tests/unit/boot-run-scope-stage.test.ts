@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { agent } from "../../src/agent/context/agent-attachments.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
-import type { WorkflowState } from "../../src/core/workflow/index.js";
+import { WorkflowEvents } from "../../src/core/workflow/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
 import {
   ExecutionStage,
@@ -26,7 +26,7 @@ import { ValidationDomain } from "../../src/domain/domains/validation/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import {
   createTestRunPersistence,
-  createTestScheduler,
+  createDefaultTestGraph,
 } from "../helpers/run-persistence.js";
 
 test("RunScopeStage creates the Run-owned stores and releases the installed scope", async (t) => {
@@ -82,7 +82,7 @@ test("DomainStage creates, installs, starts, and clears both Run Domains", async
       "/repo",
       eventBus,
       undefined,
-      createTestScheduler("validation"),
+      createDefaultTestGraph("validation"),
     ),
     terminate: async () => undefined,
   });
@@ -141,7 +141,7 @@ for (const preparationFails of [false, true]) {
         "/repo",
         eventBus,
         undefined,
-        createTestScheduler("validation"),
+        createDefaultTestGraph("validation"),
       ),
       terminate: async () => undefined,
     });
@@ -174,11 +174,11 @@ for (const preparationFails of [false, true]) {
       attachedAt: new Date().toISOString(),
       processId: process.pid,
     });
-    for (let phase = 0; phase < 4; phase += 1) scope.workflow.scheduler.advance("completed");
     const previousWorkflow = scope.workflow.snapshot()!;
     const previousRoot = scope.workflow.journalRoot;
+    for (let phase = 0; phase < 4; phase += 1) await scope.workflow.advance("completed");
     const nextRoot = join(scope.runRoot, "workflows", "workflow-002", "journal");
-    await scope.workflow.settleWorkflow();
+
     assert.equal(scope.workflow.snapshot(), undefined);
     const domains = scope.domainRegistry.list();
     const observed: string[] = [];
@@ -196,22 +196,16 @@ for (const preparationFails of [false, true]) {
       observed.push("stop:validation");
       await stopValidation();
     });
-    const prepare = base.prepareWorkflow;
+    const prepare = base.recordObject.prepareWorkflow;
     const preparationError = new Error("Domain Workflow preparation failed during shutdown");
-    t.mock.method(base, "prepareWorkflow", async (workflowState: WorkflowState, root: string) => {
+    t.mock.method(base.recordObject, "prepareWorkflow", async (root: string) => {
       observed.push("prepare");
       announcePreparation();
       await gate;
       if (preparationFails) throw preparationError;
-      const change = await prepare.call(base, workflowState, root);
-      return {
-        commit() {
-          observed.push("commit");
-          change.commit();
-        },
-        abort: () => change.abort(),
-        releasePrevious: () => change.releasePrevious(),
-      };
+      const change = prepare.call(base.recordObject, root);
+      eventBus.subscribe(WorkflowEvents.workflow.committing, () => { observed.push("commit"); });
+      return change;
     });
     const submit = (text: string) => eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
       messageId: text,

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
-import { AssetStore, type AssetConfig } from "../../src/asset-store/index.js";
+import { AssetStore, type AssetConfig, type WorkflowProfileAsset } from "../../src/asset-store/index.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { Journal, type JournalEvent } from "../../src/core/journal/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
@@ -23,8 +23,9 @@ import {
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import type { RunEnvironment } from "../../src/run/types.js";
 import type { ExecutionPlatformPort } from "../../src/execution/scout-execution-system.js";
-import { createGraphState, Graph, Scheduler, Workflow, WorkflowEvents, type WorkflowState } from "../../src/core/workflow/index.js";
-import { Benchmarks, ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
+import { createGraphState, Graph, Workflow, WorkflowEvents, type WorkflowState, type GraphState } from "../../src/core/workflow/index.js";
+import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
+import { Benchmarks } from "../../src/core/benchmarks/index.js";
 
 const noopLogger = {
   debug: () => undefined,
@@ -46,7 +47,7 @@ export function createTestRunPersistence(
   scoutRoot = "/repo",
   eventBus = new InMemoryEventBus(),
   runRootOverride?: string,
-  schedulerOverride?: Scheduler,
+  graphOverride?: Graph,
 ): {
   runRoot: string;
   journal: {
@@ -65,7 +66,7 @@ export function createTestRunPersistence(
     : undefined;
   const runRoot = runRootOverride ?? join(root!, runId);
   const manifestStore = new RunManifestStore(runRoot);
-  const scheduler = schedulerOverride ?? createTestScheduler();
+  const runtimeGraph = graphOverride ?? createDefaultTestGraph();
   const workflowRoot = root ?? resolveTestWorkflowRoot(runRoot);
   // This fixture explicitly seeds an active Workflow; production startup remains empty.
   const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
@@ -74,14 +75,11 @@ export function createTestRunPersistence(
   const createdAt = new Date().toISOString();
   const seed = Journal.create({ journalId: `${runId}:workflow:scout`, path: join(prepared.journalRoot, "scout.journal"), lockPath: join(prepared.journalRoot, ".scout.lock") });
   seed.append({ id: `${runId}-created`, key: RunEvents.run.created, payload: { runId, scoutRoot, createdAt }, occurredAt: createdAt });
-  seed.append({ id: `${runId}-initialized`, key: WorkflowEvents.workflow.initialized, payload: { state: scheduler.snapshot(), initializedAt: createdAt }, occurredAt: createdAt });
+  seed.append({ id: `${runId}-initialized`, key: WorkflowEvents.workflow.initialized, payload: { state: runtimeGraph.snapshot(), initializedAt: createdAt }, occurredAt: createdAt });
   seed.close();
   benchmarks.recordStarted(prepared.workflowId);
   benchmarks.benchmarks.release();
-  const workflow = new Workflow({
-    graphState: scheduler.snapshot(),
-    resume: { workflowState: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot },
-  });
+  const workflow = new Workflow(createTestWorkflowAsset(runtimeGraph.snapshot()));
   const config = new AssetStore().config(scoutRoot);
   const scope = new RunScope({
     runId,
@@ -98,6 +96,7 @@ export function createTestRunPersistence(
   const releaseScope = installRunScope(scope);
   manifestStore.create({ runId, scoutRoot, createdAt, checkpointSeq: 0 });
   void workflow.start();
+  workflow.restore({ graphState: runtimeGraph.snapshot(), workflowState: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot });
   if (workflow.lastSeq !== 2) {
     throw new Error(`Test run ${runId} did not persist run.created and Workflow initialization.`);
   }
@@ -143,7 +142,7 @@ export function installTestRunScope(
     manifestStore?: RunManifestStore;
     appServer?: CodexAppServerClient;
     environment?: RunEnvironment;
-    scheduler?: Scheduler;
+    runtimeGraph?: Graph;
     executionSystem?: ExecutionPlatformPort;
     workflowState?: WorkflowState;
     terminate?(reason: string): Promise<void>;
@@ -164,7 +163,7 @@ export function installTestRunScope(
       scoutRoot,
       eventBus,
       options.runRoot,
-      options.scheduler,
+      options.runtimeGraph,
     );
   const scope = new RunScope({
     runId: options.runId,
@@ -214,9 +213,32 @@ function resolveTestWorkflowRoot(runRoot: string): string {
   return dirname(dirname(runRoot));
 }
 
-/** Creates the smallest valid Scheduler used by isolated run tests. */
-export function createTestScheduler(domain = "test"): Scheduler {
-  return new Scheduler(new Graph(createGraphState({
+/** Static Asset fixture for tests that supply custom graph definitions. */
+export function createTestWorkflowAsset(state: GraphState): WorkflowProfileAsset {
+  return {
+    name: state.workflowProfile, sourcePath: `workflows/${state.workflowProfile}.json`, hash: "test-asset",
+    profile: {
+      domain: state.domain,
+      defaults: { config: "test", model: { id: "gpt-5", provider: "openai", reasoningEffort: "medium", reasoningSummary: "auto" }, maxThreads: 1, maxDepth: 1 },
+      phases: { workers: Object.fromEntries(state.phases.map((phase) => [phase.name, { edges: phase.edges }])) },
+      resources: {},
+      roles: Object.fromEntries(state.roles.map((role) => [role.name, {
+        multiAgent: false, customAgents: [], ...(role.name === "coordinator" ? {} : { phases: role.phases }),
+      }])),
+    },
+  };
+}
+
+/** Builds runtime Graph fixtures, including explicitly selected recovery cursors. */
+export function createTestGraph(state: GraphState): Graph {
+  const graph = new Graph(createTestWorkflowAsset(state));
+  graph.restore(state);
+  return graph;
+}
+
+/** Creates the default Graph definition used by isolated run tests. */
+export function createDefaultTestGraph(domain = "test"): Graph {
+  return createTestGraph(createGraphState({
     domain: domain,
     workflowProfile: "test-workflow",
     phases: [
@@ -248,5 +270,5 @@ export function createTestScheduler(domain = "test"): Scheduler {
       { name: "validator", phases: ["research-reviewer", "verify-reviewer"] },
     ],
     currentPhase: "research",
-  })));
+  }));
 }

@@ -27,7 +27,6 @@ import type { DynamicToolCallInput } from "../../agent-server/types.js";
 interface CoordinatorTick {
   messages: AgentMessage[];
   workflowPhaseRequested: boolean;
-  workflowSettlementRequested: boolean;
 }
 
 /** Coordinator role: owns orchestration messages and task assignment, not worker tasks. */
@@ -37,13 +36,12 @@ export class CoordinatorAgent extends ScoutAgent {
   private readonly inbox: AgentInbox;
   private resumeContext?: string;
   private workflowPhaseStepRequested = false;
-  private workflowSettlementRequested = false;
   private readonly userInputs = new Map<string, ScoutEvent<UserMessageSubmittedPayload>>();
   private pendingWorkflowStart?: { threadId: string; turnId: string; callId: string; prompt: string };
 
   constructor(options: ScoutAgentOptions) {
     const scope = currentRunScope();
-    const role = resolveSynthesisRole(scope.workflow.scheduler.snapshot()).name;
+    const role = resolveSynthesisRole(scope.workflow.graph.snapshot()).name;
     super({
       ...options,
       spec: {
@@ -87,16 +85,12 @@ export class CoordinatorAgent extends ScoutAgent {
         try {
           completed = await this.runCoordinatorTick(tick);
         } catch (error) {
-          // Keep the failed tick's report in its Workflow before attempting the
-          // independent lifecycle transition.
           this.publishFailure(error);
         }
         const request = this.pendingWorkflowStart;
         this.pendingWorkflowStart = undefined;
         if (!this.isStopping) {
-          await scope.workflow.settleWorkflow();
           if (!scope.workflow.snapshot()) {
-            this.workflowSettlementRequested = false;
             this.workflowPhaseStepRequested = false;
           }
           if (request && completed) {
@@ -183,15 +177,9 @@ export class CoordinatorAgent extends ScoutAgent {
     ]);
   }
 
-  /** Requests a fresh Coordinator Step after Scheduler advances to another Phase. */
+  /** Requests a fresh Coordinator Step after Workflow advances to another Phase. */
   scheduleCurrentPhaseStep(): void {
     this.workflowPhaseStepRequested = true;
-    if (!this.isStopping) this.loop.schedule();
-  }
-
-  /** Schedules a terminal follow-up if automatic Workflow settlement cannot finish. */
-  scheduleWorkflowSettlementStep(): void {
-    this.workflowSettlementRequested = true;
     if (!this.isStopping) this.loop.schedule();
   }
 
@@ -213,12 +201,10 @@ export class CoordinatorAgent extends ScoutAgent {
       messages.length === 0
       && !this.resumeContext
       && !this.workflowPhaseStepRequested
-      && !this.workflowSettlementRequested
     ) return undefined;
     return {
       messages,
       workflowPhaseRequested: this.workflowPhaseStepRequested,
-      workflowSettlementRequested: this.workflowSettlementRequested,
     };
   }
 
@@ -259,7 +245,6 @@ export class CoordinatorAgent extends ScoutAgent {
         this.consumeQueuedMessages(messages, step.stepId);
         this.resumeContext = undefined;
         if (tick.workflowPhaseRequested) this.workflowPhaseStepRequested = false;
-        if (tick.workflowSettlementRequested) this.workflowSettlementRequested = false;
       },
     });
     const { outcome } = result;

@@ -15,7 +15,7 @@ import type { ScoutAgentRole } from "../../../agent/thread/types.js";
 import type {
   ScoutDomain,
   ScoutDomainDescription,
-  ScoutDomainJournalProjection,
+  ScoutDomainRecordProjection,
 } from "../../types.js";
 import { ScoutDomainId } from "../../types.js";
 import { ValidationDomainAgentBackend } from "./agent/backend/validation-domain-agent-backend.js";
@@ -39,7 +39,7 @@ export class ValidationDomain implements ScoutDomain {
     name: "Scout Validation Domain",
   });
   readonly backend = new ValidationDomainAgentBackend();
-  readonly journal: ScoutDomainJournalProjection = validationJournalProjection;
+  readonly recordObject: ScoutDomainRecordProjection = validationJournalProjection;
   private readonly recordedArtifacts = new Set<string>();
   private readonly recordedGates = new Map<string, string>();
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
@@ -84,7 +84,7 @@ export class ValidationDomain implements ScoutDomain {
   restore(): void {
     const scope = currentRunScope();
     const events = scope.workflow.readEvents();
-    const domainEvents = this.journal.readAll?.() ?? [];
+    const domainEvents = this.recordObject.readAll?.() ?? [];
     this.recordedArtifacts.clear();
     this.recordedGates.clear();
     for (const event of domainEvents) {
@@ -126,7 +126,7 @@ export class ValidationDomain implements ScoutDomain {
 
   private recordArtifacts(role: ScoutAgentRole, submittedTaskId?: string): void {
     const scope = currentRunScope();
-    const graphRole = scope.workflow.scheduler.snapshot().roles.find((candidate) =>
+    const graphRole = scope.workflow.graph.snapshot().roles.find((candidate) =>
       candidate.name === role
     );
     if (!graphRole) {
@@ -219,7 +219,7 @@ export class ValidationDomain implements ScoutDomain {
 }
 
 /** Projects Validation events for shared Journal persistence and recovery. */
-export const validationJournalProjection: ScoutDomainJournalProjection = {
+export const validationJournalProjection: ScoutDomainRecordProjection = {
   eventTypes: [ValidationEvents.artifact.published, ValidationEvents.gate.recorded],
   project(event) {
     if (ValidationEvents.artifact.published.is(event)) {

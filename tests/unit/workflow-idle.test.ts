@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Workflow, projectWorkflowState } from "../../src/core/workflow/index.js";
-import { Benchmarks, ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
+import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
+import { Benchmarks } from "../../src/core/benchmarks/index.js";
 import { readJournalEvents } from "../../src/core/journal/index.js";
 import { workflowRootFromJournalRoot } from "../../src/core/path.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
@@ -15,14 +16,14 @@ import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
 import type { RunScope } from "../../src/run/run-scope.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
-import { createTestScheduler, installTestRunScope } from "../helpers/run-persistence.js";
+import { createDefaultTestGraph, installTestRunScope, createTestWorkflowAsset } from "../helpers/run-persistence.js";
 
 test("New runtime has no active Workflow until explicitly requested; completed recovery does not create or modify evidence", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-empty-workflow-"));
   const runRoot = join(root, "run", "run-empty");
   const manifestStore = new RunManifestStore(runRoot);
   manifestStore.create({ runId: "run-empty", scoutRoot: root, createdAt: new Date().toISOString(), checkpointSeq: 0 });
-  const workflow = new Workflow({ graphState: createTestScheduler().snapshot() });
+  const workflow = new Workflow(createTestWorkflowAsset(createDefaultTestGraph().snapshot()));
   const scope = installTestRunScope(t, { runId: "run-empty", scoutRoot: root, runRoot, workflow, manifestStore });
   const agentRoot = registerCoordinator(scope);
   const entityLog = join(agentRoot, "logs", "activity.log");
@@ -61,8 +62,8 @@ test("New runtime has no active Workflow until explicitly requested; completed r
     logsRoot: join(runRoot, "workflows", "workflow-001", "agents", "coordinator", "logs"),
   });
   await assert.rejects(workflow.startWorkflow(), /already active/);
-  workflow.scheduler.advance("error");
-  await workflow.settleWorkflow();
+  await workflow.advance("error");
+
   assert.equal(workflow.benchmarks, sharedBenchmarks);
   assert.equal(workflow.snapshot(), undefined);
   assert.equal(existsSync(join(runRoot, "workflows", "workflow-002")), false);
@@ -71,13 +72,16 @@ test("New runtime has no active Workflow until explicitly requested; completed r
   const contents = readFileSync(journalPath, "utf8");
   const benchmarkContents = readFileSync(join(runRoot, "benchmarks.json"), "utf8");
   const events = readJournalEvents(journalPath);
-  const resumed = new Workflow({ graphState: projectGraphState(events), resume: {
-    workflowState: projectWorkflowState("workflow-001", events), journalRoot,
-  } });
+  const resumed = new Workflow(createTestWorkflowAsset(projectGraphState(events)));
+  const resumedRecovery = {
+    graphState: projectGraphState(events),
+    workflowState: projectWorkflowState("workflow-001", events), journalRoot
+  };
   await workflow.stop();
   assert.throws(() => workflow.benchmarks, /Benchmarks are unavailable/);
   scope.clearWorkflow(workflow); scope.setWorkflow(resumed);
   await resumed.start();
+  resumed.restore(resumedRecovery);
   assert.deepEqual(resumed.benchmarks.read("scout"), sharedBenchmarks.read("scout"));
   assert.equal(resumed.snapshot(), undefined);
   await scope.eventBus.publishAndWait(AgentEvents.activity.observed, {
@@ -101,7 +105,7 @@ test("An unfinished renamed Workflow resumes its identity, cursor and current ar
   });
   const originalLog = join(scope.workflow.agentPaths("researcher").logsRoot, "activity.log");
   const initial = scope.workflow;
-  initial.scheduler.advance("completed");
+  await initial.advance("completed");
   const workflowState = initial.snapshot()!;
   const graphState = initial.graph.snapshot();
   const benchmarks = new ScoutBenchmarks(new Benchmarks(scope.runRoot));
@@ -113,12 +117,17 @@ test("An unfinished renamed Workflow resumes its identity, cursor and current ar
   const selected = benchmarks.resolve("currentWorkflow")!;
   assert.equal(selected.workflowId, workflowState.workflowId);
   assert.equal(selected.workflowRoot, renamedRoot);
-  const resumed = new Workflow({ graphState, resume: { workflowState, journalRoot: selected.journalRoot } });
+  const resumed = new Workflow(createTestWorkflowAsset(graphState));
+  const resumedRecovery = {
+    graphState,
+    workflowState, journalRoot: selected.journalRoot
+  };
   scope.clearWorkflow(initial); scope.setWorkflow(resumed);
   await resumed.start();
+  resumed.restore(resumedRecovery);
   assert.equal(resumed.snapshot()?.status, "active");
   assert.equal(workflowRootFromJournalRoot(resumed.journalRoot), renamedRoot);
-  assert.equal(resumed.scheduler.snapshot().currentPhase, "research-reviewer");
+  assert.equal(resumed.graph.snapshot().currentPhase, "research-reviewer");
   assert.equal(resumed.agentPaths("researcher").artifactRoot, join(renamedRoot, "agents", "researcher", "artifacts"));
   await scope.eventBus.publishAndWait(AgentEvents.activity.observed, {
     agentId: "researcher", type: "reasoning", status: "completed", detail: "after renamed resume",
@@ -142,8 +151,8 @@ test("Agent telemetry keeps idle-runtime activity on the entity without backfill
   });
   const firstLog = join(scope.workflow.agentPaths("coordinator").logsRoot, "activity.log");
   await publish("first-workflow-only");
-  scope.workflow.scheduler.advance("error");
-  await scope.workflow.settleWorkflow();
+  await scope.workflow.advance("error");
+
   const oldContents = readFileSync(firstLog, "utf8");
   await publish("empty-workflow-retained");
   const entityContents = readFileSync(entityLog, "utf8");

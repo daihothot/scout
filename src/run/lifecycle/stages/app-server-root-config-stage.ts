@@ -12,8 +12,7 @@ import {
   resolveScoutSkillsForPhases,
 } from "../../../asset-store/assets/skill-catalog.js";
 import { AssetStore } from "../../../asset-store/asset-store.js";
-import { readWorkflowProfile } from "../../../asset-store/assets/workflow-profiles.js";
-import { WorkflowBuilder } from "../../../asset-store/builders/workflow-builder.js";
+import { buildWorkflow, WorkflowBuilder } from "../../../asset-store/builders/workflow-builder.js";
 import {
   CodexAgentRuntimeAssetLayout,
   ScoutAssetLayout,
@@ -90,7 +89,7 @@ export class AppServerRootConfigStage implements RunStage {
         runRoot: scope.runRoot,
         workflowProfileName: scope.scoutConfig.workflow.profile,
         agentRoles: this.options.agentRoles
-          ?? scope.workflow.scheduler.snapshot().roles.map((role) => role.name),
+          ?? scope.workflow.graph.snapshot().roles.map((role) => role.name),
       });
     this.stopped = false;
   }
@@ -118,13 +117,12 @@ export function createClientRootConfig(options: {
     CodexAgentRuntimeAssetLayout.root,
   );
   const assetJson = new AssetStore().json(scoutRoot);
-  const workflow = readWorkflowProfile(scoutRoot, options.workflowProfileName);
+  const workflow = buildWorkflow(scoutRoot, options.workflowProfileName);
   const workflowBuilder = new WorkflowBuilder(workflow);
-  const graphState = workflowBuilder.build();
-  const workflowDomain = graphState.domain;
+  const workflowDomain = workflow.profile.domain;
   const mcpServers = assetJson.readJson(ScoutAssetLayout.mcpServers) as McpServersFile;
   const shellTools = assetJson.readJson(ScoutAssetLayout.shellTools) as ShellToolsFile;
-  const agentRoles = options.agentRoles ?? graphState.roles.map((role) => role.name);
+  const agentRoles = options.agentRoles ?? Object.keys(workflow.profile.roles);
   const mountRoots: string[] = [];
   const readableRoots: string[] = [];
   const writableRoots: string[] = [];
@@ -184,7 +182,7 @@ export function createClientRootConfig(options: {
   };
 }
 
-/** Creates the root configuration after mounts have been prepared, using the Scheduler Domain facts. */
+/** Creates the root configuration after mounts have been prepared, using the Graph Domain facts. */
 export function createPreparedClientRootConfig(
   environment: RunEnvironment,
   currentScoutRoot: string,
@@ -198,7 +196,7 @@ export function createPreparedClientRootConfig(
     "assets",
     CodexAgentRuntimeAssetLayout.root,
   );
-  const workflowDomain = currentRunScope().workflow.scheduler.snapshot().domain;
+  const workflowDomain = currentRunScope().workflow.graph.snapshot().domain;
   const shellTools = new AssetStore().json(scoutRoot)
     .readJson(ScoutAssetLayout.shellTools) as ShellToolsFile;
   const roleRoots = agents.map((agent) => ({

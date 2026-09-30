@@ -9,7 +9,7 @@ import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
 import type { Workflow } from "../core/workflow/workflow.js";
 import type { RequestHub } from "../core/requeshub/index.js";
-import { DomainRegistry } from "../domain/index.js";
+import { DomainRegistry } from "../domain/domain-registry.js";
 import type { ExecutionPlatformPort } from "../execution/scout-execution-system.js";
 import type { RuntimeInteractionPort } from "../interaction/protocol/port.js";
 import {

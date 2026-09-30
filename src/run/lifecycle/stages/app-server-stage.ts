@@ -11,7 +11,7 @@ import {
   AppServerRootConfigStage,
   type RunAppServerRootConfig,
 } from "./app-server-root-config-stage.js";
-import { readWorkflowProfile } from "../../../asset-store/assets/workflow-profiles.js";
+import { buildWorkflow } from "../../../asset-store/builders/workflow-builder.js";
 import { resolveSynthesisRole } from "../../../core/workflow/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
@@ -61,12 +61,12 @@ export class RunAppServerStage implements RunStage {
 
   async start(): Promise<void> {
     const scope = currentRunScope();
-    const synthesisRole = resolveSynthesisRole(scope.workflow.scheduler.snapshot()).name;
+    const synthesisRole = resolveSynthesisRole(scope.workflow.graph.snapshot()).name;
     if (!this.rootConfigStage.prepared) await this.rootConfigStage.start();
     const rootConfig = this.rootConfigStage.rootConfig;
     const defaultModel = scope.hasEnvironment
       ? scope.environment.agents[synthesisRole].mount.agentProfile.model
-      : readWorkflowProfile(scope.scoutRoot, scope.scoutConfig.workflow.profile)
+      : buildWorkflow(scope.scoutRoot, scope.scoutConfig.workflow.profile)
           .profile.defaults.model;
     const runRoot = resolve(scope.runRoot);
     const { logsRoot, isolatedHome, codexHome: isolatedCodexHome } = runPaths(runRoot);

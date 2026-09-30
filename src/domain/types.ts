@@ -8,7 +8,7 @@ import type {
 } from "../core/events/index.js";
 import type { DynamicToolCallInput } from "../agent-server/types.js";
 import type { WorkflowState } from "../core/workflow/index.js";
-import type { JournalEvent } from "../core/journal/index.js";
+import type { RecordEvent } from "../core/record/index.js";
 import type { DomainAgentBackend } from "./agent/domain-agent-backend.js";
 
 /** Stable identities of Scout Domain runtimes available to a Workflow. */
@@ -66,7 +66,7 @@ export interface ScoutDomainGateFact {
 }
 
 /** One Domain-owned fact projected from a persisted Domain event. */
-export type ScoutDomainJournalFact =
+export type ScoutDomainRecordFact =
   | { kind: "artifact"; payload: ScoutDomainArtifactFact }
   | { kind: "gate"; payload: ScoutDomainGateFact };
 
@@ -78,44 +78,30 @@ export interface ScoutDomainRuntimeFact {
 }
 
 /** Persisted Domain event shape accepted by a Domain-owned runtime projection. */
-export interface ScoutDomainJournalEvent extends ScoutEvent {
+export interface ScoutDomainRecordEvent extends ScoutEvent {
   seq: number;
   recordedAt: string;
 }
 
 /** Domain-owned event contract and read-model projection boundary. */
-export interface ScoutDomainJournalProjection<
+export interface ScoutDomainRecordProjection<
   TRuntimeFact extends ScoutDomainRuntimeFact = ScoutDomainRuntimeFact,
 > {
   /** Event routes written to this Domain's own journal, never to scout.journal. */
   readonly eventTypes: readonly EventType[];
   /** Reads persisted events when this projection owns a readable Domain journal. */
-  readAll?(): JournalEvent[];
+  readAll?(): RecordEvent[];
   /** Projects a Domain journal event into shared resume facts when needed. */
-  project(event: ScoutEvent, journalSeq: number): ScoutDomainJournalFact | undefined;
+  project(event: ScoutEvent, journalSeq: number): ScoutDomainRecordFact | undefined;
   /** Rebuilds the Domain's current runtime facts from its persisted event stream. */
-  aggregate?(events: readonly ScoutDomainJournalEvent[]): TRuntimeFact;
-}
-
-/** A prepared Workflow boundary whose resources remain owned by its Domain. */
-export interface ScoutDomainWorkflowChange {
-  /** Switches only in-memory references and state after all preparation succeeds. */
-  commit(): void;
-  /** Closes uncommitted resources without changing the current Workflow. */
-  abort(): void;
-  /** Releases the previous Workflow's resources after the new Workflow is committed. */
-  releasePrevious(): void;
+  aggregate?(events: readonly ScoutDomainRecordEvent[]): TRuntimeFact;
 }
 
 /** Lifecycle and tool surface owned by a Scout domain implementation. */
 export interface ScoutDomain {
   readonly description: ScoutDomainDescription;
   readonly backend: DomainAgentBackend;
-  readonly journal?: ScoutDomainJournalProjection;
-  prepareWorkflow?(
-    workflowState: WorkflowState,
-    journalRoot: string,
-  ): Promise<ScoutDomainWorkflowChange> | ScoutDomainWorkflowChange;
+  readonly recordObject?: ScoutDomainRecordProjection;
   restore?(workflowState: WorkflowState): Promise<void> | void;
   /** Releases this Domain's completed Workflow resources without uninstalling its services. */
   finishWorkflow?(): Promise<void> | void;

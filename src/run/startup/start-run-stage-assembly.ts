@@ -12,12 +12,12 @@ import {
   RunScopeStage,
   RequestHubStage,
   RunStageExecutor,
-  WorkflowStage,
 } from "../lifecycle/index.js";
 import type { Workflow } from "../../core/workflow/index.js";
 import type { RunScope } from "../run-scope.js";
 import { PrepareEnvironmentStage } from "./stages/prepare-environment-stage.js";
 import { InitializeRunStage } from "./stages/initialize-run-stage.js";
+import { StartWorkflowStage } from "./stages/start-workflow-stage.js";
 
 /** Registers startup's lifecycle groups and exposes its scope stage. */
 export class StartRunStageAssembly {
@@ -35,9 +35,9 @@ export class StartRunStageAssembly {
 
     executor.registerSerial(
       runScopeStage,
-      new RequestHubStage(),
       new InitializeRunStage(),
-      new WorkflowStage(input.workflow),
+      new StartWorkflowStage(input.workflow),
+      new RequestHubStage(),
       new RunRuntimeStage("start"),
       new ExecutionStage(),
       new InteractionStage(),

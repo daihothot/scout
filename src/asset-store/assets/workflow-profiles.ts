@@ -4,7 +4,6 @@ import type {
   CodexReasoningEffort,
   CodexReasoningSummary,
 } from "../../agent-server/codex/model-config.js";
-import { sha256File } from "../../core/fs.js";
 import {
   InternalPhase,
   SynthesisPhase,
@@ -12,13 +11,11 @@ import {
 } from "../../core/workflow/index.js";
 import type {
   WorkflowProfile,
-  WorkflowProfileAsset,
   WorkflowResourcePark,
   WorkflowRoleDefinition,
   WorkflowWorkerPhaseDefinition,
 } from "../contracts/workflow-profile.js";
 import { assertMountPathSegment } from "../files/asset-paths.js";
-import { AssetJsonReader } from "../files/asset-json-reader.js";
 import { ScoutAssetLayout } from "./asset-layout.js";
 
 const reasoningEfforts = new Set<CodexReasoningEffort>([
@@ -51,26 +48,8 @@ export function workflowProfilePath(scoutRoot: string, name: string): string {
   );
 }
 
-/** Reads and strictly validates one selected Workflow Profile. */
-export function readWorkflowProfile(
-  scoutRoot: string,
-  name: string,
-): WorkflowProfileAsset {
-  const path = workflowProfilePath(scoutRoot, name);
-  const workflowRoot = join(resolve(scoutRoot), "assets", "scout", ScoutAssetLayout.workflowsRoot);
-  const profile = parseWorkflowProfile(
-    new AssetJsonReader(workflowRoot).readJson(`${name}.json`),
-    path,
-  );
-  return {
-    name,
-    sourcePath: `${ScoutAssetLayout.workflowsRoot}/${name}.json`,
-    hash: sha256File(path),
-    profile,
-  };
-}
-
-function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
+/** Validates the source body; runtime cursor state is not part of an Asset. */
+export function parseWorkflowProfile(value: unknown, path: string): WorkflowProfile {
   const profile = requireRecord(value, path, "Workflow Profile");
   assertKeys(
     profile,

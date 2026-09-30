@@ -1,9 +1,9 @@
 import type { Workflow } from "../../../core/workflow/workflow.js";
 import { currentRunScope } from "../../run-scope.js";
-import type { RunStage } from "../run-stage.js";
+import type { RunStage } from "../../lifecycle/run-stage.js";
 
 /** Installs and boots the Workflow service for the active RunScope. */
-export class WorkflowStage implements RunStage {
+export class StartWorkflowStage implements RunStage {
   readonly id = "workflow";
   private started = false;
   private installed = false;

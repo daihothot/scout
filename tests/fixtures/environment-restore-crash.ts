@@ -8,7 +8,7 @@ import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { RestoreEnvironmentStage } from "../../src/run/resume/stages/restore-environment-stage.js";
 import { installRunScope, RunScope } from "../../src/run/run-scope.js";
-import { createTestScheduler } from "../helpers/run-persistence.js";
+import { createDefaultTestGraph, createTestWorkflowAsset } from "../helpers/run-persistence.js";
 
 const [scoutRoot, runId, crashAt, allowDrift] = process.argv.slice(2);
 if (!scoutRoot || !runId || !crashAt) throw new Error("Missing environment crash fixture arguments.");
@@ -48,7 +48,7 @@ const scope = new RunScope({
   runRoot,
   runId,
   config: assetStore.config(scoutRoot),
-  workflow: new Workflow({ graphState: createTestScheduler().snapshot() }),
+  workflow: new Workflow(createTestWorkflowAsset(createDefaultTestGraph().snapshot())),
   manifestStore: new CrashManifestStore(runRoot),
   scoutConfig: {
     workflow: { profile: "validation" },

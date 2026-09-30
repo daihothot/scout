@@ -6,13 +6,14 @@ import { Journal, readJournalEvents } from "../../src/core/journal/index.js";
 import {
   BaseDomain,
   BaseDomainEvents,
-  BaseDomainJournal,
+  BaseDomainRecordObject,
   ScoutDomainId,
   type BaseDomainAgentToolCallObservedEvent,
 } from "../../src/domain/index.js";
-import { RbtEvents, RbtJournal, type RbtExecutionHistoryReadyEvent } from "../../src/domain/domains/rbt/index.js";
+import { RbtEvents, RbtRecordObject, type RbtExecutionHistoryReadyEvent } from "../../src/domain/domains/rbt/index.js";
 import type { RunScope } from "../../src/run/run-scope.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
+import { WorkflowEvents } from "../../src/core/workflow/index.js";
 
 for (const entry of [
   {
@@ -20,8 +21,8 @@ for (const entry of [
     create: (scope: RunScope) => {
       const installed = scope.domainRegistry.get(ScoutDomainId.Base);
       assert.ok(installed instanceof BaseDomain);
-      installed.journal.close();
-      return new BaseDomainJournal();
+      installed.recordObject.close();
+      return new BaseDomainRecordObject();
     },
     file: "base.journal",
     lock: ".base.lock",
@@ -46,7 +47,7 @@ for (const entry of [
   },
   {
     name: "RBT",
-    create: () => new RbtJournal(),
+    create: () => new RbtRecordObject(),
     file: "rbt-events.jsonl",
     lock: ".rbt-events.lock",
     journalId: "rbt",
@@ -289,21 +290,22 @@ test("Base Domain keeps runtime facts and tool calls until its prepared Workflow
   const previousContents = readFileSync(previousPath, "utf8");
   const stop = t.mock.method(domain.execution, "stop");
   const nextRoot = join(scope.runRoot, "prepared-workflow");
-  const workflowState = { workflowId: "workflow-002", status: "active" as const, checkpointSeq: 0 };
-  const aborted = domain.prepareWorkflow(workflowState, nextRoot);
+  const boundary = { workflowId: "workflow-002", journalRoot: nextRoot };
+  await scope.eventBus.publishAndWait(WorkflowEvents.workflow.preparing, boundary);
   assert.deepEqual(domain.runtimeFact, previousFact);
   assert.deepEqual(domain.toolCallStore.list(), previousCalls);
   assert.equal(stop.mock.callCount(), 0);
-  aborted.abort();
+  await scope.eventBus.publishAndWait(WorkflowEvents.workflow.aborting, boundary);
   assert.deepEqual(domain.runtimeFact, previousFact);
   assert.deepEqual(domain.toolCallStore.list(), previousCalls);
   assert.equal(stop.mock.callCount(), 0);
-  const change = domain.prepareWorkflow(workflowState, nextRoot);
-  change.commit();
+  const retryBoundary = { ...boundary, journalRoot: join(scope.runRoot, "prepared-workflow-retry") };
+  await scope.eventBus.publishAndWait(WorkflowEvents.workflow.preparing, retryBoundary);
+  await scope.eventBus.publishAndWait(WorkflowEvents.workflow.committing, retryBoundary);
   assert.deepEqual(domain.runtimeFact, { domainId: "base", journalSeq: 0, toolCalls: [] });
   assert.deepEqual(domain.toolCallStore.list(), []);
   assert.equal(stop.mock.callCount(), 1);
-  change.releasePrevious();
+  await scope.eventBus.publishAndWait(WorkflowEvents.workflow.releasingPrevious, retryBoundary);
   assert.equal(readFileSync(previousPath, "utf8"), previousContents);
-  assert.deepEqual(readJournalEvents(join(nextRoot, "base.journal")), []);
+  assert.deepEqual(readJournalEvents(join(retryBoundary.journalRoot, "base.journal")), []);
 });

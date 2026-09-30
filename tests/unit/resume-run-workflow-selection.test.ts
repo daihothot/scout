@@ -1,3 +1,5 @@
+import { Workflow } from "../../src/core/workflow/workflow.js";
+import { createTestGraph } from "../helpers/run-persistence.js";
 import assert from "node:assert/strict";
 import {
   cpSync,
@@ -17,7 +19,8 @@ import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
 import { Journal, readJournalEvents } from "../../src/core/journal/index.js";
 import { Logger } from "../../src/core/logging/index.js";
 import { Graph, WorkflowEvents } from "../../src/core/workflow/index.js";
-import { Benchmarks, ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
+import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
+import { Benchmarks } from "../../src/core/benchmarks/index.js";
 import {
   NoopRuntimeInteractionPort,
   type RuntimeDisclosureEvent,
@@ -112,7 +115,7 @@ for (const evidence of ["agent", "advanced", "missing-journal"] as const) {
           });
         } else {
           journal.append({ id: "advanced", key: WorkflowEvents.workflow.advanced,
-            payload: { ...new Graph(fixture.graphState).advance("completed"), outcome: "completed", advancedAt: fixture.createdAt },
+            payload: { ...createTestGraph(fixture.graphState).advance("completed"), outcome: "completed", advancedAt: fixture.createdAt },
             occurredAt: fixture.createdAt });
         }
       } finally { journal.close(); }
@@ -250,7 +253,7 @@ test("resume opens a matching Run's Workflow without replacing it", async (t) =>
     const scope = currentRunScope();
     assert.equal(scope.runId, fixture.runId);
     assert.equal(scope.workflow.journalPath, fixture.journalPath);
-    assert.deepEqual(scope.workflow.scheduler.snapshot(), fixture.graphState);
+    assert.deepEqual(scope.workflow.graph.snapshot(), fixture.graphState);
     assert.equal(scope.workflow.snapshot()?.workflowId, "workflow-001");
     assert.equal(scope.workflow.readEvents().length, 2);
     throw stopBeforeExternalClients;
@@ -302,7 +305,7 @@ for (const change of ["tail", "graph", "identity"] as const) {
               ? { ...event, payload: { ...event.payload, runId: "another-run" } }
               : event));
           } else if (change === "graph") {
-            const terminal = new Graph(fixture.graphState).advance("error");
+            const terminal = createTestGraph(fixture.graphState).advance("error");
             previous.append({
               id: "concurrent-completion", key: WorkflowEvents.workflow.advanced,
               payload: { ...terminal, outcome: "error", advancedAt: fixture.createdAt },
@@ -400,7 +403,7 @@ for (const failurePoint of ["ready-subscriber", "ready-log"] as const) {
   });
 }
 
-test("WorkflowStage leaves a completed resume empty without replaying its historical inputs", async (t) => {
+test("RestoreWorkflowStage leaves a completed resume empty without replaying its historical inputs", async (t) => {
   const fixture = createFixture(t);
   fixture.writeWorkflow(fixture.runId);
   const thread = {
@@ -436,7 +439,7 @@ test("WorkflowStage leaves a completed resume empty without replaying its histor
       payload: { messageId: "raw-only-message", text: "not queued yet", attachment: "raw-only work", submittedAt: fixture.createdAt },
       occurredAt: fixture.createdAt,
     });
-    const terminal = new Graph(fixture.graphState).advance("error");
+    const terminal = createTestGraph(fixture.graphState).advance("error");
     assert.equal(terminal.cycleCompleted, true);
     journal.append({
       id: "terminal", key: WorkflowEvents.workflow.advanced,
@@ -495,7 +498,7 @@ test("resume retains a settling Workflow together with its bound Task and pendin
   try {
     journal.append({ id: "assigned", key: AgentEvents.task.assigned, payload: task, occurredAt: fixture.createdAt });
     journal.append({ id: "worker-message", key: AgentEvents.message.queued, payload: message, occurredAt: fixture.createdAt });
-    const terminal = new Graph(fixture.graphState).advance("error");
+    const terminal = createTestGraph(fixture.graphState).advance("error");
     assert.equal(terminal.cycleCompleted, true);
     journal.append({
       id: "terminal", key: WorkflowEvents.workflow.advanced,
@@ -556,23 +559,23 @@ for (const pending of ["task", "message", "turn", "running-step", "interrupted-s
       } else if (pending === "turn") {
         journal.append({
           id: "turn", key: AgentEvents.turn.started,
-          payload: { invocationId: "turn-1", agentId: "coordinator", role: "coordinator", threadId: "thread-1", prompt: "finish", startedAt: fixture.createdAt },
+          payload: { invocationId: "turn-1", agentId: "executor", role: "executor", threadId: "thread-1", prompt: "finish", startedAt: fixture.createdAt },
           occurredAt: fixture.createdAt,
         });
-        expected = /unfinished Agent turn/;
+        expected = /unfinished Worker turn/;
       } else {
         const interrupted = pending === "interrupted-step";
         journal.append({
           id: "step", key: interrupted ? AgentEvents.step.interrupted : AgentEvents.step.started,
           payload: {
-            stepId: "step-1", agentId: "coordinator", status: interrupted ? "interrupted" : "running",
+            stepId: "step-1", agentId: interrupted ? "coordinator" : "executor", status: interrupted ? "interrupted" : "running",
             prompt: "finish", toolCallIds: [], humanInputReferences: [],
             startedAt: fixture.createdAt, updatedAt: fixture.createdAt,
           }, occurredAt: fixture.createdAt,
         });
-        expected = interrupted ? /interrupted Coordinator step/ : /running Agent step/;
+        expected = interrupted ? /completed Workflow reached clients/ : /running Worker step/;
       }
-      const terminal = new Graph(fixture.graphState).advance("error");
+      const terminal = createTestGraph(fixture.graphState).advance("error");
       journal.append({
         id: "terminal", key: WorkflowEvents.workflow.advanced,
         payload: { ...terminal, outcome: "error", advancedAt: fixture.createdAt }, occurredAt: fixture.createdAt,
@@ -586,9 +589,14 @@ for (const pending of ["task", "message", "turn", "running-step", "interrupted-s
     }
     const before = readFileSync(fixture.journalPath, "utf8");
     const linksBefore = readFileSync(fixture.benchmarks.path, "utf8");
-    const clients = t.mock.method(ResumeClientsStage.prototype, "start");
+    const clients = pending === "interrupted-step"
+      ? t.mock.method(ResumeClientsStage.prototype, "start", async () => {
+        assert.equal(currentRunScope().workflow.snapshot(), undefined);
+        throw new Error("completed Workflow reached clients");
+      })
+      : t.mock.method(ResumeClientsStage.prototype, "start");
     await assert.rejects(resumeRun(fixture.options), expected);
-    assert.equal(clients.mock.callCount(), 0);
+    assert.equal(clients.mock.callCount(), pending === "interrupted-step" ? 1 : 0);
     assert.equal(readFileSync(fixture.journalPath, "utf8"), before);
     assert.equal(readFileSync(fixture.benchmarks.path, "utf8"), linksBefore);
     assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
@@ -645,7 +653,7 @@ for (const missing of ["directory", "file"] as const) {
       assert.equal(scope.runRoot, fixture.runRoot);
       assert.equal(scope.workflow.snapshot(), undefined);
       assert.deepEqual(scope.workflow.readEvents(), []);
-      assert.deepEqual(scope.workflow.scheduler.snapshot(), fixture.graphState);
+      assert.deepEqual(scope.workflow.graph.snapshot(), fixture.graphState);
       assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
       assert.equal(fixture.disclosures.length, 1, "warning precedes service startup");
       assert.equal(fixture.disclosures[0]!.level, "warn");
@@ -843,7 +851,7 @@ function createFixture(t: TestContext, domain: string = "rbt") {
   }
   const journalRoot = join(runRoot, "workflows", "workflow-001", "journal");
   const journalPath = join(journalRoot, "scout.journal");
-  const graphState = new AssetStore().buildWorkflow(root, "rbt");
+  const graphState = new Workflow(new AssetStore().buildWorkflow(root, "rbt")).graph.snapshot();
   const disclosures: RuntimeDisclosureEvent[] = [];
   const interactionPort = new NoopRuntimeInteractionPort();
   t.mock.method(interactionPort, "disclose", async (event: RuntimeDisclosureEvent) => {

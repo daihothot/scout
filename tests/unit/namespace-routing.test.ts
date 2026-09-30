@@ -20,7 +20,7 @@ import { RbtDomainAgentBackend } from "../../src/domain/domains/rbt/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { installRunScope, RunScope } from "../../src/run/run-scope.js";
-import { createTestScheduler } from "../helpers/run-persistence.js";
+import { createDefaultTestGraph, createTestWorkflowAsset } from "../helpers/run-persistence.js";
 
 const unnamespacedTool: AgentDynamicToolSpec = {
   guidanceSkill: "tool-domain-probe",
@@ -129,7 +129,7 @@ async function installNamespaceScope(t: TestContext): Promise<RunScope> {
     scoutRoot: root,
     runRoot,
     config: new AssetStore().config(root),
-    workflow: new Workflow({ graphState: createTestScheduler().snapshot() }),
+    workflow: new Workflow(createTestWorkflowAsset(createDefaultTestGraph().snapshot())),
     manifestStore: new RunManifestStore(runRoot),
     logger: new Logger({ runId, logsRoot: join(runRoot, "logs") }),
     eventBus: new InMemoryEventBus(),

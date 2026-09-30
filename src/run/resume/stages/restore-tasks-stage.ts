@@ -6,7 +6,7 @@ import {
 } from "../../../core/workflow/index.js";
 import type { RunStage } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
-import { projectRun, readDomainJournalProjections } from "../projection/index.js";
+import { projectRun, readDomainRecordProjections } from "../projection/index.js";
 
 /**
  * Rehydrates worker task stores and republishes projected task facts to the
@@ -20,11 +20,11 @@ export class RestoreTasksStage implements RunStage {
   async start(): Promise<void> {
     const scope = currentRunScope();
     if (!scope.workflow.snapshot()) return;
-    const graphState = scope.workflow.scheduler.snapshot();
+    const graphState = scope.workflow.graph.snapshot();
     const projection = projectRun(
       scope.workflow.readEvents(),
       resolveSynthesisRole(graphState).name,
-      readDomainJournalProjections(scope.domainRegistry.list()),
+      readDomainRecordProjections(scope.domainRegistry.list()),
     );
     const allTasks = [
       ...projection.tasks,
