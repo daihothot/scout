@@ -41,8 +41,9 @@ test("CodexAppServerClient supplies a fresh hook runtime identity to each proces
 
 test("CodexAppServerClient accepts the pinned version from supported app-server user agents", async () => {
   for (const userAgent of [
-    "scout-runtime/0.150.1 (Mac OS 26.6.2; arm64) vscode/1.135.0 (scout-runtime; 0.1.0)",
-    "codex_vscode/0.150.1 (Mac OS 26.6.2; arm64) dumb (probe; 0)",
+    "scout-runtime/0.159.2 (Mac OS 26.6.2; arm64) vscode/1.135.0 (scout-runtime; 0.1.0)",
+    "codex_vscode/0.159.2 (Mac OS 26.6.2; arm64) dumb (probe; 0)",
+    "Codex Desktop/0.159.2 (Mac OS 26.7.0; arm64) dumb (scout-runtime; 0.1.0)",
   ]) {
     const fakeServer = writeFakeAppServer(`
       const readline = require("node:readline");
@@ -57,14 +58,14 @@ test("CodexAppServerClient accepts the pinned version from supported app-server 
     `);
     const client = new CodexAppServerClient({
       codexPath: fakeServer,
-      expectedCodexVersion: "0.150.1",
+      expectedCodexVersion: "0.159.2",
       home: tmpdir(),
       codexHome: tmpdir(),
     });
 
     try {
       await client.startSession();
-      assert.equal(client.codexVersion, "0.150.1");
+      assert.equal(client.codexVersion, "0.159.2");
     } finally {
       client.close();
     }
@@ -72,34 +73,76 @@ test("CodexAppServerClient accepts the pinned version from supported app-server 
 });
 
 test("CodexAppServerClient rejects an app-server version outside Scout's pinned runtime", async () => {
-  const fakeServer = writeFakeAppServer(`
-    const readline = require("node:readline");
-    const rl = readline.createInterface({ input: process.stdin });
-    function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
-    rl.on("line", (line) => {
-      const message = JSON.parse(line);
-      if (message.method === "initialize") {
-        send({
-          id: message.id,
-          result: { userAgent: "codex_vscode/0.149.0 (test; arm64)" },
-        });
-      }
+  for (const { userAgent, version } of [
+    { userAgent: "codex_vscode/0.150.1 (test; arm64)", version: "0.150.1" },
+    { userAgent: "Codex Desktop/0.150.1 (test; arm64)", version: "0.150.1" },
+    { userAgent: "Codex Desktop/0.159.2-alpha.1 (test; arm64)", version: "0.159.2-alpha.1" },
+  ]) {
+    const fakeServer = writeFakeAppServer(`
+      const readline = require("node:readline");
+      const rl = readline.createInterface({ input: process.stdin });
+      function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+      rl.on("line", (line) => {
+        const message = JSON.parse(line);
+        if (message.method === "initialize") {
+          send({ id: message.id, result: { userAgent: ${JSON.stringify(userAgent)} } });
+        }
+      });
+    `);
+    const client = new CodexAppServerClient({
+      codexPath: fakeServer,
+      expectedCodexVersion: "0.159.2",
+      home: tmpdir(),
+      codexHome: tmpdir(),
     });
-  `);
-  const client = new CodexAppServerClient({
-    codexPath: fakeServer,
-    expectedCodexVersion: "0.150.1",
-    home: tmpdir(),
-    codexHome: tmpdir(),
-  });
 
-  try {
-    await assert.rejects(
-      client.startSession(),
-      /Scout requires Codex 0\.150\.1, but app-server reported 0\.149\.0/,
-    );
-  } finally {
-    client.close();
+    try {
+      await assert.rejects(
+        client.startSession(),
+        { message: `Scout requires Codex 0.159.2, but app-server reported ${version}.` },
+      );
+      assert.equal(client.codexVersion, undefined);
+    } finally {
+      client.close();
+    }
+  }
+});
+
+test("CodexAppServerClient rejects malformed app-server user agents without searching later version tokens", async () => {
+  for (const userAgent of [
+    "",
+    "/0.159.2 (test; arm64)",
+    "Codex Desktop 0.159.2 (test; arm64)",
+    "Codex Desktop/unknown (test; arm64) scout-runtime/0.159.2",
+    "Codex Desktop/0.159.2invalid (test; arm64)",
+    "Codex\nDesktop/0.159.2 (test; arm64)",
+  ]) {
+    const fakeServer = writeFakeAppServer(`
+      const readline = require("node:readline");
+      const rl = readline.createInterface({ input: process.stdin });
+      function send(value) { process.stdout.write(JSON.stringify(value) + "\\n"); }
+      rl.on("line", (line) => {
+        const message = JSON.parse(line);
+        if (message.method === "initialize") {
+          send({ id: message.id, result: { userAgent: ${JSON.stringify(userAgent)} } });
+        }
+      });
+    `);
+    const client = new CodexAppServerClient({
+      codexPath: fakeServer,
+      expectedCodexVersion: "0.159.2",
+      home: tmpdir(),
+      codexHome: tmpdir(),
+    });
+
+    try {
+      await assert.rejects(client.startSession(), {
+        message: `Codex app-server returned an invalid userAgent: ${userAgent}`,
+      });
+      assert.equal(client.codexVersion, undefined);
+    } finally {
+      client.close();
+    }
   }
 });
 

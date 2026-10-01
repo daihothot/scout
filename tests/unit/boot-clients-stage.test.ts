@@ -114,12 +114,12 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   const expectedCodexHome = resolve(expectedHome, ".codex");
   assert.equal(stage.appServerClient.isolatedHome, expectedHome);
   assert.equal(stage.appServerClient.isolatedCodexHome, expectedCodexHome);
-  assert.equal(stage.appServerClient.codexVersion, "0.150.1");
+  assert.equal(stage.appServerClient.codexVersion, "0.159.2");
   assert.match(
     stage.appServerClient.codexPath,
     /node_modules\/@openai\/codex\/bin\/codex\.js$/,
   );
-  assert.equal(stage.appServerClient.client.codexVersion, "0.150.1");
+  assert.equal(stage.appServerClient.client.codexVersion, "0.159.2");
   assert.equal(existsSync(expectedCodexHome), true);
   assert.equal(existsSync(staleAuthPath), false);
   assert.equal(scope.appServer, stage.appServerClient.client);

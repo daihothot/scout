@@ -355,7 +355,7 @@ export class CodexAppServerClient {
     if (this.expectedCodexVersion) {
       const userAgent = readString(readObject(initialized), "userAgent");
       const actualCodexVersion = userAgent.match(
-        /^[^/\s]+\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\s|$)/,
+        /^[^/\s]+(?:[ \t]+[^/\s]+)*\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:\s|$)/,
       )?.[1];
       if (!actualCodexVersion) {
         throw new Error(`Codex app-server returned an invalid userAgent: ${userAgent}`);
