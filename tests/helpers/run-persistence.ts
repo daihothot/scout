@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
 import { AssetStore, type AssetConfig, type WorkflowProfileAsset } from "../../src/asset-store/index.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
-import { Journal, type JournalEvent } from "../../src/core/journal/index.js";
+import { Journal } from "../../src/core/journal/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import {
   BaseDomain,
@@ -23,9 +23,12 @@ import {
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import type { RunEnvironment } from "../../src/run/types.js";
 import type { ExecutionPlatformPort } from "../../src/execution/scout-execution-system.js";
-import { createGraphState, Graph, Workflow, WorkflowEvents, type WorkflowState, type GraphState } from "../../src/core/workflow/index.js";
+import { createGraphData, Graph, Workflow, WorkflowEvents, type WorkflowData, type GraphData } from "../../src/core/workflow/index.js";
 import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
 import { Benchmarks } from "../../src/core/benchmarks/index.js";
+import { testWorkflowParticipant } from "./workflow-participant.js";
+import { WorkflowState } from "../../src/core/workflow/index.js";
+import type { ScoutRecord } from "../../src/core/record/scout-record.js";
 
 const noopLogger = {
   debug: () => undefined,
@@ -35,32 +38,33 @@ const noopLogger = {
 } as unknown as Logger;
 
 const testDomain: ScoutDomain = {
-  description: { id: ScoutDomainId.Validation, name: "Test Domain" },
+  ...testWorkflowParticipant,
+  description: { id: ScoutDomainId.Rbt, name: "Test Domain" },
   backend: new class extends DomainAgentBackend {
     override async handleDynamicToolCall() { return undefined; }
   }(),
 };
 
-export function createTestRunPersistence(
+export async function createTestRunPersistence(
   t: TestContext,
   runId: string,
   scoutRoot = "/repo",
   eventBus = new InMemoryEventBus(),
   runRootOverride?: string,
   graphOverride?: Graph,
-): {
+): Promise<{
   runRoot: string;
   journal: {
     readonly runId: string;
     readonly runRoot: string;
     readonly path: string;
     readonly lastSeq: number;
-    readAll(): JournalEvent[];
+    readAll(): ScoutRecord[];
   };
   manifestStore: RunManifestStore;
   workflow: Workflow;
   config: AssetConfig;
-} {
+}> {
   const root = runRootOverride === undefined
     ? mkdtempSync(join(tmpdir(), "scout-run-test-"))
     : undefined;
@@ -95,8 +99,8 @@ export function createTestRunPersistence(
   });
   const releaseScope = installRunScope(scope);
   manifestStore.create({ runId, scoutRoot, createdAt, checkpointSeq: 0 });
-  void workflow.start();
-  workflow.restore({ graphState: runtimeGraph.snapshot(), workflowState: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot });
+  await workflow.start();
+  await workflow.enterState({ state: WorkflowState.Restoring, input: { graphData: runtimeGraph.snapshot(), workflowData: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot } });
   if (workflow.lastSeq !== 2) {
     throw new Error(`Test run ${runId} did not persist run.created and Workflow initialization.`);
   }
@@ -128,7 +132,7 @@ export function createTestRunPersistence(
   };
 }
 
-export function installTestRunScope(
+export async function installTestRunScope(
   t: TestContext,
   options: {
     runId: string;
@@ -144,10 +148,10 @@ export function installTestRunScope(
     environment?: RunEnvironment;
     runtimeGraph?: Graph;
     executionSystem?: ExecutionPlatformPort;
-    workflowState?: WorkflowState;
+    workflowData?: WorkflowData;
     terminate?(reason: string): Promise<void>;
   },
-): RunScope {
+): Promise<RunScope> {
   const scoutRoot = options.scoutRoot ?? "/repo";
   const eventBus = options.eventBus ?? new InMemoryEventBus();
   const persistence = options.workflow && options.manifestStore
@@ -157,7 +161,7 @@ export function installTestRunScope(
       manifestStore: options.manifestStore,
       config: new AssetStore().config(scoutRoot),
     }
-    : createTestRunPersistence(
+    : await createTestRunPersistence(
       t,
       options.runId,
       scoutRoot,
@@ -200,9 +204,13 @@ export function installTestRunScope(
   scope.domainRegistry.register(baseDomain);
   scope.domainRegistry.register(domain);
   baseDomain.start();
+  scope.workflow.registerParticipant(baseDomain);
+  scope.workflow.registerParticipant(domain);
   t.after(async () => {
     await domain.stop?.();
-    baseDomain.close();
+    baseDomain.stop();
+    if (scope.workflow.participants.includes(domain)) scope.workflow.unregisterParticipant(domain);
+    if (scope.workflow.participants.includes(baseDomain)) scope.workflow.unregisterParticipant(baseDomain);
     if (options.appServer) scope.clearAppServer(options.appServer);
     release();
   });
@@ -214,7 +222,7 @@ function resolveTestWorkflowRoot(runRoot: string): string {
 }
 
 /** Static Asset fixture for tests that supply custom graph definitions. */
-export function createTestWorkflowAsset(state: GraphState): WorkflowProfileAsset {
+export function createTestWorkflowAsset(state: GraphData): WorkflowProfileAsset {
   return {
     name: state.workflowProfile, sourcePath: `workflows/${state.workflowProfile}.json`, hash: "test-asset",
     profile: {
@@ -230,7 +238,7 @@ export function createTestWorkflowAsset(state: GraphState): WorkflowProfileAsset
 }
 
 /** Builds runtime Graph fixtures, including explicitly selected recovery cursors. */
-export function createTestGraph(state: GraphState): Graph {
+export function createTestGraph(state: GraphData): Graph {
   const graph = new Graph(createTestWorkflowAsset(state));
   graph.restore(state);
   return graph;
@@ -238,7 +246,7 @@ export function createTestGraph(state: GraphState): Graph {
 
 /** Creates the default Graph definition used by isolated run tests. */
 export function createDefaultTestGraph(domain = "test"): Graph {
-  return createTestGraph(createGraphState({
+  return createTestGraph(createGraphData({
     domain: domain,
     workflowProfile: "test-workflow",
     phases: [

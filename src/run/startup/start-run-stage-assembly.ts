@@ -11,6 +11,7 @@ import {
   RunRuntimeStage,
   RunScopeStage,
   RequestHubStage,
+  WorkflowStage,
   RunStageExecutor,
 } from "../lifecycle/index.js";
 import type { Workflow } from "../../core/workflow/index.js";
@@ -36,7 +37,7 @@ export class StartRunStageAssembly {
     executor.registerSerial(
       runScopeStage,
       new InitializeRunStage(),
-      new StartWorkflowStage(input.workflow),
+      new WorkflowStage(input.workflow),
       new RequestHubStage(),
       new RunRuntimeStage("start"),
       new ExecutionStage(),
@@ -47,7 +48,7 @@ export class StartRunStageAssembly {
     );
     executor.registerParallel(new DomainStage(), new AgentTelemetryStage());
     executor.registerParallel(new AgentBackendStage(), new OrchestratorStage());
-    executor.registerSerial(new AgentsStage());
+    executor.registerSerial(new AgentsStage(), new StartWorkflowStage());
 
     this.executor = executor;
     this.runScopeStage = runScopeStage;

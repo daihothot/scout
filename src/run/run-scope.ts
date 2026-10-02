@@ -1,6 +1,7 @@
 import type { CodexAppServerClient } from "../agent-server/codex/app-server-client.js";
 import type { AssetConfig } from "../asset-store/config/asset-config.js";
 import { AgentRegistry } from "../agent/core/agent-registry.js";
+import type { AgentOrchestrator } from "../agent/orchestration/agent-orchestrator.js";
 import { AgentHumanInputStore } from "../agent/human-input/index.js";
 import { AgentTaskStore } from "../agent/task/agent-task-store.js";
 import { AgentStepStore } from "../agent/step/agent-step-store.js";
@@ -60,6 +61,7 @@ export class RunScope {
   readonly manifestStore: RunManifestStore;
   private readonly terminateRun: RunScopeOptions["terminate"];
   private activeAppServer?: CodexAppServerClient;
+  private activeAgentOrchestrator?: AgentOrchestrator;
   private activeExecutionSystem?: ExecutionPlatformPort;
   private activeWorkflow?: Workflow;
   private activeRequestHub?: RequestHub;
@@ -86,6 +88,21 @@ export class RunScope {
       throw new Error("Run app-server is not available.");
     }
     return this.activeAppServer;
+  }
+
+  get agentOrchestrator(): AgentOrchestrator {
+    if (!this.activeAgentOrchestrator) throw new Error("AgentOrchestrator Service is not available.");
+    return this.activeAgentOrchestrator;
+  }
+
+  setAgentOrchestrator(orchestrator: AgentOrchestrator): void {
+    if (this.activeAgentOrchestrator) throw new Error("AgentOrchestrator Service is already available.");
+    this.activeAgentOrchestrator = orchestrator;
+  }
+
+  clearAgentOrchestrator(orchestrator: AgentOrchestrator): void {
+    if (this.activeAgentOrchestrator !== orchestrator) throw new Error("Cannot clear an inactive AgentOrchestrator Service.");
+    this.activeAgentOrchestrator = undefined;
   }
 
   get requestHub(): RequestHub {

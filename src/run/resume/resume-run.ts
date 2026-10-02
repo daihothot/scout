@@ -4,10 +4,11 @@ import { runPaths, scoutJournalPaths, scoutRunRoot } from "../../core/path.js";
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import { InMemoryEventBus } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
-import { resolveSynthesisRole, projectWorkflowState, Workflow, WorkflowEvents, type GraphState, type WorkflowResumeInput } from "../../core/workflow/index.js";
+import { resolveSynthesisRole, projectWorkflowData, Workflow, WorkflowEvents, type GraphData, type WorkflowResumeInput } from "../../core/workflow/index.js";
 import { ScoutBenchmarks } from "../../core/benchmarks/index.js";
 import { Benchmarks } from "../../core/benchmarks/index.js";
-import { RecordableObject, type RecordEvent } from "../../core/record/index.js";
+import { ScoutRecordObject } from "../../core/record/scout-record-object.js";
+import type { ScoutRecord } from "../../core/record/scout-record.js";
 import { AssetStore } from "../../asset-store/index.js";
 import {
   NoopRuntimeInteractionPort,
@@ -30,11 +31,7 @@ import type {
   ResumeRunOptions,
   ScoutRunSummary,
 } from "../types.js";
-import {
-  projectGraphState,
-  projectRun,
-  readDomainRecordProjections,
-} from "./projection/index.js";
+import { projectGraphData } from "../../core/workflow/projector/graph-projector.js";
 import { ResumeRunStageAssembly } from "./resume-run-stage-assembly.js";
 import { PrepareEnvironmentStage } from "../startup/stages/prepare-environment-stage.js";
 import { RestoreEnvironmentStage, ResumeClientsStage } from "./stages/index.js";
@@ -66,9 +63,9 @@ export async function resumeRun(
   const selectedWorkflowId = benchmarks.read()?.currentWorkflow;
   const journalRoot = selectedWorkflow?.journalRoot;
   const journalPath = journalRoot ? scoutJournalPaths(journalRoot).path : undefined;
-  let persistedEvents: RecordEvent[] | undefined;
+  let persistedEvents: ScoutRecord[] | undefined;
   try {
-    if (journalPath) persistedEvents = RecordableObject.readFile(journalPath);
+    if (journalPath) persistedEvents = ScoutRecordObject.readFile(journalPath);
   } catch (error) {
     if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
       throw error;
@@ -108,22 +105,22 @@ export async function resumeRun(
   const workflow = new Workflow(selectedProfile);
   let recovery: WorkflowResumeInput | undefined;
   if (persistedEvents) {
-    const graphState = projectGraphState(persistedEvents);
-    if (selectedProfile.name !== graphState.workflowProfile) {
+    const graphData = projectGraphData(persistedEvents);
+    if (selectedProfile.name !== graphData.workflowProfile) {
       throw new Error(
         `Cannot resume ${manifest.runId} with Workflow Profile ${selectedProfile.name};`
-        + ` the run was created with ${graphState.workflowProfile}.`,
+        + ` the run was created with ${graphData.workflowProfile}.`,
       );
     }
-    if (selectedProfile.profile.domain !== graphState.domain) {
+    if (selectedProfile.profile.domain !== graphData.domain) {
       throw new Error(
         `Cannot resume ${manifest.runId} with domain ${selectedProfile.profile.domain};`
-        + ` the persisted GraphState requires ${graphState.domain}.`,
+        + ` the persisted GraphData requires ${graphData.domain}.`,
       );
     }
     recovery = {
-      graphState,
-      workflowState: projectWorkflowState(selectedWorkflowId!, persistedEvents),
+      graphData,
+      workflowData: projectWorkflowData(selectedWorkflowId!, persistedEvents),
       journalRoot: journalRoot!,
     };
   } else {
@@ -220,7 +217,7 @@ export async function resumeRun(
     }, {
       occurredAt: readyAt,
     });
-    assembly.injectResumeContextStage.activate();
+    scope.agentOrchestrator.ready();
     const checkpointSeq = scope.workflow.lastSeq;
     const agentIds = scope.agentRegistry.listAgents().map((agent) => agent.agentId);
     scope.logger.info({
@@ -295,8 +292,8 @@ function isRunManifest(path: string): boolean {
 }
 
 /** Projects the restored in-memory environment into the public run summary. */
-function toRunSummary(environment: RunEnvironment, graphState: GraphState): ScoutRunSummary {
-  const coordinator = environment.agents[resolveSynthesisRole(graphState).name];
+function toRunSummary(environment: RunEnvironment, graphData: GraphData): ScoutRunSummary {
+  const coordinator = environment.agents[resolveSynthesisRole(graphData).name];
   return {
     status: "passed",
     runId: environment.contextBundle.runId,

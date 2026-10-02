@@ -26,10 +26,10 @@ import {
   type AgentTaskState,
 } from "../../src/agent/task/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
-import { projectRun as projectRunEvents } from "../../src/run/resume/projection/run-projector.js";
+import { projectAgentWorkflow as projectRunEvents } from "../../src/agent/orchestration/projector/agent-workflow-projector.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
-const projectRun = (events: Parameters<typeof projectRunEvents>[0]) =>
+const projectAgentWorkflow = (events: Parameters<typeof projectRunEvents>[0]) =>
   projectRunEvents(events, "coordinator");
 
 test("AgentTaskStore records each disposition kind and rejects a conflicting disposition", () => {
@@ -117,7 +117,7 @@ test("Task disposition persists in Task state and stays out of Step telemetry", 
   const root = mkdtempSync(join(tmpdir(), "scout-task-disposition-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const eventBus = new InMemoryEventBus();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-task-disposition",
     eventBus,
   });
@@ -169,7 +169,7 @@ test("Task disposition persists in Task state and stays out of Step telemetry", 
     scope.workflow.readEvents().at(-1)?.key.routeKey,
     AgentEvents.task.dispositionRecorded.routeKey,
   );
-  const projection = projectRun(scope.workflow.readEvents());
+  const projection = projectAgentWorkflow(scope.workflow.readEvents());
   assert.deepEqual(projection.tasks[0]?.dispositions, [disposition]);
   assert.equal(Object.hasOwn(projection.steps[0] ?? {}, "disposition"), false);
 

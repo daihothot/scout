@@ -1,5 +1,13 @@
 import { AgentInbox } from "../core/agent-inbox.js";
 import { AgentEvents } from "../events/index.js";
+import { WorkerAgent } from "../roles/worker-agent.js";
+import { resolveSynthesisRole, type WorkflowData, type ScoutWorkflowParticipant } from "../../core/workflow/index.js";
+import { currentRunScope } from "../../run/run-scope.js";
+import { projectAgentWorkflow, type AgentWorkflowData } from "./projector/agent-workflow-projector.js";
+import { AgentEntityRecovery } from "./recovery/agent-entity-recovery.js";
+import { AgentTaskRecovery } from "./recovery/agent-task-recovery.js";
+import { AgentContextRecovery } from "./recovery/agent-context-recovery.js";
+import { AgentInterruptionRecovery } from "./recovery/agent-interruption-recovery.js";
 
 /** Observable lifecycle state for the task-event orchestrator. */
 export interface AgentOrchestratorSnapshot {
@@ -9,10 +17,15 @@ export interface AgentOrchestratorSnapshot {
 }
 
 /** Owns the task-event subscription and rejects unrelated agent events. */
-export class AgentOrchestrator {
+export class AgentOrchestrator implements ScoutWorkflowParticipant {
   private readonly inbox: AgentInbox;
   private started = false;
   private stopped = false;
+  private readonly entityRecovery = new AgentEntityRecovery();
+  private readonly contextRecovery = new AgentContextRecovery();
+  private entitiesRestored = false;
+  private runtimeReady = false;
+  private activationPending = false;
 
   constructor() {
     this.inbox = new AgentInbox({
@@ -41,6 +54,87 @@ export class AgentOrchestrator {
     if (this.stopped) return;
     this.stopped = true;
     this.inbox.stop();
+  }
+
+  create(): void { this.clearWorkflow(); }
+
+  async restore(data: WorkflowData): Promise<void> {
+    const scope = currentRunScope();
+    const synthesisRole = resolveSynthesisRole(scope.workflow.graph.snapshot()).name;
+    let projection = projectAgentWorkflow(scope.workflow.readEvents(), synthesisRole);
+    if (data.status === "completed") {
+      const userInputs = new Set(projection.userMessages.map((message) => message.messageId));
+      const coordinator = projection.threads.find((thread) => thread.role === synthesisRole)?.agentId ?? synthesisRole;
+      const reasons = [
+        ...projection.tasks.filter((task) => task.status === "queued" || task.status === "running")
+          .map((task) => `unfinished Task ${task.taskId} (${task.status})`),
+        ...(projection.pendingMessages.some((message) => !userInputs.has(message.messageId)) ? ["pending Agent messages"] : []),
+        ...(projection.turns.some((turn) => turn.agentId !== coordinator && !turn.completedAt) ? ["an unfinished Worker turn"] : []),
+        ...(projection.steps.some((step) => step.agentId !== coordinator && step.status === "running") ? ["a running Worker step"] : []),
+      ];
+      if (reasons.length) throw new Error(`Cannot restore completed Workflow: ${reasons.join(", ")}.`);
+      await this.restoreEntities(projection);
+      return;
+    }
+    await new AgentInterruptionRecovery().restore();
+    projection = projectAgentWorkflow(scope.workflow.readEvents(), synthesisRole);
+    await this.restoreEntities(projection);
+    // Restoring native Threads can append replacement identities to the Scout record.
+    projection = projectAgentWorkflow(scope.workflow.readEvents(), synthesisRole);
+    await new AgentTaskRecovery().restore(projection);
+    await this.contextRecovery.restore(projection);
+    this.activationPending = true;
+  }
+
+  /** Agent entities also exist in the blank period, independently of Workflow task data. */
+  async restoreEntities(projection?: AgentWorkflowData): Promise<void> {
+    if (this.entitiesRestored) return;
+    await this.entityRecovery.restore(projection);
+    this.entitiesRestored = true;
+  }
+
+  run(): void { if (this.runtimeReady && this.activationPending) this.activate(); }
+
+  /** Called by the Run entry point only after all ready consumers have succeeded. */
+  ready(): void {
+    this.runtimeReady = true;
+    if (this.activationPending) this.activate();
+  }
+
+  async close(): Promise<void> {
+    this.activationPending = false;
+    const failures: unknown[] = [];
+    for (const agent of currentRunScope().agentRegistry.listAgents()) {
+      const task = agent.snapshot().activeTask;
+      try { if (agent instanceof WorkerAgent && task) await agent.releaseTask(task.taskId); }
+      catch (error) { failures.push(error); }
+    }
+    if (failures.length) throw new AggregateError(failures, "Agent Workflow task release failed.");
+  }
+
+  abort(): void { this.activationPending = false; }
+
+  clearWorkflow(): void {
+    this.activationPending = false;
+    this.contextRecovery.clearWorkflow();
+    const scope = currentRunScope();
+    // A terminal tool call can finish the Workflow inside an ongoing Agent Turn.
+    // Its Step and references belong to that Agent execution until it finishes.
+    const runningSteps = scope.stepStore.list().filter((step) => step.status === "running");
+    const stepIds = new Set(runningSteps.map((step) => step.stepId));
+    const requestIds = new Set(runningSteps.flatMap((step) => step.humanInputReferences.map((reference) => reference.requestId)));
+    scope.toolCallStore.restore(scope.toolCallStore.list().filter((call) => stepIds.has(call.stepId)));
+    scope.humanInputStore.restore(scope.taskStore.listTasks().flatMap((task) =>
+      scope.humanInputStore.listForTask(task.taskId)).filter((input) => requestIds.has(input.requestId)));
+    scope.stepStore.restore(runningSteps);
+    for (const task of scope.taskStore.listTasks()) scope.taskStore.removeTask(task.taskId);
+  }
+
+  async stopEntities(reason: string): Promise<void> { await this.entityRecovery.stop(reason); }
+
+  private activate(): void {
+    this.activationPending = false;
+    this.contextRecovery.activate();
   }
 
   snapshot(): AgentOrchestratorSnapshot {

@@ -1,18 +1,18 @@
 import { defineEventCatalog, event } from "../events/index.js";
 import type {
-  GraphState,
+  GraphData,
   WorkflowPhaseOutcome,
-} from "./graph-state.js";
+} from "./graph-data.js";
 
 /** Initial Graph fact persisted before a new Workflow becomes active. */
 export interface WorkflowGraphInitializedEvent {
-  state: GraphState;
+  state: GraphData;
   initializedAt: string;
 }
 
 /** Cursor transition fact persisted after Coordinator submits a Phase outcome. */
 export interface WorkflowGraphAdvancedEvent {
-  state: GraphState;
+  state: GraphData;
   previousPhase: string;
   outcome: WorkflowPhaseOutcome;
   cycleCompleted: boolean;

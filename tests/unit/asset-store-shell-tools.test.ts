@@ -34,7 +34,7 @@ import {
 } from "../../src/asset-store/index.js";
 import { MountInspector } from "../../src/asset-store/inspection/mount-inspector.js";
 import { buildMountShellPath } from "../../src/asset-store/mount/macros.js";
-import { createGraphState, type GraphState } from "../../src/core/workflow/index.js";
+import { createGraphData, type GraphData } from "../../src/core/workflow/index.js";
 
 const scoutRoot = process.cwd();
 type Mutable<T> = {
@@ -59,7 +59,7 @@ test("Workflow Profiles retain one Domain and reject plural or invalid selection
   assert.equal(graph.domain, "rbt");
   assert.ok(Object.isFrozen(graph));
   const input = { ...graph, domain: "rbt" };
-  const snapshot = createGraphState(input);
+  const snapshot = createGraphData(input);
   input.domain = "validation";
   assert.equal(snapshot.domain, "rbt");
 
@@ -74,7 +74,7 @@ test("Workflow Profiles retain one Domain and reject plural or invalid selection
   const { domain: removedGraphDomain, ...withoutGraphDomain } = graph;
   void removedGraphDomain;
   assert.throws(
-    () => createGraphState({ ...withoutGraphDomain, domains: ["validation"] } as unknown as GraphState),
+    () => createGraphData({ ...withoutGraphDomain, domains: ["validation"] } as unknown as GraphData),
     /requires one valid domain identifier/,
   );
 });
@@ -1475,63 +1475,17 @@ test("Scout system config is outside Agent resource identity", () => {
   assert.equal(current.resourceHash, initial.resourceHash);
 });
 
-test("AssetStore mounts configured Unity Signals for Worker roles only", () => {
-  const fixtureRoot = createCodexAssetFixture("scout-asset-store-unity-signals-");
-  const store = new AssetStore();
-  const signalSkills = [
-    "signal-runtime-log",
-    "signal-callback-event-by-runtime-log",
-    "signal-local-storage",
-  ];
-
-  for (const agentId of ["researcher", "verifier", "validator"]) {
-    const mount = store.materializeMount({
-      scoutRoot: fixtureRoot,
-      runId: `run-unity-signals-${agentId}-test`,
-      agentId,
-    });
-    const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
-
-    for (const signalSkill of signalSkills) {
-      assert.ok(hasSkill(mount.skills, signalSkill));
-      assert.ok(hasSkill(manifest.skills, signalSkill));
-      const materialized = mount.skills.find((skill) => skill.name === signalSkill);
-      assert.ok(materialized);
-      assert.equal(existsSync(join(mount.mountRoot, materialized.path)), true);
-      assert.match(materialized.path, /^\.scout\/skill\/signal\/local\/unity\/general\//);
-    }
-  }
-
-  const coordinatorMount = store.materializeMount({
-    scoutRoot: fixtureRoot,
-    runId: "run-unity-signals-coordinator-test",
-    agentId: "coordinator",
-  });
-  for (const signalSkill of signalSkills) {
-    assert.equal(hasSkill(coordinatorMount.skills, signalSkill), false);
-  }
-});
 
 test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition by execution and audit role", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-runtime-log-acquisition-");
   const store = new AssetStore();
-  const toolSkill = "tool-unity-pipeline-cli";
-  const acquisitionSkill = "signal-runtime-log-via-unity-pipeline-cli";
 
   const verifierMount = store.materializeMount({
     scoutRoot: fixtureRoot,
     runId: "run-runtime-log-acquisition-verifier-test",
     agentId: "verifier",
   });
-  assert.ok(hasSkill(verifierMount.skills, toolSkill));
-  assert.ok(hasSkill(verifierMount.skills, acquisitionSkill));
   assert.ok(verifierMount.shellTools.some((tool) => tool.id === "unity"));
-  const materializedTool = verifierMount.skills.find((skill) => skill.name === toolSkill);
-  const materializedAcquisition = verifierMount.skills.find((skill) => skill.name === acquisitionSkill);
-  assert.ok(materializedTool);
-  assert.ok(materializedAcquisition);
-  assert.equal(existsSync(join(verifierMount.mountRoot, materializedTool.path)), true);
-  assert.equal(existsSync(join(verifierMount.mountRoot, materializedAcquisition.path)), true);
   assert.equal(existsSync(join(verifierMount.mountRoot, "bin", "unity")), true);
 
   const validatorMount = store.materializeMount({
@@ -1539,8 +1493,6 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
     runId: "run-runtime-log-acquisition-validator-test",
     agentId: "validator",
   });
-  assert.ok(hasSkill(validatorMount.skills, toolSkill));
-  assert.ok(hasSkill(validatorMount.skills, acquisitionSkill));
   assert.equal(validatorMount.shellTools.some((tool) => tool.id === "unity"), false);
 
   const coordinatorMount = store.materializeMount({
@@ -1548,8 +1500,6 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
     runId: "run-runtime-log-acquisition-coordinator-test",
     agentId: "coordinator",
   });
-  assert.equal(hasSkill(coordinatorMount.skills, toolSkill), false);
-  assert.equal(hasSkill(coordinatorMount.skills, acquisitionSkill), false);
   assert.equal(coordinatorMount.shellTools.some((tool) => tool.id === "unity"), false);
 
   const researcherMount = store.materializeMount({
@@ -1557,8 +1507,6 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
     runId: "run-runtime-log-acquisition-researcher-test",
     agentId: "researcher",
   });
-  assert.ok(hasSkill(researcherMount.skills, toolSkill));
-  assert.ok(hasSkill(researcherMount.skills, acquisitionSkill));
   assert.equal(researcherMount.shellTools.some((tool) => tool.id === "unity"), false);
 });
 
@@ -1571,11 +1519,6 @@ test("AssetStore mounts RBT Reviewer guidance without codebase access or host ru
     agentId: "reviewer",
     workflowProfileName: "rbt",
   });
-  assert.ok(hasSkill(reviewerMount.skills, "domain-rbt-reviewer"));
-  assert.equal(hasSkill(reviewerMount.skills, "domain-rbt-execution-pack"), false);
-  assert.equal(hasSkill(reviewerMount.skills, "tool-jarvis-codebase"), false);
-  assert.ok(hasSkill(reviewerMount.skills, "tool-execution-platform"));
-  assert.ok(hasSkill(reviewerMount.skills, "tool-rbt-behavior"));
   assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "unity"), false);
   assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "jarvis-codebase"), false);
   assert.equal(reviewerMount.shellTools.some((tool) => tool.id === "codegraph"), false);

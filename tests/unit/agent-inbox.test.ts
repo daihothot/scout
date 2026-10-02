@@ -7,7 +7,7 @@ import { installTestRunScope } from "../helpers/run-persistence.js";
 
 test("AgentInbox drains subscribed events until idle", async (t) => {
   const bus = new InMemoryEventBus();
-  installTestRunScope(t, { runId: "agent-inbox-drain", eventBus: bus });
+  await installTestRunScope(t, { runId: "agent-inbox-drain", eventBus: bus });
   const received: string[] = [];
   const inbox = new AgentInbox({
     isStopped: () => false,
@@ -33,7 +33,7 @@ test("AgentInbox drains subscribed events until idle", async (t) => {
 
 test("AgentInbox reports errors and continues when events remain", async (t) => {
   const bus = new InMemoryEventBus();
-  installTestRunScope(t, { runId: "agent-inbox-error", eventBus: bus });
+  await installTestRunScope(t, { runId: "agent-inbox-error", eventBus: bus });
   const errors: unknown[] = [];
   const taskIds: string[] = [];
   let batches = 0;
@@ -65,7 +65,7 @@ test("AgentInbox reports errors and continues when events remain", async (t) => 
 
 test("AgentInbox handles events published while draining", async (t) => {
   const bus = new InMemoryEventBus();
-  installTestRunScope(t, { runId: "agent-inbox-published-while-draining", eventBus: bus });
+  await installTestRunScope(t, { runId: "agent-inbox-published-while-draining", eventBus: bus });
   const taskIds: string[] = [];
   let batches = 0;
   const inbox = new AgentInbox({
@@ -94,7 +94,7 @@ test("AgentInbox handles events published while draining", async (t) => {
 
 test("AgentInbox stops receiving and draining events", async (t) => {
   const bus = new InMemoryEventBus();
-  installTestRunScope(t, { runId: "agent-inbox-stop", eventBus: bus });
+  await installTestRunScope(t, { runId: "agent-inbox-stop", eventBus: bus });
   let batches = 0;
   const inbox = new AgentInbox({
     isStopped: () => false,

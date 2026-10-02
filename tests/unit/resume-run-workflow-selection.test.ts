@@ -16,9 +16,9 @@ import test, { type TestContext } from "node:test";
 import { AssetStore } from "../../src/asset-store/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
-import { Journal, readJournalEvents } from "../../src/core/journal/index.js";
+import { Journal } from "../../src/core/journal/index.js";
 import { Logger } from "../../src/core/logging/index.js";
-import { Graph, WorkflowEvents } from "../../src/core/workflow/index.js";
+import { WorkflowEvents } from "../../src/core/workflow/index.js";
 import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
 import { Benchmarks } from "../../src/core/benchmarks/index.js";
 import {
@@ -29,18 +29,20 @@ import { RunEvents } from "../../src/run/events/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { resumeRun } from "../../src/run/resume/resume-run.js";
 import { ResumeClientsStage } from "../../src/run/resume/stages/resume-clients-stage.js";
-import { RestoreAgentsStage } from "../../src/run/resume/stages/restore-agents-stage.js";
-import { InjectResumeContextStage } from "../../src/run/resume/stages/inject-resume-context-stage.js";
+import { AgentEntityRecovery } from "../../src/agent/orchestration/recovery/agent-entity-recovery.js";
+import { AgentTaskRecovery } from "../../src/agent/orchestration/recovery/agent-task-recovery.js";
+import { RestoreWorkflowStage } from "../../src/run/resume/stages/restore-workflow-stage.js";
+import { AgentContextRecovery } from "../../src/agent/orchestration/recovery/agent-context-recovery.js";
 import { RestoreEnvironmentStage } from "../../src/run/resume/stages/restore-environment-stage.js";
 import { PrepareEnvironmentStage } from "../../src/run/startup/stages/prepare-environment-stage.js";
 import { ExecutionStage, RunAppServerStage, RunStageExecutor, type RunStage } from "../../src/run/lifecycle/index.js";
 import { currentRunScope } from "../../src/run/run-scope.js";
-import { projectRun } from "../../src/run/resume/projection/index.js";
+import { projectAgentWorkflow } from "../../src/agent/orchestration/projector/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import { AgentTaskStatuses, type AgentTaskState } from "../../src/agent/task/types.js";
 
 test("resume finishes interrupted environment initialization in the same Run and Workflow, then uses restoration", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t, "rbt", true);
   fixture.manifestStore.update(({ agents: _agents, ...manifest }) => manifest);
   fixture.writeWorkflow(fixture.runId);
   cpSync(join(process.cwd(), "assets", "agent-runtimes"), join(fixture.root, "assets", "agent-runtimes"), { recursive: true });
@@ -70,8 +72,8 @@ test("resume finishes interrupted environment initialization in the same Run and
   t.mock.method(ExecutionStage.prototype, "start", async () => {
     const scope = currentRunScope();
     assert.equal(scope.runId, fixture.runId);
-    assert.equal(scope.workflow.snapshot()?.workflowId, "workflow-001");
-    assert.deepEqual(Object.keys(scope.environment.agents).sort(), fixture.graphState.roles.map((role) => role.name).sort());
+    assert.equal(scope.workflow.snapshot(), undefined, "Services install before business recovery.");
+    assert.deepEqual(Object.keys(scope.environment.agents).sort(), fixture.graphData.roles.map((role) => role.name).sort());
     throw reachedEnvironment;
   });
   const restored = new Error("existing environment selected for restoration");
@@ -82,7 +84,7 @@ test("resume finishes interrupted environment initialization in the same Run and
   assert.equal(fixture.manifestStore.read().agents, undefined);
   assert.equal(existsSync(join(fixture.runRoot, "agents", "coordinator", "mount", "mount-manifest.json")), true);
   await assert.rejects(resumeRun(fixture.options), (error) => error === reachedEnvironment);
-  assert.deepEqual(Object.keys(fixture.manifestStore.read().agents ?? {}).sort(), fixture.graphState.roles.map((role) => role.name).sort());
+  assert.deepEqual(Object.keys(fixture.manifestStore.read().agents ?? {}).sort(), fixture.graphData.roles.map((role) => role.name).sort());
   await assert.rejects(resumeRun(fixture.options), (error) => error === restored);
   assert.equal(clients.mock.callCount(), 3);
   assert.equal(prepared.mock.callCount(), 2);
@@ -95,7 +97,7 @@ test("resume finishes interrupted environment initialization in the same Run and
 
 for (const evidence of ["agent", "advanced", "missing-journal"] as const) {
   test(`resume rejects a missing environment index with ${evidence} evidence before starting services`, async (t) => {
-    const fixture = createFixture(t);
+    const fixture = await createFixture(t);
     fixture.manifestStore.update(({ agents: _agents, ...manifest }) => manifest);
     if (evidence !== "missing-journal") {
       fixture.writeWorkflow(fixture.runId);
@@ -115,7 +117,7 @@ for (const evidence of ["agent", "advanced", "missing-journal"] as const) {
           });
         } else {
           journal.append({ id: "advanced", key: WorkflowEvents.workflow.advanced,
-            payload: { ...createTestGraph(fixture.graphState).advance("completed"), outcome: "completed", advancedAt: fixture.createdAt },
+            payload: { ...createTestGraph(fixture.graphData).advance("completed"), outcome: "completed", advancedAt: fixture.createdAt },
             occurredAt: fixture.createdAt });
         }
       } finally { journal.close(); }
@@ -140,7 +142,7 @@ for (const evidence of ["agent", "advanced", "missing-journal"] as const) {
 }
 
 test("resume selects the requested Run's benchmark even while another Run holds its own lock", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   fixture.writeWorkflow(fixture.runId);
   const journalBefore = readFileSync(fixture.journalPath, "utf8");
   const repositoryBenchmarkPath = join(fixture.root, "run", "benchmarks.json");
@@ -159,7 +161,7 @@ test("resume selects the requested Run's benchmark even while another Run holds 
     const otherLinks = readFileSync(other.path, "utf8");
     const otherLock = readFileSync(join(otherRoot, ".workflow.lock"), "utf8");
     const stop = new Error("requested Run selected before starting external clients");
-    const clients = t.mock.method(ResumeClientsStage.prototype, "start", async () => {
+    const clients = mockOwnerRestore(t, async () => {
       const scope = currentRunScope();
       assert.equal(scope.runRoot, fixture.runRoot);
       assert.equal(scope.workflow.journalPath, fixture.journalPath);
@@ -184,7 +186,7 @@ test("resume selects the requested Run's benchmark even while another Run holds 
 });
 
 test("resume does not fall back to a repository benchmark when the requested Run has no benchmark", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   fixture.writeWorkflow(fixture.runId);
   const repositoryBenchmarkPath = join(fixture.root, "run", "benchmarks.json");
   const repositoryLinks = readFileSync(fixture.benchmarks.path, "utf8");
@@ -193,7 +195,7 @@ test("resume does not fall back to a repository benchmark when the requested Run
   const manifestBefore = readFileSync(fixture.manifestStore.path, "utf8");
   const journalBefore = readFileSync(fixture.journalPath, "utf8");
   const stop = new Error("empty Run selected without repository fallback");
-  const clients = t.mock.method(ResumeClientsStage.prototype, "start", async () => {
+  const clients = mockAfterRecovery(t, async () => {
     assert.equal(currentRunScope().workflow.snapshot(), undefined);
     assert.deepEqual(currentRunScope().workflow.readEvents(), []);
     throw stop;
@@ -208,7 +210,7 @@ test("resume does not fall back to a repository benchmark when the requested Run
 });
 
 test("resume rejects another Run's current Workflow before starting runtime services", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   fixture.writeWorkflow("run-other");
   const manifestBefore = readFileSync(fixture.manifestStore.path, "utf8");
   const benchmarksBefore = readFileSync(fixture.benchmarks.path, "utf8");
@@ -229,7 +231,7 @@ test("resume rejects another Run's current Workflow before starting runtime serv
 });
 
 test("resume rejects a Workflow without run.created rather than treating it as missing", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   fixture.writeWorkflow();
   const clients = t.mock.method(ResumeClientsStage.prototype, "start");
 
@@ -242,18 +244,18 @@ test("resume rejects a Workflow without run.created rather than treating it as m
 });
 
 test("resume opens a matching Run's Workflow without replacing it", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   fixture.writeWorkflow(fixture.runId);
   const manifestBefore = readFileSync(fixture.manifestStore.path, "utf8");
   const journalBefore = readFileSync(fixture.journalPath, "utf8");
   const stopBeforeExternalClients = new Error("stop before external clients");
   let reachedWorkflow = false;
-  t.mock.method(ResumeClientsStage.prototype, "start", async () => {
+  mockOwnerRestore(t, async () => {
     reachedWorkflow = true;
     const scope = currentRunScope();
     assert.equal(scope.runId, fixture.runId);
     assert.equal(scope.workflow.journalPath, fixture.journalPath);
-    assert.deepEqual(scope.workflow.graph.snapshot(), fixture.graphState);
+    assert.deepEqual(scope.workflow.graph.snapshot(), fixture.graphData);
     assert.equal(scope.workflow.snapshot()?.workflowId, "workflow-001");
     assert.equal(scope.workflow.readEvents().length, 2);
     throw stopBeforeExternalClients;
@@ -269,7 +271,7 @@ test("resume opens a matching Run's Workflow without replacing it", async (t) =>
 });
 
 test("resuming an older selected Workflow updates lastRun without changing history permalinks", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   fixture.writeWorkflow(fixture.runId);
   const links = {
     currentWorkflow: "workflow-001", lastWorkflow: "workflow-099",
@@ -279,7 +281,7 @@ test("resuming an older selected Workflow updates lastRun without changing histo
     Object.fromEntries(Object.entries(links).map(([name, workflowId]) => [name, { workflowId }])),
   }), "utf8");
   const stop = new Error("stop before external clients");
-  t.mock.method(ResumeClientsStage.prototype, "start", async () => {
+  mockOwnerRestore(t, async () => {
     assert.deepEqual(fixture.benchmarks.read(), { ...links, lastRun: "workflow-001" });
     throw stop;
   });
@@ -289,7 +291,7 @@ test("resuming an older selected Workflow updates lastRun without changing histo
 
 for (const change of ["tail", "graph", "identity"] as const) {
   test(`resume rejects a ${change} change between pre-read and locked open without mutating benchmarks`, async (t) => {
-    const fixture = createFixture(t);
+    const fixture = await createFixture(t);
     fixture.writeWorkflow(fixture.runId);
     const before = readFileSync(fixture.benchmarks.path, "utf8");
     const open = Journal.open.bind(Journal);
@@ -305,7 +307,7 @@ for (const change of ["tail", "graph", "identity"] as const) {
               ? { ...event, payload: { ...event.payload, runId: "another-run" } }
               : event));
           } else if (change === "graph") {
-            const terminal = createTestGraph(fixture.graphState).advance("error");
+            const terminal = createTestGraph(fixture.graphData).advance("error");
             previous.append({
               id: "concurrent-completion", key: WorkflowEvents.workflow.advanced,
               payload: { ...terminal, outcome: "error", advancedAt: fixture.createdAt },
@@ -342,7 +344,7 @@ for (const change of ["tail", "graph", "identity"] as const) {
 }
 
 test("a failed lastRun write releases the restored Workflow's journal lock", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   fixture.writeWorkflow(fixture.runId);
   const failure = new Error("lastRun unavailable");
   const before = readFileSync(fixture.benchmarks.path, "utf8");
@@ -356,7 +358,7 @@ test("a failed lastRun write releases the restored Workflow's journal lock", asy
 
 for (const failurePoint of ["ready-subscriber", "ready-log"] as const) {
   test(`resume terminates restored resources on ${failurePoint} failure and preserves the original error`, async (t) => {
-    const fixture = createFixture(t);
+    const fixture = await createFixture(t);
     fixture.writeWorkflow(fixture.runId);
     const failure = new Error(failurePoint);
     const activity: string[] = [];
@@ -365,11 +367,14 @@ for (const failurePoint of ["ready-subscriber", "ready-log"] as const) {
     // services that would connect to external runtimes in this unit test.
     t.mock.method(RunStageExecutor.prototype, "registerSerial", function (this: RunStageExecutor, ...stages: RunStage[]) {
       register.apply(this, stages.filter((stage) => [
-        "run_scope", "workflow", "restore_agents", "inject_resume_context",
+        "run_scope", "workflow", "restore_workflow",
       ].includes(stage.id)));
     });
-    t.mock.method(RunStageExecutor.prototype, "registerParallel", () => undefined);
-    t.mock.method(RestoreAgentsStage.prototype, "start", async () => {
+    const parallel = RunStageExecutor.prototype.registerParallel;
+    t.mock.method(RunStageExecutor.prototype, "registerParallel", function (this: RunStageExecutor, ...stages: RunStage[]) {
+      parallel.apply(this, stages.filter((stage) => stage.id === "orchestrator"));
+    });
+    t.mock.method(AgentEntityRecovery.prototype, "restore", async () => {
       activity.push("agents-restored");
       const scope = currentRunScope();
       scope.eventBus.subscribeOnce(RunEvents.runtime.ready, async () => {
@@ -381,9 +386,9 @@ for (const failurePoint of ["ready-subscriber", "ready-log"] as const) {
         activity.push("ready-finished");
       });
     });
-    t.mock.method(RestoreAgentsStage.prototype, "stop", async () => { activity.push("agents-stopped"); });
-    t.mock.method(InjectResumeContextStage.prototype, "start", async () => { activity.push("messages-restored"); });
-    t.mock.method(InjectResumeContextStage.prototype, "activate", () => {
+    t.mock.method(AgentEntityRecovery.prototype, "stop", async () => { activity.push("agents-stopped"); });
+    t.mock.method(AgentContextRecovery.prototype, "restore", async () => { activity.push("messages-restored"); });
+    t.mock.method(AgentContextRecovery.prototype, "activate", () => {
       assert.equal(activity.at(-1), "ready-finished");
       activity.push("activated");
     });
@@ -404,7 +409,7 @@ for (const failurePoint of ["ready-subscriber", "ready-log"] as const) {
 }
 
 test("RestoreWorkflowStage leaves a completed resume empty without replaying its historical inputs", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   fixture.writeWorkflow(fixture.runId);
   const thread = {
     agentId: "coordinator", role: "coordinator", phases: ["research"],
@@ -422,7 +427,8 @@ test("RestoreWorkflowStage leaves a completed resume empty without replaying its
     journal.append({ id: "thread", key: AgentEvents.thread.started, payload: thread, occurredAt: fixture.createdAt });
     journal.append({
       id: "restart", key: AgentEvents.thread.restarted,
-      payload: { previousThreadId: thread.threadId, newThread: restartedThread }, occurredAt: fixture.createdAt,
+      payload: { previousThreadId: thread.threadId, newThread: restartedThread,
+        reason: "missing_rollout_without_recoverable_work", restartedAt: fixture.createdAt }, occurredAt: fixture.createdAt,
     });
     journal.append({
       id: "old-user-input", key: SystemEvents.interaction.userMessageSubmitted,
@@ -439,7 +445,7 @@ test("RestoreWorkflowStage leaves a completed resume empty without replaying its
       payload: { messageId: "raw-only-message", text: "not queued yet", attachment: "raw-only work", submittedAt: fixture.createdAt },
       occurredAt: fixture.createdAt,
     });
-    const terminal = createTestGraph(fixture.graphState).advance("error");
+    const terminal = createTestGraph(fixture.graphData).advance("error");
     assert.equal(terminal.cycleCompleted, true);
     journal.append({
       id: "terminal", key: WorkflowEvents.workflow.advanced,
@@ -456,7 +462,7 @@ test("RestoreWorkflowStage leaves a completed resume empty without replaying its
   const manifestBefore = readFileSync(fixture.manifestStore.path, "utf8");
   const stopBeforeExternalClients = new Error("next Workflow ready before clients");
   let reachedWorkflow = false;
-  t.mock.method(ResumeClientsStage.prototype, "start", async () => {
+  mockAfterRecovery(t, async () => {
     reachedWorkflow = true;
     const scope = currentRunScope();
     assert.equal(scope.domainRegistry.list().length, 0);
@@ -478,7 +484,7 @@ test("RestoreWorkflowStage leaves a completed resume empty without replaying its
 });
 
 test("resume retains a settling Workflow together with its bound Task and pending non-user message", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   fixture.writeWorkflow(fixture.runId);
   const task: AgentTaskState = {
     type: "local_agent", taskId: "pending-task", taskSequence: 1,
@@ -498,7 +504,7 @@ test("resume retains a settling Workflow together with its bound Task and pendin
   try {
     journal.append({ id: "assigned", key: AgentEvents.task.assigned, payload: task, occurredAt: fixture.createdAt });
     journal.append({ id: "worker-message", key: AgentEvents.message.queued, payload: message, occurredAt: fixture.createdAt });
-    const terminal = createTestGraph(fixture.graphState).advance("error");
+    const terminal = createTestGraph(fixture.graphData).advance("error");
     assert.equal(terminal.cycleCompleted, true);
     journal.append({
       id: "terminal", key: WorkflowEvents.workflow.advanced,
@@ -510,11 +516,11 @@ test("resume retains a settling Workflow together with its bound Task and pendin
   const before = readFileSync(fixture.journalPath, "utf8");
   const linksBefore = fixture.benchmarks.read();
   const stop = new Error("settling Workflow restored before clients");
-  const clients = t.mock.method(ResumeClientsStage.prototype, "start", async () => {
+  const clients = mockOwnerRestore(t, async () => {
     const workflow = currentRunScope().workflow;
     assert.equal(workflow.snapshot()?.workflowId, "workflow-001");
     assert.equal(workflow.snapshot()?.status, "settling");
-    const projection = projectRun(workflow.readEvents(), "coordinator");
+    const projection = projectAgentWorkflow(workflow.readEvents(), "coordinator");
     assert.equal(projection.workflowStatus, "settling");
     assert.deepEqual(projection.tasks, [task]);
     assert.deepEqual(projection.pendingMessages, [message]);
@@ -529,7 +535,7 @@ test("resume retains a settling Workflow together with its bound Task and pendin
 
 for (const pending of ["task", "message", "turn", "running-step", "interrupted-step"] as const) {
   test(`resume rejects a completed Workflow with an unfinished ${pending} without changing its journal or pointers`, async (t) => {
-    const fixture = createFixture(t);
+    const fixture = await createFixture(t);
     fixture.writeWorkflow(fixture.runId);
     const journal = Journal.open({
       journalId: "invalid-completed-resume", path: fixture.journalPath,
@@ -555,7 +561,7 @@ for (const pending of ["task", "message", "turn", "running-step", "interrupted-s
           payload: { agentId: "coordinator", messageId: "worker-message", body: "worker result", queuedAt: fixture.createdAt },
           occurredAt: fixture.createdAt,
         });
-        expected = /1 pending Agent message/;
+        expected = /pending Agent messages/;
       } else if (pending === "turn") {
         journal.append({
           id: "turn", key: AgentEvents.turn.started,
@@ -575,7 +581,7 @@ for (const pending of ["task", "message", "turn", "running-step", "interrupted-s
         });
         expected = interrupted ? /completed Workflow reached clients/ : /running Worker step/;
       }
-      const terminal = createTestGraph(fixture.graphState).advance("error");
+      const terminal = createTestGraph(fixture.graphData).advance("error");
       journal.append({
         id: "terminal", key: WorkflowEvents.workflow.advanced,
         payload: { ...terminal, outcome: "error", advancedAt: fixture.createdAt }, occurredAt: fixture.createdAt,
@@ -590,7 +596,7 @@ for (const pending of ["task", "message", "turn", "running-step", "interrupted-s
     const before = readFileSync(fixture.journalPath, "utf8");
     const linksBefore = readFileSync(fixture.benchmarks.path, "utf8");
     const clients = pending === "interrupted-step"
-      ? t.mock.method(ResumeClientsStage.prototype, "start", async () => {
+      ? mockAfterRecovery(t, async () => {
         assert.equal(currentRunScope().workflow.snapshot(), undefined);
         throw new Error("completed Workflow reached clients");
       })
@@ -612,21 +618,21 @@ for (const scenario of [
   { name: "changed-to-rbt", persisted: "validation", selected: "rbt", matches: false },
 ]) {
   test(`resume checks the business Domain selection: ${scenario.name}`, async (t) => {
-    const fixture = createFixture(t, scenario.persisted);
+    const fixture = await createFixture(t, scenario.persisted);
     fixture.writeWorkflow(fixture.runId);
     const profilePath = join(fixture.root, "assets", "scout", "workflows", "rbt.json");
     const profile = JSON.parse(readFileSync(profilePath, "utf8")) as Record<string, unknown>;
     writeFileSync(profilePath, JSON.stringify({ ...profile, domain: scenario.selected }));
     const before = readFileSync(fixture.journalPath, "utf8");
     const stop = new Error("matching Domain selection reached clients");
-    const clients = t.mock.method(ResumeClientsStage.prototype, "start", async () => {
+    const clients = mockOwnerRestore(t, async () => {
       assert.deepEqual(currentRunScope().workflow.graph.snapshot().domain, scenario.persisted);
       throw stop;
     });
     if (scenario.matches) {
       await assert.rejects(resumeRun(fixture.options), (error) => error === stop);
     } else {
-      await assert.rejects(resumeRun(fixture.options), /Cannot resume run-requested with domain.*persisted GraphState requires/);
+      await assert.rejects(resumeRun(fixture.options), /Cannot resume run-requested with domain.*persisted GraphData requires/);
     }
     assert.equal(clients.mock.callCount(), scenario.matches ? 1 : 0);
     assert.equal(readFileSync(fixture.journalPath, "utf8"), before);
@@ -636,7 +642,7 @@ for (const scenario of [
 
 for (const missing of ["directory", "file"] as const) {
   test(`resume stays empty in the same Run when the benchmark target ${missing} is missing`, async (t) => {
-    const fixture = createFixture(t);
+    const fixture = await createFixture(t);
     const abandonedDomainPath = join(fixture.journalRoot, "rbt.journal");
     if (missing === "directory") rmSync(join(fixture.runRoot, "workflows", "workflow-001"), { recursive: true });
     if (missing === "file") {
@@ -646,14 +652,14 @@ for (const missing of ["directory", "file"] as const) {
     const manifestBefore = readFileSync(fixture.manifestStore.path, "utf8");
     const stopBeforeExternalClients = new Error("stop before external clients");
     let reachedWorkflow = false;
-    t.mock.method(ResumeClientsStage.prototype, "start", async () => {
+    mockAfterRecovery(t, async () => {
       reachedWorkflow = true;
       const scope = currentRunScope();
       assert.equal(scope.runId, fixture.runId);
       assert.equal(scope.runRoot, fixture.runRoot);
       assert.equal(scope.workflow.snapshot(), undefined);
       assert.deepEqual(scope.workflow.readEvents(), []);
-      assert.deepEqual(scope.workflow.graph.snapshot(), fixture.graphState);
+      assert.deepEqual(scope.workflow.graph.snapshot(), fixture.graphData);
       assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
       assert.equal(fixture.disclosures.length, 1, "warning precedes service startup");
       assert.equal(fixture.disclosures[0]!.level, "warn");
@@ -686,7 +692,7 @@ for (const missing of ["directory", "file"] as const) {
 
 for (const change of ["journal-reappeared", "permalink-changed"] as const) {
   test(`missing-journal resume rejects ${change} after taking the runtime lock without overwriting the repaired Workflow`, async (t) => {
-    const fixture = createFixture(t);
+    const fixture = await createFixture(t);
     const manifestBefore = readFileSync(fixture.manifestStore.path, "utf8");
     const acquire = Benchmarks.prototype.acquire;
     let changed = false;
@@ -717,7 +723,7 @@ for (const change of ["journal-reappeared", "permalink-changed"] as const) {
             });
             repaired.append({
               id: "workflow-initialized", key: WorkflowEvents.workflow.initialized,
-              payload: { state: fixture.graphState, initializedAt: fixture.createdAt },
+              payload: { state: fixture.graphData, initializedAt: fixture.createdAt },
               occurredAt: fixture.createdAt,
             });
           } finally {
@@ -754,7 +760,7 @@ for (const change of ["journal-reappeared", "permalink-changed"] as const) {
 }
 
 test("missing-journal resume preserves non-ENOENT failures found under its runtime lock", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   const linksBefore = readFileSync(fixture.benchmarks.path, "utf8");
   const acquire = Benchmarks.prototype.acquire;
   t.mock.method(Benchmarks.prototype, "acquire", function (this: Benchmarks) {
@@ -777,7 +783,7 @@ test("missing-journal resume preserves non-ENOENT failures found under its runti
 });
 
 test("resume does not silently start a new Workflow when its missing-journal warning cannot be disclosed", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   const failure = new Error("interaction is unavailable");
   t.mock.method(fixture.options.interactionPort, "disclose", async () => {
     throw failure;
@@ -795,7 +801,7 @@ test("resume does not silently start a new Workflow when its missing-journal war
 
 for (const failure of ["empty", "malformed", "io-error", "empty-permalink"] as const) {
   test(`resume does not start a new Workflow for an ${failure} journal selection`, async (t) => {
-    const fixture = createFixture(t);
+    const fixture = await createFixture(t);
     mkdirSync(fixture.journalRoot, { recursive: true });
     let expected: RegExp;
     if (failure === "empty-permalink") {
@@ -823,7 +829,23 @@ for (const failure of ["empty", "malformed", "io-error", "empty-permalink"] as c
   });
 }
 
-function createFixture(t: TestContext, domain: string = "rbt") {
+function createFixture(t: TestContext, domain: string = "rbt", installEnvironment = false) {
+  if (!installEnvironment) {
+    // Exercise the real Workflow and owner recovery driver, without external clients.
+    const serial = RunStageExecutor.prototype.registerSerial;
+    const parallel = RunStageExecutor.prototype.registerParallel;
+    t.mock.method(RunStageExecutor.prototype, "registerSerial", function (this: RunStageExecutor, ...stages: RunStage[]) {
+      serial.apply(this, stages.filter((stage) => ["run_scope", "workflow", "restore_workflow"].includes(stage.id)));
+    });
+    t.mock.method(RunStageExecutor.prototype, "registerParallel", function (this: RunStageExecutor, ...stages: RunStage[]) {
+      parallel.apply(this, stages.filter((stage) => stage.id === "orchestrator"));
+    });
+    t.mock.method(AgentEntityRecovery.prototype, "restore", async () => undefined);
+    t.mock.method(AgentEntityRecovery.prototype, "stop", async () => undefined);
+    t.mock.method(AgentTaskRecovery.prototype, "restore", async () => undefined);
+    t.mock.method(AgentContextRecovery.prototype, "restore", async () => undefined);
+    t.mock.method(AgentContextRecovery.prototype, "activate", () => undefined);
+  }
   const root = mkdtempSync(join(tmpdir(), "scout-resume-workflow-selection-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   cpSync(join(process.cwd(), "assets", "scout"), join(root, "assets", "scout"), {
@@ -851,7 +873,7 @@ function createFixture(t: TestContext, domain: string = "rbt") {
   }
   const journalRoot = join(runRoot, "workflows", "workflow-001", "journal");
   const journalPath = join(journalRoot, "scout.journal");
-  const graphState = new Workflow(new AssetStore().buildWorkflow(root, "rbt")).graph.snapshot();
+  const graphData = new Workflow(new AssetStore().buildWorkflow(root, "rbt")).graph.snapshot();
   const disclosures: RuntimeDisclosureEvent[] = [];
   const interactionPort = new NoopRuntimeInteractionPort();
   t.mock.method(interactionPort, "disclose", async (event: RuntimeDisclosureEvent) => {
@@ -866,7 +888,7 @@ function createFixture(t: TestContext, domain: string = "rbt") {
     benchmarks,
     journalRoot,
     journalPath,
-    graphState,
+    graphData,
     disclosures,
     options: { cwd: root, run: runId, interactionPort },
     writeWorkflow(journalRunId?: string) {
@@ -887,7 +909,7 @@ function createFixture(t: TestContext, domain: string = "rbt") {
         journal.append({
           id: "workflow-initialized",
           key: WorkflowEvents.workflow.initialized,
-          payload: { state: graphState, initializedAt: createdAt },
+          payload: { state: graphData, initializedAt: createdAt },
           occurredAt: createdAt,
         });
       } finally {
@@ -895,4 +917,22 @@ function createFixture(t: TestContext, domain: string = "rbt") {
       }
     },
   };
+}
+
+/** Observe this owner's restored facts before subsequent owners run. */
+function mockOwnerRestore(t: TestContext, inspect: () => Promise<void>) {
+  const restore = Workflow.prototype.restore;
+  return t.mock.method(Workflow.prototype, "restore", function (this: Workflow, ...args: Parameters<Workflow["restore"]>) {
+    restore.apply(this, args);
+    return inspect();
+  });
+}
+
+/** Observe the final active/blank state after the real recovery transition. */
+function mockAfterRecovery(t: TestContext, inspect: () => Promise<void>) {
+  const start = RestoreWorkflowStage.prototype.start;
+  return t.mock.method(RestoreWorkflowStage.prototype, "start", async function (this: RestoreWorkflowStage) {
+    await start.call(this);
+    await inspect();
+  });
 }

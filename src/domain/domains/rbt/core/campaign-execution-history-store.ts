@@ -70,14 +70,17 @@ export class RbtCampaignExecutionHistoryStore {
     this.active.clear();
   }
 
+  /** Discards only in-memory recording ownership; existing history files are retained. */
+  clearWorkflow(): void { this.active.clear(); }
+
   private async recordStart(command: RbtCampaignCommandEvent): Promise<void> {
     const key = historyKey(command.agentId, command.runtimeSequence);
     if (this.active.has(key)) {
       throw new Error(`RBT campaign history is already recording: ${command.campaignId}.`);
     }
     const scope = currentRunScope();
-    const workflowState = scope.workflow.snapshot();
-    if (!workflowState) throw new Error("RBT history requires an active Workflow.");
+    const workflowData = scope.workflow.snapshot();
+    if (!workflowData) throw new Error("RBT history requires an active Workflow.");
     const artifactPath = join(
       scope.workflow.agentPaths(command.agentId).artifactRoot,
       "history",
@@ -100,7 +103,7 @@ export class RbtCampaignExecutionHistoryStore {
       status: command.status === "failed" ? "failed" : "recording",
       commands: [historyCommand(command)],
       artifactPath,
-      artifactRef: `scout-artifact://${workflowState.workflowId}/${command.agentId}/history/${String(command.runtimeSequence).padStart(3, "0")}.json`,
+      artifactRef: `scout-artifact://${workflowData.workflowId}/${command.agentId}/history/${String(command.runtimeSequence).padStart(3, "0")}.json`,
     };
     if (command.status !== "failed") this.active.set(key, history);
     const digest = this.write(history);

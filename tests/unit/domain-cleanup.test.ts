@@ -8,8 +8,8 @@ import { JarvisBehaviorAndroidWebSocketLink } from "../../src/domain/domains/rbt
 import { HostCommandExecutor, type HostCommandRequest, type HostCommandResult } from "../../src/host/host-command-executor.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
-test("Base stop closes its journal even when execution cleanup and logging fail", (t) => {
-  const scope = installTestRunScope(t, { runId: "base-cleanup-failures" });
+test("Base stop closes its journal even when execution cleanup and logging fail", async (t) => {
+  const scope = await installTestRunScope(t, { runId: "base-cleanup-failures" });
   const base = scope.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(base instanceof BaseDomain);
   const executionFailure = new Error("execution cleanup failed");
@@ -30,7 +30,7 @@ test("RBT stop closes its journal and unregisters tools despite WebSocket failur
   let attempts = 0;
   t.mock.method(websocket, "stop", async () => { if (++attempts === 1) throw failure; });
   const domain = new RbtDomain({ websocket });
-  const scope = installTestRunScope(t, { runId: "rbt-cleanup-failure", scoutRoot: process.cwd(), domain });
+  const scope = await installTestRunScope(t, { runId: "rbt-cleanup-failure", scoutRoot: process.cwd(), domain });
   await domain.start();
   await assert.rejects(domain.stop(), (error) => error instanceof AggregateError && error.errors.includes(failure));
   assert.equal(existsSync(join(scope.workflow.journalRoot, ".rbt-events.lock")), false);
@@ -43,7 +43,7 @@ test("RBT stop closes its journal and unregisters tools despite WebSocket failur
 
 test("RBT startup preserves the primary error while closing journals after failed tool unregistration", async (t) => {
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, { runId: "rbt-start-cleanup-failure", scoutRoot: process.cwd(), domain });
+  const scope = await installTestRunScope(t, { runId: "rbt-start-cleanup-failure", scoutRoot: process.cwd(), domain });
   const primary = new Error("base tool registration failed");
   const cleanup = new Error("rbt tool unregistration failed");
   const base = scope.domainRegistry.get(ScoutDomainId.Base);

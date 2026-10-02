@@ -13,3 +13,4 @@ export * from "./stages/orchestrator-stage.js";
 export * from "./stages/run-runtime-stage.js";
 export * from "./stages/run-scope-stage.js";
 export * from "./stages/request-hub-stage.js";
+export * from "./stages/workflow-stage.js";

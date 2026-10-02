@@ -201,7 +201,7 @@ export class PrepareEnvironmentStage implements RunStage {
     const environment = new RunEnvironmentBuilder(assetStore).build({
       runId: scope.runId,
       agents,
-      graphState: scope.workflow.graph.snapshot(),
+      graphData: scope.workflow.graph.snapshot(),
     });
     this.preparedRootAccess = environment.rootAccess;
     scope.setEnvironment(environment);

@@ -1,15 +1,17 @@
+import { ScoutRecordObject } from "../../src/core/record/scout-record-object.js";
+import { WorkflowState } from "../../src/core/workflow/index.js";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Workflow, projectWorkflowState } from "../../src/core/workflow/index.js";
+import { Workflow, projectWorkflowData } from "../../src/core/workflow/index.js";
 import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
 import { Benchmarks } from "../../src/core/benchmarks/index.js";
 import { readJournalEvents } from "../../src/core/journal/index.js";
 import { workflowRootFromJournalRoot } from "../../src/core/path.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
-import { projectGraphState } from "../../src/run/resume/projection/index.js";
+import { projectGraphData } from "../../src/core/workflow/projector/graph-projector.js";
 import { AgentActivityRecorder } from "../../src/agent/telemetry/agent-activity-recorder.js";
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import type { AgentThreadSnapshot } from "../../src/agent/thread/types.js";
@@ -24,7 +26,7 @@ test("New runtime has no active Workflow until explicitly requested; completed r
   const manifestStore = new RunManifestStore(runRoot);
   manifestStore.create({ runId: "run-empty", scoutRoot: root, createdAt: new Date().toISOString(), checkpointSeq: 0 });
   const workflow = new Workflow(createTestWorkflowAsset(createDefaultTestGraph().snapshot()));
-  const scope = installTestRunScope(t, { runId: "run-empty", scoutRoot: root, runRoot, workflow, manifestStore });
+  const scope = await installTestRunScope(t, { runId: "run-empty", scoutRoot: root, runRoot, workflow, manifestStore });
   const agentRoot = registerCoordinator(scope);
   const entityLog = join(agentRoot, "logs", "activity.log");
   t.after(async () => { await scope.workflow.stop(); rmSync(root, { recursive: true, force: true }); });
@@ -71,17 +73,17 @@ test("New runtime has no active Workflow until explicitly requested; completed r
   assert.equal(existsSync(join(journalRoot, ".base.lock")), false);
   const contents = readFileSync(journalPath, "utf8");
   const benchmarkContents = readFileSync(join(runRoot, "benchmarks.json"), "utf8");
-  const events = readJournalEvents(journalPath);
-  const resumed = new Workflow(createTestWorkflowAsset(projectGraphState(events)));
+  const events = ScoutRecordObject.readFile(journalPath);
+  const resumed = new Workflow(createTestWorkflowAsset(projectGraphData(events)));
   const resumedRecovery = {
-    graphState: projectGraphState(events),
-    workflowState: projectWorkflowState("workflow-001", events), journalRoot
+    graphData: projectGraphData(events),
+    workflowData: projectWorkflowData("workflow-001", events), journalRoot
   };
   await workflow.stop();
   assert.throws(() => workflow.benchmarks, /Benchmarks are unavailable/);
   scope.clearWorkflow(workflow); scope.setWorkflow(resumed);
   await resumed.start();
-  resumed.restore(resumedRecovery);
+  await resumed.enterState({ state: WorkflowState.Restoring, input: resumedRecovery });
   assert.deepEqual(resumed.benchmarks.read("scout"), sharedBenchmarks.read("scout"));
   assert.equal(resumed.snapshot(), undefined);
   await scope.eventBus.publishAndWait(AgentEvents.activity.observed, {
@@ -96,7 +98,7 @@ test("New runtime has no active Workflow until explicitly requested; completed r
 });
 
 test("An unfinished renamed Workflow resumes its identity, cursor and current artifact paths", async (t) => {
-  const scope = installTestRunScope(t, { runId: "rename-workflow" });
+  const scope = await installTestRunScope(t, { runId: "rename-workflow" });
   const recorder = new AgentActivityRecorder();
   recorder.start();
   t.after(() => recorder.stop());
@@ -106,25 +108,25 @@ test("An unfinished renamed Workflow resumes its identity, cursor and current ar
   const originalLog = join(scope.workflow.agentPaths("researcher").logsRoot, "activity.log");
   const initial = scope.workflow;
   await initial.advance("completed");
-  const workflowState = initial.snapshot()!;
-  const graphState = initial.graph.snapshot();
+  const workflowData = initial.snapshot()!;
+  const graphData = initial.graph.snapshot();
   const benchmarks = new ScoutBenchmarks(new Benchmarks(scope.runRoot));
   const before = readFileSync(benchmarks.path, "utf8");
-  for (const domain of scope.domainRegistry.list()) await domain.finishWorkflow?.();
+  for (const domain of scope.domainRegistry.list()) await domain.close();
   await initial.stop();
   const renamedRoot = join(scope.runRoot, "workflows", "firebase-fallback v1");
-  renameSync(join(scope.runRoot, "workflows", workflowState.workflowId), renamedRoot);
+  renameSync(join(scope.runRoot, "workflows", workflowData.workflowId), renamedRoot);
   const selected = benchmarks.resolve("currentWorkflow")!;
-  assert.equal(selected.workflowId, workflowState.workflowId);
+  assert.equal(selected.workflowId, workflowData.workflowId);
   assert.equal(selected.workflowRoot, renamedRoot);
-  const resumed = new Workflow(createTestWorkflowAsset(graphState));
+  const resumed = new Workflow(createTestWorkflowAsset(graphData));
   const resumedRecovery = {
-    graphState,
-    workflowState, journalRoot: selected.journalRoot
+    graphData,
+    workflowData, journalRoot: selected.journalRoot
   };
   scope.clearWorkflow(initial); scope.setWorkflow(resumed);
   await resumed.start();
-  resumed.restore(resumedRecovery);
+  await resumed.enterState({ state: WorkflowState.Restoring, input: resumedRecovery });
   assert.equal(resumed.snapshot()?.status, "active");
   assert.equal(workflowRootFromJournalRoot(resumed.journalRoot), renamedRoot);
   assert.equal(resumed.graph.snapshot().currentPhase, "research-reviewer");
@@ -141,7 +143,7 @@ test("An unfinished renamed Workflow resumes its identity, cursor and current ar
 });
 
 test("Agent telemetry keeps idle-runtime activity on the entity without backfilling either Workflow", async (t) => {
-  const scope = installTestRunScope(t, { runId: "workflow-telemetry" });
+  const scope = await installTestRunScope(t, { runId: "workflow-telemetry" });
   const entityLog = join(registerCoordinator(scope), "logs", "activity.log");
   const recorder = new AgentActivityRecorder();
   recorder.start();

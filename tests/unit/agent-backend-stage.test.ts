@@ -19,7 +19,7 @@ test("AgentBackendStage rolls back partial subscriptions and can retry all three
       live.add("request"); return () => { live.delete("request"); };
     },
   } as unknown as CodexAppServerClient;
-  installTestRunScope(t, { runId: "backend-stage", appServer: client });
+  await installTestRunScope(t, { runId: "backend-stage", appServer: client });
   await assert.rejects(stage.start(), /RequestHub Service is not available/);
   assert.equal(live.size, 0);
   await hubStage.start();

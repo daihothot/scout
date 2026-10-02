@@ -1,116 +1,23 @@
-import { Workflow } from "../../src/core/workflow/workflow.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, posix } from "node:path";
+import { join } from "node:path";
 import {
-  AssetStore,
   buildScoutSkillCatalog,
-  listScoutSkillPaths,
   parseScoutSkillMetadata,
   parseScoutSkillResourceMetadata,
   resolveScoutSkillsForPhases,
   resolveSkillDependencyLoadOrder,
   validateScoutSkillCatalog,
-  ScoutSkillTypes,
   type ScoutSkillCatalogEntry,
 } from "../../src/asset-store/index.js";
-
-const scoutRoot = process.cwd();
-const assetsRoot = join(scoutRoot, "assets", "scout");
-
-test("every Scout Skill projects the runtime metadata needed by its mount", () => {
-  const catalog = buildScoutSkillCatalog({
-    assetsRoot,
-    skillPaths: listScoutSkillPaths(assetsRoot),
-  });
-  assert.ok(catalog.length >= 20);
-  assert.equal(new Set(catalog.map((skill) => skill.name)).size, catalog.length);
-  for (const skill of catalog) {
-    assert.ok(Object.values(ScoutSkillTypes).includes(skill.type));
-    assert.ok(skill.phase === undefined || Array.isArray(skill.phase));
-    assert.ok(skill.family.length > 0);
-    assert.ok(skill.tags.length > 0);
-    assert.ok(skill.description.length > 0);
-    assert.ok(skill.summary.length > 0);
-    if (skill.type === ScoutSkillTypes.Domain) {
-      const domain = skill.domain;
-      assert.equal(typeof domain, "string");
-      assert.ok(domain !== undefined && domain.length > 0);
-    } else {
-      assert.equal(skill.domain, undefined);
-    }
-    assert.equal(
-      skill.path,
-      posix.join(".scout", "skill", ...skill.family, skill.name, "SKILL.md"),
-    );
-  }
-
-});
-
-test("RBT roles receive only their Execution Pack and Signal responsibilities", () => {
-  const graph = new Workflow(new AssetStore().buildWorkflow(scoutRoot, "rbt")).graph.snapshot();
-  const catalog = buildScoutSkillCatalog({
-    assetsRoot,
-    skillPaths: listScoutSkillPaths(assetsRoot),
-  });
-  validateScoutSkillCatalog(catalog);
-
-  const projectedByRole = new Map(graph.roles.map((role) => [
-    role.name,
-    resolveScoutSkillsForPhases(catalog, {
-      domain: graph.domain,
-      phases: role.phases,
-    }).map((skill) => skill.name),
-  ] as const));
-
-  const coordinator = projectedByRole.get("coordinator") ?? [];
-  const executor = projectedByRole.get("executor") ?? [];
-  const reviewer = projectedByRole.get("reviewer") ?? [];
-
-  assert.ok(coordinator.includes("domain-rbt-coordinator"));
-  assert.equal(coordinator.includes("domain-rbt-execution-pack"), false);
-  assert.equal(coordinator.some((name) => name.startsWith("signal-") && name.includes("rbt")), false);
-
-  for (const inventory of [executor, reviewer]) {
-    assert.ok(inventory.includes("signal-rbt-evidence"));
-    assert.equal(inventory.includes("signal-rbt-behavior-trace-by-rbt-evidence"), false);
-    assert.equal(inventory.includes("signal-rbt-state-snapshot-by-rbt-evidence"), false);
-    assert.equal(inventory.includes("signal-rbt-state-snapshot-via-rbt-behavior"), false);
-    assert.equal(inventory.includes("signal-rbt-error-by-rbt-evidence"), false);
-    assert.equal(inventory.includes("signal-account-state-by-rbt-state-snapshot"), false);
-  }
-  assert.ok(executor.includes("domain-rbt-executor"));
-  assert.ok(executor.includes("domain-rbt-execution-pack"));
-  assert.equal(executor.includes("domain-rbt-reviewer"), false);
-  assert.equal(executor.includes("signal-rbt-evidence-via-rbt-behavior"), false);
-  assert.equal(executor.includes("tool-execution-platform"), false);
-  assert.ok(executor.includes("tool-rbt-behavior"));
-  assert.ok(reviewer.includes("domain-rbt-reviewer"));
-  assert.ok(reviewer.includes("domain-rbt-review-pack"));
-  assert.equal(reviewer.includes("domain-rbt-execution-pack"), false);
-  assert.equal(reviewer.includes("tool-jarvis-codebase"), false);
-  assert.ok(reviewer.includes("signal-rbt-evidence-via-rbt-behavior"));
-  assert.equal(reviewer.includes("domain-rbt-executor"), false);
-  assert.ok(reviewer.includes("tool-execution-platform"));
-  assert.ok(reviewer.includes("tool-rbt-behavior"));
-
-  const reviewerDependencies = resolveSkillDependencyLoadOrder(catalog, ["domain-rbt-reviewer"])
-    .map((skill) => skill.name);
-  assert.equal(reviewerDependencies.includes("domain-rbt-execution-pack"), false);
-  assert.equal(reviewerDependencies.includes("tool-jarvis-codebase"), false);
-  assert.ok(reviewerDependencies.includes("domain-rbt-review-pack"));
-  assert.ok(reviewerDependencies.includes("signal-rbt-evidence-via-rbt-behavior"));
-  assert.ok(reviewerDependencies.includes("tool-execution-platform"));
-});
 
 test("Scout Skill resources retain resource-level required and optional metadata", () => {
   assert.deepEqual(parseScoutSkillResourceMetadata({

@@ -70,8 +70,8 @@ for (const entry of [
     },
   },
 ]) {
-  test(`${entry.name} journal opens existing facts independently of Workflow startup origin`, (t) => {
-    const scope = installTestRunScope(t, { runId: `${entry.name}-journal-existing` });
+  test(`${entry.name} journal opens existing facts independently of Workflow startup origin`, async (t) => {
+    const scope = await installTestRunScope(t, { runId: `${entry.name}-journal-existing` });
     const journal = entry.create(scope);
     t.after(() => journal.close());
     const path = join(scope.workflow.journalRoot, entry.file);
@@ -92,8 +92,8 @@ for (const entry of [
     assert.equal(scope.workflow.snapshot()?.status, "active");
   });
 
-  test(`${entry.name} journal creates its own missing file`, (t) => {
-    const scope = installTestRunScope(t, { runId: `${entry.name}-journal-missing` });
+  test(`${entry.name} journal creates its own missing file`, async (t) => {
+    const scope = await installTestRunScope(t, { runId: `${entry.name}-journal-missing` });
     const journal = entry.create(scope);
     t.after(() => journal.close());
     const path = join(scope.workflow.journalRoot, entry.file);
@@ -111,8 +111,8 @@ for (const entry of [
     assert.equal(existsSync(join(scope.workflow.journalRoot, entry.lock)), true);
   });
 
-  test(`${entry.name} journal rejects corrupt existing facts without recreating the file`, (t) => {
-    const scope = installTestRunScope(t, { runId: `${entry.name}-journal-corrupt` });
+  test(`${entry.name} journal rejects corrupt existing facts without recreating the file`, async (t) => {
+    const scope = await installTestRunScope(t, { runId: `${entry.name}-journal-corrupt` });
     const journal = entry.create(scope);
     t.after(() => journal.close());
     const path = join(scope.workflow.journalRoot, entry.file);
@@ -127,8 +127,8 @@ for (const entry of [
     assert.equal(existsSync(join(scope.workflow.journalRoot, entry.lock)), false);
   });
 
-  test(`${entry.name} journal rejects an attached file without recreating or releasing it`, (t) => {
-    const scope = installTestRunScope(t, { runId: `${entry.name}-journal-attached` });
+  test(`${entry.name} journal rejects an attached file without recreating or releasing it`, async (t) => {
+    const scope = await installTestRunScope(t, { runId: `${entry.name}-journal-attached` });
     const journal = entry.create(scope);
     t.after(() => journal.close());
     const path = join(scope.workflow.journalRoot, entry.file);
@@ -148,22 +148,22 @@ for (const entry of [
     assert.equal(readFileSync(lockPath, "utf8"), lock);
   });
 
-  test(`${entry.name} journal prepares and aborts without replacing the current Workflow`, (t) => {
-    const scope = installTestRunScope(t, { runId: `${entry.name}-workflow-abort` });
+  test(`${entry.name} journal prepares and aborts without replacing the current Workflow`, async (t) => {
+    const scope = await installTestRunScope(t, { runId: `${entry.name}-workflow-abort` });
     const journal = entry.create(scope);
     t.after(() => journal.close());
     journal.start();
     const previousRoot = scope.workflow.journalRoot;
     const previousEvents = journal.readAll();
-    assert.throws(() => journal.prepareWorkflow(previousRoot), /already attached/);
+    assert.throws(() => journal.prepare(previousRoot), /already attached/);
     assert.deepEqual(journal.readAll(), previousEvents);
 
     const nextRoot = join(scope.runRoot, "prepared-workflow");
-    const change = journal.prepareWorkflow(nextRoot);
+    const change = journal.prepare(nextRoot);
     assert.deepEqual(journal.readAll(), previousEvents);
     assert.equal(existsSync(join(previousRoot, entry.lock)), true);
     assert.equal(existsSync(join(nextRoot, entry.lock)), true);
-    assert.throws(() => journal.prepareWorkflow(join(scope.runRoot, "another-workflow")), /already has a prepared/);
+    assert.throws(() => journal.prepare(join(scope.runRoot, "another-workflow")), /already has a prepared/);
     assert.throws(() => change.releasePrevious(), /Cannot release the current/);
     change.abort();
     change.abort();
@@ -172,7 +172,7 @@ for (const entry of [
     assert.deepEqual(journal.readAll(), previousEvents);
     assert.throws(() => change.commit(), /inactive.*preparation/);
 
-    const retry = journal.prepareWorkflow(nextRoot);
+    const retry = journal.prepare(nextRoot);
     retry.commit();
     assert.equal(existsSync(join(previousRoot, entry.lock)), true);
     assert.throws(() => retry.abort(), /Cannot abort a committed/);
@@ -183,13 +183,13 @@ for (const entry of [
     assert.equal(existsSync(join(nextRoot, entry.lock)), true);
   });
 
-  test(`${entry.name} journal commits without closing or writing any resource`, (t) => {
-    const scope = installTestRunScope(t, { runId: `${entry.name}-workflow-commit` });
+  test(`${entry.name} journal commits without closing or writing any resource`, async (t) => {
+    const scope = await installTestRunScope(t, { runId: `${entry.name}-workflow-commit` });
     const journal = entry.create(scope);
     t.after(() => journal.close());
     journal.start();
     const nextRoot = join(scope.runRoot, "prepared-workflow");
-    const change = journal.prepareWorkflow(nextRoot);
+    const change = journal.prepare(nextRoot);
     const close = t.mock.method(Journal.prototype, "close", () => {
       throw new Error("commit must not release journal locks");
     });
@@ -207,13 +207,13 @@ for (const entry of [
   });
 
   for (const committed of [false, true]) {
-    test(`${entry.name} journal retains ${committed ? "previous" : "prepared"} resources after close failure`, (t) => {
-      const scope = installTestRunScope(t, { runId: `${entry.name}-workflow-close-${committed}` });
+    test(`${entry.name} journal retains ${committed ? "previous" : "prepared"} resources after close failure`, async (t) => {
+      const scope = await installTestRunScope(t, { runId: `${entry.name}-workflow-close-${committed}` });
       const journal = entry.create(scope);
       journal.start();
       const previousRoot = scope.workflow.journalRoot;
       const nextRoot = join(scope.runRoot, "prepared-workflow");
-      const change = journal.prepareWorkflow(nextRoot);
+      const change = journal.prepare(nextRoot);
       if (committed) change.commit();
       const failingPath = join(committed ? previousRoot : nextRoot, entry.file);
       const originalClose = Journal.prototype.close;
@@ -232,7 +232,7 @@ for (const entry of [
       assert.throws(release, (error) => error === failure);
       if (!committed) assert.throws(() => change.commit(), (error) => error === failure);
       assert.throws(
-        () => journal.prepareWorkflow(join(scope.runRoot, "unsafe-retry")),
+        () => journal.prepare(join(scope.runRoot, "unsafe-retry")),
         /after journal cleanup failed/,
       );
       assert.equal(attempts, 1);
@@ -245,16 +245,16 @@ for (const entry of [
     });
   }
 
-  test(`${entry.name} journal closes prepared and retired Workflow resources during shutdown`, (t) => {
-    const scope = installTestRunScope(t, { runId: `${entry.name}-workflow-stop` });
+  test(`${entry.name} journal closes prepared and retired Workflow resources during shutdown`, async (t) => {
+    const scope = await installTestRunScope(t, { runId: `${entry.name}-workflow-stop` });
     const journal = entry.create(scope);
     journal.start();
     const firstRoot = scope.workflow.journalRoot;
     const secondRoot = join(scope.runRoot, "second-workflow");
     const thirdRoot = join(scope.runRoot, "third-workflow");
-    const committed = journal.prepareWorkflow(secondRoot);
+    const committed = journal.prepare(secondRoot);
     committed.commit();
-    const pending = journal.prepareWorkflow(thirdRoot);
+    const pending = journal.prepare(thirdRoot);
     journal.close();
     journal.close();
     for (const root of [firstRoot, secondRoot, thirdRoot]) {
@@ -267,7 +267,7 @@ for (const entry of [
 }
 
 test("Base Domain keeps runtime facts and tool calls until its prepared Workflow commits", async (t) => {
-  const scope = installTestRunScope(t, { runId: "base-domain-prepared-state" });
+  const scope = await installTestRunScope(t, { runId: "base-domain-prepared-state" });
   const domain = scope.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(domain instanceof BaseDomain);
   const call: BaseDomainAgentToolCallObservedEvent = {
@@ -302,6 +302,7 @@ test("Base Domain keeps runtime facts and tool calls until its prepared Workflow
   const retryBoundary = { ...boundary, journalRoot: join(scope.runRoot, "prepared-workflow-retry") };
   await scope.eventBus.publishAndWait(WorkflowEvents.workflow.preparing, retryBoundary);
   await scope.eventBus.publishAndWait(WorkflowEvents.workflow.committing, retryBoundary);
+  domain.create();
   assert.deepEqual(domain.runtimeFact, { domainId: "base", journalSeq: 0, toolCalls: [] });
   assert.deepEqual(domain.toolCallStore.list(), []);
   assert.equal(stop.mock.callCount(), 1);

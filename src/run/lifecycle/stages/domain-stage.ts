@@ -31,6 +31,7 @@ export class DomainStage implements RunStage {
       registered.push(scope.domainRegistry.register(await createDomainRuntime(selectedDomainId)));
       for (const domain of scope.domainRegistry.list()) {
         await domain.start?.();
+        scope.workflow.registerParticipant(domain);
       }
       this.started = true;
     } catch (error) {
@@ -38,6 +39,7 @@ export class DomainStage implements RunStage {
       for (const domain of [...registered].reverse()) {
         try {
           await domain.stop?.();
+          if (scope.workflow.participants.includes(domain)) scope.workflow.unregisterParticipant(domain);
           scope.domainRegistry.unregister(domain);
         } catch (cleanupError) {
           failures.push(cleanupError);
@@ -68,6 +70,7 @@ export class DomainStage implements RunStage {
     for (const domain of domains) {
       try {
         await domain.stop?.();
+        if (scope.workflow.participants.includes(domain)) scope.workflow.unregisterParticipant(domain);
         scope.domainRegistry.unregister(domain);
       } catch (error) {
         failures.push(error);

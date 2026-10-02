@@ -1,4 +1,7 @@
-import { StartWorkflowStage } from "../../src/run/startup/stages/start-workflow-stage.js";
+import { projectCurrentAgentWorkflow } from "../helpers/workflow-participant.js";
+import { WorkflowState } from "../../src/core/workflow/index.js";
+import { testWorkflowParticipant } from "../helpers/workflow-participant.js";
+import { WorkflowStage } from "../../src/run/lifecycle/stages/workflow-stage.js";
 import { RestoreWorkflowStage } from "../../src/run/resume/stages/restore-workflow-stage.js";
 import { writeAgentThreadRecord } from "../../src/agent/thread/agent-thread-record.js";
 import assert from "node:assert/strict";
@@ -49,24 +52,21 @@ import {
   type ScoutEvent,
 } from "../../src/core/events/index.js";
 import type { JournalEvent } from "../../src/core/journal/index.js";
-import { Workflow, WorkflowEvents, projectWorkflowState } from "../../src/core/workflow/index.js";
+import { decodeScoutRecords, type ScoutRecord } from "../../src/core/record/scout-record.js";
+import { Workflow, WorkflowEvents, projectWorkflowData } from "../../src/core/workflow/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import {
+  BaseDomain,
   ScoutDomainId,
   DomainAgentBackend,
   type ScoutDomain,
 } from "../../src/domain/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import { RunEvents } from "../../src/run/events/index.js";
-import { buildResumePacket } from "../../src/run/resume/packet/index.js";
-import {
-  inferTaskRecoveryCheckpoint,
-  planResumeActions,
-  projectRun as projectRunEvents,
-  ResumeActionTypes,
-  TaskRecoveryCheckpoints,
-  recoverPendingMessages,
-} from "../../src/run/resume/projection/index.js";
+import { buildResumePacket } from "../../src/agent/context/recovery/index.js";
+import { inferTaskRecoveryCheckpoint, TaskRecoveryCheckpoints } from "../../src/agent/task/projector/task-recovery.js";
+import { planResumeActions, ResumeActionTypes, recoverPendingMessages } from "../../src/agent/orchestration/recovery/agent-workflow-recovery.js";
+import { projectAgentWorkflow as projectRunEvents } from "../../src/agent/orchestration/projector/index.js";
 import {
   currentRunScope,
   installRunScope,
@@ -75,20 +75,16 @@ import {
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { ScoutExecutionSystem } from "../../src/execution/index.js";
 
-const projectRun = (events: Parameters<typeof projectRunEvents>[0]) =>
-  projectRunEvents(events, "coordinator");
+const projectAgentWorkflow = (events: readonly JournalEvent[]) =>
+  projectRunEvents(decodeScoutRecords(events), "coordinator");
 import {
   InitializeRunStage,
   PrepareEnvironmentStage,
 } from "../../src/run/startup/index.js";
-import {
-  InjectResumeContextStage,
-  RecordResumeInterruptionsStage,
-  RestoreAgentsStage,
-  RestoreDomainStage,
-  RestoreEnvironmentStage,
-  RestoreTasksStage,
-} from "../../src/run/resume/index.js";
+import { AgentContextRecovery } from "../../src/agent/orchestration/recovery/agent-context-recovery.js";
+import { AgentEntityRecovery } from "../../src/agent/orchestration/recovery/agent-entity-recovery.js";
+import { AgentTaskRecovery } from "../../src/agent/orchestration/recovery/agent-task-recovery.js";
+import { RecordResumeInterruptionsStage, RestoreEnvironmentStage } from "../../src/run/resume/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import {
   AgentBackendStage,
@@ -159,7 +155,7 @@ test("Run projection rebuilds pending messages, human gate and interrupted turn"
       startedAt: "2026-07-22T00:00:05.000Z",
     }),
   );
-  const projection = projectRun(events);
+  const projection = projectAgentWorkflow(events);
 
   assert.equal(projection.pendingMessages.some((message) => message.messageId === "user-message-unqueued"), false,
     "projection contains facts, not synthesized recovery delivery");
@@ -187,7 +183,7 @@ test("Run projection rejects duplicate invocation identities instead of replacin
     prompt: "first invocation",
     startedAt: "2026-07-22T00:00:00.000Z",
   };
-  assert.throws(() => projectRun(journalEvents(
+  assert.throws(() => projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.turn.started, started),
     scoutEvent(AgentEvents.turn.completed, {
       turn: { ...started, finishedAt: "2026-07-22T00:00:01.000Z", status: "completed" },
@@ -213,7 +209,7 @@ test("Run projection keeps the original thread snapshot across resume lifecycles
     },
     startResponse: { thread: { id: "thread-researcher" } },
   } satisfies AgentThreadSnapshot;
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.thread.started, started),
     scoutEvent(AgentEvents.thread.closed, {
       ...started,
@@ -258,7 +254,7 @@ test("Run projection merges plan deltas and retains Human Input Step references"
     explanation: "Inspect evidence.",
     steps: [{ step: "Read source", status: "inProgress" as const, raw: {} }],
   };
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.step.started, started),
     scoutEvent(AgentEvents.step.humanInputReferenced, referenced),
     scoutEvent(AgentEvents.step.planUpdated, {
@@ -281,7 +277,7 @@ test("Run projection merges plan deltas and retains Human Input Step references"
 
 test("Run projection derives an outcome checkpoint and no checkpoint without a task", () => {
   const doneTask = { ...taskState(), status: AgentTaskStatuses.Done };
-  const doneProjection = projectRun(journalEvents(
+  const doneProjection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, taskState()),
     scoutEvent(AgentEvents.task.outcomeSubmitted, {
       task: doneTask,
@@ -295,14 +291,14 @@ test("Run projection derives an outcome checkpoint and no checkpoint without a t
     TaskRecoveryCheckpoints.OutcomeSubmitted,
   );
 
-  const idleProjection = projectRun(journalEvents());
+  const idleProjection = projectAgentWorkflow(journalEvents());
   assert.equal(inferTaskRecoveryCheckpoint(idleProjection, undefined), undefined);
 });
 
 test("Terminal task checkpoints ignore stale unresolved human requests", () => {
   for (const status of [AgentTaskStatuses.Failed, AgentTaskStatuses.Stopped] as const) {
     const task = taskState({ status, error: `${status} reason` });
-    const projection = projectRun(journalEvents(
+    const projection = projectAgentWorkflow(journalEvents(
       scoutEvent(AgentEvents.task.assigned, taskState()),
       scoutEvent(AgentEvents.humanInput.requested, {
         requestId: `${status}-request`,
@@ -395,7 +391,7 @@ test("Coordinator resume actions compose independent task checkpoints without pr
     status: AgentTaskStatuses.Failed,
     error: "检查失败",
   });
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, taskState({
       taskId: reportedTask.taskId,
     })),
@@ -461,7 +457,7 @@ test("Coordinator resume actions compose independent task checkpoints without pr
 
 test("Coordinator does not re-evaluate a completed outcome without newer facts", () => {
   const task = taskState({ status: AgentTaskStatuses.Done });
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, taskState()),
     scoutEvent(AgentEvents.task.outcomeSubmitted, {
       task,
@@ -504,7 +500,7 @@ test("Coordinator does not re-evaluate a completed outcome without newer facts",
 
 test("Coordinator keeps an outcome when its completed turn started before the outcome", () => {
   const task = taskState({ status: AgentTaskStatuses.Done });
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, taskState()),
     scoutEvent(AgentEvents.turn.started, {
       invocationId: "coordinator-invocation-0001",
@@ -550,7 +546,7 @@ test("Coordinator keeps an outcome when its completed turn started before the ou
 
 test("Domain journal ordinals do not decide task review; pending Domain messages remain consumable", () => {
   const task = taskState({ status: AgentTaskStatuses.Done });
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, taskState()),
     scoutEvent(AgentEvents.task.outcomeSubmitted, {
       task, stepId: "worker-step", outcome: "done", submittedAt: "2026-09-27T00:00:00Z",
@@ -626,7 +622,7 @@ test("Coordinator re-evaluates a completed outcome after a newer outcome", () =>
     outcome: "## Outcome\n\n更新结果。",
     submittedAt: "2026-07-22T00:04:00.000Z",
   }, "2026-07-22T00:04:00.000Z");
-  const projection = projectRun(journalEvents(...firstCheck, newerOutcome));
+  const projection = projectAgentWorkflow(journalEvents(...firstCheck, newerOutcome));
   assert.deepEqual(
     planResumeActions({
       projection,
@@ -642,7 +638,7 @@ test("Coordinator re-evaluates a completed outcome after a newer outcome", () =>
 });
 
 test("Coordinator Resume Packet processes pending user input without duplicating its body", () => {
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(SystemEvents.interaction.userMessageSubmitted, {
       messageId: "pending-user-message",
       text: "只投递一次的用户正文",
@@ -677,7 +673,7 @@ test("Coordinator Resume Packet processes pending user input without duplicating
 
 test("Pending human responses stay in the delivery queue instead of Resume Packet confirmed facts", () => {
   const task = taskState();
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, task),
     scoutEvent(AgentEvents.humanInput.requested, {
       requestId: "human-response-pending",
@@ -766,7 +762,7 @@ test("Run projection persists one consumption fact for each Human Input directio
     consumedAt: "2026-07-22T00:01:03.000Z",
     deliveryMode: "queued" as const,
   };
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, task),
     scoutEvent(AgentEvents.humanInput.requested, {
       requestId: "human-consumption",
@@ -809,7 +805,7 @@ test("Run projection persists one consumption fact for each Human Input directio
   }]);
   assert.deepEqual(projection.pendingMessages, []);
 
-  assert.throws(() => projectRun(journalEvents(
+  assert.throws(() => projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, task),
     scoutEvent(AgentEvents.humanInput.requested, {
       requestId: "human-consumption",
@@ -827,7 +823,7 @@ test("Run projection persists one consumption fact for each Human Input directio
 
 test("Released tasks do not retain unresolved Human Gates or their pending delivery", () => {
   const task = taskState();
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, task),
     scoutEvent(AgentEvents.humanInput.requested, {
       requestId: "released-request",
@@ -869,7 +865,7 @@ test("Resume Packet is deterministic, role-scoped and escapes closing tags", () 
     description: "检查私有信息",
     initialPrompt: agent.turn.message("validator secret"),
   });
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, researcher),
     scoutEvent(AgentEvents.task.assigned, validator),
     scoutEvent(AgentEvents.message.queued, {
@@ -913,7 +909,7 @@ test("Worker resume packet keeps only the interrupted Step prompt and strips nes
     status: AgentStepStatuses.Interrupted,
     prompt: nestedPrompt,
   });
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, task),
     scoutEvent(AgentEvents.step.interrupted, {
       ...step,
@@ -959,7 +955,7 @@ test("Worker resume packet keeps only the interrupted Step prompt and strips nes
     ...step,
     prompt: nestedPrompt,
   };
-  const nestedProjection = projectRun(journalEvents(
+  const nestedProjection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, task),
     scoutEvent(AgentEvents.step.interrupted, nestedStep),
   ));
@@ -993,7 +989,7 @@ test("Coordinator resume packet uses its own interrupted Step prompt only", () =
     status: AgentStepStatuses.Interrupted,
     prompt: agent.turn.message("Worker 历史执行 prompt"),
   });
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, workerTask),
     scoutEvent(AgentEvents.step.interrupted, coordinatorStep),
     scoutEvent(AgentEvents.step.interrupted, workerStep),
@@ -1044,7 +1040,7 @@ for (const nextStepStarted of [false, true]) {
       taskId: undefined,
     };
     const nextStep = { ...oldStep, stepId: "next-phase-step" };
-    const projection = projectRun(journalEvents(
+    const projection = projectAgentWorkflow(journalEvents(
       scoutEvent(AgentEvents.step.started, oldStep),
       scoutEvent(WorkflowEvents.workflow.advanced, {
         state: { ...graph, currentPhase: "research-reviewer" }, previousPhase: "research",
@@ -1065,7 +1061,7 @@ for (const nextStepStarted of [false, true]) {
 
 test("Settling recovery separates old work from deferred user input", () => {
   const graph = createDefaultTestGraph().snapshot();
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(SystemEvents.interaction.userMessageSubmitted, {
       messageId: "next-workflow-input", text: "next workflow only", attachment: agent.turn.message("next workflow only"),
       submittedAt: "2026-07-22T00:00:00.000Z",
@@ -1100,7 +1096,7 @@ for (const status of [AgentStepStatuses.Running, AgentStepStatuses.Interrupted])
       }),
       taskId: undefined,
     } satisfies AgentStepState;
-    const projection = projectRun(journalEvents(
+    const projection = projectAgentWorkflow(journalEvents(
       scoutEvent(AgentEvents.step.interrupted, {
         ...step, stepId: "coordinator-older-interruption", status: AgentStepStatuses.Interrupted,
         prompt: "obsolete interrupted request",
@@ -1145,7 +1141,7 @@ for (const status of [AgentStepStatuses.Completed, AgentStepStatuses.Failed]) {
       taskId: undefined,
     } satisfies AgentStepState;
     const latestStep = { ...oldStep, stepId: "coordinator-latest-step", status, prompt: "newer input" };
-    const projection = projectRun(journalEvents(
+    const projection = projectAgentWorkflow(journalEvents(
       scoutEvent(AgentEvents.step.interrupted, oldStep),
       scoutEvent(AgentEvents.step.started, { ...latestStep, status: AgentStepStatuses.Running }),
       scoutEvent(
@@ -1167,7 +1163,7 @@ for (const status of [AgentStepStatuses.Completed, AgentStepStatuses.Failed]) {
 test("Resume Packet bounds long outcomes without message duplication", () => {
   const task = taskState({ status: AgentTaskStatuses.Done });
   const longOutcome = "很长的结论".repeat(1000);
-  const projection = projectRun(journalEvents(
+  const projection = projectAgentWorkflow(journalEvents(
     scoutEvent(AgentEvents.task.assigned, taskState()),
     ...Array.from({ length: 12 }, (_, index) =>
       scoutEvent(AgentEvents.task.outcomeSubmitted, {
@@ -1209,7 +1205,7 @@ test("Resume Packet bounds long outcomes without message duplication", () => {
 
 test("TaskRunner injects restored context once and consumes restored messages once", async (t) => {
   const eventBus = new InMemoryEventBus();
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: "worker-runner-restored-context",
     eventBus,
   });
@@ -1378,8 +1374,8 @@ test("TaskRunner injects restored context once and consumes restored messages on
   );
 });
 
-test("TaskRunner restores a pending protocol correction from Task facts", (t) => {
-  installTestRunScope(t, { runId: "task-protocol-correction-restore" });
+test("TaskRunner restores a pending protocol correction from Task facts", async (t) => {
+  await installTestRunScope(t, { runId: "task-protocol-correction-restore" });
   const sourceStepId = "researcher-task-0001-step-0001";
   const sourceTurnId = "turn-missing-disposition";
   const task = taskState({
@@ -1416,8 +1412,8 @@ test("TaskRunner restores a pending protocol correction from Task facts", (t) =>
   assert.doesNotMatch(preparation.prompt, /restored task context/);
 });
 
-test("TaskRunner restores protocol correction after its Step was interrupted", (t) => {
-  installTestRunScope(t, { runId: "task-protocol-correction-interrupted" });
+test("TaskRunner restores protocol correction after its Step was interrupted", async (t) => {
+  await installTestRunScope(t, { runId: "task-protocol-correction-interrupted" });
   const sourceStepId = "researcher-task-0001-step-0001";
   const correctionStepId = "researcher-task-0001-step-0002";
   const sourceTurnId = "turn-missing-disposition";
@@ -1448,8 +1444,8 @@ test("TaskRunner restores protocol correction after its Step was interrupted", (
   assert.equal(runner.currentProtocolCorrectionSourceTurnId(), sourceTurnId);
 });
 
-test("TaskRunner does not restore correction after a later lifecycle disposition", (t) => {
-  installTestRunScope(t, { runId: "task-protocol-correction-resolved" });
+test("TaskRunner does not restore correction after a later lifecycle disposition", async (t) => {
+  await installTestRunScope(t, { runId: "task-protocol-correction-resolved" });
   const sourceStepId = "researcher-task-0001-step-0001";
   const resolvedStepId = "researcher-task-0001-step-0002";
   const task = taskState({
@@ -1533,7 +1529,7 @@ class RestorableMessageAgent extends ScoutAgent {
 
 test("ScoutAgent restores accepted delivery ids without replaying them", async (t) => {
   const eventBus = new InMemoryEventBus();
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: "coordinator-runner-restored-deliveries",
     eventBus,
     appServer: {} as CodexAppServerClient,
@@ -1596,7 +1592,7 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
       contextBundle: { runId, contextBundleId: "context-1" },
     } as never;
     const eventBus = new InMemoryEventBus();
-    const persistence = createTestRunPersistence(
+    const persistence = await createTestRunPersistence(
       t, runId, fixtureRoot, eventBus, join(fixtureRoot, "run", runId),
     );
     const initialScope = new RunScope({
@@ -1621,7 +1617,7 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
 
     assert.equal(initialScope.workflow.snapshot(), undefined);
     await initialScope.workflow.startWorkflow();
-    assert.equal(projectRun(initialScope.workflow.readEvents()).turns.length, 0);
+    assert.equal(projectAgentWorkflow(initialScope.workflow.readEvents()).turns.length, 0);
     const second = hasCurrentWorkflowTurn
       ? await initialAgent.runTurn({ prompt: "second Workflow before restore" })
       : undefined;
@@ -1630,7 +1626,7 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
     await initialAgent.stopAgent("restore_identity_test");
     const workflowId = initialScope.workflow.snapshot()!.workflowId;
     const journalRoot = initialScope.workflow.journalRoot;
-    const graphState = initialScope.workflow.graph.snapshot();
+    const graphData = initialScope.workflow.graph.snapshot();
     let events = initialScope.workflow.readEvents();
     await initialScope.workflow.stop();
     releaseInitialScope();
@@ -1638,12 +1634,12 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
 
     const invocationIds = [first.turn.invocationId, ...(second ? [second.turn.invocationId] : [])];
     for (let restore = 0; restore < 2; restore += 1) {
-      const restoredThread = projectRun(events).threads[0];
+      const restoredThread = projectAgentWorkflow(events).threads[0];
       assert.ok(restoredThread);
-      const workflow = new Workflow(createTestWorkflowAsset(graphState));
+      const workflow = new Workflow(createTestWorkflowAsset(graphData));
       const workflowRecovery = {
-        graphState,
-        workflowState: projectWorkflowState(workflowId, events),
+        graphData,
+        workflowData: projectWorkflowData(workflowId, events),
         journalRoot
       };
       const scope = new RunScope({
@@ -1657,14 +1653,14 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
       const release = installRunScope(scope);
       try {
         await workflow.start();
-        workflow.restore(workflowRecovery);
+        await workflow.enterState({ state: WorkflowState.Restoring, input: workflowRecovery });
         const restoredAgent = new RestorableMessageAgent();
         scope.agentRegistry.registerAgent(restoredAgent);
         await restoredAgent.resumeThread({ thread: restoredThread, rolloutPath: "/unused-test-rollout" });
         const outcome = await restoredAgent.runTurn({ prompt: `restored turn ${restore + 1}` });
         invocationIds.push(outcome.turn.invocationId);
         assert.equal(new Set(invocationIds).size, invocationIds.length);
-        assert.equal(projectRun(workflow.readEvents()).turns.length, restore + 1 + Number(hasCurrentWorkflowTurn));
+        assert.equal(projectAgentWorkflow(workflow.readEvents()).turns.length, restore + 1 + Number(hasCurrentWorkflowTurn));
         await restoredAgent.stopAgent("restore_identity_test");
         events = workflow.readEvents();
         await workflow.stop();
@@ -1681,7 +1677,7 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
 for (const status of ["failed", "interrupted"] as const) {
   test(`CoordinatorRunner does not publish a partial response from a ${status} turn`, async (t) => {
     const eventBus = new InMemoryEventBus();
-    installTestRunScope(t, {
+    await installTestRunScope(t, {
       runId: `coordinator-runner-${status}-turn`,
       eventBus,
     });
@@ -1773,12 +1769,12 @@ test("Resume activation continues a Coordinator-only interruption after its user
     threadId: thread.threadId, prompt: step.prompt, startedAt: step.startedAt,
   });
   await new RecordResumeInterruptionsStage().start();
-  const restoreAgents = new RestoreAgentsStage();
-  await restoreAgents.start();
+  const restoreAgents = new AgentEntityRecovery();
+  await restoreAgents.restore(projectCurrentAgentWorkflow());
   try {
-    await new RestoreTasksStage().start();
-    const inject = new InjectResumeContextStage();
-    await inject.start();
+    await new AgentTaskRecovery().restore(projectCurrentAgentWorkflow()!);
+    const inject = new AgentContextRecovery();
+    await inject.restore(projectCurrentAgentWorkflow()!);
     const coordinator = fixture.scope.agentRegistry.resolveAgent("coordinator");
     assert.ok(coordinator instanceof CoordinatorAgent);
     assert.equal(coordinator.snapshot().pendingMessageCount, 0);
@@ -1789,7 +1785,7 @@ test("Resume activation continues a Coordinator-only interruption after its user
     assert.equal(prompts.length, 1);
     assert.match(prompts[0] ?? "", /resume_coordinator_step/);
     assert.match(prompts[0] ?? "", /recover my interrupted request/);
-    assert.equal(projectRun(fixture.scope.workflow.readEvents()).coordinatorMessages.length, 1);
+    assert.equal(projectAgentWorkflow(fixture.scope.workflow.readEvents()).coordinatorMessages.length, 1);
   } finally {
     await restoreAgents.stop("test_cleanup");
   }
@@ -1830,12 +1826,12 @@ test("Resume activation wakes a committed next Phase after the previous Coordina
   await fixture.scope.eventBus.publishAndWait(AgentEvents.step.started, step);
   await fixture.scope.workflow.advance("completed");
   await fixture.scope.eventBus.publishAndWait(AgentEvents.step.completed, { ...step, status: AgentStepStatuses.Completed });
-  const restoreAgents = new RestoreAgentsStage();
-  await restoreAgents.start();
+  const restoreAgents = new AgentEntityRecovery();
+  await restoreAgents.restore(projectCurrentAgentWorkflow());
   try {
-    await new RestoreTasksStage().start();
-    const inject = new InjectResumeContextStage();
-    await inject.start();
+    await new AgentTaskRecovery().restore(projectCurrentAgentWorkflow()!);
+    const inject = new AgentContextRecovery();
+    await inject.restore(projectCurrentAgentWorkflow()!);
     assert.deepEqual(prompts, []);
     inject.activate();
     const coordinator = fixture.scope.agentRegistry.resolveAgent("coordinator");
@@ -1844,16 +1840,16 @@ test("Resume activation wakes a committed next Phase after the previous Coordina
     assert.equal(prompts.length, 1);
     assert.match(prompts[0]!, /continue_phase/);
     assert.match(prompts[0]!, /research-reviewer/);
-    assert.equal(projectRun(fixture.scope.workflow.readEvents()).pendingPhase, undefined);
+    assert.equal(projectAgentWorkflow(fixture.scope.workflow.readEvents()).pendingPhase, undefined);
   } finally {
     await restoreAgents.stop("test_cleanup");
   }
 });
 
-test("RestoreAgentsStage never cold-starts an Agent after thread resume fails", (t) =>
+test("AgentEntityRecovery never cold-starts an Agent after thread resume fails", (t) =>
   assertThreadRestoreFailure(t));
 
-test("RestoreAgentsStage rejects a missing persisted rollout before building Agents", async (t) => {
+test("AgentEntityRecovery rejects a missing persisted rollout before building Agents", async (t) => {
   const missing = await installRolloutLocatorFixture(t, "missing");
   const codexRoot = join(
     missing.fixtureRoot,
@@ -1865,13 +1861,13 @@ test("RestoreAgentsStage rejects a missing persisted rollout before building Age
   mkdirSync(codexRoot, { recursive: true });
   assert.equal(existsSync(join(codexRoot, "sessions")), false);
   await assert.rejects(
-    new RestoreAgentsStage().start(),
+    new AgentEntityRecovery().restore(projectCurrentAgentWorkflow()),
     new RegExp(`No persisted Codex rollout found for thread ${missing.thread.threadId}`),
   );
   assert.equal(missing.scope.agentRegistry.listAgents().length, 0);
 });
 
-test("RestoreAgentsStage restarts a journaled thread that Codex never persisted", async (t) => {
+test("AgentEntityRecovery restarts a journaled thread that Codex never persisted", async (t) => {
   const startedRoles: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
@@ -1923,8 +1919,8 @@ test("RestoreAgentsStage restarts a journaled thread that Codex never persisted"
     },
   );
 
-  const stage = new RestoreAgentsStage();
-  await stage.start();
+  const stage = new AgentEntityRecovery();
+  await stage.restore(projectCurrentAgentWorkflow());
 
   assert.deepEqual(startedRoles.sort(), createDefaultTestGraph().snapshot().roles.map((role) => role.name).sort());
   assert.equal(
@@ -1945,7 +1941,7 @@ test("RestoreAgentsStage restarts a journaled thread that Codex never persisted"
 });
 
 for (const completedWorkflow of [false, true]) {
-test(`RestoreAgentsStage resumes Agent entity memory with ${completedWorkflow ? "a completed Workflow and empty runtime" : "a zero-turn active Workflow"}`, async (t) => {
+test(`AgentEntityRecovery resumes Agent entity memory with ${completedWorkflow ? "a completed Workflow and empty runtime" : "a zero-turn active Workflow"}`, async (t) => {
   const resumedThreadIds: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
@@ -2006,8 +2002,8 @@ test(`RestoreAgentsStage resumes Agent entity memory with ${completedWorkflow ? 
     oldEvidence = readFileSync(oldJournalPath, "utf8");
   }
 
-  const stage = new RestoreAgentsStage();
-  await stage.start();
+  const stage = new AgentEntityRecovery();
+  await stage.restore(projectCurrentAgentWorkflow());
 
   assert.deepEqual(resumedThreadIds, [zeroTurn.thread.threadId]);
   assert.equal(
@@ -2022,7 +2018,7 @@ test(`RestoreAgentsStage resumes Agent entity memory with ${completedWorkflow ? 
 });
 }
 
-test("RestoreAgentsStage restarts a current zero-turn thread after an older turn", async (t) => {
+test("AgentEntityRecovery restarts a current zero-turn thread after an older turn", async (t) => {
   const startedRoles: string[] = [];
   const appServer = {
     async startThread(options: { cwd: string; ephemeral?: boolean }) {
@@ -2098,8 +2094,8 @@ test("RestoreAgentsStage restarts a current zero-turn thread after an older turn
     },
   );
 
-  const stage = new RestoreAgentsStage();
-  await stage.start();
+  const stage = new AgentEntityRecovery();
+  await stage.restore(projectCurrentAgentWorkflow());
 
   assert.ok(startedRoles.includes("researcher"));
   assert.equal(
@@ -2118,7 +2114,7 @@ test("RestoreAgentsStage restarts a current zero-turn thread after an older turn
   await stage.stop("test_cleanup");
 });
 
-test("RestoreAgentsStage rejects duplicate persisted rollouts", async (t) => {
+test("AgentEntityRecovery rejects duplicate persisted rollouts", async (t) => {
   const duplicate = await installRolloutLocatorFixture(t, "duplicate");
   writePersistedRollout({
     scoutRoot: duplicate.fixtureRoot,
@@ -2134,13 +2130,13 @@ test("RestoreAgentsStage rejects duplicate persisted rollouts", async (t) => {
   });
 
   await assert.rejects(
-    new RestoreAgentsStage().start(),
+    new AgentEntityRecovery().restore(projectCurrentAgentWorkflow()),
     new RegExp(`Multiple persisted Codex rollouts found for thread ${duplicate.thread.threadId}`),
   );
   assert.equal(duplicate.scope.agentRegistry.listAgents().length, 0);
 });
 
-test("RestoreAgentsStage trusts rollout session metadata instead of its file name", async (t) => {
+test("AgentEntityRecovery trusts rollout session metadata instead of its file name", async (t) => {
   const mismatched = await installRolloutLocatorFixture(t, "filename-mismatch");
   writePersistedRollout({
     scoutRoot: mismatched.fixtureRoot,
@@ -2150,13 +2146,13 @@ test("RestoreAgentsStage trusts rollout session metadata instead of its file nam
   });
 
   await assert.rejects(
-    new RestoreAgentsStage().start(),
+    new AgentEntityRecovery().restore(projectCurrentAgentWorkflow()),
     new RegExp(`No persisted Codex rollout found for thread ${mismatched.thread.threadId}`),
   );
   assert.equal(mismatched.scope.agentRegistry.listAgents().length, 0);
 });
 
-test("RestoreAgentsStage rejects a symlinked rollout that escapes Codex sessions", async (t) => {
+test("AgentEntityRecovery rejects a symlinked rollout that escapes Codex sessions", async (t) => {
   const escaped = await installRolloutLocatorFixture(t, "symlink-escape");
   const outsideRollout = join(escaped.fixtureRoot, "outside-rollout.jsonl");
   writeFileSync(outsideRollout, `${JSON.stringify({
@@ -2175,13 +2171,13 @@ test("RestoreAgentsStage rejects a symlinked rollout that escapes Codex sessions
   symlinkSync(outsideRollout, join(sessionsRoot, "escaped-rollout.jsonl"));
 
   await assert.rejects(
-    new RestoreAgentsStage().start(),
+    new AgentEntityRecovery().restore(projectCurrentAgentWorkflow()),
     /Refusing symlink beneath Codex sessions/,
   );
   assert.equal(escaped.scope.agentRegistry.listAgents().length, 0);
 });
 
-test("RestoreAgentsStage rejects a symlinked directory beneath Codex sessions", async (t) => {
+test("AgentEntityRecovery rejects a symlinked directory beneath Codex sessions", async (t) => {
   const escaped = await installRolloutLocatorFixture(t, "directory-symlink-escape");
   const outsideDirectory = join(escaped.fixtureRoot, "outside-sessions-date");
   mkdirSync(outsideDirectory, { recursive: true });
@@ -2201,13 +2197,13 @@ test("RestoreAgentsStage rejects a symlinked directory beneath Codex sessions", 
   symlinkSync(outsideDirectory, join(sessionsRoot, "2026"));
 
   await assert.rejects(
-    new RestoreAgentsStage().start(),
+    new AgentEntityRecovery().restore(projectCurrentAgentWorkflow()),
     /Refusing symlink beneath Codex sessions/,
   );
   assert.equal(escaped.scope.agentRegistry.listAgents().length, 0);
 });
 
-test("RestoreAgentsStage rejects a codex-home symlink that escapes the run", async (t) => {
+test("AgentEntityRecovery rejects a codex-home symlink that escapes the run", async (t) => {
   const escaped = await installRolloutLocatorFixture(t, "codex-home-symlink-escape");
   const outsideCodexHome = join(escaped.fixtureRoot, "outside-codex-home");
   const outsideRollout = join(
@@ -2233,13 +2229,30 @@ test("RestoreAgentsStage rejects a codex-home symlink that escapes the run", asy
   symlinkSync(outsideCodexHome, codexHome);
 
   await assert.rejects(
-    new RestoreAgentsStage().start(),
+    new AgentEntityRecovery().restore(projectCurrentAgentWorkflow()),
     /Codex home escapes/,
   );
   assert.equal(escaped.scope.agentRegistry.listAgents().length, 0);
 });
 
 test("resume stages restore tasks, messages, and interruptions from a Test RunScope", async (t) => {
+  // This recovery fixture has test roles, not an installed Validation business Domain.
+  t.mock.method(DomainStage.prototype, "start", async () => {
+    const scope = currentRunScope();
+    for (const domain of [new BaseDomain(), runtimeTestDomain()]) {
+      scope.domainRegistry.register(domain);
+      await domain.start?.();
+      scope.workflow.registerParticipant(domain);
+    }
+  });
+  t.mock.method(DomainStage.prototype, "stop", async () => {
+    const scope = currentRunScope();
+    for (const domain of [...scope.domainRegistry.list()].reverse()) {
+      await domain.stop?.();
+      scope.workflow.unregisterParticipant(domain);
+      scope.domainRegistry.unregister(domain);
+    }
+  });
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-run-resume-workflow-"));
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
@@ -2443,7 +2456,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   }, {
     occurredAt: "2026-07-22T00:00:10.000Z",
   });
-  const resumeWorkflow = projectWorkflowState(
+  const resumeWorkflow = projectWorkflowData(
     initialWorkflow.snapshot()!.workflowId,
     initialWorkflow.readEvents(),
   );
@@ -2564,8 +2577,8 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   });
   const resumedWorkflow = new Workflow(createTestWorkflowAsset(createDefaultTestGraph("validation").snapshot()));
   const resumedWorkflowRecovery = {
-    graphState: createDefaultTestGraph("validation").snapshot(),
-    workflowState: resumeWorkflow,
+    graphData: createDefaultTestGraph("validation").snapshot(),
+    workflowData: resumeWorkflow,
     journalRoot: resumeJournalRoot
   };
   const scope = new RunScope({
@@ -2580,10 +2593,9 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     terminate: (reason) => executor.terminate(reason),
   });
   scope.setAppServer(appServer);
-  const injectResumeContextStage = new InjectResumeContextStage();
   executor.registerSerial(
     new RunScopeStage(scope),
-    new RestoreWorkflowStage(resumedWorkflow, resumedWorkflowRecovery),
+    new WorkflowStage(resumedWorkflow),
     new RequestHubStage(),
     new RestoreEnvironmentStage({
       preflightMount: async () => ({ status: "passed" }),
@@ -2601,16 +2613,13 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
       async close() {},
     }, eventBus)),
     new DomainStage(),
-    new RestoreDomainStage(),
-    new RecordResumeInterruptionsStage(),
-    new RunRuntimeStage("resume"),
   );
   executor.registerSerial(new AgentTelemetryStage());
   executor.registerParallel(new AgentBackendStage(), new OrchestratorStage());
   executor.registerSerial(
-    new RestoreAgentsStage(),
-    new RestoreTasksStage(),
-    injectResumeContextStage,
+    new RestoreWorkflowStage(resumedWorkflowRecovery),
+    new RecordResumeInterruptionsStage(),
+    new RunRuntimeStage("resume"),
   );
   t.after(async () => {
     releaseResumedTurns?.();
@@ -2620,7 +2629,8 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     scope.clearAppServer(appServer);
   });
   await executor.startup();
-  injectResumeContextStage.activate();
+  await resumedEventBus.publishAndWait(RunEvents.runtime.ready, { mode: "resume", readyAt: new Date().toISOString() });
+  scope.agentOrchestrator.ready();
   await resumedTurnsStarted;
 
   const restoredManifest = resumedManifestStore.read();
@@ -2677,7 +2687,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   ));
 
   const restoredEvents = scope.workflow.readEvents();
-  const projection = projectRun(restoredEvents);
+  const projection = projectAgentWorkflow(restoredEvents);
   const restoredResearcher = projection.tasks.find((task) =>
     task.taskId === researcherTask.taskId
   );
@@ -2782,7 +2792,7 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
   executor.registerSerial(
     new RunScopeStage(scope),
     new InitializeRunStage(),
-    new StartWorkflowStage(workflow),
+    new WorkflowStage(workflow),
     failingStage,
   );
 
@@ -2890,7 +2900,7 @@ async function assertThreadRestoreFailure(
       return {};
     },
   } as unknown as CodexAppServerClient;
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "thread-restore-failure",
     runRoot: join(fixtureRoot, "run", "thread-restore-failure"),
     scoutRoot: fixtureRoot,
@@ -2946,10 +2956,10 @@ async function assertThreadRestoreFailure(
     runId: scope.runId,
     threadId: thread.threadId,
   });
-  const stage = new RestoreAgentsStage();
+  const stage = new AgentEntityRecovery();
 
   await assert.rejects(
-    stage.start(),
+    stage.restore(projectCurrentAgentWorkflow()),
     /resume failed for thread-researcher-original/,
   );
 
@@ -2987,7 +2997,7 @@ async function installRolloutLocatorFixture(
   );
   makeFixtureShellToolsResolvable(fixtureRoot);
   const eventBus = new InMemoryEventBus();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: `rollout-${suffix}`,
     runRoot: join(fixtureRoot, "run", `rollout-${suffix}`),
     scoutRoot: fixtureRoot,
@@ -3056,13 +3066,13 @@ function scoutEvent<TPayload>(
   };
 }
 
-function journalEvents(...inputs: ScoutEvent[]): JournalEvent[] {
+function journalEvents(...inputs: ScoutEvent[]): ScoutRecord[] {
   const created = scoutEvent(RunEvents.run.created, {
     runId: "run-resume-test",
     scoutRoot: "/repo",
     createdAt: "2026-07-22T00:00:00.000Z",
   });
-  return [created, ...inputs].map((input, index) => ({
+  return decodeScoutRecords([created, ...inputs].map((input, index) => ({
     id: `event-${index + 1}`,
     key: {
       scope: input.key.scope,
@@ -3076,7 +3086,7 @@ function journalEvents(...inputs: ScoutEvent[]): JournalEvent[] {
     version: 1,
     seq: index + 1,
     recordedAt: "2026-07-22T00:00:00.000Z",
-  }));
+  })));
 }
 
 function taskState(input: Partial<AgentTaskState> = {}): AgentTaskState {
@@ -3174,7 +3184,8 @@ function noopLogger(): Logger {
 
 function runtimeTestDomain(): ScoutDomain {
   return {
-    description: { id: ScoutDomainId.Validation, name: "Test Domain" },
+    ...testWorkflowParticipant,
+    description: { id: ScoutDomainId.Rbt, name: "Test Domain" },
     backend: new class extends DomainAgentBackend {
       override async handleDynamicToolCall() { return undefined; }
     }(),

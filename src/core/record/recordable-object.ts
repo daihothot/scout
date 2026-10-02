@@ -6,8 +6,8 @@ import { currentRunScope } from "../../run/run-scope.js";
 import { WorkflowEvents, type WorkflowBoundaryEvent } from "../workflow/workflow-events.js";
 
 /** Persisted event metadata exposed without exposing the underlying Journal handle. */
-export interface RecordEvent<TPayload = unknown> extends Omit<ScoutEvent<TPayload>, "key"> {
-  key: EventKey;
+export interface RecordEvent<TPayload = unknown, TRoute extends string = string> extends Omit<ScoutEvent<TPayload>, "key"> {
+  key: EventKey & { readonly routeKey: TRoute };
   version: 1;
   seq: number;
   recordedAt: string;
@@ -21,7 +21,7 @@ export interface RecordWriteFailure {
 }
 
 /** A record-owned resource transaction; business state is not part of it. */
-export interface RecordWorkflowChange {
+export interface RecordPreparation {
   readonly journalRoot: string;
   readonly checkpointSeq: number;
   commit(): void;
@@ -30,7 +30,7 @@ export interface RecordWorkflowChange {
 }
 
 /** Owns one Workflow-scoped recording file and its event/explicit write paths. */
-export abstract class RecordableObject {
+export abstract class RecordableObject<TRecord extends RecordEvent = RecordEvent> {
   abstract readonly eventTypes: readonly EventType[];
   private activeJournal?: Journal;
   private activeRoot?: string;
@@ -40,7 +40,7 @@ export abstract class RecordableObject {
   private readonly preparedJournals = new Set<Journal>();
   private readonly previousJournals = new Set<Journal>();
   private readonly failedClosures = new Map<Journal, unknown>();
-  private preparation?: RecordWorkflowChange;
+  private preparation?: RecordPreparation;
 
   protected constructor(private readonly name: string) {}
 
@@ -48,8 +48,11 @@ export abstract class RecordableObject {
 
   protected abstract location(journalRoot: string): JournalLocation;
 
-  /** Producers supply their own initial facts; the common layer does not interpret them. */
-  protected workflowBaseline(): readonly ScoutEvent[] { return []; }
+  /** Decodes external file payloads; runtime relationships belong to projectors. */
+  protected abstract decode(records: readonly RecordEvent[]): TRecord[];
+
+  /** Supplies initial facts for a newly prepared file; never reads or projects history. */
+  protected baselineEvents(): readonly ScoutEvent[] { return []; }
 
   protected onWriteSuccess(): void {}
 
@@ -75,7 +78,7 @@ export abstract class RecordableObject {
     const options = { priority: EventSubscriptionPriorities.Critical };
     this.unsubscribers.push(
       scope.eventBus.subscribe<WorkflowBoundaryEvent>(WorkflowEvents.workflow.preparing, async ({ payload }) => {
-        await this.prepareWorkflow(payload.journalRoot);
+        await this.prepare(payload.journalRoot);
       }, options),
       scope.eventBus.subscribe<WorkflowBoundaryEvent>(WorkflowEvents.workflow.committing, ({ payload }) => {
         if (!this.preparation || this.preparation.journalRoot !== payload.journalRoot) {
@@ -84,13 +87,13 @@ export abstract class RecordableObject {
         this.preparation.commit();
       }, options),
       scope.eventBus.subscribe(WorkflowEvents.workflow.aborting, () => {
-        this.abortPreparedWorkflow();
+        this.abortPreparation();
       }, options),
       scope.eventBus.subscribe(WorkflowEvents.workflow.releasingPrevious, () => {
         this.releasePrevious();
       }, options),
       scope.eventBus.subscribe(WorkflowEvents.workflow.releasing, () => {
-        this.releaseWorkflow();
+        this.release();
       }, options),
     );
     this.started = true;
@@ -106,13 +109,21 @@ export abstract class RecordableObject {
 
   create(journalRoot: string, baseline: readonly ScoutEvent[] = []): void {
     if (this.activeJournal) throw new Error(`${this.name} journal is already available.`);
-    this.prepareWorkflow(journalRoot, baseline).commit();
+    this.prepare(journalRoot, baseline).commit();
   }
 
   open(journalRoot: string): void {
     if (this.activeJournal) throw new Error(`${this.name} journal is already available.`);
     this.activeJournal = Journal.open(this.location(journalRoot));
     this.activeRoot = journalRoot;
+    if (this.started) this.requireWriter().start();
+  }
+
+  /** Rebinds a declared file; a never-recorded domain starts with an empty record. */
+  attach(journalRoot: string): void {
+    if (this.activeJournal) return;
+    if (existsSync(this.location(journalRoot).path)) this.open(journalRoot);
+    else this.create(journalRoot, []);
   }
 
   write(event: ScoutEvent): RecordEvent {
@@ -124,6 +135,8 @@ export abstract class RecordableObject {
     if (!this.activeJournal && !currentRunScope().workflow.snapshot()) return [];
     return this.requireJournal().readAll();
   }
+
+  read(): TRecord[] { return this.decode(this.readAll()); }
 
   get hasActiveRecord(): boolean { return this.activeJournal !== undefined; }
   get hasPreparedRecords(): boolean { return this.preparedJournals.size > 0; }
@@ -139,7 +152,7 @@ export abstract class RecordableObject {
   get path(): string { return this.requireJournal().path; }
   get failed(): boolean { return this.requireJournal().failed; }
 
-  prepareWorkflow(journalRoot: string, baseline?: readonly ScoutEvent[]): RecordWorkflowChange {
+  prepare(journalRoot: string, baseline?: readonly ScoutEvent[]): RecordPreparation {
     if (this.failedClosures.size > 0) {
       throw new AggregateError(this.failedClosures.values(), `Cannot prepare ${this.name} Workflow after journal cleanup failed.`);
     }
@@ -148,7 +161,7 @@ export abstract class RecordableObject {
     const nextJournal = Journal.create(this.location(journalRoot));
     this.preparedJournals.add(nextJournal);
     try {
-      const events = baseline ?? this.workflowBaseline();
+      const events = baseline ?? this.baselineEvents();
       if (events.length > 0 || baseline !== undefined) nextJournal.replaceAll(events);
     } catch (error) {
       try {
@@ -160,7 +173,7 @@ export abstract class RecordableObject {
       throw error;
     }
     let committed = false;
-    const change: RecordWorkflowChange = {
+    const change: RecordPreparation = {
       journalRoot,
       checkpointSeq: nextJournal.lastSeq,
       commit: () => {
@@ -193,7 +206,7 @@ export abstract class RecordableObject {
     return change;
   }
 
-  abortPreparedWorkflow(): void {
+  abortPreparation(): void {
     const failures: unknown[] = [];
     for (const journal of this.preparedJournals) {
       try {
@@ -217,7 +230,7 @@ export abstract class RecordableObject {
   }
 
   /** Releases recording resources while retaining participation in future Workflow boundaries. */
-  releaseWorkflow(): void {
+  release(): void {
     this.writer?.stop();
     const failures: unknown[] = [];
     for (const journal of new Set([
@@ -240,7 +253,7 @@ export abstract class RecordableObject {
 
   close(): void {
     this.stop();
-    this.releaseWorkflow();
+    this.release();
   }
 
   private requireJournal(): Journal {

@@ -1,4 +1,7 @@
-import type { WorkflowState } from "../../src/core/workflow/workflow-state.js";
+import { projectCurrentAgentWorkflow } from "../helpers/workflow-participant.js";
+import { WorkflowState } from "../../src/core/workflow/index.js";
+import { testWorkflowParticipant } from "../helpers/workflow-participant.js";
+import type { WorkflowData } from "../../src/core/workflow/workflow-data.js";
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -35,7 +38,7 @@ import {
 import type { AgentTurnCompletedEvent } from "../../src/agent/thread/turn-events.js";
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
 import { EventSubscriptionPriorities, InMemoryEventBus } from "../../src/core/events/index.js";
-import { createGraphState, Graph, projectWorkflowState, Workflow, WorkflowEvents } from "../../src/core/workflow/index.js";
+import { createGraphData, Graph, projectWorkflowData, Workflow, WorkflowEvents } from "../../src/core/workflow/index.js";
 import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
 import { Benchmarks } from "../../src/core/benchmarks/index.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
@@ -96,6 +99,7 @@ import { CoordinatorContextTags } from "../../src/agent/runner/coordinator/coord
 import type { AgentTaskNotAssignedEventPayload } from "../../src/agent/task/task-events.js";
 import type { ScoutEvent } from "../../src/core/events/index.js";
 import { Journal, readJournalEvents, type JournalEvent } from "../../src/core/journal/index.js";
+import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import type { LogEvent, Logger } from "../../src/core/logging/index.js";
 import { WorkerAgent } from "../../src/agent/roles/worker-agent.js";
@@ -109,9 +113,9 @@ import {
 import { RunEvents } from "../../src/run/events/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { AgentsStage } from "../../src/run/lifecycle/stages/agents-stage.js";
-import { RestoreAgentsStage } from "../../src/run/resume/stages/restore-agents-stage.js";
-import { RestoreTasksStage } from "../../src/run/resume/stages/restore-tasks-stage.js";
-import { projectRun } from "../../src/run/resume/projection/index.js";
+import { AgentEntityRecovery } from "../../src/agent/orchestration/recovery/agent-entity-recovery.js";
+import { AgentTaskRecovery } from "../../src/agent/orchestration/recovery/agent-task-recovery.js";
+import { projectAgentWorkflow } from "../../src/agent/orchestration/projector/index.js";
 
 let releaseTestRunScope: (() => Promise<void>) | undefined;
 
@@ -121,9 +125,9 @@ afterEach(async () => {
   await release?.();
 });
 
-test("AgentBuilder creates a coordinator with orchestration tools only", () => {
+test("AgentBuilder creates a coordinator with orchestration tools only", async () => {
   const domainTool = buildDomainTool("domain-a");
-  const fixture = createAgentFixture("builder-coordinator", {
+  const fixture = await createAgentFixture("builder-coordinator", {
     domain: createStaticDomain("domain-a", [domainTool]),
   });
   const builder = new AgentBuilder();
@@ -174,8 +178,8 @@ test("AgentBuilder creates a coordinator with orchestration tools only", () => {
   );
 });
 
-test("AgentBuilder rejects a dynamic tool whose guidance Skill is not mounted", () => {
-  const fixture = createAgentFixture("builder-missing-tool-guidance", {
+test("AgentBuilder rejects a dynamic tool whose guidance Skill is not mounted", async () => {
+  const fixture = await createAgentFixture("builder-missing-tool-guidance", {
     domain: createStaticDomain("domain-empty", []),
   });
   fixture.mount.skills = fixture.mount.skills.filter((skill) =>
@@ -188,8 +192,8 @@ test("AgentBuilder rejects a dynamic tool whose guidance Skill is not mounted", 
   );
 });
 
-test("AgentBuilder creates one worker role while preserving domain tool scope", () => {
-  const fixture = createAgentFixture("builder-worker", {
+test("AgentBuilder creates one worker role while preserving domain tool scope", async () => {
+  const fixture = await createAgentFixture("builder-worker", {
     domain: createStaticDomain("domain-worker", [buildDomainTool("domain-worker")]),
   });
   const researcherMount = createMount(fixture.root, "researcher");
@@ -232,11 +236,12 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   assert.ok(instructions.indexOf("common instructions") < instructions.indexOf("worker instructions"));
 });
 
-test("AgentBuilder unions and deduplicates Domain tools across a Worker's Phases", () => {
+test("AgentBuilder unions and deduplicates Domain tools across a Worker's Phases", async () => {
   const requestedPhases: string[] = [];
   const shared = buildDomainTool("domain-shared");
   const domain: ScoutDomain = {
-    description: { id: ScoutDomainId.Validation, name: "domain-phase-tools" },
+    ...testWorkflowParticipant,
+    description: { id: ScoutDomainId.Rbt, name: "domain-phase-tools" },
     backend: new class extends DomainAgentBackend {
       override dynamicToolsForPhase(phase: ScoutAgentPhase) {
         requestedPhases.push(phase);
@@ -250,7 +255,7 @@ test("AgentBuilder unions and deduplicates Domain tools across a Worker's Phases
       override async handleDynamicToolCall() { return undefined; }
     }(),
   };
-  const fixture = createAgentFixture("builder-worker-phase-tools", { domain });
+  const fixture = await createAgentFixture("builder-worker-phase-tools", { domain });
   const researcherMount = createMount(fixture.root, "researcher");
   researcherMount.agentProfile.phases = ["research", "verify"];
   prepareAgent(fixture, "researcher", researcherMount, createAssetCommit(researcherMount));
@@ -264,8 +269,8 @@ test("AgentBuilder unions and deduplicates Domain tools across a Worker's Phases
   assert.deepEqual(domainNamespaces, ["domain-shared", "domain-research", "domain-verify"]);
 });
 
-test("AgentBuilder creates an arbitrary Workflow role as a generic Worker", () => {
-  const runtimeGraph = createTestGraph(createGraphState({
+test("AgentBuilder creates an arbitrary Workflow role as a generic Worker", async () => {
+  const runtimeGraph = createTestGraph(createGraphData({
     domain: "test",
     workflowProfile: "dynamic-role-test",
     phases: [{
@@ -279,7 +284,7 @@ test("AgentBuilder creates an arbitrary Workflow role as a generic Worker", () =
     ],
     currentPhase: "audit",
   }));
-  const fixture = createAgentFixture("builder-dynamic-worker", { runtimeGraph });
+  const fixture = await createAgentFixture("builder-dynamic-worker", { runtimeGraph });
   const auditorMount = createMount(fixture.root, "auditor");
   auditorMount.agentProfile.phases = ["audit"];
   prepareAgent(fixture, "auditor", auditorMount, createAssetCommit(auditorMount));
@@ -300,7 +305,7 @@ test("AgentBuilder creates an arbitrary Workflow role as a generic Worker", () =
 
 test("Workflow Worker turns use the role permission profile", async () => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("builder-validator-write-roots", { appServer });
+  const fixture = await createAgentFixture("builder-validator-write-roots", { appServer });
   const validatorMount = createMount(fixture.root, "validator");
   const validatorCommit = createAssetCommit(validatorMount);
   prepareAgent(fixture, "validator", validatorMount, validatorCommit);
@@ -334,7 +339,7 @@ test("Workflow Worker turns use the role permission profile", async () => {
 
 test("Worker turns select one stable profile independently of write-root order", async () => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("builder-worker-write-root-order", { appServer });
+  const fixture = await createAgentFixture("builder-worker-write-root-order", { appServer });
   const researcherMount = createMount(fixture.root, "researcher");
   const codebaseRoot = join(fixture.root, "managed-codebase");
   researcherMount.writableRoots = [
@@ -365,7 +370,7 @@ for (const status of ["failed", "interrupted"] as const) {
       turnStatus: status,
       turnError: `${status} by app-server`,
     });
-    const fixture = createAgentFixture(`turn-status-${status}`, { appServer });
+    const fixture = await createAgentFixture(`turn-status-${status}`, { appServer });
     const researcherMount = createMount(fixture.root, "researcher");
     prepareAgent(
       fixture,
@@ -388,7 +393,7 @@ test("ScoutAgent omits a null app-server turn error", async () => {
     turnStatus: "interrupted",
     turnError: null,
   });
-  const fixture = createAgentFixture("turn-null-error", { appServer });
+  const fixture = await createAgentFixture("turn-null-error", { appServer });
   const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
     fixture,
@@ -408,7 +413,7 @@ test("ScoutAgent omits a null app-server turn error", async () => {
 test("WorkerAgent keeps its bound TaskRunner and reports a rejected task assignment", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-task-not-assigned", []);
-  const fixture = createAgentFixture("worker-task-not-assigned", { appServer, domain });
+  const fixture = await createAgentFixture("worker-task-not-assigned", { appServer, domain });
   const researcherMount = createMount(fixture.root, "researcher");
   const researcherCommit = createAssetCommit(researcherMount);
   prepareAgent(fixture, "researcher", researcherMount, researcherCommit);
@@ -471,7 +476,7 @@ test("WorkerAgent keeps its bound TaskRunner and reports a rejected task assignm
 
 test("AssignTask routes through the current Phase and skips a busy first role", async () => {
   const appServer = createFakeAppServer();
-  const runtimeGraph = createTestGraph(createGraphState({
+  const runtimeGraph = createTestGraph(createGraphData({
     domain: "test",
     workflowProfile: "phase-routing-test",
     phases: [{
@@ -486,7 +491,7 @@ test("AssignTask routes through the current Phase and skips a busy first role", 
     ],
     currentPhase: "audit",
   }));
-  const fixture = createAgentFixture("assign-task-phase-routing", {
+  const fixture = await createAgentFixture("assign-task-phase-routing", {
     appServer,
     runtimeGraph,
   });
@@ -597,7 +602,7 @@ test("SubmitPhaseOutcome advances the cursor and schedules one fresh Coordinator
       }
     },
   });
-  const fixture = createAgentFixture("submit-phase-outcome", { appServer });
+  const fixture = await createAgentFixture("submit-phase-outcome", { appServer });
   const coordinatorAgent = new AgentBuilder().buildCoordinator();
   await coordinatorAgent.startThread();
   const backend = new AgentDynamicToolBackend();
@@ -689,7 +694,7 @@ test("SubmitPhaseOutcome combines event and inbox draining for user input arrivi
       }));
     },
   });
-  const fixture = createAgentFixture("human-input-during-advance", { appServer });
+  const fixture = await createAgentFixture("human-input-during-advance", { appServer });
   const workflow = currentRunScope().workflow;
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
@@ -775,7 +780,7 @@ test("Input arriving during inbox drain defers advance without automatically ret
       });
     },
   });
-  const fixture = createAgentFixture("human-input-during-inbox-drain", { appServer });
+  const fixture = await createAgentFixture("human-input-during-inbox-drain", { appServer });
   const workflow = currentRunScope().workflow;
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
@@ -820,7 +825,7 @@ test("Input arriving during inbox drain defers advance without automatically ret
 
 test("SubmitPhaseOutcome rejects a Worker before touching Workflow state", async () => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("phase-outcome-worker", { appServer });
+  const fixture = await createAgentFixture("phase-outcome-worker", { appServer });
   const mount = createMount(fixture.root, "researcher");
   prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
   const worker = new AgentBuilder().buildWorker("researcher");
@@ -847,7 +852,7 @@ test("SubmitPhaseOutcome rejects a Worker before touching Workflow state", async
 
 test("SubmitPhaseOutcome leaves Workflow unchanged while a queued or running Task is unfinished", async (t) => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("phase-outcome-unfinished-task", { appServer });
+  const fixture = await createAgentFixture("phase-outcome-unfinished-task", { appServer });
   const workflow = currentRunScope().workflow;
   const coordinator = new AgentBuilder().buildCoordinator();
   // Isolate the task barrier; real Turn admission and replay are covered above.
@@ -952,7 +957,7 @@ test("Rejected Phase completion keeps human input reachable through Gateway unti
       }
     },
   });
-  const fixture = createAgentFixture("phase-outcome-human-input", { appServer });
+  const fixture = await createAgentFixture("phase-outcome-human-input", { appServer });
   const workflow = currentRunScope().workflow;
   const mount = createMount(fixture.root, "researcher");
   prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
@@ -1041,7 +1046,7 @@ test("SubmitPhaseOutcome waits for a stopped Worker's in-flight Step to finish",
       await workerTurnReleased;
     },
   });
-  const fixture = createAgentFixture("phase-outcome-stopped-step", { appServer });
+  const fixture = await createAgentFixture("phase-outcome-stopped-step", { appServer });
   const workflow = currentRunScope().workflow;
   const mount = createMount(fixture.root, "researcher");
   prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
@@ -1132,7 +1137,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
       submissions.push(result.success);
     },
   });
-  const fixture = createAgentFixture("phase-outcome-done-pending", { appServer });
+  const fixture = await createAgentFixture("phase-outcome-done-pending", { appServer });
   const workflow = currentRunScope().workflow;
   const mount = createMount(fixture.root, "researcher");
   prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
@@ -1169,7 +1174,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
       queuedSnapshot = worker?.snapshot();
       runningStepCount = fixture.stepStore.list({ taskId: assignment.value.taskId }).filter((step) => step.status === "running").length;
       before = {
-        graph: workflow.graph.snapshot(), workflowState: workflow.snapshot()!, journal: workflow.readEvents(),
+        graph: workflow.graph.snapshot(), workflowData: workflow.snapshot()!, journal: workflow.readEvents(),
         benchmarks: new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), turns: appServer.turnInputs.length,
       };
       rejected = handler({
@@ -1178,7 +1183,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
         tool: "SubmitPhaseOutcome", arguments: { outcome: "completed" },
       });
       after = {
-        graph: workflow.graph.snapshot(), workflowState: workflow.snapshot(), journal: workflow.readEvents(),
+        graph: workflow.graph.snapshot(), workflowData: workflow.snapshot(), journal: workflow.readEvents(),
         benchmarks: new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), turns: appServer.turnInputs.length,
       };
     }, { priority: EventSubscriptionPriorities.Low });
@@ -1218,7 +1223,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
 for (const boundary of ["phase-advanced", "completed-with-release-failure"] as const) {
   test(`Worker rejects follow-up work on a Done Task after ${boundary}`, async (t) => {
     const appServer = createFakeAppServer({ threadIds: ["thread-researcher", "thread-coordinator"] });
-    const fixture = createAgentFixture(`done-task-message-${boundary}`, { appServer });
+    const fixture = await createAgentFixture(`done-task-message-${boundary}`, { appServer });
     const workflow = currentRunScope().workflow;
     const base = fixture.domainRegistry.get(ScoutDomainId.Base);
     assert.ok(base instanceof BaseDomain);
@@ -1238,6 +1243,9 @@ for (const boundary of ["phase-advanced", "completed-with-release-failure"] as c
     };
     worker.restoreTask({ task, maxTaskSequence: 1 });
     await fixture.eventBus.publishAndWait(AgentEvents.task.assigned, task, { occurredAt: now });
+    const journalPath = workflow.journalPath;
+    const coordinator = builder.buildCoordinator();
+    await coordinator.startThread();
     if (boundary === "completed-with-release-failure") {
       t.mock.method(worker, "releaseTask", async () => { throw new Error("Release not ready"); });
       const advanced = await workflow.advance("error");
@@ -1246,17 +1254,14 @@ for (const boundary of ["phase-advanced", "completed-with-release-failure"] as c
     } else {
       await workflow.advance("completed");
     }
-    assert.equal(workflow.snapshot()?.status, boundary === "completed-with-release-failure" ? undefined : "active");
-    // Create the Coordinator after the transition so this test isolates admission,
-    // without scheduling the independent phase/settlement tick.
-    const coordinator = builder.buildCoordinator();
-    await coordinator.startThread();
+    assert.equal(workflow.snapshot()?.status, boundary === "completed-with-release-failure" ? "completed" : "active");
+    // The existing Agent entity remains usable; no new Thread is started after a failed exit.
     const backend = new AgentDynamicToolBackend();
     backend.start();
     const before = worker.snapshot();
     const taskBefore = fixture.taskStore.getTask(task.taskId);
-    const queuedBefore = workflow.readEvents().filter((event) => AgentEvents.message.queued.is(event));
-    const expected = boundary === "completed-with-release-failure" ? /Workflow is empty/ : /Task .* belongs to Phase research.*current Phase is research-reviewer/;
+    const queuedBefore = readJournalEvents(journalPath).filter((event) => AgentEvents.message.queued.is(event));
+    const expected = boundary === "completed-with-release-failure" ? /Workflow is completed/ : /Task .* belongs to Phase research.*current Phase is research-reviewer/;
     try {
       await assert.rejects(worker.sendMessage({
         taskId: task.taskId, message: agent.turn.message("Reopen old work"), deliveryMode: "queued",
@@ -1274,7 +1279,7 @@ for (const boundary of ["phase-advanced", "completed-with-release-failure"] as c
       await worker.runToIdle();
       assert.deepEqual(worker.snapshot(), before);
       assert.deepEqual(fixture.taskStore.getTask(task.taskId), taskBefore);
-      assert.deepEqual(workflow.readEvents().filter((event) => AgentEvents.message.queued.is(event)), queuedBefore);
+      assert.deepEqual(readJournalEvents(journalPath).filter((event) => AgentEvents.message.queued.is(event)), queuedBefore);
       assert.equal(appServer.turnInputs.length, 0);
     } finally {
       await worker.stopAgent("test_cleanup");
@@ -1305,7 +1310,7 @@ test(`A terminal Phase outcome completes before its Coordinator Step ends${perma
       assert.match(agent.turn.workflow_phase(), /workflow_status: empty/);
     },
   });
-  const runtimeGraph = createTestGraph(createGraphState({
+  const runtimeGraph = createTestGraph(createGraphData({
     domain: "test",
     workflowProfile: "terminal-phase-test",
     phases: [{
@@ -1319,7 +1324,7 @@ test(`A terminal Phase outcome completes before its Coordinator Step ends${perma
     ],
     currentPhase: "audit",
   }));
-  const fixture = createAgentFixture("submit-terminal-phase-outcome", { appServer, runtimeGraph });
+  const fixture = await createAgentFixture("submit-terminal-phase-outcome", { appServer, runtimeGraph });
   const workflow = currentRunScope().workflow;
   const base = fixture.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(base instanceof BaseDomain);
@@ -1354,6 +1359,8 @@ test(`A terminal Phase outcome completes before its Coordinator Step ends${perma
     if (permalinkFails) assert.match(JSON.stringify(errors), /success permalink failed/);
     assert.equal(appServer.turnInputs.length, 1);
     assert.equal(readJournalEvents(oldPath).filter((event) => WorkflowEvents.workflow.advanced.is(event)).length, 1);
+    assert.equal(fixture.stepStore.list().length, 1);
+    assert.equal(fixture.stepStore.list()[0]?.status, "completed");
     assert.equal(readJournalEvents(oldPath).filter((event) => WorkflowEvents.workflow.completed.is(event)).length, 1);
     assert.equal(readJournalEvents(oldPath).filter((event) => AgentEvents.turn.completed.is(event)).length, 0);
     assert.equal(workflow.readEvents().some((event) => AgentEvents.turn.started.is(event)), false);
@@ -1380,7 +1387,7 @@ test("Coordinator does not carry phase or settlement scheduling into an idle run
       }));
     },
   });
-  const runtimeGraph = createTestGraph(createGraphState({
+  const runtimeGraph = createTestGraph(createGraphData({
     domain: "test", workflowProfile: "two-phase-test",
     phases: [
       { name: "research", edges: { completed: "audit", error: null }, roles: ["researcher"] },
@@ -1392,7 +1399,7 @@ test("Coordinator does not carry phase or settlement scheduling into an idle run
     ],
     currentPhase: "research",
   }));
-  const fixture = createAgentFixture("coordinator-combined-phase-outcomes", { appServer, runtimeGraph });
+  const fixture = await createAgentFixture("coordinator-combined-phase-outcomes", { appServer, runtimeGraph });
   const workflow = currentRunScope().workflow;
   const base = fixture.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(base instanceof BaseDomain);
@@ -1427,7 +1434,7 @@ test("Coordinator does not carry phase or settlement scheduling into an idle run
 });
 
 test("WorkerAgent replaces restored failed and stopped tasks when new work arrives", async () => {
-  const fixture = createAgentFixture("worker-restored-terminal-task");
+  const fixture = await createAgentFixture("worker-restored-terminal-task");
   const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
     fixture,
@@ -1481,7 +1488,7 @@ test("WorkerAgent replaces restored failed and stopped tasks when new work arriv
 
 test("AssignTask replaces a Done binding, serializes replacement, and preserves release history for restore", async () => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("replace-done-binding", { appServer });
+  const fixture = await createAgentFixture("replace-done-binding", { appServer });
   const mount = createMount(fixture.root, "researcher");
   prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
   const builder = new AgentBuilder();
@@ -1550,7 +1557,7 @@ test("AssignTask replaces a Done binding, serializes replacement, and preserves 
 
 for (const state of ["queued", "waiting-for-human", "pending-message", "in-flight-message"] as const) {
   test(`Worker cannot replace or release a Task with ${state}`, async () => {
-    const fixture = createAgentFixture(`protect-${state}`);
+    const fixture = await createAgentFixture(`protect-${state}`);
     const mount = createMount(fixture.root, "researcher");
     prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
     const worker = new AgentBuilder().buildWorker("researcher") as WorkerAgent;
@@ -1595,7 +1602,7 @@ for (const state of ["queued", "waiting-for-human", "pending-message", "in-fligh
 }
 
 test("Worker retains its old binding when resource release fails and can retry replacement", async () => {
-  const fixture = createAgentFixture("release-failure-retry");
+  const fixture = await createAgentFixture("release-failure-retry");
   const mount = createMount(fixture.root, "researcher");
   prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
   const worker = new AgentBuilder().buildWorker("researcher") as WorkerAgent;
@@ -1630,8 +1637,8 @@ test("Worker retains its old binding when resource release fails and can retry r
   }
 });
 
-test("RestoreTasksStage restores only bound Tasks and retains released sequence and result history", async () => {
-  const fixture = createAgentFixture("restore-released-tasks");
+test("AgentTaskRecovery restores only bound Tasks and retains released sequence and result history", async () => {
+  const fixture = await createAgentFixture("restore-released-tasks");
   const base = fixture.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(base instanceof BaseDomain);
   base.start();
@@ -1658,12 +1665,12 @@ test("RestoreTasksStage restores only bound Tasks and retains released sequence 
     await fixture.eventBus.publishAndWait(AgentEvents.task.assigned, current);
     await fixture.eventBus.publishAndWait(AgentEvents.task.assigned, releasedVerifier);
     await fixture.eventBus.publishAndWait(AgentEvents.task.released, releasedVerifier);
-    await new RestoreTasksStage().start();
+    await new AgentTaskRecovery().restore(projectCurrentAgentWorkflow()!);
     const [researcher, verifier] = workers;
     assert.equal(researcher?.taskRunner?.snapshot().activeTask?.taskId, current.taskId);
     assert.equal(verifier?.taskRunner, undefined);
     assert.deepEqual(fixture.taskStore.listTasks().map((task) => task.taskId), [current.taskId]);
-    const projection = projectRun(fixture.journal.readAll(), "coordinator");
+    const projection = projectAgentWorkflow(fixture.journal.readAll(), "coordinator");
     assert.deepEqual(projection.releasedTasks.map(({ task }) => [task.taskId, task.status]), [
       [previous.taskId, AgentTaskStatuses.Done], [releasedVerifier.taskId, AgentTaskStatuses.Failed],
     ]);
@@ -1676,8 +1683,8 @@ test("RestoreTasksStage restores only bound Tasks and retains released sequence 
   }
 });
 
-test("AgentRegistry indexes registered agents and thread bindings without owning thread startup", () => {
-  const fixture = createAgentFixture("registry-bind");
+test("AgentRegistry indexes registered agents and thread bindings without owning thread startup", async () => {
+  const fixture = await createAgentFixture("registry-bind");
   const builder = new AgentBuilder();
   const agent = builder.buildCoordinator();
 
@@ -1691,7 +1698,7 @@ test("AgentRegistry indexes registered agents and thread bindings without owning
 
 test("ScoutAgent starts a thread, runs preflight, and binds it to registry", async () => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("thread-start", { appServer });
+  const fixture = await createAgentFixture("thread-start", { appServer });
   const builder = new AgentBuilder();
   const agent = builder.buildCoordinator();
   const threadEvents: Array<ScoutEvent<AgentThreadSnapshot>> = [];
@@ -1752,7 +1759,7 @@ test("ScoutAgent starts a thread, runs preflight, and binds it to registry", asy
 
 test("ScoutAgent restarts a journaled thread as a distinct lifecycle fact", async () => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("thread-restart", { appServer });
+  const fixture = await createAgentFixture("thread-restart", { appServer });
   const agent = new AgentBuilder().buildCoordinator();
   const threadEvents: ScoutEvent[] = [];
   const unsubscribe = fixture.eventBus.subscribe(
@@ -1816,7 +1823,7 @@ test("ScoutAgent interrupts its owned turn and seals queued work before stopping
     },
     onInterruptTurn: () => releaseTurn?.(),
   });
-  createAgentFixture("stop-active-turn", { appServer });
+  await createAgentFixture("stop-active-turn", { appServer });
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
   await coordinator.sendMessage({ message: agent.turn.message("first turn") });
@@ -1854,7 +1861,7 @@ test("ScoutAgent cancels its turn waiter and reports an interrupt failure", asyn
       rejectTurn?.(error);
     },
   });
-  const fixture = createAgentFixture("stop-interrupt-failure", { appServer });
+  const fixture = await createAgentFixture("stop-interrupt-failure", { appServer });
   const turns: AgentTurnCompletedEvent["turn"][] = [];
   fixture.eventBus.subscribe<AgentTurnCompletedEvent>(AgentEvents.turn.completed, (event) => {
     turns.push(event.payload.turn);
@@ -1897,7 +1904,7 @@ test("ScoutAgent interrupts a turn that binds after the stop timeout", async (t)
     },
     onCancelTurnWait: () => releaseTurnStart?.(),
   });
-  createAgentFixture("stop-late-turn-start", { appServer });
+  await createAgentFixture("stop-late-turn-start", { appServer });
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
   await coordinator.sendMessage({ message: agent.turn.message("blocked turn") });
@@ -1918,7 +1925,7 @@ test("ScoutAgent interrupts a turn that binds after the stop timeout", async (t)
 
 test("ScoutAgent returns no goal when setting a goal fails", async () => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("goal-failure", { appServer });
+  const fixture = await createAgentFixture("goal-failure", { appServer });
   const coordinator = new CoordinatorAgent(fixture.options);
   fixture.registry.registerAgent(coordinator);
   await coordinator.startThread();
@@ -1931,10 +1938,10 @@ test("ScoutAgent returns no goal when setting a goal fails", async () => {
   await coordinator.stopAgent("test_cleanup");
 });
 
-test("AgentTimelineBackend does not publish app-server agent message deltas as activity", () => {
+test("AgentTimelineBackend does not publish app-server agent message deltas as activity", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-skip-agent-message-delta", []);
-  const fixture = createAgentFixture("skip-agent-message-delta", { appServer, domain });
+  const fixture = await createAgentFixture("skip-agent-message-delta", { appServer, domain });
   const activities: AgentActivity[] = [];
   fixture.eventBus.subscribe<AgentActivity>(AgentEvents.activity.observed, (event) => {
     activities.push(event.payload);
@@ -1958,7 +1965,7 @@ test("AgentTimelineBackend does not publish app-server agent message deltas as a
   assert.deepEqual(activities, []);
 });
 
-test("AgentTimelineBackend normalizes app-server items into Agent activity", () => {
+test("AgentTimelineBackend normalizes app-server items into Agent activity", async () => {
   const entry = {
     seq: 7,
     stream: "item",
@@ -1984,7 +1991,7 @@ test("AgentTimelineBackend normalizes app-server items into Agent activity", () 
       };
     },
   });
-  const fixture = createAgentFixture("agent-activity", {
+  const fixture = await createAgentFixture("agent-activity", {
     appServer,
     domain: createStaticDomain("domain-agent-activity", []),
   });
@@ -2042,7 +2049,7 @@ test("AgentTimelineBackend publishes one command fact without the command result
       },
     }),
   });
-  const fixture = createAgentFixture("agent-command-result", {
+  const fixture = await createAgentFixture("agent-command-result", {
     appServer,
     domain: createStaticDomain("domain-command-result", []),
   });
@@ -2119,7 +2126,7 @@ test("AgentTimelineBackend projects a failed command without its return value", 
       },
     }),
   });
-  const fixture = createAgentFixture("agent-command-activity-failure", {
+  const fixture = await createAgentFixture("agent-command-activity-failure", {
     appServer,
     domain: createStaticDomain("domain-command-activity-failure", []),
   });
@@ -2188,7 +2195,7 @@ test("AgentTimelineBackend keeps command bodies out of Activity facts", async ()
       },
     }),
   });
-  const fixture = createAgentFixture("agent-command-activity-heredoc", {
+  const fixture = await createAgentFixture("agent-command-activity-heredoc", {
     appServer,
     domain: createStaticDomain("domain-command-activity-heredoc", []),
   });
@@ -2213,7 +2220,7 @@ test("AgentTimelineBackend keeps command bodies out of Activity facts", async ()
   assert.equal(Object.hasOwn(commands[0] ?? {}, "aggregatedOutput"), false);
 });
 
-test("AgentTimelineBackend publishes context compaction as ordinary activity", () => {
+test("AgentTimelineBackend publishes context compaction as ordinary activity", async () => {
   const entries = [
     {
       seq: 7,
@@ -2244,7 +2251,7 @@ test("AgentTimelineBackend publishes context compaction as ordinary activity", (
       },
     }),
   });
-  const fixture = createAgentFixture("context-compaction-activity", {
+  const fixture = await createAgentFixture("context-compaction-activity", {
     appServer,
     domain: createStaticDomain("domain-context-compaction-activity", []),
   });
@@ -2273,7 +2280,7 @@ test("AgentTimelineBackend publishes context compaction as ordinary activity", (
   );
 });
 
-test("AgentTimelineBackend publishes native subagent facts without activity duplication", () => {
+test("AgentTimelineBackend publishes native subagent facts without activity duplication", async () => {
   const entry = {
     seq: 8,
     stream: "item",
@@ -2317,7 +2324,7 @@ test("AgentTimelineBackend publishes native subagent facts without activity dupl
       },
     }),
   });
-  const fixture = createAgentFixture("native-subagent-activity", {
+  const fixture = await createAgentFixture("native-subagent-activity", {
     appServer,
     domain: createStaticDomain("domain-native-subagent-activity", []),
   });
@@ -2367,7 +2374,7 @@ test("AgentTimelineBackend publishes native subagent facts without activity dupl
   assert.equal(activities.length, 0);
 });
 
-test("AgentTimelineBackend publishes turn lifecycle separately from item activity", () => {
+test("AgentTimelineBackend publishes turn lifecycle separately from item activity", async () => {
   const started = {
     seq: 8,
     stream: "lifecycle",
@@ -2399,7 +2406,7 @@ test("AgentTimelineBackend publishes turn lifecycle separately from item activit
         : undefined,
     }),
   });
-  const fixture = createAgentFixture("agent-turn-activity", {
+  const fixture = await createAgentFixture("agent-turn-activity", {
     appServer,
     domain: createStaticDomain("domain-agent-turn-activity", []),
   });
@@ -2427,11 +2434,11 @@ test("AgentTimelineBackend publishes turn lifecycle separately from item activit
   );
 });
 
-test("AgentTimelineBackend logs only health failures from an unbound app-server event burst", () => {
+test("AgentTimelineBackend logs only health failures from an unbound app-server event burst", async () => {
   const appServer = createFakeAppServer();
   const logs: Array<Omit<LogEvent, "timestamp" | "level" | "runId"> & { level: string }> = [];
   const logger = createCaptureLogger(logs);
-  const fixture = createAgentFixture("app-server-log-volume", {
+  const fixture = await createAgentFixture("app-server-log-volume", {
     appServer,
     domain: createStaticDomain("domain-app-server-log-volume", []),
     logger,
@@ -2461,9 +2468,9 @@ test("AgentTimelineBackend logs only health failures from an unbound app-server 
   );
 });
 
-test("Timeline and Dynamic Tool backends own independent subscription lifetimes", () => {
+test("Timeline and Dynamic Tool backends own independent subscription lifetimes", async () => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("agent-backend-stop", {
+  const fixture = await createAgentFixture("agent-backend-stop", {
     appServer,
     domain: createStaticDomain("domain-agent-backend-stop", []),
   });
@@ -2494,7 +2501,8 @@ test("Worker child threads cannot inherit domain tool access from their register
     },
   });
   const domain: ScoutDomain = {
-    description: { id: ScoutDomainId.Validation, name: "domain-child-tool" },
+    ...testWorkflowParticipant,
+    description: { id: ScoutDomainId.Rbt, name: "domain-child-tool" },
     backend: new class extends DomainAgentBackend {
       override dynamicToolsForPhase() { return [buildDomainTool("domain-child-tool")]; }
 
@@ -2507,7 +2515,7 @@ test("Worker child threads cannot inherit domain tool access from their register
       }
     }(),
   };
-  const fixture = createAgentFixture("worker-child-domain-tool", { appServer, domain });
+  const fixture = await createAgentFixture("worker-child-domain-tool", { appServer, domain });
   const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
     fixture,
@@ -2540,7 +2548,8 @@ test("AgentDynamicToolBackend passes the current Workflow Phase to a Domain tool
   const calls: ScoutDomainDynamicToolCall[] = [];
   const appServer = createFakeAppServer();
   const domain: ScoutDomain = {
-    description: { id: ScoutDomainId.Validation, name: "domain-phase-call" },
+    ...testWorkflowParticipant,
+    description: { id: ScoutDomainId.Rbt, name: "domain-phase-call" },
     backend: new class extends DomainAgentBackend {
       override dynamicToolsForPhase() { return [buildDomainTool("domain-phase-call")]; }
 
@@ -2553,7 +2562,7 @@ test("AgentDynamicToolBackend passes the current Workflow Phase to a Domain tool
       }
     }(),
   };
-  const fixture = createAgentFixture("worker-domain-phase-call", { appServer, domain });
+  const fixture = await createAgentFixture("worker-domain-phase-call", { appServer, domain });
   const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
     fixture,
@@ -2583,20 +2592,18 @@ test("AgentDynamicToolBackend passes the current Workflow Phase to a Domain tool
 test("AgentDynamicToolBackend routes tools across every registered Scout Domain", async () => {
   const calls: ScoutDomainDynamicToolCall[] = [];
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("worker-multiple-domain-tools", { appServer });
-  fixture.domainRegistry.register({
-    description: { id: ScoutDomainId.Rbt, name: "secondary-domain" },
-    backend: new class extends DomainAgentBackend {
-      override dynamicToolsForPhase() { return [buildDomainTool("secondary-domain")]; }
-
-      override async handleDynamicToolCall(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
+  const fixture = await createAgentFixture("worker-multiple-domain-tools", { appServer });
+  fixture.domainRegistry.get(ScoutDomainId.Base).backend.register("research", {
+    definition: buildDomainTool("secondary-domain"),
+    tool: {
+      async execute(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
         calls.push(call);
         return {
           success: true,
           contentItems: [{ type: "inputText", text: "secondary domain result" }],
         };
       }
-    }(),
+    },
   });
   const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
@@ -2629,24 +2636,24 @@ test("AgentDynamicToolBackend routes tools across every registered Scout Domain"
 
 test("AgentDynamicToolBackend rejects duplicate Domain backend registrations before invoking either tool", async () => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("duplicate-domain-backends", { appServer });
   const calls: ScoutDomainDynamicToolCall[] = [];
+  const fixture = await createAgentFixture("duplicate-domain-backends", {
+    appServer,
+    domain: {
+      ...testWorkflowParticipant,
+      description: { id: ScoutDomainId.Rbt, name: "Duplicate tool Domain" },
+      backend: new class extends DomainAgentBackend {
+        override async handleDynamicToolCall(call: ScoutDomainDynamicToolCall) { calls.push(call); return undefined; }
+      }(),
+    },
+  });
   const definition = buildDomainTool("duplicate-domain-tool");
   assert.ok(definition.namespace);
-  for (const id of [ScoutDomainId.Validation, ScoutDomainId.Rbt]) {
-    const backend = new class extends DomainAgentBackend {
-      override async handleDynamicToolCall(call: ScoutDomainDynamicToolCall) {
-        calls.push(call);
-        return undefined;
-      }
-    }();
-    if (id === ScoutDomainId.Validation) {
-      fixture.domainRegistry.unregister(fixture.domainRegistry.get(id));
-    }
-    fixture.domainRegistry.register({ description: { id, name: id }, backend });
+  for (const id of [ScoutDomainId.Base, ScoutDomainId.Rbt]) {
+    const backend = fixture.domainRegistry.get(id).backend;
     backend.register("research", {
       definition,
-      tool: { execute: async () => ({ success: true, contentItems: [] }) },
+      tool: { execute: async (call) => { calls.push(call); return { success: true, contentItems: [] }; } },
     });
   }
   const mount = createMount(fixture.root, "researcher");
@@ -2664,7 +2671,7 @@ test("AgentDynamicToolBackend rejects duplicate Domain backend registrations bef
     arguments: {},
   });
   assert.equal(response.success, false);
-  assert.match(response.contentItems[0]?.text ?? "", /registered by multiple Scout Domains: validation, rbt/);
+  assert.match(response.contentItems[0]?.text ?? "", /registered by multiple Scout Domains: base, rbt/);
   assert.deepEqual(calls, []);
 });
 
@@ -2674,7 +2681,7 @@ test("Child threads cannot call Scout agent lifecycle tools", async () => {
       "thread-child": "thread-test",
     },
   });
-  const fixture = createAgentFixture("worker-child-lifecycle-tool", { appServer });
+  const fixture = await createAgentFixture("worker-child-lifecycle-tool", { appServer });
   const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
     fixture,
@@ -2702,7 +2709,7 @@ test("Child threads cannot call Scout agent lifecycle tools", async () => {
 
 test("Unknown threads remain unauthorized for domain dynamic tools", async () => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("unknown-domain-tool-caller", { appServer });
+  const fixture = await createAgentFixture("unknown-domain-tool-caller", { appServer });
   new AgentDynamicToolBackend().start();
 
   assert.ok(appServer.handler);
@@ -2722,7 +2729,7 @@ test("Unknown threads remain unauthorized for domain dynamic tools", async () =>
 test("SendMessage reports an undelivered message when the target Worker has no TaskRunner", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-send-message-no-worker-runner", []);
-  const fixture = createAgentFixture("send-message-no-worker-runner", { appServer, domain });
+  const fixture = await createAgentFixture("send-message-no-worker-runner", { appServer, domain });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
   new AgentDynamicToolBackend().start();
@@ -2756,7 +2763,7 @@ test("Worker SendMessage reaches Coordinator and Coordinator output reaches the 
   });
   const domain = createStaticDomain("domain-worker-message-to-coordinator", []);
   const interactionPort = new CapturingInteractionPort();
-  const fixture = createAgentFixture("worker-message-to-coordinator", {
+  const fixture = await createAgentFixture("worker-message-to-coordinator", {
     appServer,
     domain,
     interactionPort,
@@ -2822,7 +2829,7 @@ for (const result of [
         await gate;
       },
     });
-    const fixture = createAgentFixture(`coordinator-workflow-${result.status}`, { appServer });
+    const fixture = await createAgentFixture(`coordinator-workflow-${result.status}`, { appServer });
     const scope = currentRunScope();
     const workflow = scope.workflow;
     workflow.initialize();
@@ -2877,7 +2884,7 @@ for (const result of [
 
 test("Coordinator consumes Gateway input even when ScoutRecordObject cannot record that input", async (t) => {
   const appServer = createFakeAppServer({ finalResponse: "Received without depending on the journal." });
-  const fixture = createAgentFixture("coordinator-input-journal-failure", { appServer });
+  const fixture = await createAgentFixture("coordinator-input-journal-failure", { appServer });
   const workflow = currentRunScope().workflow;
   workflow.initialize();
   const coordinator = new AgentBuilder().buildCoordinator();
@@ -2946,7 +2953,7 @@ for (const failOldRawInput of [false, true]) {
         await terminalGate;
       },
     });
-    const fixture = createAgentFixture(`coordinator-pending-input-${failOldRawInput}`, { appServer });
+    const fixture = await createAgentFixture(`coordinator-pending-input-${failOldRawInput}`, { appServer });
     const workflow = currentRunScope().workflow;
     const base = fixture.domainRegistry.get(ScoutDomainId.Base);
     assert.ok(base instanceof BaseDomain);
@@ -3069,7 +3076,7 @@ test(`Workflow ${outcome} consumes pending user input before deciding completion
     },
   });
   const graph = createDefaultTestGraph().snapshot();
-  const fixture = createAgentFixture(`coordinator-terminal-release-${outcome}`, {
+  const fixture = await createAgentFixture(`coordinator-terminal-release-${outcome}`, {
     appServer, runtimeGraph: createTestGraph({
       ...graph,
       phases: graph.phases.map((phase, index) => index === 0
@@ -3168,7 +3175,7 @@ test(`Workflow ${outcome} consumes pending user input before deciding completion
 test("A failed Worker release preserves completion, releases peers and blocks the next Workflow", async (t) => {
   const appServer = createFakeAppServer({ threadIds: ["thread-researcher", "thread-verifier"] });
   const graph = createDefaultTestGraph().snapshot();
-  const fixture = createAgentFixture("workflow-release-failure", {
+  const fixture = await createAgentFixture("workflow-release-failure", {
     appServer, runtimeGraph: createTestGraph({
       ...graph,
       phases: graph.phases.map((phase, index) => index === 0
@@ -3210,7 +3217,7 @@ test("A failed Worker release preserves completion, releases peers and blocks th
     assert.equal(advanced.result.cycleCompleted, true);
     const before = new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read();
     await assert.rejects(workflow.startWorkflow(), /resource release failed/);
-    assert.equal(workflow.snapshot(), undefined);
+    assert.equal(workflow.snapshot()?.status, "completed");
     assert.equal(workflow.graph.completedOutcome, "completed");
     assert.deepEqual(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), before);
     assert.equal(errors.length, 1);
@@ -3219,7 +3226,7 @@ test("A failed Worker release preserves completion, releases peers and blocks th
     assert.ok(workers[1]?.taskRunner);
     failed.mock.restore();
 
-    assert.equal(workflow.snapshot(), undefined);
+    assert.equal(workflow.snapshot()?.status, "completed");
     assert.equal(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read()?.lastSuccess, "workflow-001");
     const oldEvents = readJournalEvents(oldPath);
     assert.equal(oldEvents.filter((event) => AgentEvents.task.released.is(event)).length, 1);
@@ -3231,9 +3238,9 @@ test("A failed Worker release preserves completion, releases peers and blocks th
   }
 });
 
-for (const Stage of [AgentsStage, RestoreAgentsStage]) {
+for (const Stage of [AgentsStage, AgentEntityRecovery]) {
   test(`${Stage.name} closes input and waits for accepted dispatch before stopping Agents`, async (t) => {
-    const fixture = createAgentFixture(`drain-before-${Stage.name}`);
+    const fixture = await createAgentFixture(`drain-before-${Stage.name}`);
     const coordinator = new AgentBuilder().buildCoordinator();
     await coordinator.startThread();
     let release!: () => void;
@@ -3270,7 +3277,7 @@ for (const Stage of [AgentsStage, RestoreAgentsStage]) {
 
 test("Coordinator journals messages received after the Agent stops without starting another turn", async () => {
   const appServer = createFakeAppServer();
-  const fixture = createAgentFixture("coordinator-stopped-message", { appServer });
+  const fixture = await createAgentFixture("coordinator-stopped-message", { appServer });
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
   await coordinator.stopAgent("test_shutdown");
@@ -3446,7 +3453,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
     },
   });
   const domain = createStaticDomain("domain-worker-lifecycle-tools", []);
-  const fixture = createAgentFixture("worker-lifecycle-tools", {
+  const fixture = await createAgentFixture("worker-lifecycle-tools", {
     appServer, domain,
     runtimeGraph: createTestGraph({ ...createDefaultTestGraph().snapshot(), currentPhase: "verify" }),
   });
@@ -3767,7 +3774,7 @@ test("RequestHumanInput yields its Worker turn before a fast human response star
       response: {},
     };
   };
-  const fixture = createAgentFixture("worker-fast-human-response", {
+  const fixture = await createAgentFixture("worker-fast-human-response", {
     appServer,
     runtimeGraph: createTestGraph({ ...createDefaultTestGraph().snapshot(), currentPhase: "verify" }),
   });
@@ -3830,7 +3837,7 @@ test("RequestHumanInput yields its Worker turn before a fast human response star
 test("AssignTask replaces a finished TaskRunner while preserving its thread and Step runner", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-archive-task", []);
-  const fixture = createAgentFixture("archive-task", { appServer, domain });
+  const fixture = await createAgentFixture("archive-task", { appServer, domain });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
   new AgentDynamicToolBackend().start();
@@ -3884,7 +3891,7 @@ test("AssignTask replaces a finished TaskRunner while preserving its thread and 
 test("removed ArchiveTask cannot be invoked by any agent", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-archive-task-role", []);
-  const fixture = createAgentFixture("archive-task-role", { appServer, domain });
+  const fixture = await createAgentFixture("archive-task-role", { appServer, domain });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
   new AgentDynamicToolBackend().start();
@@ -3912,7 +3919,7 @@ test("removed ArchiveTask cannot be invoked by any agent", async () => {
 test("SubmitTask rejects a Coordinator caller", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-worker-lifecycle-tool-role", []);
-  const fixture = createAgentFixture("worker-lifecycle-tool-role", { appServer, domain });
+  const fixture = await createAgentFixture("worker-lifecycle-tool-role", { appServer, domain });
   new AgentDynamicToolBackend().start();
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
@@ -3934,8 +3941,8 @@ test("SubmitTask rejects a Coordinator caller", async () => {
   await coordinator.stopAgent("test_cleanup");
 });
 
-test("AgentTaskStore snapshots are immutable from callers", () => {
-  const fixture = createAgentFixture("task-store-immutable");
+test("AgentTaskStore snapshots are immutable from callers", async () => {
+  const fixture = await createAgentFixture("task-store-immutable");
   const task = fixture.taskStore.addTask({
     type: "local_agent",
     taskId: "task-immutable",
@@ -3989,7 +3996,7 @@ test("Coordinator opens each Workflow only after its requesting Turn and reuses 
       }
     },
   });
-  const fixture = createAgentFixture("explicit-workflow-start", { appServer, withoutActiveWorkflow: true });
+  const fixture = await createAgentFixture("explicit-workflow-start", { appServer, withoutActiveWorkflow: true });
   backend = new AgentDynamicToolBackend();
   const scope = currentRunScope();
   scope.domainRegistry.get(ScoutDomainId.Base)!.start!();
@@ -4038,10 +4045,10 @@ test("Coordinator opens each Workflow only after its requesting Turn and reuses 
 
 test("resumed Workflow resolves handoff refs after a directory rename without rewriting evidence", async () => {
   const appServer = createFakeAppServer({ turnIds: ["before-rename", "after-resume"] });
-  createAgentFixture("artifact-path-resume", { appServer });
+  await createAgentFixture("artifact-path-resume", { appServer });
   const scope = currentRunScope();
   const original = scope.workflow;
-  const graphState = original.graph.snapshot();
+  const graphData = original.graph.snapshot();
   const originalRoot = dirname(original.journalRoot);
   const relativePath = "result.json";
   const artifactRoot = original.agentPaths("researcher").artifactRoot;
@@ -4064,11 +4071,11 @@ test("resumed Workflow resolves handoff refs after a directory rename without re
     assert.ok(selected);
     assert.equal(selected.workflowRoot, renamedRoot);
     const journalPath = join(selected.journalRoot, "scout.journal");
-    resumed = new Workflow(createTestWorkflowAsset(graphState));
+    resumed = new Workflow(createTestWorkflowAsset(graphData));
     scope.clearWorkflow(original);
     scope.setWorkflow(resumed);
     await resumed.start();
-    resumed.restore({ graphState, workflowState: state, journalRoot: selected.journalRoot });
+    await resumed.enterState({ state: WorkflowState.Restoring, input: { graphData, workflowData: state, journalRoot: selected.journalRoot } });
     assert.equal(readFileSync(journalPath, "utf8"), oldJournal);
     await coordinator.runTurn({ prompt });
     assert.equal(appServer.threadInputs.length, 1);
@@ -4097,7 +4104,7 @@ test("resumed Workflow resolves handoff refs after a directory rename without re
 
 test("empty Workflow does not resolve historical refs or supply artifact access paths", async () => {
   const appServer = createFakeAppServer();
-  createAgentFixture("idle-artifact-reference", { appServer, withoutActiveWorkflow: true });
+  await createAgentFixture("idle-artifact-reference", { appServer, withoutActiveWorkflow: true });
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
   try {
@@ -4126,7 +4133,7 @@ for (const status of ["failed", "interrupted"] as const) {
       });
       assert.equal(result.success, true);
     } });
-    createAgentFixture("failed-start-workflow-" + status, { appServer, withoutActiveWorkflow: true });
+    await createAgentFixture("failed-start-workflow-" + status, { appServer, withoutActiveWorkflow: true });
     backend = new AgentDynamicToolBackend();
     const coordinatorAgent = new AgentBuilder().buildCoordinator();
     await coordinatorAgent.startThread();
@@ -4141,7 +4148,7 @@ for (const status of ["failed", "interrupted"] as const) {
   });
 }
 
-function createAgentFixture(
+async function createAgentFixture(
   name: string,
   input: {
     appServer?: ReturnType<typeof createFakeAppServer>;
@@ -4151,7 +4158,7 @@ function createAgentFixture(
     runtimeGraph?: Graph;
     withoutActiveWorkflow?: boolean;
   } = {},
-): {
+): Promise<{
   root: string;
   mount: CodexMount;
   assetCommit: AssetCommit;
@@ -4163,8 +4170,8 @@ function createAgentFixture(
   eventBus: InMemoryEventBus;
   domainRegistry: RunScope["domainRegistry"];
   logger: Logger;
-  journal: { readAll(): JournalEvent[] };
-} {
+  journal: { readAll(): import("../../src/core/record/scout-record.js").ScoutRecord[] };
+}> {
   const root = mkdtempSync(join(tmpdir(), `scout-${name}-`));
   const mount = createMount(root, "coordinator");
   const assetCommit = createAssetCommit(mount);
@@ -4181,7 +4188,7 @@ function createAgentFixture(
   const manifestStore = new RunManifestStore(runRoot);
   const runtimeGraph = input.runtimeGraph ?? createDefaultTestGraph();
   const createdAt = new Date().toISOString();
-  let resume: { workflowState: WorkflowState; journalRoot: string } | undefined;
+  let resume: { workflowData: WorkflowData; journalRoot: string } | undefined;
   if (!input.withoutActiveWorkflow) {
     const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
     benchmarks.benchmarks.acquire();
@@ -4192,10 +4199,10 @@ function createAgentFixture(
     seed.close();
     benchmarks.recordStarted(prepared.workflowId);
     benchmarks.benchmarks.release();
-    resume = { workflowState: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot };
+    resume = { workflowData: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot };
   }
   const workflow = new Workflow(createTestWorkflowAsset(runtimeGraph.snapshot()));
-  const workflowRecovery = resume ? { graphState: runtimeGraph.snapshot(), ...resume } : undefined;
+  const workflowRecovery = resume ? { graphData: runtimeGraph.snapshot(), ...resume } : undefined;
   if (releaseTestRunScope) {
     throw new Error("Test run scope was not released before creating another fixture.");
   }
@@ -4255,11 +4262,23 @@ function createAgentFixture(
     createdAt,
     checkpointSeq: 0,
   });
-  void workflow.start();
-  if (workflowRecovery) workflow.restore(workflowRecovery);
+  await workflow.start();
+  if (workflowRecovery) await workflow.enterState({ state: WorkflowState.Restoring, input: workflowRecovery });
+  // This harness seeds Graph data before constructing Agents. Production recovery
+  // is tested separately; every execution here still uses the real lifecycle owner.
+  const orchestrator = new AgentOrchestrator();
+  scope.setAgentOrchestrator(orchestrator);
+  workflow.registerParticipant(baseDomain);
+  workflow.registerParticipant(domain);
+  workflow.registerParticipant(orchestrator);
+  orchestrator.start();
   releaseTestRunScope = async () => {
+    orchestrator.stop();
+    workflow.unregisterParticipant(orchestrator);
+    scope.clearAgentOrchestrator(orchestrator);
     for (const registeredDomain of scope.domainRegistry.list().reverse()) {
       await registeredDomain.stop?.();
+      workflow.unregisterParticipant(registeredDomain);
       scope.domainRegistry.unregister(registeredDomain);
     }
     await workflow.stop();
@@ -4289,7 +4308,7 @@ function createAgentFixture(
 }
 
 function prepareAgent(
-  fixture: ReturnType<typeof createAgentFixture>,
+  fixture: Awaited<ReturnType<typeof createAgentFixture>>,
   role: ScoutAgentRole,
   mount: CodexMount,
   assetCommit: AssetCommit,
@@ -4414,7 +4433,8 @@ function createAssetCommit(mount: CodexMount): AssetCommit {
 
 function createStaticDomain(domainId: string, tools: AgentDynamicToolSpec[]): ScoutDomain {
   return {
-    description: { id: ScoutDomainId.Validation, name: domainId },
+    ...testWorkflowParticipant,
+    description: { id: ScoutDomainId.Rbt, name: domainId },
     backend: new class extends DomainAgentBackend {
       override dynamicToolsForPhase() { return tools; }
 

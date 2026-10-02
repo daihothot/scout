@@ -23,26 +23,30 @@ const selection: RequestType<{ choices: string[] }, { choice: string }> = {
   isResult: (value): value is { choice: string } => "choice" in value && typeof value.choice === "string",
 };
 
-function createTestHub(t: TestContext) {
+async function createTestHub(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), "scout-request-hub-test-"));
-  const scope = installTestRunScope(t, { runId: "request-hub", scoutRoot: root, runRoot: join(root, "run", "request-hub") });
+  const scope = await installTestRunScope(t, { runId: "request-hub", scoutRoot: root, runRoot: join(root, "run", "request-hub") });
   const location = { journalId: `${scope.runId}:request-hub`, path: join(scope.workflow.journalRoot, "request-hub.journal"), lockPath: join(scope.workflow.journalRoot, ".request-hub.lock") };
   const hubs: RequestHub[] = [];
   const open = () => {
     const hub = new RequestHub();
     hubs.push(hub);
     hub.start();
+    scope.workflow.registerParticipant(hub);
     return hub;
   };
   t.after(() => {
-    for (const hub of hubs) hub.close();
+    for (const hub of hubs) {
+      hub.stop();
+      if (scope.workflow.participants.includes(hub)) scope.workflow.unregisterParticipant(hub);
+    }
     rmSync(root, { recursive: true, force: true });
   });
   return { hub: open(), location, open, scope };
 }
 
 test("RequestHub keeps unrelated typed requests and rejects a mismatched contract", async (t) => {
-  const { hub } = createTestHub(t);
+  const { hub } = await createTestHub(t);
   const first = hub.register(calculation, { input: 4 });
   const second = hub.register(selection, { choices: ["a", "b"] });
   assert.equal(hub.get(selection, first.requestId), undefined);
@@ -58,7 +62,7 @@ test("RequestHub keeps unrelated typed requests and rejects a mismatched contrac
 });
 
 test("RequestHub isolates registration, lookup, result, and callback data", async (t) => {
-  const { hub } = createTestHub(t);
+  const { hub } = await createTestHub(t);
   const payload = { choices: ["a"] };
   const registered = hub.register(selection, payload, { callback: (result) => { result.choice = "changed"; } });
   payload.choices.push("outside");
@@ -77,7 +81,7 @@ test("RequestHub isolates registration, lookup, result, and callback data", asyn
 });
 
 test("RequestHub commits before callback and never replays failed callbacks", async (t) => {
-  const { hub, open } = createTestHub(t);
+  const { hub, open } = await createTestHub(t);
   let calls = 0;
   const registered = hub.register(calculation, { input: 1 }, { callback: () => {
     calls += 1;
@@ -90,14 +94,14 @@ test("RequestHub commits before callback and never replays failed callbacks", as
   await assert.rejects(completion, /callback failure/);
   assert.equal(calls, 1);
   assert.equal(hub.expire(registered.requestId, "too_late"), false);
-  hub.close();
+  hub.stop();
   const restored = open();
   assert.deepEqual(restored.get(calculation, registered.requestId), hub.get(calculation, registered.requestId));
   assert.equal(calls, 1);
 });
 
 test("RequestHub preserves pending requests on close and restores explicit expiry", async (t) => {
-  const { hub, open, location } = createTestHub(t);
+  const { hub, open, location } = await createTestHub(t);
   let callbacks = 0;
   const pending = hub.register(calculation, { input: 1 }, { callback: () => { callbacks += 1; } });
   const completed = hub.register(calculation, { input: 2 });
@@ -107,8 +111,8 @@ test("RequestHub preserves pending requests on close and restores explicit expir
   assert.equal(hub.expire(expired.requestId, "again"), false);
   assert.equal(hub.expire("missing", "test"), false);
   const events = readJournalEvents(location.path);
-  hub.close();
-  hub.close();
+  hub.stop();
+  hub.stop();
   assert.equal(existsSync(location.lockPath), false);
   assert.deepEqual(readJournalEvents(location.path), events);
   assert.equal(hub.get(calculation, pending.requestId)?.status, "pending");
@@ -126,8 +130,8 @@ test("RequestHub preserves pending requests on close and restores explicit expir
   assert.throws(() => restored.complete(calculation, expired.requestId, { output: 6 }), /expired/);
 });
 
-test("RequestHub validates actual data without committing malformed payloads or results", (t) => {
-  const { hub } = createTestHub(t);
+test("RequestHub validates actual data without committing malformed payloads or results", async (t) => {
+  const { hub } = await createTestHub(t);
   // @ts-expect-error A request contract rejects another payload type at compile time too.
   assert.throws(() => hub.register(calculation, { choices: ["a"] }), /payload/);
   const pending = hub.register(calculation, { input: 1 });
@@ -137,7 +141,7 @@ test("RequestHub validates actual data without committing malformed payloads or 
 });
 
 test("Multiple consumption appends independent results, restores them, and retains them on expiry", async (t) => {
-  const { hub, open, location } = createTestHub(t);
+  const { hub, open, location } = await createTestHub(t);
   const callbacks: number[] = [];
   const registered = hub.register(calculation, { input: 1 }, {
     consumption: "multiple", callback: ({ output }) => { callbacks.push(output); },
@@ -151,7 +155,7 @@ test("Multiple consumption appends independent results, restores them, and retai
   assert.deepEqual(before.completions.map(({ result }) => result.output), [2, 3]);
   assert.equal(new Set(before.completions.map(({ completionId }) => completionId)).size, 2);
   assert.deepEqual(callbacks, [2, 3]);
-  hub.close();
+  hub.stop();
   const restored = open();
   assert.deepEqual(restored.get(calculation, registered.requestId), before);
   await restored.complete(calculation, registered.requestId, { output: 4 });
@@ -162,7 +166,7 @@ test("Multiple consumption appends independent results, restores them, and retai
   assert.equal(expired.reason, "workflow_finished");
   assert.deepEqual(expired.completions.map(({ result }) => result.output), [2, 3, 4]);
   assert.deepEqual(callbacks, [2, 3]);
-  restored.close();
+  restored.stop();
   assert.deepEqual(open().get(calculation, registered.requestId), expired);
   assert.deepEqual(readJournalEvents(location.path).map(({ key }) => key.routeKey), [
     RequestHubEvents.requestHub.registered.routeKey,
@@ -174,7 +178,7 @@ test("Multiple consumption appends independent results, restores them, and retai
 });
 
 test("A failed callback cannot roll back or mutate multiple-consumption records", async (t) => {
-  const { hub } = createTestHub(t);
+  const { hub } = await createTestHub(t);
   const registered = hub.register(selection, { choices: ["a", "b"] }, { consumption: "multiple", callback: (result) => {
     result.choice = "changed";
     throw new Error("callback failure");
@@ -189,7 +193,7 @@ test("A failed callback cannot roll back or mutate multiple-consumption records"
 });
 
 test("Journal append failures leave registration, completion, expiry, and callbacks uncommitted", async (t) => {
-  const { hub, location } = createTestHub(t);
+  const { hub, location } = await createTestHub(t);
   let callbacks = 0;
   const registered = hub.register(calculation, { input: 1 }, { consumption: "multiple", callback: () => { callbacks += 1; } });
   const original = hub.get(calculation, registered.requestId);
@@ -208,8 +212,8 @@ test("Journal append failures leave registration, completion, expiry, and callba
   assert.equal(hub.expire(registered.requestId, "cancel"), true);
 });
 
-test("RequestHub rejects lossy JSON payloads and results before recording them", (t) => {
-  const { hub, location } = createTestHub(t);
+test("RequestHub rejects lossy JSON payloads and results before recording them", async (t) => {
+  const { hub, location } = await createTestHub(t);
   const data: RequestType<object, object> = {
     name: "json", isPayload: (value): value is object => typeof value === "object",
     isResult: (value): value is object => typeof value === "object",
@@ -223,10 +227,10 @@ test("RequestHub rejects lossy JSON payloads and results before recording them",
 });
 
 test("Restore validates payloads and every result against the supplied host contract before rebinding", async (t) => {
-  const { hub, open } = createTestHub(t);
+  const { hub, open } = await createTestHub(t);
   const request = hub.register(calculation, { input: 1 }, { consumption: "multiple" });
   await hub.complete(calculation, request.requestId, { output: 2 });
-  hub.close();
+  hub.stop();
   const restored = open();
   const wrongPayload: RequestType<{ input: number }, { output: number }> = {
     ...calculation, isPayload: (value): value is { input: number } => "input" in value && value.input === 99,
@@ -242,10 +246,10 @@ test("Restore validates payloads and every result against the supplied host cont
 
 test("RequestHub refuses invalid replay transitions and releases its Journal lock on startup failure", async (t) => {
   for (const corruption of ["duplicate_registration", "after_completion", "unknown_request", "unknown_event"]) {
-    await t.test(corruption, (t) => {
-      const { hub, open, location } = createTestHub(t);
+    await t.test(corruption, async (t) => {
+      const { hub, open, location } = await createTestHub(t);
       const request = hub.register(calculation, { input: 1 });
-      hub.close();
+      hub.stop();
       const journal = Journal.open(location);
       const occurredAt = new Date().toISOString();
       const completed = { requestId: request.requestId, result: { output: 2 } };
@@ -267,13 +271,13 @@ test("RequestHub refuses invalid replay transitions and releases its Journal loc
   }
 });
 
-test("RequestHub requires startup and refuses a second live writer", (t) => {
-  const { hub, location, open } = createTestHub(t);
+test("RequestHub requires startup and refuses a second live writer", async (t) => {
+  const { hub, location, open } = await createTestHub(t);
   assert.throws(open, /already attached/);
   hub.start();
   const unstarted = new RequestHub();
   assert.throws(() => unstarted.register(calculation, { input: 1 }), /not started/);
-  unstarted.close();
+  unstarted.stop();
   assert.throws(() => unstarted.start(), /closed/);
 });
 
@@ -285,10 +289,10 @@ test("RequestHub rejects malformed registration, completion, and expiry facts du
     { key: RequestHubEvents.requestHub.expired, payload: { requestId: "pending", reason: "" } },
   ];
   for (const [index, invalid] of invalidFacts.entries()) {
-    await t.test(`invalid fact ${index + 1}`, (t) => {
-      const { hub, location, open } = createTestHub(t);
+    await t.test(`invalid fact ${index + 1}`, async (t) => {
+      const { hub, location, open } = await createTestHub(t);
       const pending = hub.register(calculation, { input: 1 });
-      hub.close();
+      hub.stop();
       const journal = Journal.open(location);
       journal.append({ id: `invalid-${index}`, occurredAt: new Date().toISOString(), key: invalid.key,
         payload: { ...invalid.payload, requestId: invalid.payload.requestId === "pending" ? pending.requestId : invalid.payload.requestId } });
@@ -300,10 +304,10 @@ test("RequestHub rejects malformed registration, completion, and expiry facts du
 });
 
 test("Replay refuses repeated completion identities on a multiple-consumption request", async (t) => {
-  const { hub, location, open } = createTestHub(t);
+  const { hub, location, open } = await createTestHub(t);
   const request = hub.register(calculation, { input: 1 }, { consumption: "multiple" });
   await hub.complete(calculation, request.requestId, { output: 2 });
-  hub.close();
+  hub.stop();
   const journal = Journal.open(location);
   journal.append(journal.readAll().at(-1)!);
   journal.close();
@@ -312,7 +316,7 @@ test("Replay refuses repeated completion identities on a multiple-consumption re
 });
 
 test("RequestHub retains request identities across awaited Workflow boundaries and restores results without callbacks", async (t) => {
-  const { hub, location, open, scope } = createTestHub(t);
+  const { hub, location, open, scope } = await createTestHub(t);
   let callbacks = 0;
   const request = hub.register(calculation, { input: 1 }, {
     consumption: "multiple", callback: () => { callbacks += 1; },
@@ -338,7 +342,7 @@ test("RequestHub retains request identities across awaited Workflow boundaries a
   assert.equal(new Set(events.map((event) => event.id)).size, 3);
   assert.equal(readFileSync(location.path, "utf8"), previous);
   const before = hub.get(calculation, request.requestId);
-  hub.close();
+  hub.stop();
   assert.equal(existsSync(current.lockPath), false);
   const restored = open();
   assert.deepEqual(restored.get(calculation, request.requestId), before);
@@ -356,11 +360,12 @@ test("RequestHub starts in an empty runtime without creating recording files and
   const manifestStore = new RunManifestStore(runRoot);
   manifestStore.create({ runId, scoutRoot: root, createdAt: new Date().toISOString(), checkpointSeq: 0 });
   const workflow = new Workflow(createTestWorkflowAsset(createDefaultTestGraph().snapshot()));
-  const scope = installTestRunScope(t, { runId, scoutRoot: root, runRoot, workflow, manifestStore });
+  const scope = await installTestRunScope(t, { runId, scoutRoot: root, runRoot, workflow, manifestStore });
   await workflow.start();
   const hub = new RequestHub();
-  t.after(async () => { hub.close(); await workflow.stop(); rmSync(root, { recursive: true, force: true }); });
+  t.after(async () => { hub.stop(); await workflow.stop(); rmSync(root, { recursive: true, force: true }); });
   hub.start();
+  scope.workflow.registerParticipant(hub);
   const request = hub.register(calculation, { input: 1 });
   assert.equal(existsSync(join(runRoot, "request-hub.journal")), false);
   assert.equal(existsSync(join(runRoot, "workflows")), false);

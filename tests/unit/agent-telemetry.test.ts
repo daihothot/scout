@@ -38,10 +38,10 @@ import { installTestRunScope } from "../helpers/run-persistence.js";
 test("TaskEventRecorder writes only task lifecycle facts", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-task-recorder-"));
   const eventBus = new InMemoryEventBus();
-  const registry = installTestRunScope(t, {
+  const registry = await (await installTestRunScope(t, {
     runId: "run-task-recorder",
     eventBus,
-  }).agentRegistry;
+  })).agentRegistry;
   const logsRoot = currentRunScope().workflow.agentPaths("researcher").logsRoot;
   registerAgent(registry, "researcher", logsRoot);
   const recorder = new TaskEventRecorder();
@@ -91,7 +91,7 @@ test("TaskEventRecorder writes only task lifecycle facts", async (t) => {
 });
 
 test("TaskEventRecorder separates new tasks after a restored worker reuses its local task sequence", async (t) => {
-  const scope = installTestRunScope(t, { runId: "restored-task-identity" });
+  const scope = await installTestRunScope(t, { runId: "restored-task-identity" });
   const logsRoot = scope.workflow.agentPaths("researcher").logsRoot;
   registerAgent(scope.agentRegistry, "researcher", logsRoot);
   const recorder = new TaskEventRecorder();
@@ -129,10 +129,10 @@ test("TaskEventRecorder separates new tasks after a restored worker reuses its l
 test("AgentHumanInputRecorder writes one Human Input body with message identity", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-human-input-recorder-"));
   const eventBus = new InMemoryEventBus();
-  const registry = installTestRunScope(t, {
+  const registry = await (await installTestRunScope(t, {
     runId: "run-human-input-recorder",
     eventBus,
-  }).agentRegistry;
+  })).agentRegistry;
   const logsRoot = currentRunScope().workflow.agentPaths("researcher").logsRoot;
   registerAgent(registry, "researcher", logsRoot);
   const recorder = new AgentHumanInputRecorder();
@@ -166,10 +166,10 @@ test("AgentHumanInputRecorder writes one Human Input body with message identity"
 test("StepEventRecorder writes Worker and Coordinator step facts only to step logs", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-step-recorder-"));
   const eventBus = new InMemoryEventBus();
-  const registry = installTestRunScope(t, {
+  const registry = await (await installTestRunScope(t, {
     runId: "run-step-recorder",
     eventBus,
-  }).agentRegistry;
+  })).agentRegistry;
   const researcherLogsRoot = currentRunScope().workflow.agentPaths("researcher").logsRoot;
   const coordinatorLogsRoot = currentRunScope().workflow.agentPaths("coordinator").logsRoot;
   registerAgent(registry, "researcher", researcherLogsRoot);
@@ -302,10 +302,10 @@ test("StepEventRecorder writes Worker and Coordinator step facts only to step lo
 test("AgentToolCallRecorder aggregates one logical Tool Call lifecycle", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-tool-call-recorder-"));
   const eventBus = new InMemoryEventBus();
-  const registry = installTestRunScope(t, {
+  const registry = await (await installTestRunScope(t, {
     runId: "run-tool-call-recorder",
     eventBus,
-  }).agentRegistry;
+  })).agentRegistry;
   const logsRoot = currentRunScope().workflow.agentPaths("coordinator").logsRoot;
   registerAgent(registry, "coordinator", logsRoot);
   const recorder = new AgentToolCallRecorder();
@@ -359,10 +359,10 @@ test("AgentToolCallRecorder aggregates one logical Tool Call lifecycle", async (
 test("AgentActivityRecorder writes stable activity to the role activity log", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-activity-recorder-"));
   const eventBus = new InMemoryEventBus();
-  const registry = installTestRunScope(t, {
+  const registry = await (await installTestRunScope(t, {
     runId: "run-activity-recorder",
     eventBus,
-  }).agentRegistry;
+  })).agentRegistry;
   const logsRoot = currentRunScope().workflow.agentPaths("researcher").logsRoot;
   registerAgent(registry, "researcher", logsRoot);
   const recorder = new AgentActivityRecorder();
@@ -418,10 +418,10 @@ test("AgentActivityRecorder writes stable activity to the role activity log", as
 test("AgentCommandExecutionRecorder writes command facts without return values", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-command-recorder-"));
   const eventBus = new InMemoryEventBus();
-  const registry = installTestRunScope(t, {
+  const registry = await (await installTestRunScope(t, {
     runId: "run-command-recorder",
     eventBus,
-  }).agentRegistry;
+  })).agentRegistry;
   const logsRoot = currentRunScope().workflow.agentPaths("researcher").logsRoot;
   registerAgent(registry, "researcher", logsRoot);
   const recorder = new AgentCommandExecutionRecorder();
@@ -452,10 +452,10 @@ test("AgentCommandExecutionRecorder writes command facts without return values",
 test("AgentSubagentRecorder writes complete native subagent facts to a dedicated log", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "scout-subagent-recorder-"));
   const eventBus = new InMemoryEventBus();
-  const registry = installTestRunScope(t, {
+  const registry = await (await installTestRunScope(t, {
     runId: "run-subagent-recorder",
     eventBus,
-  }).agentRegistry;
+  })).agentRegistry;
   const logsRoot = currentRunScope().workflow.agentPaths("researcher").logsRoot;
   registerAgent(registry, "researcher", logsRoot);
   const activityRecorder = new AgentActivityRecorder();
@@ -522,10 +522,10 @@ test("AgentThreadRecorder summarizes thread instruction and tool bodies", async 
   const root = mkdtempSync(join(tmpdir(), "scout-thread-recorder-"));
   const logsRoot = join(root, "agents", "researcher", "logs");
   const eventBus = new InMemoryEventBus();
-  const registry = installTestRunScope(t, {
+  const registry = await (await installTestRunScope(t, {
     runId: "run-thread-recorder",
     eventBus,
-  }).agentRegistry;
+  })).agentRegistry;
   registerAgent(registry, "researcher", logsRoot);
   const recorder = new AgentThreadRecorder();
   const baseInstructions = `${"base-instruction ".repeat(300)}END_OF_BASE_INSTRUCTIONS`;
@@ -722,10 +722,10 @@ test("AgentThreadRecorder records Coordinator instruction assets without their b
   const root = mkdtempSync(join(tmpdir(), "scout-coordinator-thread-recorder-"));
   const logsRoot = join(root, "agents", "coordinator", "logs");
   const eventBus = new InMemoryEventBus();
-  const registry = installTestRunScope(t, {
+  const registry = await (await installTestRunScope(t, {
     runId: "run-coordinator-thread-recorder",
     eventBus,
-  }).agentRegistry;
+  })).agentRegistry;
   registerAgent(registry, "coordinator", logsRoot);
   const recorder = new AgentThreadRecorder();
   const started: AgentThreadSnapshot = {
@@ -831,17 +831,17 @@ test("All execution telemetry recorders share entity/Workflow directory selectio
   ];
   for (const entry of cases) {
     await t.test(entry.Recorder.name, async (t) => {
-      const scope = installTestRunScope(t, { runId: `routing-${entry.Recorder.name}` });
+      const scope = await installTestRunScope(t, { runId: `routing-${entry.Recorder.name}` });
       const agentRoot = join(scope.runRoot, "agents", "researcher");
       const entityLogs = join(agentRoot, "logs");
       const firstLogs = scope.workflow.agentPaths("researcher").logsRoot;
       const secondLogs = join(scope.runRoot, "workflows", "renamed-workflow", "agents", "researcher", "logs");
       registerAgent(scope.agentRegistry, "researcher", agentRoot);
-      const workflowState = scope.workflow.snapshot();
-      assert.ok(workflowState);
+      const workflowData = scope.workflow.snapshot();
+      assert.ok(workflowData);
       let selectedLogs: string | undefined;
       // Isolate recorder selection from workflow lifecycle, which has separate integration tests.
-      t.mock.method(scope.workflow, "snapshot", () => selectedLogs ? workflowState : undefined);
+      t.mock.method(scope.workflow, "snapshot", () => selectedLogs ? workflowData : undefined);
       t.mock.method(scope.workflow, "agentPaths", (agentId: string) => {
         assert.equal(agentId, "researcher");
         assert.ok(selectedLogs, "idle-runtime logging must not ask Workflow for paths");
@@ -888,14 +888,14 @@ test("All execution telemetry recorders share entity/Workflow directory selectio
 });
 
 test("Tool Call completion and stop flushing retain the first-observed telemetry directory", async (t) => {
-  const scope = installTestRunScope(t, { runId: "tool-call-log-ownership" });
+  const scope = await installTestRunScope(t, { runId: "tool-call-log-ownership" });
   const agentRoot = join(scope.runRoot, "agents", "coordinator");
   const entityLog = join(agentRoot, "logs", "tool-calls.log");
   const workflowLog = join(scope.workflow.agentPaths("coordinator").logsRoot, "tool-calls.log");
   registerAgent(scope.agentRegistry, "coordinator", agentRoot);
-  const workflowState = scope.workflow.snapshot();
+  const workflowData = scope.workflow.snapshot();
   let inWorkflow = false;
-  t.mock.method(scope.workflow, "snapshot", () => inWorkflow ? workflowState : undefined);
+  t.mock.method(scope.workflow, "snapshot", () => inWorkflow ? workflowData : undefined);
   const recorder = new AgentToolCallRecorder();
   recorder.start();
   t.after(() => recorder.stop());

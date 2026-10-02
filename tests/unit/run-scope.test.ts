@@ -14,8 +14,8 @@ test("currentRunScope rejects access outside an active run", () => {
   assert.throws(() => currentRunScope(), /No active Scout run scope/);
 });
 
-test("installRunScope exposes one run scope until release", (t) => {
-  const scope = createRunScope(t, "run-scope-active");
+test("installRunScope exposes one run scope until release", async (t) => {
+  const scope = await createRunScope(t, "run-scope-active");
   const release = installRunScope(scope);
 
   assert.equal(currentRunScope(), scope);
@@ -24,13 +24,14 @@ test("installRunScope exposes one run scope until release", (t) => {
   assert.throws(() => currentRunScope(), /No active Scout run scope/);
 });
 
-test("installRunScope rejects a second active run without replacing the first", (t) => {
-  const first = createRunScope(t, "run-scope-first");
+test("installRunScope rejects a second active run without replacing the first", async (t) => {
+  const first = await createRunScope(t, "run-scope-first");
+  const second = await createRunScope(t, "run-scope-second");
   const release = installRunScope(first);
 
   try {
     assert.throws(
-      () => installRunScope(createRunScope(t, "run-scope-second")),
+      () => installRunScope(second),
       /Run scope already installed: run-scope-first/,
     );
     assert.equal(currentRunScope(), first);
@@ -39,8 +40,8 @@ test("installRunScope rejects a second active run without replacing the first", 
   }
 });
 
-test("run scope release cannot be applied twice", (t) => {
-  const release = installRunScope(createRunScope(t, "run-scope-release"));
+test("run scope release cannot be applied twice", async (t) => {
+  const release = installRunScope(await createRunScope(t, "run-scope-release"));
 
   release();
 
@@ -50,8 +51,8 @@ test("run scope release cannot be applied twice", (t) => {
   );
 });
 
-test("RunScope exposes staged resources only after their owner registers them", (t) => {
-  const scope = createRunScope(t, "run-scope-resources");
+test("RunScope exposes staged resources only after their owner registers them", async (t) => {
+  const scope = await createRunScope(t, "run-scope-resources");
   const appServer = {} as RunScope["appServer"];
   const environment = createRunEnvironment(scope.runId);
 
@@ -73,8 +74,8 @@ test("RunScope exposes staged resources only after their owner registers them", 
   assert.throws(() => scope.appServer, /app-server is not available/);
 });
 
-test("RunScope rejects clearing a client it does not own", (t) => {
-  const scope = createRunScope(t, "run-scope-client-owner");
+test("RunScope rejects clearing a client it does not own", async (t) => {
+  const scope = await createRunScope(t, "run-scope-client-owner");
   const appServer = {} as RunScope["appServer"];
 
   scope.setAppServer(appServer);
@@ -86,14 +87,14 @@ test("RunScope rejects clearing a client it does not own", (t) => {
   assert.equal(scope.appServer, appServer);
 });
 
-function createRunScope(t: import("node:test").TestContext, runId: string): RunScope {
+async function createRunScope(t: import("node:test").TestContext, runId: string): Promise<RunScope> {
   return new RunScope({
     runId,
     scoutRoot: "/repo",
     logger: {} as RunScope["logger"],
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    ...createTestRunPersistence(t, runId),
+    ...await createTestRunPersistence(t, runId),
     terminate: async () => undefined,
   });
 }

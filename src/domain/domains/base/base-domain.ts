@@ -1,6 +1,4 @@
-import { WorkflowEvents } from "../../../core/workflow/workflow-events.js";
-import type { WorkflowState } from "../../../core/workflow/workflow-state.js";
-import { EventSubscriptionPriorities } from "../../../core/events/index.js";
+import type { WorkflowData } from "../../../core/workflow/workflow-data.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 import {
   ScoutDomainId,
@@ -13,7 +11,8 @@ import {
   ExecutionPlatformTool,
   executionPlatformAgentTool,
 } from "./agent/tools/index.js";
-import { BaseDomainRecordObject, type BaseDomainRuntimeFact } from "./base-domain-record-object.js";
+import { BaseDomainRecordObject } from "./record/base-domain-record-object.js";
+import { BaseDomainProjector, type BaseDomainRuntimeFact } from "./projector/base-domain-projector.js";
 import { BaseDomainToolCallStore } from "./base-domain-tool-call-store.js";
 import { BaseDomainExecution } from "./execution/index.js";
 
@@ -36,7 +35,6 @@ export class BaseDomain implements ScoutDomain {
     toolCalls: [],
   };
   private started = false;
-  private unsubscribeWorkflowCommit?: () => void;
 
   constructor() {
     const scope = currentRunScope();
@@ -57,19 +55,14 @@ export class BaseDomain implements ScoutDomain {
   start(): void {
     if (this.started) return;
     const scope = currentRunScope();
-    const workflowState = scope.workflow.snapshot();
+    const workflowData = scope.workflow.snapshot();
     this.recordObject.start();
-    this.unsubscribeWorkflowCommit = scope.eventBus.subscribe(WorkflowEvents.workflow.committing, () => {
-      this.restoredFact = { domainId: "base", journalSeq: 0, toolCalls: [] };
-      this.toolCallStore.clear();
-      this.execution.stop();
-    }, { priority: EventSubscriptionPriorities.Normal });
     this.started = true;
     scope.logger.info({
       module: "domain.base",
       event: "base_domain_started",
       message: "Started Base Domain.",
-      data: { workflowId: workflowState?.workflowId },
+      data: { workflowId: workflowData?.workflowId },
     });
   }
 
@@ -78,7 +71,6 @@ export class BaseDomain implements ScoutDomain {
     this.started = false;
     const failures: unknown[] = [];
     for (const release of [
-      () => { this.unsubscribeWorkflowCommit?.(); this.unsubscribeWorkflowCommit = undefined; },
       () => this.recordObject.stop(),
       () => this.execution.stop(),
       () => this.toolCallStore.clear(),
@@ -104,27 +96,30 @@ export class BaseDomain implements ScoutDomain {
     if (failures.length > 0) throw new AggregateError(failures, "Failed to stop Base Domain.");
   }
 
-  finishWorkflow(): void {
-    this.recordObject.releaseWorkflow();
+  create(): void {
+    this.restoredFact = { domainId: "base", journalSeq: 0, toolCalls: [] };
+    this.toolCallStore.clear();
+    this.execution.stop();
   }
 
-  restore(workflowState: WorkflowState): void {
-    if (workflowState.status === "completed") {
-      this.restoredFact = {
-        domainId: "base",
-        journalSeq: 0,
-        toolCalls: [],
-      };
-      this.toolCallStore.clear();
-      this.execution.stop();
-      return;
-    }
-    this.restoredFact = this.recordObject.aggregate(this.recordObject.readAll());
+  restore(_workflowData: WorkflowData): void {
+    if (_workflowData.status === "completed") return;
+    this.recordObject.attach(currentRunScope().workflow.journalRoot);
+    const records = this.recordObject.read();
+    const runtimeObject = new BaseDomainProjector().project(records);
+    this.restoredFact = runtimeObject;
     this.toolCallStore.restore(this.restoredFact.toolCalls);
     this.execution.restore(this.restoredFact);
   }
 
-  close(): void {
-    this.stop();
+  run(): void {}
+  async close(): Promise<void> { await this.execution.drain(); }
+  async abort(): Promise<void> { await this.execution.drain(); }
+
+  clearWorkflow(): void {
+    this.restoredFact = { domainId: "base", journalSeq: 0, toolCalls: [] };
+    this.toolCallStore.clear();
+    this.execution.stop();
+    this.recordObject.release();
   }
 }

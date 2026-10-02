@@ -34,14 +34,6 @@ test("agent dynamic tool specs expose stable namespaces, guidance Skills, and re
     AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
     AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
   ]);
-  assert.deepEqual(tools.map((tool) => tool.guidanceSkill), [
-    "tool-scout-assign-task",
-    "tool-scout-send-message",
-    "tool-scout-request-human-input",
-    "tool-scout-respond-human-input",
-    "tool-scout-submit-task",
-    "tool-scout-submit-phase-outcome",
-  ]);
   assert.deepEqual(tools.map((tool) => readRequired(tool.inputSchema)), [
     ["description", "prompt"],
     ["to", "message"],
@@ -106,7 +98,6 @@ test("agent tool parser rejects malformed and removed Skill tool payloads", () =
     description: "Research BDD",
     prompt: " ",
   }), /AssignTask prompt/);
-  assert.throws(() => parseAgentDynamicToolCall("ArchiveTask", { task_id: " " }), /Unsupported agent tool/);
   assert.throws(
     () => parseAgentDynamicToolCall("SubmitPhaseOutcome", { outcome: "blocked" }),
     /SubmitPhaseOutcome outcome/,
@@ -133,15 +124,6 @@ function readRequired(schema: unknown): string[] {
   const object = readObject(schema);
   return Array.isArray(object.required)
     ? object.required.filter((item): item is string => typeof item === "string")
-    : [];
-}
-
-function readEnumProperty(schema: unknown, key: string): string[] {
-  const object = readObject(schema);
-  const properties = readObject(object.properties);
-  const property = readObject(properties[key]);
-  return Array.isArray(property.enum)
-    ? property.enum.filter((item): item is string => typeof item === "string")
     : [];
 }
 

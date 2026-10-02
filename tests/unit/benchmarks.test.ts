@@ -13,8 +13,8 @@ function fixture(t: TestContext): Benchmarks {
   return benchmarks;
 }
 
-test("Benchmarks store business-owned nodes without adding fields and preserve independent chapters", (t) => {
-  const benchmarks = fixture(t);
+test("Benchmarks store business-owned nodes without adding fields and preserve independent chapters", async (t) => {
+  const benchmarks = await fixture(t);
   assert.equal(existsSync(benchmarks.path), false);
   assert.equal(benchmarks.read("scout"), undefined);
   assert.deepEqual(benchmarks.list("rbt"), []);
@@ -39,8 +39,8 @@ test("Benchmarks store business-owned nodes without adding fields and preserve i
   assert.throws(() => benchmarks.list("rbt", ["business", "lastRun", "note"]), /has no children/);
 });
 
-test("Node submissions reread manual edits and commit a batch without overwriting unrelated fields", (t) => {
-  const benchmarks = fixture(t);
+test("Node submissions reread manual edits and commit a batch without overwriting unrelated fields", async (t) => {
+  const benchmarks = await fixture(t);
   benchmarks.submit("rbt", [{ path: ["history"], value: { lastRun: { workflowId: "workflow-001" } } }]);
   benchmarks.read("rbt");
   const manual = {
@@ -59,8 +59,8 @@ test("Node submissions reread manual edits and commit a batch without overwritin
   });
 });
 
-test("Only explicit Workflow references are indexed, including references in arrays", (t) => {
-  const benchmarks = fixture(t);
+test("Only explicit Workflow references are indexed, including references in arrays", async (t) => {
+  const benchmarks = await fixture(t);
   const reference = { workflowId: "workflow-004", pack: { artifact: "execute-file.json", hash: "abc" } };
   benchmarks.submit("scout", [{ path: ["currentWorkflow"], value: { workflowId: "workflow-004" } }]);
   benchmarks.submit("rbt", [{ path: [], value: {
@@ -81,8 +81,8 @@ test("Only explicit Workflow references are indexed, including references in arr
   assert.equal(benchmarks.referencesTo("workflow-004").length, 3);
 });
 
-test("Workflow resolution follows its identity after rename, allows missing evidence and rejects duplicates", (t) => {
-  const benchmarks = fixture(t);
+test("Workflow resolution follows its identity after rename, allows missing evidence and rejects duplicates", async (t) => {
+  const benchmarks = await fixture(t);
   const reference = { workflowId: "workflow-008" };
   benchmarks.submit("rbt", [{ path: ["history"], value: reference }]);
   assert.equal(benchmarks.resolve(reference), undefined);
@@ -99,8 +99,8 @@ test("Workflow resolution follows its identity after rename, allows missing evid
   assert.throws(() => benchmarks.resolve(reference), /Duplicate Workflow identity/);
 });
 
-test("Invalid batches and filesystem write failures leave the previous document intact", (t) => {
-  const benchmarks = fixture(t);
+test("Invalid batches and filesystem write failures leave the previous document intact", async (t) => {
+  const benchmarks = await fixture(t);
   benchmarks.submit("rbt", [{ path: [], value: { kept: 7, leaf: false } }]);
   const before = readFileSync(benchmarks.path, "utf8");
   assert.throws(() => benchmarks.submit("rbt", [
@@ -123,8 +123,8 @@ test("Invalid batches and filesystem write failures leave the previous document 
   assert.equal(readFileSync(benchmarks.path, "utf8"), before);
 });
 
-test("All chapters share the Workflow lease while read-only consumers do not acquire ownership", (t) => {
-  const benchmarks = fixture(t);
+test("All chapters share the Workflow lease while read-only consumers do not acquire ownership", async (t) => {
+  const benchmarks = await fixture(t);
   benchmarks.submit("scout", [{ path: ["currentWorkflow"], value: { workflowId: "workflow-001" } }]);
   const reader = new Benchmarks(benchmarks.runRoot);
   assert.deepEqual(reader.read("scout"), benchmarks.read("scout"));
@@ -138,8 +138,8 @@ test("All chapters share the Workflow lease while read-only consumers do not acq
   assert.deepEqual(benchmarks.read("rbt"), {});
 });
 
-test("Malformed documents and references fail without rewriting operator data", (t) => {
-  const benchmarks = fixture(t);
+test("Malformed documents and references fail without rewriting operator data", async (t) => {
+  const benchmarks = await fixture(t);
   for (const contents of ["{", "[]", "null", '{"version":1}', '{"rbt":[]}', '{"rbt":{"history":{"workflowId":null}}}']) {
     writeFileSync(benchmarks.path, contents);
     assert.throws(() => benchmarks.read("rbt"));

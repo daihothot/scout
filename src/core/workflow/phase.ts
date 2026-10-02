@@ -1,4 +1,4 @@
-import type { GraphPhase } from "./graph-state.js";
+import type { GraphPhase } from "./graph-data.js";
 
 /** Current Worker Phase that selects the first available bound role. */
 export class Phase {

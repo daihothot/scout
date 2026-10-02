@@ -8,7 +8,7 @@ import { installTestRunScope } from "../helpers/run-persistence.js";
 
 test("AgentOrchestrator owns its lifecycle and consumes task events", async (t) => {
   const eventBus = new InMemoryEventBus();
-  installTestRunScope(t, { runId: "agent-orchestrator", eventBus });
+  await installTestRunScope(t, { runId: "agent-orchestrator", eventBus });
   const orchestrator = new AgentOrchestrator();
 
   assert.deepEqual(orchestrator.snapshot(), {

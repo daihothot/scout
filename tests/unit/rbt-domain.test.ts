@@ -1,3 +1,4 @@
+import { RbtDomainProjector } from "../../src/domain/domains/rbt/index.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
@@ -21,7 +22,7 @@ import { AgentEvents } from "../../src/agent/events/index.js";
 import type { SendAgentMessageInput } from "../../src/agent/task/types.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { Result } from "../../src/core/result.js";
-import { createGraphState, Graph } from "../../src/core/workflow/index.js";
+import { createGraphData, Graph } from "../../src/core/workflow/index.js";
 import {
   JarvisWebSocketTool,
   RbtDomain,
@@ -53,7 +54,7 @@ import { installTestRunScope, createTestGraph } from "../helpers/run-persistence
 test("RBT Domain exposes behavior execution and final platform shutdown by Phase", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-tools",
     scoutRoot: process.cwd(),
     eventBus,
@@ -61,14 +62,10 @@ test("RBT Domain exposes behavior execution and final platform shutdown by Phase
     runtimeGraph: rbtGraph(eventBus),
   });
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
-  assert.deepEqual(domain.backend.dynamicToolsForPhase("execute").map((tool) => [
-    tool.name,
-    tool.guidanceSkill,
-  ]), [
-    ["JarvisBehavior", "tool-rbt-behavior"],
-  ]);
+  assert.deepEqual(domain.backend.dynamicToolsForPhase("execute").map((tool) => tool.name), ["JarvisBehavior"]);
   assert.deepEqual(domain.backend.dynamicToolsForPhase("review").map((tool) => tool.name), [
     "JarvisBehavior",
   ]);
@@ -92,13 +89,14 @@ test("RBT schema follows execute roles, including renamed workers and a reviewer
     roles: graph.roles.map((role) => ({ ...role, name: role.name === "executor" ? "operator" : role.name })),
     phases: graph.phases.map((phase) => ({ ...phase, roles: phase.roles.map((role) => role === "executor" ? "operator" : role) })),
   });
-  const scope = installTestRunScope(t, { runId: "renamed-rbt-worker", scoutRoot: process.cwd(), eventBus, domain, runtimeGraph, executionSystem: fakeExecutionSystem() });
+  const scope = await installTestRunScope(t, { runId: "renamed-rbt-worker", scoutRoot: process.cwd(), eventBus, domain, runtimeGraph, executionSystem: fakeExecutionSystem() });
   const codebaseRoot = installBehaviorSchema(scope.runRoot);
   scope.setEnvironment(rbtEnvironment(scope.runId, {
     operator: { ...roleRoots(scope.runRoot, "operator"), readableRoots: [codebaseRoot], shellTools: [] },
     reviewer: { ...roleRoots(scope.runRoot, "reviewer"), readableRoots: [], shellTools: [] },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
   for (const [role, phase, command] of [
     ["operator", "execute", "behavior.registry.nodes"],
@@ -119,11 +117,12 @@ test("RBT rejects conflicting schema bindings across execute roles", async (t) =
     ...graph, roles: [...graph.roles, { name: "operator", phases: ["execute"] }],
     phases: graph.phases.map((phase) => phase.name === "execute" ? { ...phase, roles: [...phase.roles, "operator"] } : phase),
   });
-  const scope = installTestRunScope(t, { runId: "ambiguous-rbt-schema", scoutRoot: process.cwd(), eventBus, domain, runtimeGraph, executionSystem: fakeExecutionSystem() });
+  const scope = await installTestRunScope(t, { runId: "ambiguous-rbt-schema", scoutRoot: process.cwd(), eventBus, domain, runtimeGraph, executionSystem: fakeExecutionSystem() });
   scope.setEnvironment(rbtEnvironment(scope.runId, Object.fromEntries(["executor", "operator"].map((role) => [role, {
     ...roleRoots(scope.runRoot, role), readableRoots: [installBehaviorSchema(join(scope.runRoot, role))], shellTools: [],
   }]))));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
   const result = await domain.backend.handleDynamicToolCall(dynamicCall({
     callId: "ambiguous", namespace: "rbt_behavior", tool: "JarvisBehavior",
@@ -135,12 +134,13 @@ test("RBT rejects conflicting schema bindings across execute roles", async (t) =
 
 test("RBT restores every missing history after Agent state restoration and does not redeliver on another restore", async (t) => {
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-history-recovery",
     scoutRoot: process.cwd(),
     domain,
   });
   await domain.start();
+  await domain.run();
   const readyHistories = [1, 2].map((runtimeSequence) => ({
     bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
     executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
@@ -157,7 +157,7 @@ test("RBT restores every missing history after Agent state restoration and does 
   for (const history of readyHistories) {
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, history, { occurredAt });
   }
-  const beforeRestore = domain.recordObject.readAll();
+  const beforeRestore = domain.recordObject.read();
   await domain.restore(scope.workflow.snapshot()!);
   assert.deepEqual(scope.agentRegistry.listAgents(), []);
 
@@ -190,7 +190,7 @@ test("RBT restores every missing history after Agent state restoration and does 
   assert.ok(deliveries.every((delivery) => delivery.deliveryMode === "queued"));
   assert.match(deliveries[0]!.message, /campaign_id: campaign-1/);
   assert.match(deliveries[1]!.message, /campaign_id: campaign-2/);
-  assert.deepEqual(domain.recordObject.readAll(), beforeRestore);
+  assert.deepEqual(domain.recordObject.read(), beforeRestore);
   assert.equal(scope.workflow.readEvents().filter((event) => AgentEvents.message.queued.is(event)).length, 2);
   assert.equal(scope.workflow.readEvents().some((event) => RbtEvents.history.ready.is(event)), false);
 
@@ -212,12 +212,13 @@ test("RBT restores every missing history after Agent state restoration and does 
 
 test("RBT recovery skips persisted queued and consumed delivery identities", async (t) => {
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-history-accepted",
     scoutRoot: process.cwd(),
     domain,
   });
   await domain.start();
+  await domain.run();
   const occurredAt = "2026-09-27T00:00:01.000Z";
   for (const runtimeSequence of [1, 2, 3]) {
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
@@ -269,8 +270,9 @@ test("RBT recovery skips persisted queued and consumed delivery identities", asy
 
 test("RBT history delivery separates identical sequence numbers across Workflows for the same Coordinator", async (t) => {
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, { runId: "rbt-cross-workflow-history", scoutRoot: process.cwd(), domain });
+  const scope = await installTestRunScope(t, { runId: "rbt-cross-workflow-history", scoutRoot: process.cwd(), domain });
   await domain.start();
+  await domain.run();
   const accepted = new Map<string, SendAgentMessageInput>();
   const coordinator = {
     agentId: "coordinator", role: "coordinator",
@@ -329,12 +331,13 @@ test("RBT history delivery separates identical sequence numbers across Workflows
 
 test("RBT repeated restore replaces the previous pending history subscription", async (t) => {
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-history-repeated-restore",
     scoutRoot: process.cwd(),
     domain,
   });
   await domain.start();
+  await domain.run();
   const history = {
     bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
     executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
@@ -373,12 +376,13 @@ test("RBT cancels restored history delivery on stop, completed restore, Workflow
   for (const boundary of ["stop", "completed_restore", "workflow_finish", "workflow_commit"] as const) {
     await t.test(boundary, async (context) => {
       const domain = new RbtDomain();
-      const scope = installTestRunScope(context, {
+      const scope = await installTestRunScope(context, {
         runId: `run-rbt-history-cancel-${boundary}`,
         scoutRoot: process.cwd(),
         domain,
       });
       await domain.start();
+      await domain.run();
       await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
         bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
         executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
@@ -404,16 +408,18 @@ test("RBT cancels restored history delivery on stop, completed restore, Workflow
       if (boundary === "stop") {
         await domain.stop();
       } else if (boundary === "completed_restore") {
+        await domain.close();
         await domain.restore({ ...scope.workflow.snapshot()!, status: "completed" });
       } else if (boundary === "workflow_finish") {
-        domain.finishWorkflow();
+        await domain.close();
       } else {
-        const prepareScout = scope.workflow.scoutRecordObject.prepareWorkflow.bind(scope.workflow.scoutRecordObject);
+        const prepareScout = scope.workflow.scoutRecordObject.prepare.bind(scope.workflow.scoutRecordObject);
         // This test isolates restored RBT delivery cancellation, not Agent baseline creation.
-        t.mock.method(scope.workflow.scoutRecordObject, "prepareWorkflow", (root: string) => prepareScout(root, []));
+        t.mock.method(scope.workflow.scoutRecordObject, "prepare", (root: string) => prepareScout(root, []));
         const boundary = { workflowId: "workflow-002", journalRoot: join(scope.runRoot, "next-workflow") };
         await scope.eventBus.publishAndWait(WorkflowEvents.workflow.preparing, boundary);
         await scope.eventBus.publishAndWait(WorkflowEvents.workflow.committing, boundary);
+        domain.create();
         await scope.eventBus.publishAndWait(WorkflowEvents.workflow.releasingPrevious, boundary);
       }
       await scope.eventBus.publishAndWait(RunEvents.runtime.ready, {
@@ -426,12 +432,13 @@ test("RBT cancels restored history delivery on stop, completed restore, Workflow
 
 test("RBT stops an in-flight history replay before delivering the next history", async (t) => {
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-history-stop-in-flight",
     scoutRoot: process.cwd(),
     domain,
   });
   await domain.start();
+  await domain.run();
   for (const runtimeSequence of [1, 2]) {
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
       bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
@@ -474,12 +481,13 @@ test("RBT stops an in-flight history replay before delivering the next history",
 
 test("RBT restored history delivery failures reject runtime ready and can be retried on restore", async (t) => {
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-history-delivery-failure",
     scoutRoot: process.cwd(),
     domain,
   });
   await domain.start();
+  await domain.run();
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
     bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
     executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
@@ -721,7 +729,7 @@ test("ExecutionPlatform Agent tool accepts only operation semantics and uses run
   const identity: ExecutionPlatformIdentity = { type: "android", version: "34" };
   const requests: Array<{ operation: string; request: ExecutionPlatformRequest }> = [];
   const eventBus = new InMemoryEventBus();
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: "run-execution-platform-tool",
     eventBus,
     executionSystem: fakeExecutionSystem({
@@ -809,7 +817,7 @@ test("ExecutionPlatform Agent tool accepts only operation semantics and uses run
 test("RBT hides ExecutionPlatform from Executor", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-unity-pipeline",
     scoutRoot: process.cwd(),
     eventBus,
@@ -825,6 +833,7 @@ test("RBT hides ExecutionPlatform from Executor", async (t) => {
     },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const call = dynamicCall({
@@ -856,7 +865,7 @@ test("RBT Reviewer shuts down the restored session using only operation, even wh
     },
   }), "utf8");
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-review-shutdown",
     scoutRoot: root,
     runRoot: join(root, "run"),
@@ -898,6 +907,8 @@ test("RBT Reviewer shuts down the restored session using only operation, even wh
   await domain.start();
   baseDomain(scope).restore(scope.workflow.snapshot()!);
   await domain.restore(scope.workflow.snapshot()!);
+  await domain.run();
+  await domain.run();
   t.after(async () => {
     await domain.stop();
     baseDomain(scope).close();
@@ -942,7 +953,7 @@ test("JarvisBehavior prepares Play Mode without an Agent UnityPipeline call", as
   const root = mkdtempSync(join(tmpdir(), "scout-rbt-platform-gate-test-"));
   const markerPath = join(root, "unity-operations.log");
   const domain = rbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-platform-gate",
     runRoot: join(root, "run"),
     scoutRoot: process.cwd(),
@@ -968,6 +979,7 @@ test("JarvisBehavior prepares Play Mode without an Agent UnityPipeline call", as
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const response = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -996,7 +1008,7 @@ test("JarvisBehavior reports Play Mode readiness timeout before WebSocket connec
   const root = mkdtempSync(join(tmpdir(), "scout-rbt-platform-timeout-test-"));
   const markerPath = join(root, "unity-operations.log");
   const domain = rbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-platform-timeout",
     runRoot: join(root, "run"),
     scoutRoot: process.cwd(),
@@ -1020,6 +1032,7 @@ test("JarvisBehavior reports Play Mode readiness timeout before WebSocket connec
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const response = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -1092,7 +1105,7 @@ test("RBT Domain derives Android launch parameters from the identified target", 
       async close() {},
     })),
   });
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: "run-rbt-android-launch",
     scoutRoot: root,
     runRoot: join(root, "run"),
@@ -1110,6 +1123,7 @@ test("RBT Domain derives Android launch parameters from the identified target", 
   });
   t.after(() => rmSync(root, { recursive: true, force: true }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -1158,7 +1172,7 @@ test("RBT Execute and Review share one launched target across Phase tools", asyn
       appId: "com.example.app",
     }),
   });
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-shared-runtime",
     runRoot: join(root, "run"),
     scoutRoot: process.cwd(),
@@ -1177,6 +1191,7 @@ test("RBT Execute and Review share one launched target across Phase tools", asyn
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const executeResult = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -1231,7 +1246,7 @@ test("RBT Android Review reconnects a restored launched target without identify 
       appId: "com.example.app",
     }),
   });
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-restored-runtime",
     runRoot: join(root, "run"),
     scoutRoot: process.cwd(),
@@ -1270,6 +1285,7 @@ test("RBT Android Review reconnects a restored launched target without identify 
   await domain.start();
   baseDomain(scope).restore(scope.workflow.snapshot()!);
   await domain.restore(scope.workflow.snapshot()!);
+  await domain.run();
   t.after(async () => {
     await domain.stop();
     baseDomain(scope).close();
@@ -1286,10 +1302,11 @@ test("RBT Android Review reconnects a restored launched target without identify 
     role: "reviewer",
   }));
 
-  assert.equal(result?.success, true);
+  assert.equal(result?.success, true, JSON.stringify(result));
   assert.deepEqual(operations, []);
   assert.deepEqual(links, ["prepare", "connect"]);
   await domain.restore(scope.workflow.snapshot()!);
+  await domain.run();
   const reconnected = await domain.backend.handleDynamicToolCall(dynamicCall({
     callId: "call-restored-review-again", namespace: "rbt_behavior", tool: "JarvisBehavior",
     arguments: { command: "behavior.campaign.query", payload: { campaignId: "campaign", scenarioId: "scenario", includeEvidence: true } },
@@ -1310,7 +1327,7 @@ test("RBT Review does not identify or launch a missing Domain target", async (t)
       appId: "com.example.app",
     }),
   });
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: "run-rbt-review-without-target",
     scoutRoot: process.cwd(),
     eventBus,
@@ -1324,6 +1341,7 @@ test("RBT Review does not identify or launch a missing Domain target", async (t)
     }),
   });
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const result = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -1374,7 +1392,7 @@ test("RBT Review link failure does not stop the shared Domain target", async (t)
       async close() {},
     })),
   });
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-review-link-failure",
     scoutRoot: process.cwd(),
     eventBus,
@@ -1404,6 +1422,7 @@ test("RBT Review link failure does not stop the shared Domain target", async (t)
     { occurredAt: "2026-09-24T00:00:00.000Z" },
   ));
   await domain.start();
+  await domain.run();
   baseDomain(scope).restore(scope.workflow.snapshot()!);
   await domain.restore(scope.workflow.snapshot()!);
   t.after(async () => {
@@ -1458,7 +1477,7 @@ test("RBT Domain stops a target after link failure so the next attempt relaunche
       async close() {},
     })),
   });
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: "run-rbt-link-retry",
     scoutRoot: process.cwd(),
     eventBus,
@@ -1471,6 +1490,7 @@ test("RBT Domain stops a target after link failure so the next attempt relaunche
     }),
   });
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const call = dynamicCall({
@@ -1509,7 +1529,7 @@ test("RBT Execute link failure does not shut down an already running shared targ
       async close() {},
     })),
   });
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "rbt-shared-target-link-failure",
     scoutRoot: process.cwd(),
     eventBus,
@@ -1522,6 +1542,7 @@ test("RBT Execute link failure does not shut down an already running shared targ
     }),
   });
   await domain.start();
+  await domain.run();
   const execution = baseDomain(scope).execution;
   const target = await execution.resolve(request);
   assert.ok(target.ok);
@@ -1559,7 +1580,7 @@ test("RBT Execute link failure preserves a fresh target reused by another caller
       async close() {},
     })),
   });
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "rbt-target-reused-during-connect",
     scoutRoot: process.cwd(),
     eventBus,
@@ -1572,6 +1593,7 @@ test("RBT Execute link failure preserves a fresh target reused by another caller
     }),
   });
   await domain.start();
+  await domain.run();
   const result = await domain.backend.handleDynamicToolCall(dynamicCall({
     callId: "call-target-reused-during-connect",
     namespace: "rbt_behavior",
@@ -1631,7 +1653,7 @@ test("Jarvis WebSocket waits for a Runtime endpoint that is starting", async (t)
 test("JarvisBehavior reports an unavailable human-prepared Unity Editor", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-platform-unavailable",
     scoutRoot: process.cwd(),
     eventBus,
@@ -1650,6 +1672,7 @@ test("JarvisBehavior reports an unavailable human-prepared Unity Editor", async 
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const response = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -1676,7 +1699,7 @@ test("JarvisBehavior reports an unavailable human-prepared Unity Editor", async 
 test("JarvisBehavior blocks RBT while the Unity Editor is compiling", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-platform-compiling",
     scoutRoot: process.cwd(),
     eventBus,
@@ -1695,6 +1718,7 @@ test("JarvisBehavior blocks RBT while the Unity Editor is compiling", async (t) 
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const response = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -1736,7 +1760,7 @@ test("JarvisBehavior blocks RBT during Unity domain reload and version changes",
     await t.test(item.runId, async (testContext) => {
       const eventBus = new InMemoryEventBus();
       const domain = rbtDomain();
-      const scope = installTestRunScope(testContext, {
+      const scope = await installTestRunScope(testContext, {
         runId: item.runId,
         scoutRoot: process.cwd(),
         eventBus,
@@ -1752,6 +1776,7 @@ test("JarvisBehavior blocks RBT during Unity domain reload and version changes",
         executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
       }));
       await domain.start();
+      await domain.run();
       testContext.after(() => domain.stop());
 
       const response = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -1777,7 +1802,7 @@ test("JarvisBehavior blocks RBT during Unity domain reload and version changes",
 test("JarvisBehavior blocks an unavailable Unity Editor state", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-platform-starting",
     scoutRoot: process.cwd(),
     eventBus,
@@ -1796,6 +1821,7 @@ test("JarvisBehavior blocks an unavailable Unity Editor state", async (t) => {
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const response = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -1822,7 +1848,7 @@ test("JarvisBehavior blocks an unavailable Unity Editor state", async (t) => {
 test("RBT Agent tool-call recorder consumes the shared Domain event", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-shared-tool-event",
     scoutRoot: process.cwd(),
     eventBus,
@@ -1834,6 +1860,7 @@ test("RBT Agent tool-call recorder consumes the shared Domain event", async (t) 
     executor: { ...roots, readableRoots: [], shellTools: [] },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   await eventBus.publishAndWait(DomainEvents.agentToolCall.observed, {
@@ -1867,7 +1894,7 @@ test("RBT Agent tool-call recorder consumes the shared Domain event", async (t) 
 test("RBT Domain records one campaign history from dynamic behavior inputs and host outputs", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-history",
     scoutRoot: process.cwd(),
     eventBus,
@@ -1898,6 +1925,7 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
     campaignEvents.push(event.key.routeKey);
   });
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const { executeFilePath } = writeTestExecuteFile(roots.artifactRoot);
@@ -1953,7 +1981,7 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
     version: "6000.0.80f1",
   });
   assert.equal(history.status, "completed");
-  const recorded = domain.recordObject.aggregate(domain.recordObject.readAll()).histories.at(-1)!;
+  const recorded = new RbtDomainProjector().project(domain.recordObject.read()).histories.at(-1)!;
   assert.equal(recorded.bddId, "account-anon-restore-existing-account");
   assert.equal(recorded.targetVersion, "26.7.0-rc.2");
   assert.deepEqual(recorded.platform, history.platform);
@@ -2016,13 +2044,13 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
   assert.equal(replayHistory.executeFileRef, history.executeFileRef);
   assert.deepEqual(replayHistory.platform, history.platform);
   assert.equal(coordinatorMessages.length, 2);
-  assert.deepEqual(domain.recordObject.aggregate(domain.recordObject.readAll()).histories.map((fact) => fact.runtimeSequence), [1, 2]);
+  assert.deepEqual(new RbtDomainProjector().project(domain.recordObject.read()).histories.map((fact) => fact.runtimeSequence), [1, 2]);
 });
 
 test("RBT execute-file rejects an array-shaped evidenceCapture before Runtime", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-evidence-capture-contract",
     scoutRoot: process.cwd(),
     eventBus,
@@ -2040,6 +2068,7 @@ test("RBT execute-file rejects an array-shaped evidenceCapture before Runtime", 
     },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const { executeFilePath } = writeTestExecuteFile(roots.artifactRoot);
@@ -2067,7 +2096,7 @@ test("RBT execute-file rejects an array-shaped evidenceCapture before Runtime", 
 test("RBT execute-file preflights every registry identity before campaign mutation", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-identity-preflight",
     scoutRoot: process.cwd(),
     eventBus,
@@ -2112,6 +2141,7 @@ test("RBT execute-file preflights every registry identity before campaign mutati
   };
   writeFileSync(executeFilePath, `${JSON.stringify(executeFile, null, 2)}\n`, "utf8");
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const response = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -2148,7 +2178,7 @@ test("RBT execute-file preflights every registry identity before campaign mutati
 test("RBT execute-file continues the sequence when campaign history publication fails", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-history-publication-failure",
     scoutRoot: process.cwd(),
     eventBus,
@@ -2170,6 +2200,7 @@ test("RBT execute-file continues the sequence when campaign history publication 
   });
   const { executeFilePath } = writeTestExecuteFile(roots.artifactRoot);
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const response = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -2213,7 +2244,7 @@ test("RBT execute-file continues the sequence when campaign history publication 
 test("RBT campaign history continues after the greatest existing runtime sequence", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-history-resume",
     scoutRoot: process.cwd(),
     eventBus,
@@ -2231,6 +2262,7 @@ test("RBT campaign history continues after the greatest existing runtime sequenc
   writeFileSync(join(historyRoot, "007.json"), "{}\n", "utf8");
   const { executeFilePath } = writeTestExecuteFile(roots.artifactRoot);
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const response = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -2252,7 +2284,7 @@ test("RBT campaign history continues after the greatest existing runtime sequenc
 test("RBT execute-file performs cleanup after a command failure and closes failed history", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain({ failedCommand: "behavior.trigger.invoke" });
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-cleanup",
     scoutRoot: process.cwd(),
     eventBus,
@@ -2267,6 +2299,7 @@ test("RBT execute-file performs cleanup after a command failure and closes faile
   }));
   const { executeFilePath } = writeTestExecuteFile(roots.artifactRoot);
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const response = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -2305,10 +2338,10 @@ test("RBT execute-file performs cleanup after a command failure and closes faile
   ]);
 });
 
-test("RBT dynamic-tool backend rejects a tool that is not registered for the call Phase", (t) => {
+test("RBT dynamic-tool backend rejects a tool that is not registered for the call Phase", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: "run-rbt-unregistered-phase-tool",
     eventBus,
     domain,
@@ -2333,7 +2366,7 @@ test("RBT dynamic-tool backend rejects a tool that is not registered for the cal
 test("RBT Domain rejects mutating behavior commands from a review role", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-review-boundary",
     scoutRoot: process.cwd(),
     eventBus,
@@ -2345,6 +2378,7 @@ test("RBT Domain rejects mutating behavior commands from a review role", async (
     reviewer: { ...roots, readableRoots: [], shellTools: [] },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const response = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -2370,7 +2404,7 @@ test("RBT Reviewer queries a campaign using the Executor-bound schema without co
       platform: "unity_editor",
     }),
   });
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-review-campaign",
     scoutRoot: process.cwd(),
     eventBus,
@@ -2392,6 +2426,7 @@ test("RBT Reviewer queries a campaign using the Executor-bound schema without co
     },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const payload = { campaignId: "campaign-review", scenarioId: "scenario-review", includeEvidence: true };
@@ -2431,7 +2466,7 @@ test("RBT Domain projects a Runtime error without exposing its result envelope",
       platform: "unity_editor",
     }),
   });
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-debug-gate",
     scoutRoot: process.cwd(),
     eventBus,
@@ -2450,6 +2485,7 @@ test("RBT Domain projects a Runtime error without exposing its result envelope",
     reviewer: { ...roots, readableRoots: [], shellTools: [] },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
 
   const executeResponse = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -2499,7 +2535,7 @@ test("RBT Behavior reconnects and retries one read-only query after a disconnect
     ...fakeJarvisReconnectRuntimeOptions(markerPath),
     executionRequest: () => ({ transport: "unity-pipeline", platform: "unity_editor" }),
   });
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "run-rbt-query-reconnect",
     runRoot,
     scoutRoot: process.cwd(),
@@ -2514,6 +2550,7 @@ test("RBT Behavior reconnects and retries one read-only query after a disconnect
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.run();
   t.after(() => domain.stop());
   t.after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -2538,7 +2575,7 @@ test("RBT Behavior reconnects and retries one read-only query after a disconnect
 });
 
 function rbtGraph(_eventBus: InMemoryEventBus): Graph {
-  return createTestGraph(createGraphState({
+  return createTestGraph(createGraphData({
     domain: "rbt",
     workflowProfile: "rbt",
     phases: [

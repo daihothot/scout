@@ -15,7 +15,7 @@ import {
 } from "./types.js";
 
 /**
- * Creates the Domain selected by GraphState through its conventional module entry.
+ * Creates the Domain selected by GraphData through its conventional module entry.
  * A Domain named <domain> is loaded from domain/domains/<domain>/index.js.
  */
 export async function createDomainRuntime(domainId: ScoutDomainId): Promise<ScoutDomain> {
@@ -54,7 +54,8 @@ export async function createDomainRuntime(domainId: ScoutDomainId): Promise<Scou
   }
   const candidate = domain as ScoutDomain;
   if (
-    (candidate.restore !== undefined && typeof candidate.restore !== "function")
+    ["create", "restore", "run", "close", "abort", "clearWorkflow"].some((method) =>
+      typeof candidate[method as keyof ScoutDomain] !== "function")
     || (candidate.start !== undefined && typeof candidate.start !== "function")
     || (candidate.stop !== undefined && typeof candidate.stop !== "function")
   ) {
@@ -69,27 +70,6 @@ export async function createDomainRuntime(domainId: ScoutDomainId): Promise<Scou
     || typeof backend.handleDynamicToolCall !== "function"
   ) {
     throw new Error(`Workflow domain ${domainId} returned an invalid Domain backend.`);
-  }
-  const journal = candidate.recordObject;
-  if (
-    journal !== undefined
-    && (
-      typeof journal !== "object"
-      || journal === null
-      || !Array.isArray(journal.eventTypes)
-      || !journal.eventTypes.every((eventType) => (
-        typeof eventType === "object"
-        && eventType !== null
-        && (eventType as { kind?: unknown }).kind === "event"
-        && typeof (eventType as { routeKey?: unknown }).routeKey === "string"
-        && typeof (eventType as { is?: unknown }).is === "function"
-      ))
-      || typeof journal.project !== "function"
-      || (journal.readAll !== undefined && typeof journal.readAll !== "function")
-      || (journal.aggregate !== undefined && typeof journal.aggregate !== "function")
-    )
-  ) {
-    throw new Error(`Workflow domain ${domainId} returned an invalid Domain journal.`);
   }
   return candidate;
 }

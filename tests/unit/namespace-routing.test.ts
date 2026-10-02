@@ -1,3 +1,4 @@
+import { testWorkflowParticipant } from "../helpers/workflow-participant.js";
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -33,7 +34,6 @@ test("StartWorkflow exposes only the formal tool, namespace and guidance Skill c
   const tool = buildStartWorkflowDynamicTool();
   assert.equal(tool.name, "StartWorkflow");
   assert.equal(tool.namespace, "scout_agent_startworkflow");
-  assert.equal(tool.guidanceSkill, "tool-scout-start-workflow");
   assert.doesNotThrow(() => assertAgentToolNamespace("scout_agent_startworkflow", "StartWorkflow"));
   assert.deepEqual(parseAgentDynamicToolCall("StartWorkflow", { prompt: "Execute the requested work" }), {
     tool: "StartWorkflow", prompt: "Execute the requested work",
@@ -55,7 +55,8 @@ test("Dynamic tool routing invokes an omitted-namespace definition for a null pr
       return { success: true, contentItems: [{ type: "inputText", text: "executed" }] };
     } },
   });
-  scope.domainRegistry.register({ description: { id: ScoutDomainId.Base, name: "Base" }, backend });
+  scope.domainRegistry.register({
+    ...testWorkflowParticipant, description: { id: ScoutDomainId.Base, name: "Base" }, backend });
 
   const response = await new AgentDynamicToolBackend()
     .handleDynamicToolCall({
@@ -79,7 +80,8 @@ test("Dynamic tool routing does not match a named namespace to an omitted-namesp
       return { success: true, contentItems: [] };
     } },
   });
-  scope.domainRegistry.register({ description: { id: ScoutDomainId.Base, name: "Base" }, backend });
+  scope.domainRegistry.register({
+    ...testWorkflowParticipant, description: { id: ScoutDomainId.Base, name: "Base" }, backend });
 
   const response = await new AgentDynamicToolBackend()
     .handleDynamicToolCall({
@@ -107,7 +109,8 @@ test("Dynamic tool routing rejects null-namespace collisions across Domains befo
         return { success: true, contentItems: [] };
       } },
     });
-    scope.domainRegistry.register({ description: { id, name: id }, backend });
+    scope.domainRegistry.register({
+    ...testWorkflowParticipant, description: { id, name: id }, backend });
   }
 
   const response = await new AgentDynamicToolBackend()

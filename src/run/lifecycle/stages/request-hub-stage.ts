@@ -16,14 +16,17 @@ export class RequestHubStage implements RunStage {
     scope.setRequestHub(hub);
     this.hub = hub;
     hub.start();
+    scope.workflow.registerParticipant(hub);
     this.started = true;
   }
 
   async stop(): Promise<void> {
     const hub = this.hub;
     if (!hub) return;
-    hub.close();
-    currentRunScope().clearRequestHub(hub);
+    hub.stop();
+    const scope = currentRunScope();
+    if (scope.workflow.participants.includes(hub)) scope.workflow.unregisterParticipant(hub);
+    scope.clearRequestHub(hub);
     this.hub = undefined;
     this.started = false;
   }

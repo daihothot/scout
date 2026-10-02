@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { EventType, ScoutEvent } from "../events/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { RequestHubRecordObject } from "./request-hub-record-object.js";
+import type { ScoutWorkflowParticipant, WorkflowData } from "../workflow/index.js";
 import { RequestHubEvents } from "./request-hub-events.js";
 import type { RequestRegistrationOptions, RequestSnapshot, RequestType } from "./types.js";
 
@@ -12,7 +13,7 @@ interface RegisteredRequest {
 }
 
 /** Durable request records and processing results. Consumers own decisions and validity. */
-export class RequestHub {
+export class RequestHub implements ScoutWorkflowParticipant {
   private readonly requests = new Map<string, RegisteredRequest>();
   private readonly contracts = new Map<string, object>();
   readonly recordObject = new RequestHubRecordObject();
@@ -118,8 +119,26 @@ export class RequestHub {
     return true;
   }
 
+  create(): void {}
+
+  /** Rebuilds existing request state during the owner-driven Workflow restore. */
+  restore(_data: WorkflowData): void {
+    this.recordObject.attach(currentRunScope().workflow.journalRoot);
+    this.requests.clear();
+    this.contracts.clear();
+    for (const record of this.recordObject.readFacts()) {
+      const snapshot = this.project(record);
+      this.requests.set(snapshot.requestId, { snapshot });
+    }
+  }
+
+  run(): void {}
+  close(): void {}
+  abort(): void {}
+  clearWorkflow(): void { this.recordObject.release(); }
+
   /** Releases the service without changing the lifetime of any persisted request. */
-  close(): void {
+  stop(): void {
     if (this.closed) return;
     this.recordObject.close();
     this.closed = true;

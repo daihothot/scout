@@ -5,11 +5,12 @@ import { CoordinatorAgent } from "../../agent/roles/coordinator-agent.js";
 import { RunEvents } from "../../run/events/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { SystemEvents } from "../../system/events/index.js";
-import { RecordableObject, type RecordWriteFailure } from "./recordable-object.js";
+import { RecordableObject, type RecordEvent, type RecordWriteFailure } from "./recordable-object.js";
+import { decodeScoutRecords, type ScoutRecord } from "./scout-record.js";
 import { WorkflowEvents } from "../workflow/workflow-events.js";
 
 /** Owns Scout facts for the active Workflow; file mechanics are a Core recording detail. */
-export class ScoutRecordObject extends RecordableObject {
+export class ScoutRecordObject extends RecordableObject<ScoutRecord> {
   readonly eventTypes = [
     RunEvents.run.created, RunEvents.runtime.attached, RunEvents.runtime.detached, RunEvents.runtime.interrupted,
     SystemEvents.interaction.userMessageSubmitted, AgentEvents.coordinator.messageProduced,
@@ -27,11 +28,15 @@ export class ScoutRecordObject extends RecordableObject {
 
   constructor() { super("Workflow scout"); }
 
+  static override readFile(path: string): ScoutRecord[] { return decodeScoutRecords(super.readFile(path)); }
+
+  protected decode(records: readonly RecordEvent[]): ScoutRecord[] { return decodeScoutRecords(records); }
+
   protected location(journalRoot: string) {
     return { journalId: `${currentRunScope().runId}:workflow:scout`, ...scoutJournalPaths(journalRoot) };
   }
 
-  protected override workflowBaseline() {
+  protected override baselineEvents() {
     const scope = currentRunScope();
     const manifest = scope.manifestStore.read();
     const graph = scope.workflow.graph.initialSnapshot();
@@ -56,7 +61,7 @@ export class ScoutRecordObject extends RecordableObject {
 
   override stop(): void {
     super.stop();
-    this.releaseWorkflow();
+    this.release();
   }
 
   protected override onWriteSuccess(): void { this.failurePublished = false; }

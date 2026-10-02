@@ -1,6 +1,6 @@
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import type { AssetStore } from "../../asset-store/index.js";
-import { resolveSynthesisRole, type GraphState } from "../../core/workflow/index.js";
+import { resolveSynthesisRole, type GraphData } from "../../core/workflow/index.js";
 import { buildRunRootAccess } from "../root-access.js";
 import {
   buildRunContextBundle,
@@ -24,10 +24,10 @@ export class RunEnvironmentBuilder {
   build(input: {
     runId: string;
     agents: Record<ScoutAgentRole, RunAgentEnvironment>;
-    graphState: GraphState;
+    graphData: GraphData;
   }): RunEnvironment {
     const agents = input.agents;
-    const coordinator = agents[resolveSynthesisRole(input.graphState).name];
+    const coordinator = agents[resolveSynthesisRole(input.graphData).name];
     if (!coordinator) {
       throw new Error("Run environment requires a coordinator agent.");
     }

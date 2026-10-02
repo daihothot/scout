@@ -61,8 +61,8 @@ function fixture(t: TestContext) {
   return { runRoot, launch, lockPath: join(runRoot, ".workflow.lock") };
 }
 
-test("Workflow benchmark mutations require their own root lease while reads remain available", (t) => {
-  const { runRoot } = fixture(t);
+test("Workflow benchmark mutations require their own root lease while reads remain available", async (t) => {
+  const { runRoot } = await fixture(t);
   const owner = new ScoutBenchmarks(new Benchmarks(runRoot));
   const observer = new ScoutBenchmarks(new Benchmarks(runRoot));
   assert.equal(observer.read(), undefined);
@@ -89,7 +89,7 @@ test("Workflow benchmark mutations require their own root lease while reads rema
 });
 
 test("Two actual processes cannot overwrite each other's uncommitted Workflow directory", { timeout: 15_000 }, async (t) => {
-  const { launch, runRoot, lockPath } = fixture(t);
+  const { launch, runRoot, lockPath } = await fixture(t);
   const left = launch();
   const right = launch();
   assert.equal((await left.next()).type, "ready");
@@ -108,7 +108,7 @@ test("Two actual processes cannot overwrite each other's uncommitted Workflow di
 });
 
 test("A SIGKILLed root owner can be reclaimed without deleting its historical Workflow", { timeout: 15_000 }, async (t) => {
-  const { runRoot, launch, lockPath } = fixture(t);
+  const { runRoot, launch, lockPath } = await fixture(t);
   const holder = launch();
   await holder.next();
   holder.command("acquire");
@@ -128,7 +128,7 @@ test("A SIGKILLed root owner can be reclaimed without deleting its historical Wo
 });
 
 test("Root owner publication exposes only a complete record and never replaces a competing owner", { timeout: 15_000 }, async (t) => {
-  const { launch, lockPath } = fixture(t);
+  const { launch, lockPath } = await fixture(t);
   const delayed = launch("pause-before-publish");
   await delayed.next();
   delayed.command("acquire");
@@ -155,7 +155,7 @@ test("Root owner publication exposes only a complete record and never replaces a
 });
 
 test("A delayed second stale reclaimer cannot unlink the first reclaimer's new live root lock", { timeout: 15_000 }, async (t) => {
-  const { runRoot, launch, lockPath } = fixture(t);
+  const { runRoot, launch, lockPath } = await fixture(t);
   const dead = launch();
   await dead.next();
   dead.command("acquire");
@@ -182,8 +182,8 @@ test("A delayed second stale reclaimer cannot unlink the first reclaimer's new l
   assert.equal((await first.next()).type, "released");
 });
 
-test("Unverifiable or remote root lock owners fail closed and their files remain intact", (t) => {
-  const { runRoot, lockPath } = fixture(t);
+test("Unverifiable or remote root lock owners fail closed and their files remain intact", async (t) => {
+  const { runRoot, lockPath } = await fixture(t);
   mkdirSync(runRoot, { recursive: true });
   const owner = {
     version: 1,
@@ -199,8 +199,8 @@ test("Unverifiable or remote root lock owners fail closed and their files remain
   }
 });
 
-test("A stranded recovery guard blocks automatic acquisition even when the root lock is absent", (t) => {
-  const { runRoot, lockPath } = fixture(t);
+test("A stranded recovery guard blocks automatic acquisition even when the root lock is absent", async (t) => {
+  const { runRoot, lockPath } = await fixture(t);
   mkdirSync(runRoot, { recursive: true });
   const guardPath = `${lockPath}.reclaim`;
   writeFileSync(guardPath, "unverifiable interrupted reclamation");
@@ -213,7 +213,7 @@ test("A stranded recovery guard blocks automatic acquisition even when the root 
 });
 
 test("SIGKILL during stale-owner reclamation retains its guard and fails closed on the next attempt", { timeout: 15_000 }, async (t) => {
-  const { runRoot, launch, lockPath } = fixture(t);
+  const { runRoot, launch, lockPath } = await fixture(t);
   const dead = launch();
   await dead.next();
   dead.command("acquire");
@@ -232,8 +232,8 @@ test("SIGKILL during stale-owner reclamation retains its guard and fails closed 
   assert.equal(existsSync(`${lockPath}.reclaim`), true);
 });
 
-test("A runtime whose lock token was replaced cannot mutate or unlink the replacement", (t) => {
-  const { runRoot, lockPath } = fixture(t);
+test("A runtime whose lock token was replaced cannot mutate or unlink the replacement", async (t) => {
+  const { runRoot, lockPath } = await fixture(t);
   const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
   benchmarks.benchmarks.acquire();
   const original = readFileSync(lockPath, "utf8");

@@ -293,14 +293,17 @@ for (const [event, withEnvironment] of [
     const register = RunStageExecutor.prototype.registerSerial;
     t.mock.method(RunStageExecutor.prototype, "registerSerial", function (this: RunStageExecutor, ...stages: RunStage[]) {
       register.apply(this, stages.flatMap((stage) => {
-        if (["run_scope", "workflow", "initialize_run"].includes(stage.id)) return [stage];
+        if (["run_scope", "workflow", "initialize_run", "start_workflow"].includes(stage.id)) return [stage];
         if (withEnvironment && stage.id === "environment") {
           return [new PrepareEnvironmentStage({ preflightMount: async () => ({ status: "passed" }) })];
         }
         return [];
       }));
     });
-    t.mock.method(RunStageExecutor.prototype, "registerParallel", () => undefined);
+    const parallel = RunStageExecutor.prototype.registerParallel;
+    t.mock.method(RunStageExecutor.prototype, "registerParallel", function (this: RunStageExecutor, ...stages: RunStage[]) {
+      parallel.apply(this, stages.filter((stage) => stage.id === "orchestrator"));
+    });
     let runRoot: string | undefined;
     const start = StartWorkflowStage.prototype.start;
     t.mock.method(StartWorkflowStage.prototype, "start", async function (this: StartWorkflowStage) {

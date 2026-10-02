@@ -1,7 +1,9 @@
+import { BaseDomainProjector } from "../../src/domain/domains/base/index.js";
+import { decodeBaseDomainRecords, type BaseDomainRecord } from "../../src/domain/domains/base/record/base-domain-record.js";
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
-import { BaseDomainExecution, BaseDomainRecordObject, type ScoutDomainRecordEvent } from "../../src/domain/index.js";
+import { BaseDomainExecution } from "../../src/domain/index.js";
 import {
   ExecutionEvents,
   ScoutExecutionSystem,
@@ -58,7 +60,7 @@ test("Base semantic shutdown uses restored facts without launch configuration or
   const target = await execution.resolve(request);
   assert.ok(target.ok);
   assert.ok((await execution.ensureStarted(request, target.identity)).ok);
-  const fact = new BaseDomainRecordObject().aggregate(events);
+  const fact = new BaseDomainProjector().project(events);
   execution.stop();
   const restored = new BaseDomainExecution(eventBus, system);
   t.after(() => restored.stop());
@@ -68,7 +70,7 @@ test("Base semantic shutdown uses restored facts without launch configuration or
   assert.ok((await restored.shutdown()).ok);
   assert.deepEqual(operations.map((call) => call.operation), ["identify", "launch", "shutdown"]);
   assert.deepEqual(operations.at(-1)!.parameters, { appId: request.appId });
-  assert.equal(new BaseDomainRecordObject().aggregate(events).execution?.state, "stopped");
+  assert.equal(new BaseDomainProjector().project(events).execution?.state, "stopped");
 });
 
 test("Base semantic shutdown failure preserves the running session and permits a later retry", async (t) => {
@@ -280,7 +282,7 @@ test("Base execution and Journal replay agree after a repeated identify of a lau
   assert.ok(target.ok);
   await execution.ensureStarted(request, target.identity);
   await system.identify({ transport: request.transport, platform: request.platform });
-  const fact = new BaseDomainRecordObject().aggregate(events);
+  const fact = new BaseDomainProjector().project(events);
   assert.equal(fact.execution?.state, "launched");
   const restored = new BaseDomainExecution(new InMemoryEventBus(), system);
   t.after(() => restored.stop());
@@ -305,7 +307,7 @@ test("Base execution and replay retain running state after unconfirmed operation
     assert.ok(!result.ok && result.code === "command_failed");
     const live = execution.current(request);
     assert.ok(live.ok && live.started, `${operation} failure must not imply shutdown`);
-    const fact = new BaseDomainRecordObject().aggregate(events);
+    const fact = new BaseDomainProjector().project(events);
     const restored = new BaseDomainExecution(new InMemoryEventBus(), system);
     try {
       restored.restore(fact);
@@ -329,7 +331,7 @@ test("Base execution and replay both invalidate a target when the handler requir
   const result = await execution.ensureStopped(request, target.identity);
   assert.ok(!result.ok && result.code === "handler_disconnected");
   assert.equal(execution.current(request).ok, false);
-  const fact = new BaseDomainRecordObject().aggregate(events);
+  const fact = new BaseDomainProjector().project(events);
   assert.equal(fact.execution, undefined);
   const restored = new BaseDomainExecution(new InMemoryEventBus(), system);
   t.after(() => restored.stop());
@@ -345,13 +347,13 @@ test("Base replay and live state ignore another app's shutdown and preserve a co
   assert.ok(target.ok);
   await execution.ensureStarted(request, target.identity);
   await system.shutdown({ identity: target.identity, appId: "com.example.second" });
-  let fact = new BaseDomainRecordObject().aggregate(events);
+  let fact = new BaseDomainProjector().project(events);
   assert.equal(fact.execution?.state, "launched");
   const running = execution.current(request);
   assert.ok(running.ok && running.started);
   await execution.ensureStopped(request, target.identity);
   await system.identify({ transport: request.transport, platform: request.platform });
-  fact = new BaseDomainRecordObject().aggregate(events);
+  fact = new BaseDomainProjector().project(events);
   assert.equal(fact.execution?.state, "stopped");
   assert.equal(fact.execution.appId, request.appId);
   const restored = new BaseDomainExecution(new InMemoryEventBus(), system);
@@ -366,9 +368,11 @@ async function fixture(
 ) {
   const eventBus = new InMemoryEventBus();
   const operations: ExecutionHandlerInvocation[] = [];
-  const events: ScoutDomainRecordEvent[] = [];
+  const events: BaseDomainRecord[] = [];
   eventBus.subscribe(ExecutionEvents.execution, (event) => {
-    events.push({ ...event, seq: events.length + 1, recordedAt: event.occurredAt });
+    events.push(...decodeBaseDomainRecords(JSON.parse(JSON.stringify([
+      { ...event, version: 1, seq: events.length + 1, recordedAt: event.occurredAt },
+    ]))));
   });
   const system = await ScoutExecutionSystem.start({
     async start() {},

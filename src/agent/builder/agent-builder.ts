@@ -35,8 +35,8 @@ export class AgentBuilder {
   }
 
   buildWorker(role: ScoutAgentRole): ScoutAgent {
-    const graphState = this.scope.workflow.graph.snapshot();
-    if (role === resolveSynthesisRole(graphState).name) {
+    const graphData = this.scope.workflow.graph.snapshot();
+    if (role === resolveSynthesisRole(graphData).name) {
       throw new Error("Coordinator must be built through buildCoordinator().");
     }
     const agentOptions = this.agentOptionsForRole(role);

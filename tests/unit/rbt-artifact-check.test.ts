@@ -117,8 +117,8 @@ function appendJournal(pack: string, row: string): void {
   mutate(pack, "journal-expected.md", text => text.replace("\n## Rules", `\n${row}\n\n## Rules`));
 }
 
-test("RBT checker accepts filled current templates and does not inspect source or business expected values", t => {
-  const pack = fixture(t);
+test("RBT checker accepts filled current templates and does not inspect source or business expected values", async t => {
+  const pack = await fixture(t);
   const result = check(pack);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /rbt_pack_valid=true/);
@@ -126,8 +126,8 @@ test("RBT checker accepts filled current templates and does not inspect source o
   assert.equal(check(pack).status, 0);
 });
 
-test("RBT checker rejects an incomplete Pack without executable inputs", t => {
-  const pack = fixture(t);
+test("RBT checker rejects an incomplete Pack without executable inputs", async t => {
+  const pack = await fixture(t);
   rmSync(join(dirname(pack), "execute-file.json"));
   const result = check(pack);
   assert.equal(result.status, 1);
@@ -151,8 +151,8 @@ const failures: Array<[string, string, string, (text: string) => string]> = [
   ["invalid SR id", "signal-expected.md", "INVALID_ID", text => text + "\n## SR-invalid\n\ninvalid\n"],
 ];
 for (const [name, file, code, change] of failures) {
-  test(`RBT checker rejects ${name}`, t => {
-    const pack = fixture(t);
+  test(`RBT checker rejects ${name}`, async t => {
+    const pack = await fixture(t);
     mutate(pack, file, change);
     const result = check(pack);
     assert.equal(result.status, 1);
@@ -160,8 +160,8 @@ for (const [name, file, code, change] of failures) {
   });
 }
 
-test("RBT checker rejects extra artifacts and symlinked evidence", t => {
-  const pack = fixture(t);
+test("RBT checker rejects extra artifacts and symlinked evidence", async t => {
+  const pack = await fixture(t);
   writeFileSync(join(pack, "execution-pack.md"), "old aggregate");
   symlinkSync(join(pack, "bdd-evidence.md"), join(pack, "evidence/E-CODE-002.md"));
   const result = check(pack);
@@ -170,14 +170,14 @@ test("RBT checker rejects extra artifacts and symlinked evidence", t => {
   assert.match(result.stderr, /READ_ERROR/);
 });
 
-test("RBT checker rejects execute-file scope/order without invoking any command", t => {
-  const pack = fixture(t);
+test("RBT checker rejects execute-file scope/order without invoking any command", async t => {
+  const pack = await fixture(t);
   mutate(pack, "../execute-file.json", text => text.replace('"behavior.scenario.activate"', '"behavior.registry.nodes"'));
   assert.match(check(pack).stderr, /EXECUTE_FILE/);
 });
 
-test("RBT checker allows multiple present SRs per JR and standalone absence", t => {
-  const pack = fixture(t);
+test("RBT checker allows multiple present SRs per JR and standalone absence", async t => {
+  const pack = await fixture(t);
   mutate(pack, "signal-expected.md", text => {
     const sr = text.match(/## SR-001[\s\S]*?(?=## SR-|## Rules)/)![0];
     return text.replace("## Rules", sr.replace("SR-001", "SR-003") +
@@ -188,8 +188,8 @@ test("RBT checker allows multiple present SRs per JR and standalone absence", t 
   assert.equal(result.status, 0, result.stderr);
 });
 
-test("RBT checker rejects activation without matching behavior trace SR and JR", t => {
-  const pack = fixture(t);
+test("RBT checker rejects activation without matching behavior trace SR and JR", async t => {
+  const pack = await fixture(t);
   mutateExecute(pack, plan => {
     plan.commands[1]!.payload.activations = [{ id: "sample.default", variantId: "mock_by_key", params: {} }];
   });
@@ -219,8 +219,8 @@ test("RBT checker rejects activation without matching behavior trace SR and JR",
   assert.equal(check(pack).status, 0);
 });
 
-test("RBT checker rejects capture without matching capture result SR and JR", t => {
-  const pack = fixture(t);
+test("RBT checker rejects capture without matching capture result SR and JR", async t => {
+  const pack = await fixture(t);
   mutateExecute(pack, plan => {
     plan.commands[1]!.payload.evidenceCapture = {
       enabled: true,
@@ -248,8 +248,8 @@ test("RBT checker rejects capture without matching capture result SR and JR", t 
   assert.equal(check(pack).status, 0);
 });
 
-test("RBT checker rejects a rootId without a matching main behavior trace", t => {
-  const pack = fixture(t);
+test("RBT checker rejects a rootId without a matching main behavior trace", async t => {
+  const pack = await fixture(t);
   mutateExecute(pack, plan => {
     plan.commands[1]!.payload.rootId = "growth.remote_config.wrong";
   });
@@ -258,8 +258,8 @@ test("RBT checker rejects a rootId without a matching main behavior trace", t =>
   assert.match(result.stderr, /\[UNCOVERED_ROOT\]/);
 });
 
-test("RBT checker validates capture variant identity and unique captureId", t => {
-  const pack = fixture(t);
+test("RBT checker validates capture variant identity and unique captureId", async t => {
+  const pack = await fixture(t);
   mutateExecute(pack, plan => {
     plan.commands[1]!.payload.evidenceCapture = {
       enabled: true,
@@ -285,8 +285,8 @@ test("RBT checker validates capture variant identity and unique captureId", t =>
   assert.match(result.stderr, /\[DUPLICATE_EXECUTE_IDENTITY\]/);
 });
 
-test("RBT checker rejects trigger without matching response payload SR and JR", t => {
-  const pack = fixture(t);
+test("RBT checker rejects trigger without matching response payload SR and JR", async t => {
+  const pack = await fixture(t);
   mutate(pack, "signal-expected.md", text => text.replace(
     "| kind | locate | response_payload | exact |",
     "| kind | locate | behavior_trace | exact |",
@@ -300,8 +300,8 @@ test("RBT checker rejects trigger without matching response payload SR and JR", 
   assert.match(result.stderr, /\[UNCOVERED_TRIGGER\]/);
 });
 
-test("RBT checker rejects pending Human Input and requires response refs for resolved input", t => {
-  const pack = fixture(t);
+test("RBT checker rejects pending Human Input and requires response refs for resolved input", async t => {
+  const pack = await fixture(t);
   mutate(pack, "human-input-evidence.md", text => text.replace("## Human Input Records\n\nnone", `## Human Input Records
 
 ### HI-001

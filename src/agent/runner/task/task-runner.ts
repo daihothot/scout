@@ -130,9 +130,9 @@ export class TaskRunner {
       throw new Error(`Cannot queue message for terminal task ${task.taskId}. Status: ${task.status}`);
     }
     const workflow = currentRunScope().workflow;
-    const workflowState = workflow.snapshot();
-    if (workflowState?.status !== "active") {
-      throw new Error(`Cannot queue message for Task ${task.taskId}: Workflow is ${workflowState?.status ?? "empty"}.`);
+    const workflowData = workflow.snapshot();
+    if (workflowData?.status !== "active") {
+      throw new Error(`Cannot queue message for Task ${task.taskId}: Workflow is ${workflowData?.status ?? "empty"}.`);
     }
     const phase = workflow.graph.current().name;
     if (task.phase !== phase) {

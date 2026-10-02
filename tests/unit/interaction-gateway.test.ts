@@ -35,7 +35,7 @@ import { installTestRunScope } from "../helpers/run-persistence.js";
 test("interaction gateway publishes exit request from interaction port", async (t) => {
   const bus = new InMemoryEventBus();
   const port = new TestInteractionPort();
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: "interaction-exit",
     eventBus: bus,
     interactionPort: port,
@@ -60,7 +60,7 @@ test("interaction gateway publishes exit request from interaction port", async (
 test("interaction gateway waits for exit subscribers to finish", async (t) => {
   const bus = new InMemoryEventBus();
   const port = new TestInteractionPort();
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: "interaction-exit-wait",
     eventBus: bus,
     interactionPort: port,
@@ -82,7 +82,7 @@ test("interaction gateway waits for exit subscribers to finish", async (t) => {
 test("interaction gateway separates Coordinator output from user input", async (t) => {
   const bus = new InMemoryEventBus();
   const port = new TestInteractionPort();
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: "interaction-message-direction",
     eventBus: bus,
     interactionPort: port,
@@ -130,7 +130,7 @@ test("interaction gateway separates Coordinator output from user input", async (
 test("interaction gateway publishes every task event once", async (t) => {
   const bus = new InMemoryEventBus();
   const port = new TestInteractionPort();
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: "interaction-task-events",
     eventBus: bus,
     interactionPort: port,
@@ -188,7 +188,7 @@ test("interaction gateway projects assigned task plan and Worker activity into T
     model: "gpt-5.5",
     reasoningEffort: "high",
   });
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: "interaction-tui-projection",
     eventBus: bus,
     interactionPort: new TuiInteractionAdapter(store),

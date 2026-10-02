@@ -1,3 +1,4 @@
+import { projectCurrentAgentWorkflow } from "../helpers/workflow-participant.js";
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -9,7 +10,6 @@ import { Logger } from "../../src/core/logging/index.js";
 import { Workflow } from "../../src/core/workflow/index.js";
 import { BaseDomain, ScoutDomainId } from "../../src/domain/index.js";
 import { RbtDomain, RbtDomainAgentBackend } from "../../src/domain/domains/rbt/index.js";
-import { ValidationDomain } from "../../src/domain/domains/validation/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import { DomainStage } from "../../src/run/lifecycle/stages/domain-stage.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
@@ -26,10 +26,8 @@ test("DomainStage registers Base and the selected business Domain before startup
   };
   t.mock.method(BaseDomain.prototype, "start", () => onStart(ScoutDomainId.Base));
   t.mock.method(RbtDomain.prototype, "start", async () => onStart(ScoutDomainId.Rbt));
-  t.mock.method(ValidationDomain.prototype, "start", async () => onStart(ScoutDomainId.Validation));
   t.mock.method(BaseDomain.prototype, "stop", () => { events.push("stop:base"); });
   t.mock.method(RbtDomain.prototype, "stop", async () => { events.push("stop:rbt"); });
-  t.mock.method(ValidationDomain.prototype, "stop", async () => { events.push("stop:validation"); });
   const stage = new DomainStage();
 
   await stage.start();
@@ -74,13 +72,11 @@ test("DomainStage preserves a failed startup cleanup owner while releasing the o
     events.push("start:rbt");
     throw startFailure;
   });
-  const validationStart = t.mock.method(ValidationDomain.prototype, "start", async () => {});
   t.mock.method(BaseDomain.prototype, "stop", () => { events.push("stop:base"); });
   t.mock.method(RbtDomain.prototype, "stop", async () => {
     events.push("stop:rbt");
     if (failCleanup) throw stopFailure;
   });
-  t.mock.method(ValidationDomain.prototype, "stop", async () => { events.push("stop:validation"); });
   const stage = new DomainStage();
 
   await assert.rejects(stage.start(), (error) => {
@@ -88,7 +84,6 @@ test("DomainStage preserves a failed startup cleanup owner while releasing the o
     assert.deepEqual(error.errors, [startFailure, stopFailure]);
     return true;
   });
-  assert.equal(validationStart.mock.callCount(), 0);
   assert.deepEqual(events, ["start:base", "start:rbt", "stop:rbt", "stop:base"]);
   const retained = scope.domainRegistry.get(ScoutDomainId.Rbt);
   assert.deepEqual(scope.domainRegistry.list(), [retained]);
@@ -108,9 +103,7 @@ test("DomainStage releases previously registered Domains when a later Domain can
   }));
   const events: string[] = [];
   const baseStart = t.mock.method(BaseDomain.prototype, "start", () => {});
-  const validationStart = t.mock.method(ValidationDomain.prototype, "start", async () => {});
   t.mock.method(BaseDomain.prototype, "stop", () => { events.push("base"); });
-  t.mock.method(ValidationDomain.prototype, "stop", async () => { events.push("validation"); });
   const backendDescriptor = Object.getOwnPropertyDescriptor(RbtDomainAgentBackend.prototype, "handleDynamicToolCall");
   assert.ok(backendDescriptor);
   Object.defineProperty(RbtDomainAgentBackend.prototype, "handleDynamicToolCall", {
@@ -120,35 +113,32 @@ test("DomainStage releases previously registered Domains when a later Domain can
 
   await assert.rejects(new DomainStage().start(), /Workflow domain rbt returned an invalid Domain backend/);
   assert.equal(baseStart.mock.callCount(), 0);
-  assert.equal(validationStart.mock.callCount(), 0);
   assert.deepEqual(events, ["base"]);
   assert.deepEqual(scope.domainRegistry.list(), []);
 });
 
 test("DomainStage stop retains only the failing Domain and retries that same instance", async (t) => {
-  const scope = installDomainStageScope(t, ScoutDomainId.Validation);
+  const scope = installDomainStageScope(t, ScoutDomainId.Rbt);
   const events: string[] = [];
-  const stopFailure = new Error("Validation resource remains open");
+  const stopFailure = new Error("RBT resource remains open");
   let failCleanup = true;
   t.mock.method(BaseDomain.prototype, "start", () => {});
   t.mock.method(RbtDomain.prototype, "start", async () => {});
-  t.mock.method(ValidationDomain.prototype, "start", async () => {});
   t.mock.method(BaseDomain.prototype, "stop", () => { events.push("base"); });
-  t.mock.method(RbtDomain.prototype, "stop", async () => { events.push("rbt"); });
-  t.mock.method(ValidationDomain.prototype, "stop", async () => {
-    events.push("validation");
+  t.mock.method(RbtDomain.prototype, "stop", async () => {
+    events.push("rbt");
     if (failCleanup) throw stopFailure;
   });
   const stage = new DomainStage();
   await stage.start();
-  const retained = scope.domainRegistry.get(ScoutDomainId.Validation);
+  const retained = scope.domainRegistry.get(ScoutDomainId.Rbt);
 
   await assert.rejects(stage.stop(), (error) => error === stopFailure);
-  assert.deepEqual(events, ["validation", "base"]);
+  assert.deepEqual(events, ["rbt", "base"]);
   assert.deepEqual(scope.domainRegistry.list(), [retained]);
   failCleanup = false;
   await stage.stop();
-  assert.deepEqual(events, ["validation", "base", "validation"]);
+  assert.deepEqual(events, ["rbt", "base", "rbt"]);
   assert.deepEqual(scope.domainRegistry.list(), []);
 });
 

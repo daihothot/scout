@@ -1,78 +1,34 @@
 import {
-  AgentBackendStage,
-  AgentTelemetryStage,
-  DomainStage,
-  ExecutionStage,
-  InteractionStage,
-  OrchestratorStage,
-  RunRuntimeStage,
-  RunScopeStage,
-  RequestHubStage,
-  RunStageExecutor,
-  type RunStage,
+  AgentBackendStage, AgentTelemetryStage, DomainStage, ExecutionStage,
+  InteractionStage, OrchestratorStage, RunRuntimeStage, RunScopeStage,
+  RequestHubStage, WorkflowStage, RunStageExecutor, type RunStage,
 } from "../lifecycle/index.js";
 import type { Workflow, WorkflowResumeInput } from "../../core/workflow/index.js";
 import type { RunScope } from "../run-scope.js";
-import {
-  ResumeClientsStage,
-  RestoreAgentsStage,
-  RestoreDomainStage,
-  RestoreTasksStage,
-  InjectResumeContextStage,
-  RecordResumeInterruptionsStage,
-  RestoreWorkflowStage,
-} from "./stages/index.js";
+import { ResumeClientsStage, RecordResumeInterruptionsStage, RestoreWorkflowStage } from "./stages/index.js";
 
-/**
- * Defines the resume lifecycle graph and its ordering constraints.
- *
- * Serial groups protect dependencies such as scope, environment, and task
- * restoration; independent domain/backend services are registered in parallel.
- * The assembly owns registration only, while each stage owns its resources and
- * restoration policy.
- */
+/** Installs dependencies before the single Workflow recovery driver enters Restoring. */
 export class ResumeRunStageAssembly {
   readonly executor: RunStageExecutor;
   readonly runScopeStage: RunScopeStage;
-  readonly injectResumeContextStage: InjectResumeContextStage;
-
-  /** Registers the complete resume graph and retains the post-start activation stage. */
   constructor(input: {
-    executor: RunStageExecutor;
-    runScope: RunScope;
-    workflow: Workflow;
-    recovery?: WorkflowResumeInput;
-    missingWorkflowId?: string;
-    clientsStage: ResumeClientsStage;
-    environmentStage: RunStage;
+    executor: RunStageExecutor; runScope: RunScope; workflow: Workflow;
+    recovery?: WorkflowResumeInput; missingWorkflowId?: string;
+    clientsStage: ResumeClientsStage; environmentStage: RunStage;
   }) {
     const executor = input.executor;
     const runScopeStage = new RunScopeStage(input.runScope);
-
     executor.registerSerial(
-      runScopeStage,
-      new RestoreWorkflowStage(input.workflow, input.recovery, input.missingWorkflowId),
-      new RequestHubStage(),
-      input.clientsStage,
-      input.environmentStage,
-      new ExecutionStage(),
-      new InteractionStage(),
-      new DomainStage(),
-      new RestoreDomainStage(),
-      new RecordResumeInterruptionsStage(),
-      new RunRuntimeStage("resume"),
+      runScopeStage, new WorkflowStage(input.workflow), new RequestHubStage(),
+      input.clientsStage, input.environmentStage, new ExecutionStage(), new InteractionStage(),
+      new DomainStage(), new AgentTelemetryStage(),
     );
-    executor.registerSerial(new AgentTelemetryStage());
     executor.registerParallel(new AgentBackendStage(), new OrchestratorStage());
-    executor.registerSerial(new RestoreAgentsStage());
-    const injectResumeContextStage = new InjectResumeContextStage();
     executor.registerSerial(
-      new RestoreTasksStage(),
-      injectResumeContextStage,
+      new RestoreWorkflowStage(input.recovery, input.missingWorkflowId),
+      new RecordResumeInterruptionsStage(), new RunRuntimeStage("resume"),
     );
-
     this.executor = executor;
     this.runScopeStage = runScopeStage;
-    this.injectResumeContextStage = injectResumeContextStage;
   }
 }

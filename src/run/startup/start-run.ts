@@ -6,7 +6,7 @@ import { Logger } from "../../core/logging/index.js";
 import {
   resolveSynthesisRole,
   Workflow,
-  type GraphState,
+  type GraphData,
 } from "../../core/workflow/index.js";
 import { AssetStore } from "../../asset-store/index.js";
 import {
@@ -149,6 +149,7 @@ export async function startRun(
     }, {
       occurredAt: readyAt,
     });
+    scope.agentOrchestrator.ready();
     scope.eventBus.publish(SystemEvents.interaction.disclosureRequested, {
       level: "info",
       source: "run.start",
@@ -184,10 +185,10 @@ export async function startRun(
 
 function toRunSummary(
   environment: RunEnvironment,
-  graphState: GraphState,
+  graphData: GraphData,
   status: ScoutRunSummary["status"],
 ): ScoutRunSummary {
-  const coordinator = environment.agents[resolveSynthesisRole(graphState).name];
+  const coordinator = environment.agents[resolveSynthesisRole(graphData).name];
   return {
     status,
     runId: environment.contextBundle.runId,

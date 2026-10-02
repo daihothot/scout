@@ -543,9 +543,9 @@ export abstract class ScoutAgent {
       throw new Error(`Agent ${this.agentId} is stopping and cannot start another turn.`);
     }
     const invocationId = this.nextInvocationId(thread.threadId);
-    const workflowState = this.runScope.workflow.snapshot();
-    const paths = workflowState ? this.runScope.workflow.agentPaths(this.agentId) : undefined;
-    const artifacts = workflowState
+    const workflowData = this.runScope.workflow.snapshot();
+    const paths = workflowData ? this.runScope.workflow.agentPaths(this.agentId) : undefined;
+    const artifacts = workflowData
       ? this.runScope.workflow.graph.snapshot().roles.map(({ name }) => ({
         agentId: name,
         path: this.runScope.workflow.agentPaths(name).artifactRoot,
@@ -553,13 +553,13 @@ export abstract class ScoutAgent {
       }))
       : [];
     const executionContext = attachments.addTagBlock("workflow_context", JSON.stringify(
-      workflowState ? {
-        workflowId: workflowState.workflowId,
-        status: workflowState.status,
+      workflowData ? {
+        workflowId: workflowData.workflowId,
+        status: workflowData.status,
         artifactRoot: paths!.artifactRoot,
         artifacts,
         artifactReferences: resolveAgentArtifactReferences(input.prompt, {
-          workflowId: workflowState.workflowId,
+          workflowId: workflowData.workflowId,
           artifacts,
         }),
       }
@@ -604,7 +604,7 @@ export abstract class ScoutAgent {
         threadId: thread.threadId,
         prompt: `${executionContext}\n\n${input.prompt}`,
         cwd: this.spec.cwd,
-        runtimeWorkspaceRoots: workflowState ? [workflowRootFromJournalRoot(this.runScope.workflow.journalRoot)] : [],
+        runtimeWorkspaceRoots: workflowData ? [workflowRootFromJournalRoot(this.runScope.workflow.journalRoot)] : [],
         model: this.spec.model.id,
         reasoningEffort: this.spec.model.reasoningEffort,
         reasoningSummary: this.spec.model.reasoningSummary,

@@ -1,3 +1,4 @@
+import { decodeScoutRecords } from "../../src/core/record/scout-record.js";
 import assert from "node:assert/strict";
 import {
   appendFileSync,
@@ -38,15 +39,15 @@ import {
   RunEvents,
   type RunJournalWriteFailedEvent,
 } from "../../src/run/events/index.js";
-import { projectRun as projectRunEvents } from "../../src/run/resume/projection/index.js";
+import { projectAgentWorkflow as projectRunEvents } from "../../src/agent/orchestration/projector/index.js";
 import {
   createTestRunPersistence,
   createDefaultTestGraph,
   installTestRunScope,
 } from "../helpers/run-persistence.js";
 
-const projectRun = (events: Parameters<typeof projectRunEvents>[0]) =>
-  projectRunEvents(events, "coordinator");
+const projectAgentWorkflow = (events: readonly import("../../src/core/journal/index.js").JournalEvent[]) =>
+  projectRunEvents(decodeScoutRecords(events), "coordinator");
 
 function baseDomain(scope: RunScope): BaseDomain {
   const domain = scope.domainRegistry.get(ScoutDomainId.Base);
@@ -56,7 +57,7 @@ function baseDomain(scope: RunScope): BaseDomain {
 
 test("Workflow Journal writer persists recovery events and excludes readiness telemetry", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const { journal, workflow } = createTestRunPersistence(
+  const { journal, workflow } = await createTestRunPersistence(
     t,
     "journal-sequence",
     "/repo",
@@ -185,7 +186,7 @@ test("Journal repairs an incomplete tail before the next append", async (t) => {
 
 test("Workflow Journal writer persists Human Input and delivery as separate events", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const { journal } = createTestRunPersistence(t, "journal-human-input", "/repo", eventBus);
+  const { journal } = await createTestRunPersistence(t, "journal-human-input", "/repo", eventBus);
   const requestMessage = {
     messageId: "task-1-human-1-request",
     agentId: "coordinator",
@@ -194,6 +195,7 @@ test("Workflow Journal writer persists Human Input and delivery as separate even
   };
   await eventBus.publishAndWait(AgentEvents.humanInput.requested, {
     requestId: "task-1-human-1",
+    stepId: "step-1",
     taskId: "task-1",
     agentId: "researcher",
     body: "请确认目标版本。",
@@ -216,6 +218,7 @@ test("Workflow Journal writer persists Human Input and delivery as separate even
   };
   await eventBus.publishAndWait(AgentEvents.humanInput.responded, {
     requestId: "task-1-human-1",
+    stepId: "step-1",
     taskId: "task-1",
     agentId: "researcher",
     body: "使用 v2。",
@@ -237,7 +240,7 @@ test("Workflow Journal writer persists Human Input and delivery as separate even
 
 test("Workflow Journal writer persists thread identities without transient telemetry", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const { journal } = createTestRunPersistence(t, "journal-thread", "/repo", eventBus);
+  const { journal } = await createTestRunPersistence(t, "journal-thread", "/repo", eventBus);
   const started = {
     agentId: "researcher",
     role: "researcher",
@@ -308,7 +311,7 @@ test("Workflow Journal writer persists thread identities without transient telem
 
 test("Run projection replaces a thread only when restart names the current snapshot", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const { journal } = createTestRunPersistence(
+  const { journal } = await createTestRunPersistence(
     t,
     "journal-thread-restart-projection",
     "/repo",
@@ -346,12 +349,12 @@ test("Run projection replaces a thread only when restart names the current snaps
     newThread: restarted,
   });
 
-  assert.deepEqual(projectRun(journal.readAll()).threads, [restarted]);
+  assert.deepEqual(projectAgentWorkflow(journal.readAll()).threads, [restarted]);
 });
 
 test("Run projection rejects a restart whose previous thread is not current", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const { journal } = createTestRunPersistence(
+  const { journal } = await createTestRunPersistence(
     t,
     "journal-thread-restart-conflict",
     "/repo",
@@ -388,7 +391,7 @@ test("Run projection rejects a restart whose previous thread is not current", as
   });
 
   assert.throws(
-    () => projectRun(journal.readAll()),
+    () => projectAgentWorkflow(journal.readAll()),
     /Thread restarted without matching previous thread: thread-verifier-stale/,
   );
 });
@@ -431,14 +434,14 @@ test("JournalWriter retries the same event once after a transient write failure"
 
 test("Workflow Journal writer reports an unrecoverable event and accepts later writes", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const persistence = createTestRunPersistence(
+  const persistence = await createTestRunPersistence(
     t,
     "journal-write-recovery",
     "/repo",
     eventBus,
   );
   const { journal, workflow } = persistence;
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: journal.runId,
     eventBus,
     workflow,
@@ -494,7 +497,7 @@ test("Workflow Journal writer reports an unrecoverable event and accepts later w
 test("Workflow starts a numbered Workflow while retaining the completed scout.journal", async (t) => {
   const eventBus = new InMemoryEventBus();
   const scoutRoot = mkdtempSync(join(tmpdir(), "scout-workflow-stage-test-"));
-  const persistence = createTestRunPersistence(
+  const persistence = await createTestRunPersistence(
     t,
     "journal-workflow-replay",
     scoutRoot,
@@ -502,7 +505,7 @@ test("Workflow starts a numbered Workflow while retaining the completed scout.jo
     join(scoutRoot, "run", "journal-workflow-replay"),
   );
   const benchmarks = new ScoutBenchmarks(new Benchmarks(persistence.runRoot));
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: persistence.journal.runId,
     eventBus,
     workflow: persistence.workflow,
@@ -564,13 +567,13 @@ test("Workflow starts a numbered Workflow while retaining the completed scout.jo
 
 test("Workflow completion follows live Graph and runtime facts, not a stale journal Task projection", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const persistence = createTestRunPersistence(
+  const persistence = await createTestRunPersistence(
     t,
     "journal-workflow-replay-blocked",
     "/repo",
     eventBus,
   );
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: persistence.journal.runId,
     eventBus,
     workflow: persistence.workflow,

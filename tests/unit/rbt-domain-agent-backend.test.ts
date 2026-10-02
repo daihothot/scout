@@ -12,7 +12,7 @@ import { RbtDomain, RbtDomainAgentBackend } from "../../src/domain/domains/rbt/i
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
 test("RbtDomainAgentBackend invokes the constructed tool registered for each Phase", async (t) => {
-  const scope = installTestRunScope(t, { runId: "rbt-backend-phase-tools" });
+  const scope = await installTestRunScope(t, { runId: "rbt-backend-phase-tools" });
   const observations: DomainAgentToolCallObservedEvent[] = [];
   scope.eventBus.subscribe(DomainEvents.agentToolCall.observed, (event) => {
     if (DomainEvents.agentToolCall.observed.is(event)) observations.push(event.payload);
@@ -77,7 +77,7 @@ test("RbtDomainAgentBackend invokes the constructed tool registered for each Pha
 });
 
 test("RbtDomainAgentBackend preserves registrations after conflicting changes", async (t) => {
-  installTestRunScope(t, { runId: "rbt-backend-registration-conflicts" });
+  await installTestRunScope(t, { runId: "rbt-backend-registration-conflicts" });
   const definition = toolSpec();
   const registration = { definition, tool: { execute: () => success("original") } };
   const backend = new RbtDomainAgentBackend();
@@ -109,7 +109,7 @@ test("RbtDomainAgentBackend preserves registrations after conflicting changes", 
 });
 
 test("RbtDomainAgentBackend isolates namespaces and definition snapshots", async (t) => {
-  installTestRunScope(t, { runId: "rbt-backend-definition-snapshots" });
+  await installTestRunScope(t, { runId: "rbt-backend-definition-snapshots" });
   const definition = toolSpec();
   const expected = structuredClone(definition);
   const otherDefinition = { ...toolSpec(), namespace: "other_behavior" };
@@ -140,7 +140,7 @@ test("RbtDomainAgentBackend isolates namespaces and definition snapshots", async
 });
 
 test("RbtDomainAgentBackend converts thrown and rejected tool errors into observed failures", async (t) => {
-  const scope = installTestRunScope(t, { runId: "rbt-backend-tool-errors" });
+  const scope = await installTestRunScope(t, { runId: "rbt-backend-tool-errors" });
   const observations: DomainAgentToolCallObservedEvent[] = [];
   scope.eventBus.subscribe(DomainEvents.agentToolCall.observed, (event) => {
     if (DomainEvents.agentToolCall.observed.is(event)) observations.push(event.payload);
@@ -170,7 +170,7 @@ test("RbtDomainAgentBackend converts thrown and rejected tool errors into observ
 
 test("RbtDomain exposes its backend for invocation with one detached completion", async (t) => {
   const domain = new RbtDomain();
-  const scope = installTestRunScope(t, { runId: "rbt-backend-domain-access", domain });
+  const scope = await installTestRunScope(t, { runId: "rbt-backend-domain-access", domain });
   const observations: DomainAgentToolCallObservedEvent[] = [];
   const occurredAt: string[] = [];
   scope.eventBus.subscribe(DomainEvents.agentToolCall.observed, (event) => {

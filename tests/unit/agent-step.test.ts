@@ -78,7 +78,7 @@ test("AgentStepStore restores one step without clearing other agents", () => {
 
 test("Tool Call backend owns provider facts and Step stores only their ids", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "tool-call-facts",
     eventBus,
   });
@@ -128,9 +128,9 @@ test("Tool Call backend owns provider facts and Step stores only their ids", asy
   assert.deepEqual(scope.stepStore.getStep(running.stepId)?.toolCallIds, ["item-tool-1"]);
 });
 
-test("Tool Call backend ignores Domain dynamic tools and external MCP tools", (t) => {
+test("Tool Call backend ignores Domain dynamic tools and external MCP tools", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "tool-call-boundary",
     eventBus,
   });
@@ -181,7 +181,7 @@ test("Tool Call backend ignores Domain dynamic tools and external MCP tools", (t
 
 test("Step lifecycle snapshots retain references that arrive before Step creation", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "step-pending-references",
     eventBus,
   });
@@ -237,7 +237,7 @@ test("Step lifecycle snapshots retain references that arrive before Step creatio
 
 test("AgentStepStore records one durable Step reference for every Human Input edge", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "step-human-input-references",
     eventBus,
   });

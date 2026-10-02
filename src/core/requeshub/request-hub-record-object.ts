@@ -1,6 +1,6 @@
 import type { ScoutEvent } from "../events/index.js";
 import { requestHubJournalPaths } from "../path.js";
-import { RecordableObject } from "../record/index.js";
+import { RecordableObject, type RecordEvent } from "../record/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 
 /** Request facts are durable before publication; callbacks and approval rules stay outside. */
@@ -20,9 +20,14 @@ export class RequestHubRecordObject extends RecordableObject {
     return { journalId: `${currentRunScope().runId}:request-hub`, ...requestHubJournalPaths(journalRoot) };
   }
 
-  protected override workflowBaseline(): readonly ScoutEvent[] { return this.facts; }
+  protected override baselineEvents(): readonly ScoutEvent[] { return this.facts; }
 
-  readFacts(): readonly ScoutEvent[] { return structuredClone(this.facts); }
+  protected decode(records: readonly RecordEvent[]): RecordEvent[] { return [...records]; }
+
+  readFacts(): readonly ScoutEvent[] {
+    if (this.hasActiveRecord) this.facts = this.read();
+    return structuredClone(this.facts);
+  }
 
   record(event: ScoutEvent): void {
     const { scope, group, name, tag, routeKey } = event.key;

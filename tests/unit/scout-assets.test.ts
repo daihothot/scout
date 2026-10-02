@@ -37,8 +37,8 @@ test("scout-assets help succeeds without a mount manifest", () => {
   }
 });
 
-test("scout-assets summary presents current profile, roots, counts, and role tools", () => {
-  const fixture = createFixture();
+test("scout-assets summary presents current profile, roots, counts, and role tools", async () => {
+  const fixture = await createFixture();
   const result = runScoutAssets(fixture.mountRoot, "summary");
 
   assert.equal(result.status, 0, result.stderr);
@@ -151,8 +151,8 @@ test("scout-assets rejects plural manifests and invalid Domain identifiers", () 
   }
 });
 
-test("scout-assets family groups current content by phase and resolves leaf families", () => {
-  const fixture = createFixture();
+test("scout-assets family groups current content by phase and resolves leaf families", async () => {
+  const fixture = await createFixture();
   const families = parseSuccessful(fixture.mountRoot, "family");
   assert.equal("parent" in families, false);
   assert.deepEqual(families["research+verify"], {
@@ -192,8 +192,8 @@ test("scout-assets family groups current content by phase and resolves leaf fami
   });
 });
 
-test("scout-assets asks for a parent path when a family name is ambiguous", () => {
-  const fixture = createFixture();
+test("scout-assets asks for a parent path when a family name is ambiguous", async () => {
+  const fixture = await createFixture();
   const ambiguous = parseSuccessful(fixture.mountRoot, "family", "unity");
   assert.deepEqual(ambiguous, {
     family: "unity",
@@ -267,8 +267,8 @@ test("scout-assets prefers an exact root path across phase groups before short n
   assert.equal(explicit["execute+review"].skills[0].name, "rbt-tool");
 });
 
-test("scout-assets family can restrict discovery to one phase", () => {
-  const fixture = createFixture();
+test("scout-assets family can restrict discovery to one phase", async () => {
+  const fixture = await createFixture();
   const verify = parseSuccessful(fixture.mountRoot, "family", "--phase", "verify");
   assert.deepEqual(verify, {
     phase: "verify",
@@ -291,8 +291,8 @@ test("scout-assets family can restrict discovery to one phase", () => {
   assert.match(missing.stderr, /Family is not supported for the current role/);
 });
 
-test("scout-assets skill returns only the requested Skill metadata", () => {
-  const fixture = createFixture();
+test("scout-assets skill returns only the requested Skill metadata", async () => {
+  const fixture = await createFixture();
   const output = parseSuccessful(fixture.mountRoot, "skill", "domain-validation-researcher");
   assert.equal(output.skill.type, "domain");
   assert.equal(output.skill.path, ".scout/skill/validation/workflow/domain-validation-researcher/SKILL.md");
@@ -306,8 +306,8 @@ test("scout-assets skill returns only the requested Skill metadata", () => {
   assert.equal("phaseTools" in signal, false);
 });
 
-test("scout-assets plugin returns mounted plugin metadata", () => {
-  const fixture = createFixture();
+test("scout-assets plugin returns mounted plugin metadata", async () => {
+  const fixture = await createFixture();
   const output = parseSuccessful(fixture.mountRoot, "plugin", "plugin-a");
   assert.equal(output.plugin.name, "plugin-a");
   assert.equal(output.plugin.path, "plugins/plugin-a");
@@ -315,8 +315,8 @@ test("scout-assets plugin returns mounted plugin metadata", () => {
   assert.equal(output.plugin.metadata.interface.displayName, "Plugin A");
 });
 
-test("scout-assets rejects unknown resources, removed commands, and missing manifests", () => {
-  const fixture = createFixture();
+test("scout-assets rejects unknown resources, removed commands, and missing manifests", async () => {
+  const fixture = await createFixture();
   const missingSkill = runScoutAssets(fixture.mountRoot, "skill", "missing-skill");
   assert.equal(missingSkill.status, 1);
   assert.match(missingSkill.stderr, /Skill is not materialized for the current role: missing-skill/);

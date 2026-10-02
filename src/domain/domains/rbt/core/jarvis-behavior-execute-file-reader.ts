@@ -23,10 +23,10 @@ export function readJarvisBehaviorExecuteFile(
   store: JarvisBehaviorToolStore,
 ): ParsedExecuteFile {
   const workflow = currentRunScope().workflow;
-  const workflowState = workflow.snapshot();
-  if (!workflowState) throw new Error("RBT execution requires an active Workflow.");
+  const workflowData = workflow.snapshot();
+  if (!workflowData) throw new Error("RBT execution requires an active Workflow.");
   const artifactRoot = workflow.agentPaths(call.caller.agentId).artifactRoot;
-  const referenceRoot = `scout-artifact://${workflowState.workflowId}/${call.caller.agentId}/`;
+  const referenceRoot = `scout-artifact://${workflowData.workflowId}/${call.caller.agentId}/`;
   if (executeFileInput.startsWith("scout-artifact://") && !executeFileInput.startsWith(referenceRoot)) {
     throw new Error("execute_file must reference the calling Agent in the current Workflow.");
   }

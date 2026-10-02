@@ -6,7 +6,7 @@ import {
   type ExecutionPlatformRequest,
   type ExecutionSelectionIdentity,
 } from "../../../../execution/index.js";
-import type { BaseDomainRuntimeFact } from "../base-domain-record-object.js";
+import type { BaseDomainRuntimeFact } from "../projector/base-domain-projector.js";
 import {
   projectBaseExecutionEvent,
   sameExecutionSelection,
@@ -125,6 +125,9 @@ export class BaseDomainExecution {
     this.state = structuredClone(fact.execution);
     this.rollbackLaunchId = undefined;
   }
+
+  /** Lifecycle owners wait for accepted execution work before clearing their runtime. */
+  async drain(): Promise<void> { await this.operationTail; }
 
   stop(): void {
     while (this.unsubscribers.length > 0) this.unsubscribers.pop()?.();

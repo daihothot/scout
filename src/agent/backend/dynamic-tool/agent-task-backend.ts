@@ -66,8 +66,8 @@ export class AgentTaskBackend {
     }
     const { task, stepId } = this.resolveRunningWorkerTaskStep(input.caller, input.delivery);
     const workflow = currentRunScope().workflow;
-    const workflowState = workflow.snapshot();
-    if (!workflowState) throw new Error("Task submission requires an active Workflow.");
+    const workflowData = workflow.snapshot();
+    if (!workflowData) throw new Error("Task submission requires an active Workflow.");
     return this.recordDisposition(task, {
       kind: AgentTaskDispositionKinds.HandoffSubmitted,
       stepId,
@@ -75,7 +75,7 @@ export class AgentTaskBackend {
       callId: input.delivery.callId,
       timestamp: new Date().toISOString(),
       outcome: canonicalizeAgentArtifactReferences(input.call.outcome, {
-        workflowId: workflowState.workflowId,
+        workflowId: workflowData.workflowId,
         agentId: input.caller.agentId,
         artifactRoot: workflow.agentPaths(input.caller.agentId).artifactRoot,
       }),

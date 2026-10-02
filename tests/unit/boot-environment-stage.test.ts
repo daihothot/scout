@@ -1,3 +1,4 @@
+import { projectCurrentAgentWorkflow } from "../helpers/workflow-participant.js";
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -58,8 +59,8 @@ after(() => {
 });
 
 test("PrepareEnvironmentStage materializes, preflights, and commits every agent mount", async (t) => {
-  const fixtureRoot = createFixture("scout-boot-environment-");
-  const runtime = installEnvironmentScope(t, fixtureRoot, "boot-environment-test");
+  const fixtureRoot = await createFixture("scout-boot-environment-");
+  const runtime = await installEnvironmentScope(t, fixtureRoot, "boot-environment-test");
   t.after(runtime.release);
   const preflightedAgents: string[] = [];
   const stage = new PrepareEnvironmentStage({
@@ -113,8 +114,8 @@ test("PrepareEnvironmentStage materializes, preflights, and commits every agent 
 });
 
 test("PrepareEnvironmentStage overlaps independent role preflights", async (t) => {
-  const fixtureRoot = createFixture("scout-boot-environment-parallel-");
-  const runtime = installEnvironmentScope(t, fixtureRoot, "boot-environment-parallel");
+  const fixtureRoot = await createFixture("scout-boot-environment-parallel-");
+  const runtime = await installEnvironmentScope(t, fixtureRoot, "boot-environment-parallel");
   t.after(runtime.release);
   let activePreflights = 0;
   let maxActivePreflights = 0;
@@ -134,9 +135,9 @@ test("PrepareEnvironmentStage overlaps independent role preflights", async (t) =
 });
 
 test("PrepareEnvironmentStage reports six rebuild units per role", async (t) => {
-  const fixtureRoot = createFixture("scout-boot-environment-progress-");
+  const fixtureRoot = await createFixture("scout-boot-environment-progress-");
   const interactionPort = new CapturingMountProgressPort();
-  const runtime = installEnvironmentScope(t, fixtureRoot, "boot-environment-progress", interactionPort);
+  const runtime = await installEnvironmentScope(t, fixtureRoot, "boot-environment-progress", interactionPort);
   t.after(runtime.release);
   const stage = new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
@@ -167,9 +168,9 @@ test("PrepareEnvironmentStage reports six rebuild units per role", async (t) => 
 });
 
 test("PrepareEnvironmentStage collects every role before reporting a failed preflight", async (t) => {
-  const fixtureRoot = createFixture("scout-boot-environment-failed-");
+  const fixtureRoot = await createFixture("scout-boot-environment-failed-");
   const interactionPort = new CapturingMountProgressPort();
-  const runtime = installEnvironmentScope(
+  const runtime = await installEnvironmentScope(
     t,
     fixtureRoot,
     "boot-environment-failed",
@@ -218,8 +219,8 @@ test("PrepareEnvironmentStage collects every role before reporting a failed pref
 });
 
 test("RestoreEnvironmentStage rejects source asset drift", async (t) => {
-  const fixtureRoot = createFixture("scout-restore-environment-drift-");
-  const runtime = installEnvironmentScope(t, fixtureRoot, "restore-environment-drift");
+  const fixtureRoot = await createFixture("scout-restore-environment-drift-");
+  const runtime = await installEnvironmentScope(t, fixtureRoot, "restore-environment-drift");
   t.after(runtime.release);
   const startStage = new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
@@ -241,8 +242,8 @@ test("RestoreEnvironmentStage rejects source asset drift", async (t) => {
 });
 
 test("RestoreEnvironmentStage applies the explicit global resource-drift policy", async (t) => {
-  const fixtureRoot = createFixture("scout-restore-environment-drift-allowed-");
-  const initial = installEnvironmentScope(t, fixtureRoot, "restore-environment-drift-allowed");
+  const fixtureRoot = await createFixture("scout-restore-environment-drift-allowed-");
+  const initial = await installEnvironmentScope(t, fixtureRoot, "restore-environment-drift-allowed");
   let initialReleased = false;
   t.after(() => {
     if (!initialReleased) initial.release();
@@ -327,9 +328,9 @@ test("RestoreEnvironmentStage applies the explicit global resource-drift policy"
 });
 
 test("RestoreEnvironmentStage rolls back the run index when metadata commit fails", async (t) => {
-  const fixtureRoot = createFixture("scout-restore-environment-metadata-rollback-");
+  const fixtureRoot = await createFixture("scout-restore-environment-metadata-rollback-");
   const runId = "restore-environment-metadata-rollback";
-  const initial = installEnvironmentScope(t, fixtureRoot, runId);
+  const initial = await installEnvironmentScope(t, fixtureRoot, runId);
   let initialReleased = false;
   t.after(() => {
     if (!initialReleased) initial.release();
@@ -439,7 +440,7 @@ for (const scenario of [
   test(`ResumeClientsStage rejects a symlinked ${scenario.name} before Codex writes`, async (t) => {
     const fixtureRoot = createLinkedAssetsFixture(t, `scout-resume-${scenario.name}-`);
     const runId = `resume-${scenario.name}`;
-    const runtime = installEnvironmentScope(t, fixtureRoot, runId);
+    const runtime = await installEnvironmentScope(t, fixtureRoot, runId);
     t.after(runtime.release);
     const configPath = scenario.arrange(join(fixtureRoot, "run", runId), fixtureRoot);
 
@@ -459,7 +460,7 @@ for (const scenario of [
 for (const missing of ["codex-home", ".codex"] as const) {
   test(`ResumeClientsStage only allows a missing ${missing} for unfinished initialization`, async (t) => {
     const fixtureRoot = createLinkedAssetsFixture(t, "scout-resume-unfinished-home-");
-    const runtime = installEnvironmentScope(t, fixtureRoot, "unfinished-home");
+    const runtime = await installEnvironmentScope(t, fixtureRoot, "unfinished-home");
     t.after(runtime.release);
     const codexHome = join(runtime.scope.runRoot, "codex-home");
     if (missing === ".codex") mkdirSync(codexHome);
@@ -507,7 +508,7 @@ test("RestoreEnvironmentStage rejects a symlinked Agent root before rebuilding a
 test("PrepareEnvironmentStage rejects a symlinked run ancestor before materializing", async (t) => {
   const fixtureRoot = createLinkedAssetsFixture(t, "scout-boot-run-ancestor-symlink-");
   const runId = "boot-run-ancestor-symlink";
-  const runtime = installEnvironmentScope(t, fixtureRoot, runId);
+  const runtime = await installEnvironmentScope(t, fixtureRoot, runId);
   t.after(runtime.release);
   const runRoot = join(fixtureRoot, "run", runId);
   const outsideAgents = join(fixtureRoot, "outside-agents");
@@ -582,7 +583,7 @@ test("RestoreEnvironmentStage rejects an intermediate symlink before rebuilding 
 test("RestoreEnvironmentStage permits the ScoutRoot assets symlink", async (t) => {
   const fixtureRoot = createLinkedAssetsFixture(t, "scout-restore-assets-link-");
   const runId = "restore-assets-link";
-  const initial = installEnvironmentScope(t, fixtureRoot, runId);
+  const initial = await installEnvironmentScope(t, fixtureRoot, runId);
   let initialReleased = false;
   t.after(() => {
     if (!initialReleased) initial.release();
@@ -593,7 +594,7 @@ test("RestoreEnvironmentStage permits the ScoutRoot assets symlink", async (t) =
   initial.release();
   initialReleased = true;
 
-  const resumed = installTestRunScope(t, {
+  const resumed = await installTestRunScope(t, {
     runId,
     scoutRoot: fixtureRoot,
     runRoot: join(fixtureRoot, "run", runId),
@@ -613,7 +614,7 @@ test("RestoreEnvironmentStage permits the ScoutRoot assets symlink", async (t) =
 test("RestoreEnvironmentStage rebuilds only damaged roles and is idempotent", async (t) => {
   const fixtureRoot = createLinkedAssetsFixture(t, "scout-restore-mixed-");
   const runId = "restore-mixed";
-  const initial = installEnvironmentScope(t, fixtureRoot, runId);
+  const initial = await installEnvironmentScope(t, fixtureRoot, runId);
   let initialReleased = false;
   t.after(() => {
     if (!initialReleased) initial.release();
@@ -707,10 +708,10 @@ test("RestoreEnvironmentStage rebuilds only damaged roles and is idempotent", as
   secondReleased = true;
 });
 
-test("RestoreEnvironmentStage follows current GraphState roles and retains removed role history", async (t) => {
-  const fixtureRoot = createFixture("scout-restore-dynamic-roles-");
+test("RestoreEnvironmentStage follows current GraphData roles and retains removed role history", async (t) => {
+  const fixtureRoot = await createFixture("scout-restore-dynamic-roles-");
   const runId = "restore-dynamic-roles";
-  const initial = installEnvironmentScope(t, fixtureRoot, runId);
+  const initial = await installEnvironmentScope(t, fixtureRoot, runId);
   let initialReleased = false;
   t.after(() => {
     if (!initialReleased) initial.release();
@@ -784,7 +785,7 @@ test("RestoreEnvironmentStage follows current GraphState roles and retains remov
 test("RestoreEnvironmentStage self-heals a partial mount without rebuilding completed roles", async (t) => {
   const fixtureRoot = createLinkedAssetsFixture(t, "scout-restore-partial-mount-");
   const runId = "restore-partial-mount";
-  const initial = installEnvironmentScope(t, fixtureRoot, runId);
+  const initial = await installEnvironmentScope(t, fixtureRoot, runId);
   let initialReleased = false;
   t.after(() => {
     if (!initialReleased) initial.release();
@@ -897,9 +898,9 @@ test("RestoreEnvironmentStage self-heals a partial mount without rebuilding comp
 
 for (const crashAt of ["wipe", "before-index", "after-index"] as const) {
   test(`RestoreEnvironmentStage survives process death at ${crashAt}`, async (t) => {
-    const fixtureRoot = createFixture(`scout-environment-crash-${crashAt}-`);
+    const fixtureRoot = await createFixture(`scout-environment-crash-${crashAt}-`);
     const runId = `environment-crash-${crashAt}`;
-    const initial = installEnvironmentScope(t, fixtureRoot, runId);
+    const initial = await installEnvironmentScope(t, fixtureRoot, runId);
     await new PrepareEnvironmentStage({ preflightMount: async () => ({ status: "passed" }) }).start();
     const { manifestStore } = initial.scope;
     const runRoot = join(fixtureRoot, "run", runId);
@@ -1087,11 +1088,11 @@ async function prepareLinkedEnvironment(
   suffix: string,
 ): Promise<{
   fixtureRoot: string;
-  runtime: ReturnType<typeof installEnvironmentScope>;
+  runtime: Awaited<ReturnType<typeof installEnvironmentScope>>;
   coordinatorSentinel: string;
 }> {
   const fixtureRoot = createLinkedAssetsFixture(t, `scout-restore-${suffix}-`);
-  const runtime = installEnvironmentScope(t, fixtureRoot, `restore-${suffix}`);
+  const runtime = await installEnvironmentScope(t, fixtureRoot, `restore-${suffix}`);
   t.after(runtime.release);
   await new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
@@ -1104,17 +1105,17 @@ async function prepareLinkedEnvironment(
   return { fixtureRoot, runtime, coordinatorSentinel };
 }
 
-function installEnvironmentScope(
+async function installEnvironmentScope(
   t: import("node:test").TestContext,
   scoutRoot: string,
   runId: string,
   interactionPort: RuntimeInteractionPort = new NoopRuntimeInteractionPort(),
   scoutConfig?: ScoutConfig,
-): {
+): Promise<{
   scope: RunScope;
   appServer: CodexAppServerClient;
   release(): void;
-} {
+}> {
   const appServer = {} as CodexAppServerClient;
   const scope = new RunScope({
     runId,
@@ -1123,7 +1124,7 @@ function installEnvironmentScope(
     eventBus: new InMemoryEventBus(),
     interactionPort,
     scoutConfig,
-    ...createTestRunPersistence(
+    ...await createTestRunPersistence(
       t,
       runId,
       scoutRoot,

@@ -1,15 +1,11 @@
-import type { EventType, ScoutEvent } from "../../../core/events/index.js";
+import type { EventType } from "../../../core/events/index.js";
 import { recordObjectPaths } from "../../../core/path.js";
-import { RecordableObject, type RecordWriteFailure } from "../../../core/record/index.js";
+import { RecordableObject, type RecordEvent, type RecordWriteFailure } from "../../../core/record/index.js";
 import { currentRunScope } from "../../../run/run-scope.js";
-import type {
-  ScoutDomainId, ScoutDomainRecordEvent, ScoutDomainRecordFact,
-  ScoutDomainRecordProjection, ScoutDomainRuntimeFact,
-} from "../../types.js";
+import type { ScoutDomainId } from "../../types.js";
 
 /** Common recording lifecycle; Domain projections remain defined by their own producers. */
-export abstract class DomainRecordObject<TRuntimeFact extends ScoutDomainRuntimeFact>
-  extends RecordableObject implements ScoutDomainRecordProjection<TRuntimeFact> {
+export abstract class DomainRecordObject<TRecord extends RecordEvent = RecordEvent> extends RecordableObject<TRecord> {
   abstract readonly eventTypes: readonly EventType[];
 
   protected constructor(private readonly identity: {
@@ -18,9 +14,6 @@ export abstract class DomainRecordObject<TRuntimeFact extends ScoutDomainRuntime
     readonly fileName: string;
     readonly lockFileName: string;
   }) { super(identity.name); }
-
-  abstract project(event: ScoutEvent, journalSeq: number): ScoutDomainRecordFact | undefined;
-  abstract aggregate(events: readonly ScoutDomainRecordEvent[]): TRuntimeFact;
 
   protected location(journalRoot: string) {
     return { journalId: this.identity.domainId, ...recordObjectPaths(journalRoot, this.identity.fileName, this.identity.lockFileName) };

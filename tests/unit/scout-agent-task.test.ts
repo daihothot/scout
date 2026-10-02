@@ -816,7 +816,7 @@ test("TaskRunner keeps done after task outcome delivery fails", async (t) => {
   assert.equal(harness.events.some((event) => AgentEvents.task.done.is(event)), true);
 });
 
-test("AgentTimelineStepBackend reduces app-server plan timeline entries into step state", (t) => {
+test("AgentTimelineStepBackend reduces app-server plan timeline entries into step state", async (t) => {
   const eventBus = new InMemoryEventBus();
   const runId = "run-task-backend-test";
   const scope = new RunScope({
@@ -825,7 +825,7 @@ test("AgentTimelineStepBackend reduces app-server plan timeline entries into ste
     logger: {} as RunScope["logger"],
     eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
-    ...createTestRunPersistence(t, runId),
+    ...await createTestRunPersistence(t, runId),
     terminate: async () => undefined,
   });
   const releaseRunScope = installRunScope(scope);
@@ -1075,7 +1075,7 @@ async function createHarness(t: TestContext, input: {
   submissionOrder: string[];
 }> {
   const eventBus = new InMemoryEventBus();
-  const scope = installTestRunScope(t, {
+  const scope = await installTestRunScope(t, {
     runId: "worker-runner-harness",
     eventBus,
     runtimeGraph: createTestGraph({ ...createDefaultTestGraph().snapshot(), currentPhase: "verify" }),

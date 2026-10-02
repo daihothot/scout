@@ -21,7 +21,7 @@ import {
 } from "../../src/core/workflow/index.js";
 import { AgentTaskDispositionKinds, AgentTaskStatuses, type AgentTaskState } from "../../src/agent/task/types.js";
 import { AgentStepStatuses, type AgentStepState } from "../../src/agent/step/types.js";
-import { projectGraphState } from "../../src/run/resume/projection/index.js";
+import { projectGraphData } from "../../src/core/workflow/projector/graph-projector.js";
 import { createTestRunPersistence, installTestRunScope, createDefaultTestGraph, createTestGraph } from "../helpers/run-persistence.js";
 import {
   createDomainRuntime,
@@ -29,7 +29,6 @@ import {
   ScoutDomainId,
 } from "../../src/domain/index.js";
 import { RbtDomain, RbtDomainAgentBackend, RbtRecordObject } from "../../src/domain/domains/rbt/index.js";
-import { ValidationDomain } from "../../src/domain/domains/validation/index.js";
 
 const scoutRoot = process.cwd();
 const profilePath = join(
@@ -88,15 +87,12 @@ test("Graph owns terminal outcomes, distinguishes return edges and restores the 
   assert.throws(() => restored.advance("error"), /completed Workflow Graph/);
 });
 
-test("Domain Runtime is selected by the GraphState domain identifier", async () => {
+test("Domain Runtime is selected by the GraphData domain identifier", async () => {
   const rbt = await createDomainRuntime(ScoutDomainId.Rbt);
   assert.ok(rbt instanceof RbtDomain);
   assert.ok(rbt.backend instanceof DomainAgentBackend);
   assert.equal(typeof rbt.recordObject.readAll, "function");
-  const validation = await createDomainRuntime(ScoutDomainId.Validation);
-  assert.ok(validation instanceof ValidationDomain);
-  assert.ok(validation.backend instanceof DomainAgentBackend);
-  assert.deepEqual(validation.backend.dynamicToolsForPhase("research"), []);
+  await assert.rejects(createDomainRuntime("validation" as ScoutDomainId), /Invalid Workflow domain: validation/);
   await assert.rejects(
     createDomainRuntime("missing-domain" as ScoutDomainId),
     /Invalid Workflow domain: missing-domain/,
@@ -119,14 +115,14 @@ test("Domain loading validates backend methods instead of Domain forwarding meth
   }
 });
 
-test("Domain loading validates the Journal read contract", async () => {
-  const descriptor = Object.getOwnPropertyDescriptor(RbtRecordObject.prototype, "readAll");
-  Object.defineProperty(RbtRecordObject.prototype, "readAll", { value: "invalid", configurable: true });
+test("Domain loading validates participant lifecycle methods", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(RbtDomain.prototype, "restore");
+  Object.defineProperty(RbtDomain.prototype, "restore", { value: "invalid", configurable: true });
   try {
-    await assert.rejects(createDomainRuntime(ScoutDomainId.Rbt), /invalid Domain journal/);
+    await assert.rejects(createDomainRuntime(ScoutDomainId.Rbt), /invalid Domain instance/);
   } finally {
-    if (descriptor) Object.defineProperty(RbtRecordObject.prototype, "readAll", descriptor);
-    else Reflect.deleteProperty(RbtRecordObject.prototype, "readAll");
+    if (descriptor) Object.defineProperty(RbtDomain.prototype, "restore", descriptor);
+    else Reflect.deleteProperty(RbtDomain.prototype, "restore");
   }
 });
 
@@ -147,14 +143,14 @@ test("Phase selects the first available role in declaration order", () => {
 
 test("Workflow persists Graph initialization and restores the latest Phase", async (t) => {
   const eventBus = new InMemoryEventBus();
-  const persistence = createTestRunPersistence(
+  const persistence = await createTestRunPersistence(
     t,
     "workflow-journal-projection",
     "/repo",
     eventBus,
   );
   const { journal, workflow } = persistence;
-  installTestRunScope(t, {
+  await installTestRunScope(t, {
     runId: journal.runId, eventBus, workflow, manifestStore: persistence.manifestStore,
   });
 
@@ -174,7 +170,7 @@ test("Workflow persists Graph initialization and restores the latest Phase", asy
   assert.equal(transition.payload.outcome, "completed");
   assert.equal(transition.payload.cycleCompleted, false);
   assert.equal(advanced.result.state.currentPhase, "research-reviewer");
-  assert.equal(projectGraphState(events).currentPhase, "research-reviewer");
+  assert.equal(projectGraphData(events).currentPhase, "research-reviewer");
 });
 
 for (const outcome of ["completed", "error"] as const) {
@@ -183,7 +179,7 @@ for (const outcome of ["completed", "error"] as const) {
       const graph = createDefaultTestGraph().snapshot();
       const runtimeGraph = createTestGraph({ ...graph, phases: graph.phases.map((phase, index) => index === 0
         ? { ...phase, edges: { ...phase.edges, error: "research-reviewer" } } : phase) });
-      const scope = installTestRunScope(t, { runId: `phase-guard-${outcome}-${status}`, runtimeGraph });
+      const scope = await installTestRunScope(t, { runId: `phase-guard-${outcome}-${status}`, runtimeGraph });
       const workflow = scope.workflow;
       const now = new Date().toISOString();
       const task: AgentTaskState = {
@@ -224,7 +220,7 @@ for (const outcome of ["completed", "error"] as const) {
 }
 
 test("Workflow keeps human-waiting and restored earlier-Phase Tasks on the active Workflow", async (t) => {
-  const scope = installTestRunScope(t, { runId: "phase-guard-human-wait" });
+  const scope = await installTestRunScope(t, { runId: "phase-guard-human-wait" });
   await scope.workflow.advance("completed");
   const now = new Date().toISOString();
   scope.taskStore.addTask({
@@ -240,11 +236,11 @@ test("Workflow keeps human-waiting and restored earlier-Phase Tasks on the activ
     }],
   });
   const graph = scope.workflow.graph.snapshot();
-  const workflowState = scope.workflow.snapshot()!;
+  const workflowData = scope.workflow.snapshot()!;
   for (const outcome of ["completed", "error"] as const) {
     await assert.rejects(async () => await scope.workflow.advance(outcome), /restored-human-task \(running\)/);
     assert.deepEqual(scope.workflow.graph.snapshot(), graph);
-    assert.deepEqual(scope.workflow.snapshot(), workflowState);
+    assert.deepEqual(scope.workflow.snapshot(), workflowData);
     assert.doesNotThrow(() => scope.workflow.assertAcceptingInput());
   }
 });
@@ -254,7 +250,7 @@ for (const status of [AgentTaskStatuses.Done, AgentTaskStatuses.Failed, AgentTas
     const graph = createDefaultTestGraph().snapshot();
     const runtimeGraph = createTestGraph({ ...graph, phases: graph.phases.map((phase, index) => index === 0
       ? { ...phase, edges: { ...phase.edges, error: "research-reviewer" } } : phase) });
-    const scope = installTestRunScope(t, { runId: `phase-guard-step-${status}`, runtimeGraph });
+    const scope = await installTestRunScope(t, { runId: `phase-guard-step-${status}`, runtimeGraph });
     const now = new Date().toISOString();
     scope.taskStore.addTask({
       type: "local_agent", taskId: "ended-task", taskSequence: 1,
@@ -282,14 +278,14 @@ for (const status of [AgentTaskStatuses.Done, AgentTaskStatuses.Failed, AgentTas
   });
 }
 
-test("GraphState recovery rejects a Run without Workflow initialization", (t) => {
-  const { journal } = createTestRunPersistence(t, "workflow-missing-initialization");
+test("GraphData recovery rejects a Run without Workflow initialization", async (t) => {
+  const { journal } = await createTestRunPersistence(t, "workflow-missing-initialization");
   const eventsWithoutWorkflow = journal.readAll().filter((event) =>
     !WorkflowEvents.workflow.initialized.is(event)
   );
 
   assert.throws(
-    () => projectGraphState(eventsWithoutWorkflow),
+    () => projectGraphData(eventsWithoutWorkflow),
     /missing system\.workflow\.initialized/,
   );
 });

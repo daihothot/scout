@@ -13,7 +13,7 @@ class TestDomainBenchmarks extends DomainBenchmarks {
 }
 
 test("Domain submissions use the shared Workflow service and preserve other chapters across executions", async (t) => {
-  const scope = installTestRunScope(t, { runId: "domain-benchmarks" });
+  const scope = await installTestRunScope(t, { runId: "domain-benchmarks" });
   const service = scope.workflow.benchmarks;
   const base = new TestDomainBenchmarks(ScoutDomainId.Base);
   const rbt = new TestDomainBenchmarks(ScoutDomainId.Rbt);

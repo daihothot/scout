@@ -1,3 +1,4 @@
+import { testWorkflowParticipant } from "../helpers/workflow-participant.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -60,7 +61,7 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
     logger: createNoopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    ...createTestRunPersistence(t, runId, root, undefined, join(root, "run", runId)),
+    ...await createTestRunPersistence(t, runId, root, undefined, join(root, "run", runId)),
     terminate: async () => undefined,
   });
   scope.setExecutionSystem(unavailableExecutionSystem());
@@ -138,7 +139,7 @@ test("AgentsStage closes started threads when another Agent fails to start", asy
     logger: createNoopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    ...createTestRunPersistence(t, runId, root, undefined, join(root, "run", runId)),
+    ...await createTestRunPersistence(t, runId, root, undefined, join(root, "run", runId)),
     terminate: async () => undefined,
   });
   scope.setExecutionSystem(unavailableExecutionSystem());
@@ -213,7 +214,8 @@ function unavailableExecutionSystem(): ExecutionPlatformPort {
 
 function createStaticDomain(): ScoutDomain {
   return {
-    description: { id: ScoutDomainId.Validation, name: "Test Domain" },
+    ...testWorkflowParticipant,
+    description: { id: ScoutDomainId.Rbt, name: "Test Domain" },
     backend: new class extends DomainAgentBackend {
       override async handleDynamicToolCall() { return undefined; }
     }(),

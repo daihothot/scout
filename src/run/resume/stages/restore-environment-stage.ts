@@ -200,7 +200,7 @@ export class RestoreEnvironmentStage implements RunStage {
       const environment = new RunEnvironmentBuilder(assetStore).build({
         runId: scope.runId,
         agents,
-        graphState: scope.workflow.graph.snapshot(),
+        graphData: scope.workflow.graph.snapshot(),
       });
       const transaction = new EnvironmentMetadataTransaction({
         rollback,

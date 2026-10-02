@@ -4,8 +4,7 @@ import { attachments } from "../../../agent/context/attachments.js";
 import { CoordinatorContextTags } from "../../../agent/runner/coordinator/coordinator-attachments.js";
 import { EventSubscriptionPriorities, type UnsubscribeEventHandler } from "../../../core/events/index.js";
 import { resolveSynthesisRole } from "../../../core/workflow/index.js";
-import { WorkflowEvents } from "../../../core/workflow/workflow-events.js";
-import type { WorkflowState } from "../../../core/workflow/workflow-state.js";
+import type { WorkflowData } from "../../../core/workflow/workflow-data.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 import { RunEvents } from "../../../run/events/index.js";
 import type { ExecutionPlatformRequest } from "../../../execution/execution-command.js";
@@ -33,7 +32,8 @@ import {
 } from "./core/index.js";
 import { loadRbtConfig, type RbtConfig } from "./config/index.js";
 import { RbtEvents, type RbtExecutionHistoryReadyEvent } from "./rbt-events.js";
-import { RbtRecordObject } from "./rbt-record-object.js";
+import { RbtRecordObject } from "./record/rbt-record-object.js";
+import { RbtDomainProjector } from "./projector/rbt-domain-projector.js";
 import { RbtArtifact } from "./artifacts/rbt-artifact.js";
 import { RbtBenchmarks } from "./rbt-benchmarks.js";
 
@@ -60,7 +60,6 @@ export class RbtDomain implements ScoutDomain {
   private readonly behaviorOrchestrator: JarvisBehaviorOrchestrator;
   private unsubscribeHistoryReady?: UnsubscribeEventHandler;
   private unsubscribeRestoredHistoryReady?: UnsubscribeEventHandler;
-  private unsubscribeWorkflowCommit?: UnsubscribeEventHandler;
   private activeConfig?: RbtConfig;
   private readonly executionRequest: () => ExecutionPlatformRequest;
   private baseDomain?: BaseDomain;
@@ -133,13 +132,6 @@ export class RbtDomain implements ScoutDomain {
     try {
       this.activeConfig = loadRbtConfig(scope.config);
       this.recordObject.start();
-      this.artifact.restore(this.recordObject.aggregate(this.recordObject.readAll()));
-      this.unsubscribeWorkflowCommit = scope.eventBus.subscribe(WorkflowEvents.workflow.committing, () => {
-        this.unsubscribeRestoredHistoryReady?.();
-        this.unsubscribeRestoredHistoryReady = undefined;
-        this.behaviorStore.clear();
-        this.artifact.restore({ histories: [], executionPacks: [], reviews: [] });
-      }, { priority: EventSubscriptionPriorities.Normal });
       this.benchmarks.start();
       this.artifact.start();
       this.backend.register("execute", this.agentTools.executeBehavior);
@@ -165,7 +157,6 @@ export class RbtDomain implements ScoutDomain {
       );
       this.toolCallRecorder.start();
       this.campaignHistoryStore.start();
-      this.behaviorOrchestrator.start();
       this.started = true;
     } catch (error) {
       try {
@@ -177,27 +168,26 @@ export class RbtDomain implements ScoutDomain {
     }
   }
 
-  finishWorkflow(): void {
+  create(): void {
     this.unsubscribeRestoredHistoryReady?.();
     this.unsubscribeRestoredHistoryReady = undefined;
-    this.recordObject.releaseWorkflow();
+    this.behaviorStore.clear();
+    this.artifact.restore({ histories: [], executionPacks: [], reviews: [] });
   }
 
-  async restore(workflowState: WorkflowState): Promise<void> {
+  async restore(workflowData: WorkflowData): Promise<void> {
+    if (workflowData.status === "completed") return;
     await this.behaviorOrchestrator.quiesce();
     this.unsubscribeRestoredHistoryReady?.();
     this.unsubscribeRestoredHistoryReady = undefined;
     this.behaviorStore.clear();
     await this.websocket.stop();
-    if (workflowState.status === "completed") {
-      this.behaviorOrchestrator.start();
-      return;
-    }
-    const restoredFacts = this.recordObject.aggregate(this.recordObject.readAll());
+    this.recordObject.attach(currentRunScope().workflow.journalRoot);
+    const records = this.recordObject.read();
+    const restoredFacts = new RbtDomainProjector().project(records);
     this.artifact.restore(restoredFacts);
     const { histories } = restoredFacts;
     if (histories.length === 0) {
-      this.behaviorOrchestrator.start();
       return;
     }
     const scope = currentRunScope();
@@ -220,7 +210,7 @@ export class RbtDomain implements ScoutDomain {
         ));
         for (const history of histories) {
           if (cancelled) return;
-          const messageId = `${scope.runId}-${workflowState.workflowId}-rbt-history-${history.agentId}-${history.runtimeSequence}`;
+          const messageId = `${scope.runId}-${workflowData.workflowId}-rbt-history-${history.agentId}-${history.runtimeSequence}`;
           if (acceptedMessages.has(messageId)) continue;
           await this.deliverHistoryRef(history, history.occurredAt);
           acceptedMessages.add(messageId);
@@ -236,7 +226,29 @@ export class RbtDomain implements ScoutDomain {
       unsubscribe();
     };
     this.unsubscribeRestoredHistoryReady = cancel;
-    this.behaviorOrchestrator.start();
+  }
+
+  run(): void { this.behaviorOrchestrator.start(); }
+
+  async close(): Promise<void> {
+    await this.behaviorOrchestrator.quiesce();
+    this.unsubscribeRestoredHistoryReady?.();
+    this.unsubscribeRestoredHistoryReady = undefined;
+    await this.websocket.stop();
+  }
+
+  async abort(): Promise<void> {
+    await this.behaviorOrchestrator.quiesce();
+    this.unsubscribeRestoredHistoryReady?.();
+    this.unsubscribeRestoredHistoryReady = undefined;
+    await this.websocket.stop();
+  }
+
+  clearWorkflow(): void {
+    this.behaviorStore.clear();
+    this.artifact.restore({ histories: [], executionPacks: [], reviews: [] });
+    this.campaignHistoryStore.clearWorkflow();
+    this.recordObject.release();
   }
 
   async stop(): Promise<void> {
@@ -248,7 +260,6 @@ export class RbtDomain implements ScoutDomain {
       for (const release of [
         () => this.artifact.stop(),
         () => this.benchmarks.stop(),
-        () => { this.unsubscribeWorkflowCommit?.(); this.unsubscribeWorkflowCommit = undefined; },
         () => this.recordObject.stop(),
         () => {
           this.unsubscribeHistoryReady?.();
@@ -292,8 +303,8 @@ export class RbtDomain implements ScoutDomain {
 
   private async deliverHistoryRef(history: RbtExecutionHistoryReadyEvent, occurredAt: string): Promise<void> {
     const scope = currentRunScope();
-    const workflowState = scope.workflow.snapshot();
-    if (!workflowState) throw new Error("RBT history delivery requires an active Workflow.");
+    const workflowData = scope.workflow.snapshot();
+    if (!workflowData) throw new Error("RBT history delivery requires an active Workflow.");
     const coordinatorRole = resolveSynthesisRole(scope.workflow.graph.snapshot()).name;
     const coordinator = scope.agentRegistry.listAgents().find((agent) => agent.role === coordinatorRole);
     if (!coordinator) return;
@@ -310,7 +321,7 @@ export class RbtDomain implements ScoutDomain {
       ].join("\n")),
       deliveryMode: "queued",
       delivery: {
-        messageId: `${scope.runId}-${workflowState.workflowId}-rbt-history-${history.agentId}-${history.runtimeSequence}`,
+        messageId: `${scope.runId}-${workflowData.workflowId}-rbt-history-${history.agentId}-${history.runtimeSequence}`,
         queuedAt: occurredAt,
       },
     });

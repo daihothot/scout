@@ -1,3 +1,4 @@
+import { testWorkflowParticipant } from "../helpers/workflow-participant.js";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -98,7 +99,7 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    ...createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
+    ...await createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
     terminate: async () => undefined,
   });
   const releaseScope = installRunScope(scope);
@@ -324,7 +325,7 @@ test("RunAppServerStage preserves its owned client when a second start cannot in
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    ...createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
+    ...await createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
     terminate: async () => undefined,
   });
   const releaseScope = installRunScope(scope);
@@ -364,7 +365,7 @@ test("RunAppServerStage rejects a missing target model provider without falling 
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    ...createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
+    ...await createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
     terminate: async () => undefined,
   });
   const releaseScope = installRunScope(scope);
@@ -428,7 +429,7 @@ test("RunAppServerStage rebinds target Codex auth without retaining copied crede
     logger: noopLogger(),
     eventBus: new InMemoryEventBus(),
     interactionPort: new NoopRuntimeInteractionPort(),
-    ...createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
+    ...await createTestRunPersistence(t, runId, fixtureRoot, undefined, join(fixtureRoot, "run", runId)),
     terminate: async () => undefined,
   });
   const releaseScope = installRunScope(scope);
@@ -545,7 +546,8 @@ function noopLogger(): Logger {
 
 function testDomain(): ScoutDomain {
   return {
-    description: { id: ScoutDomainId.Validation, name: "Test Domain" },
+    ...testWorkflowParticipant,
+    description: { id: ScoutDomainId.Rbt, name: "Test Domain" },
     backend: new class extends DomainAgentBackend {
       override async handleDynamicToolCall() { return undefined; }
     }(),

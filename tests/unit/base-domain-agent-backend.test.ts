@@ -9,7 +9,7 @@ import {
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
 test("BaseDomainAgentBackend registers and invokes multiple tools by Phase", async (t) => {
-  installTestRunScope(t, { runId: "run-base-domain-agent-tools" });
+  await installTestRunScope(t, { runId: "run-base-domain-agent-tools" });
   const store = new BaseDomainToolCallStore();
   const invoked: string[] = [];
   const first = toolSpec("base_first", "FirstTool");
@@ -66,7 +66,7 @@ test("BaseDomainAgentBackend registers and invokes multiple tools by Phase", asy
 });
 
 test("BaseDomainAgentBackend rejects conflicting and unregistered Phase tools", async (t) => {
-  installTestRunScope(t, { runId: "run-base-domain-agent-tool-rejection" });
+  await installTestRunScope(t, { runId: "run-base-domain-agent-tool-rejection" });
   const installed = toolSpec("base_installed", "InstalledTool");
   const missing = toolSpec("base_missing", "MissingTool");
   let invocationCount = 0;

@@ -1,3 +1,4 @@
+import { testWorkflowParticipant } from "../helpers/workflow-participant.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
@@ -11,16 +12,13 @@ test("DomainRegistry retains every Scout Domain in registration order", () => {
   const registry = new DomainRegistry();
   const base = domain(ScoutDomainId.Base, "Base");
   const rbt = domain(ScoutDomainId.Rbt, "RBT");
-  const validation = domain(ScoutDomainId.Validation, "Validation");
 
   registry.register(base);
   registry.register(rbt);
-  registry.register(validation);
 
   assert.equal(registry.get(ScoutDomainId.Base), base);
   assert.equal(registry.get(ScoutDomainId.Rbt), rbt);
-  assert.equal(registry.get(ScoutDomainId.Validation), validation);
-  assert.deepEqual(registry.list(), [base, rbt, validation]);
+  assert.deepEqual(registry.list(), [base, rbt]);
   assert.equal(rbt.description.id, ScoutDomainId.Rbt);
 });
 
@@ -49,6 +47,7 @@ test("DomainRegistry rejects duplicate ids and an inactive unregister", () => {
 
 function domain(id: ScoutDomainId, name: string): ScoutDomain {
   return {
+    ...testWorkflowParticipant,
     description: { id, name },
     backend: new class extends DomainAgentBackend {
       override async handleDynamicToolCall() { return undefined; }

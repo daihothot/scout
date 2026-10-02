@@ -32,7 +32,7 @@ async function fixture(t: TestContext) {
     onServerRequest(handler: AppServerRequestHandler) { handlers.add(handler); return () => { handlers.delete(handler); }; },
     turnSnapshot: () => protocolCompleted ? { status: "completed" } : undefined,
   } as unknown as CodexAppServerClient;
-  const scope = installTestRunScope(t, { runId: "permission-unit", appServer: client, logger: {
+  const scope = await installTestRunScope(t, { runId: "permission-unit", appServer: client, logger: {
     debug() {}, info() {},
     warn(input: LogInput) { warnings.push(input); },
     error(input: LogInput) { errors.push(input.message ?? ""); errorEvents.push(input); },

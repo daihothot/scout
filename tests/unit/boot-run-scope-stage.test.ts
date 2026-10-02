@@ -22,7 +22,7 @@ import {
 import { RunEvents } from "../../src/run/events/index.js";
 import { ScoutExecutionSystem } from "../../src/execution/scout-execution-system.js";
 import { BaseDomain, ScoutDomainId } from "../../src/domain/index.js";
-import { ValidationDomain } from "../../src/domain/domains/validation/index.js";
+import { RbtDomain } from "../../src/domain/domains/rbt/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import {
   createTestRunPersistence,
@@ -39,7 +39,7 @@ test("RunScopeStage creates the Run-owned stores and releases the installed scop
     logger: noopLogger(),
     eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
-    ...createTestRunPersistence(t, runId, "/repo", eventBus),
+    ...await createTestRunPersistence(t, runId, "/repo", eventBus),
     terminate: async (reason) => {
       terminationReason = reason;
     },
@@ -72,17 +72,17 @@ test("DomainStage creates, installs, starts, and clears both Run Domains", async
   const eventBus = new InMemoryEventBus();
   const scope = new RunScope({
     runId,
-    scoutRoot: "/repo",
+    scoutRoot: process.cwd(),
     logger: noopLogger(),
     eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
-    ...createTestRunPersistence(
+    ...await createTestRunPersistence(
       t,
       runId,
-      "/repo",
+      process.cwd(),
       eventBus,
       undefined,
-      createDefaultTestGraph("validation"),
+      createDefaultTestGraph("rbt"),
     ),
     terminate: async () => undefined,
   });
@@ -110,8 +110,8 @@ test("DomainStage creates, installs, starts, and clears both Run Domains", async
   await domainStage.start();
 
   assert.equal(
-    scope.domainRegistry.get(ScoutDomainId.Validation).description.id,
-    ScoutDomainId.Validation,
+    scope.domainRegistry.get(ScoutDomainId.Rbt).description.id,
+    ScoutDomainId.Rbt,
   );
   assert.equal(
     scope.domainRegistry.get(ScoutDomainId.Base).description.id,
@@ -131,17 +131,17 @@ for (const preparationFails of [false, true]) {
     const eventBus = new InMemoryEventBus();
     const scope = new RunScope({
       runId,
-      scoutRoot: "/repo",
+      scoutRoot: process.cwd(),
       logger: noopLogger(),
       eventBus,
       interactionPort: new NoopRuntimeInteractionPort(),
-      ...createTestRunPersistence(
+      ...await createTestRunPersistence(
         t,
         runId,
-        "/repo",
+        process.cwd(),
         eventBus,
         undefined,
-        createDefaultTestGraph("validation"),
+        createDefaultTestGraph("rbt"),
       ),
       terminate: async () => undefined,
     });
@@ -183,9 +183,9 @@ for (const preparationFails of [false, true]) {
     const domains = scope.domainRegistry.list();
     const observed: string[] = [];
     const base = scope.domainRegistry.get(ScoutDomainId.Base);
-    const validation = scope.domainRegistry.get(ScoutDomainId.Validation);
+    const validation = scope.domainRegistry.get(ScoutDomainId.Rbt);
     assert.ok(base instanceof BaseDomain);
-    assert.ok(validation instanceof ValidationDomain);
+    assert.ok(validation instanceof RbtDomain);
     const stopBase = base.stop.bind(base);
     t.mock.method(base, "stop", () => {
       observed.push("stop:base");
@@ -196,9 +196,9 @@ for (const preparationFails of [false, true]) {
       observed.push("stop:validation");
       await stopValidation();
     });
-    const prepare = base.recordObject.prepareWorkflow;
+    const prepare = base.recordObject.prepare;
     const preparationError = new Error("Domain Workflow preparation failed during shutdown");
-    t.mock.method(base.recordObject, "prepareWorkflow", async (root: string) => {
+    t.mock.method(base.recordObject, "prepare", async (root: string) => {
       observed.push("prepare");
       announcePreparation();
       await gate;
@@ -261,11 +261,11 @@ test("ExecutionStage installs and clears the run-scoped system without probing a
   const eventBus = new InMemoryEventBus();
   const scope = new RunScope({
     runId,
-    scoutRoot: "/repo",
+    scoutRoot: process.cwd(),
     logger: noopLogger(),
     eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
-    ...createTestRunPersistence(t, runId, "/repo", eventBus),
+    ...await createTestRunPersistence(t, runId, "/repo", eventBus),
     terminate: async () => undefined,
   });
   const scopeStage = new RunScopeStage(scope);
@@ -299,11 +299,11 @@ test("RunScopeStage remains available until every dependent stage stops", async 
   const eventBus = new InMemoryEventBus();
   const scope = new RunScope({
     runId: "boot-run-scope-order",
-    scoutRoot: "/repo",
+    scoutRoot: process.cwd(),
     logger,
     eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
-    ...createTestRunPersistence(t, "boot-run-scope-order", "/repo", eventBus),
+    ...await createTestRunPersistence(t, "boot-run-scope-order", "/repo", eventBus),
     terminate: (reason) => boot.terminate(reason),
   });
   const scopeStage = new RunScopeStage(scope);
@@ -331,7 +331,7 @@ test("RunScopeStage remains available until every dependent stage stops", async 
 
 test("RunScopeStage does not record an attachment when another run owns the process scope", async (t) => {
   const firstEventBus = new InMemoryEventBus();
-  const firstPersistence = createTestRunPersistence(
+  const firstPersistence = await createTestRunPersistence(
     t,
     "run-scope-owner",
     "/repo",
@@ -339,7 +339,7 @@ test("RunScopeStage does not record an attachment when another run owns the proc
   );
   const first = new RunScopeStage(new RunScope({
     runId: "run-scope-owner",
-    scoutRoot: "/repo",
+    scoutRoot: process.cwd(),
     logger: noopLogger(),
     eventBus: firstEventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
@@ -347,7 +347,7 @@ test("RunScopeStage does not record an attachment when another run owns the proc
     terminate: async () => undefined,
   }));
   const secondEventBus = new InMemoryEventBus();
-  const secondPersistence = createTestRunPersistence(
+  const secondPersistence = await createTestRunPersistence(
     t,
     "run-scope-rejected",
     "/repo",
@@ -355,7 +355,7 @@ test("RunScopeStage does not record an attachment when another run owns the proc
   );
   const second = new RunScopeStage(new RunScope({
     runId: "run-scope-rejected",
-    scoutRoot: "/repo",
+    scoutRoot: process.cwd(),
     logger: noopLogger(),
     eventBus: secondEventBus,
     interactionPort: new NoopRuntimeInteractionPort(),
@@ -383,10 +383,10 @@ test("RunScopeStage does not record an attachment when another run owns the proc
 test("RunScopeStage detaches normally after a previous Journal write failure", async (t) => {
   const runId = "run-scope-journal-failed";
   const eventBus = new InMemoryEventBus();
-  const persistence = createTestRunPersistence(t, runId, "/repo", eventBus);
+  const persistence = await createTestRunPersistence(t, runId, "/repo", eventBus);
   const scopeStage = new RunScopeStage(new RunScope({
     runId,
-    scoutRoot: "/repo",
+    scoutRoot: process.cwd(),
     logger: noopLogger(),
     eventBus,
     interactionPort: new NoopRuntimeInteractionPort(),

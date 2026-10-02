@@ -20,7 +20,7 @@ import { installTestRunScope } from "../helpers/run-persistence.js";
 import { RbtCampaignExecutionHistoryStore } from "../../src/domain/domains/rbt/core/campaign-execution-history-store.js";
 
 test("RBT serializes initial shared connection and command segments without duplicate launch", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   const entered = commandGate();
   const release = commandGate();
   let active = 0;
@@ -45,7 +45,7 @@ test("RBT serializes initial shared connection and command segments without dupl
 });
 
 test("RBT reconnect and retry remain inside the same command segment", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   const reconnecting = commandGate();
   const release = commandGate();
   let first = true;
@@ -73,7 +73,7 @@ test("RBT reconnect and retry remain inside the same command segment", async (t)
 });
 
 test("RBT rolls back its fresh launch even when failed-connection cleanup also throws", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   t.mock.method(fixture.websocket, "connectPlatformLink", async () => ({
     ok: false, code: "connect_failed", message: "connection failed", hostCommands: [],
   }));
@@ -92,7 +92,7 @@ test("RBT rolls back its fresh launch even when failed-connection cleanup also t
 });
 
 test("RBT closes its connection attempt and rolls back only its fresh launch when connect throws", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   const connect = t.mock.method(fixture.websocket, "connectPlatformLink", async () => { throw new Error("connect threw"); });
   const response = await fixture.orchestrator.executeCommand("execute", call, "first", {});
   assert.equal(response.success, false);
@@ -104,7 +104,7 @@ test("RBT closes its connection attempt and rolls back only its fresh launch whe
 });
 
 test("RBT quiesce rejects new work and drains every accepted command segment", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   const entered = commandGate();
   const release = commandGate();
   fixture.onCommand = async (command) => { if (command === "first") { entered.resolve(); await release.promise; } };
@@ -124,7 +124,7 @@ test("RBT quiesce rejects new work and drains every accepted command segment", a
 });
 
 test("RBT execute-file releases its command queue between campaign commands", { timeout: 5_000 }, async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   const campaignStarted = commandGate();
   const continueCampaign = commandGate();
   fixture.scope.eventBus.subscribe(RbtEvents.campaign.start, async () => {
@@ -141,7 +141,7 @@ test("RBT execute-file releases its command queue between campaign commands", { 
 });
 
 test("RBT execute-file closes failed history and attempts cleanup after a thrown command", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   const artifact = new RbtArtifact();
   artifact.start();
   t.after(() => artifact.stop());
@@ -165,7 +165,7 @@ test("RBT execute-file closes failed history and attempts cleanup after a thrown
 });
 
 test("RBT history identifies the executed bytes even when the execute-file changes during execution", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   const artifact = new RbtArtifact();
   artifact.start();
   t.after(() => artifact.stop());
@@ -186,7 +186,7 @@ test("RBT history identifies the executed bytes even when the execute-file chang
 });
 
 test("RBT target loss closes local history without claiming remote cleanup succeeded", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   const artifact = new RbtArtifact();
   artifact.start();
   t.after(() => artifact.stop());
@@ -209,7 +209,7 @@ test("RBT target loss closes local history without claiming remote cleanup succe
 });
 
 test("RBT execute-file fails after target shutdown without relaunching its old campaign", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   fixture.scope.eventBus.subscribe(RbtEvents.campaign.start, async () => {
     const target = fixture.base.execution.current(request);
     assert.ok(target.ok);
@@ -223,7 +223,7 @@ test("RBT execute-file fails after target shutdown without relaunching its old c
 });
 
 test("RBT quiesce waits for execute-file event delivery outside the command queue", async (t) => {
-  const fixture = createFixture(t);
+  const fixture = await createFixture(t);
   const campaignStarted = commandGate();
   const continueCampaign = commandGate();
   fixture.scope.eventBus.subscribe(RbtEvents.campaign.start, async () => {
@@ -256,7 +256,7 @@ function commandGate(): { promise: Promise<void>; resolve(): void } {
   return { promise, resolve };
 }
 
-function createFixture(t: TestContext) {
+async function createFixture(t: TestContext) {
   const eventBus = new InMemoryEventBus();
   const operations: string[] = [];
   const system: ExecutionPlatformPort = {
@@ -282,7 +282,7 @@ function createFixture(t: TestContext) {
       return { ok: true, identity: selection.platform };
     },
   };
-  const scope = installTestRunScope(t, { runId: "rbt-connection-queue", eventBus, executionSystem: system });
+  const scope = await installTestRunScope(t, { runId: "rbt-connection-queue", eventBus, executionSystem: system });
   const base = scope.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(base instanceof BaseDomain);
   const mount: CodexMount = {
