@@ -23,7 +23,7 @@ export class ResumeRunStageAssembly {
       input.clientsStage, input.environmentStage, new ExecutionStage(), new InteractionStage(),
       new DomainStage(), new AgentTelemetryStage(),
     );
-    executor.registerParallel(new AgentBackendStage(), new OrchestratorStage());
+    executor.registerSerial(new OrchestratorStage(), new AgentBackendStage());
     executor.registerSerial(
       new RestoreWorkflowStage(input.recovery, input.missingWorkflowId),
       new RecordResumeInterruptionsStage(), new RunRuntimeStage("resume"),

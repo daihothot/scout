@@ -256,7 +256,7 @@ export abstract class ScoutAgent {
     turnId?: string,
     stepId?: string,
   ): void {
-    const runningSteps = this.runScope.stepStore.list({ agentId: this.agentId }).filter((step) =>
+    const runningSteps = this.runScope.agentOrchestrator.stepStore.list({ agentId: this.agentId }).filter((step) =>
       step.status === "running" && (stepId === undefined || step.stepId === stepId)
     );
     if (runningSteps.length !== 1 || !runningSteps[0]) {
@@ -566,7 +566,7 @@ export abstract class ScoutAgent {
         : { status: "empty", instruction: "没有活动 Workflow。可交流与查看历史；开始新执行前由 Coordinator 调用 StartWorkflow，接受后立即结束当前 Turn。" },
     ));
     const startedAt = new Date().toISOString();
-    const activeTask = this.runScope.taskStore.findActiveTaskForAgent(this.agentId);
+    const activeTask = this.runScope.agentOrchestrator.taskStore.findActiveTaskForAgent(this.agentId);
     this.eventBus.publish(AgentEvents.turn.started, {
       invocationId,
       agentId: this.agentId,

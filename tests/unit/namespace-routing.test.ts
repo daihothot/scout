@@ -21,6 +21,7 @@ import { RbtDomainAgentBackend } from "../../src/domain/domains/rbt/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { installRunScope, RunScope } from "../../src/run/run-scope.js";
+import { OrchestratorStage } from "../../src/run/lifecycle/stages/orchestrator-stage.js";
 import { createDefaultTestGraph, createTestWorkflowAsset } from "../helpers/run-persistence.js";
 
 const unnamespacedTool: AgentDynamicToolSpec = {
@@ -145,11 +146,14 @@ async function installNamespaceScope(t: TestContext): Promise<RunScope> {
     threadId === caller.threadId ? caller : undefined
   );
   const release = installRunScope(scope);
+  const orchestrator = new OrchestratorStage();
+  await orchestrator.start();
   scope.manifestStore.create({ runId, scoutRoot: root, createdAt: new Date().toISOString(), checkpointSeq: 0 });
   await scope.workflow.start();
   await scope.workflow.startWorkflow();
   t.after(async () => {
     await scope.workflow.stop();
+    await orchestrator.stop();
     release();
     rmSync(root, { recursive: true, force: true });
   });

@@ -36,15 +36,15 @@ export interface AgentTaskHumanInputResult extends Record<string, unknown> {
 export class AgentTaskBackend {
   private readonly registry: RunScope["agentRegistry"];
   private readonly taskStore: AgentTaskStore;
-  private readonly stepStore: RunScope["stepStore"];
+  private readonly stepStore: RunScope["agentOrchestrator"]["stepStore"];
   private readonly eventBus: RunScope["eventBus"];
   private readonly humanInputBackend: AgentHumanInputBackend;
 
   constructor(input: { humanInputBackend: AgentHumanInputBackend }) {
     const scope = currentRunScope();
     this.registry = scope.agentRegistry;
-    this.taskStore = scope.taskStore;
-    this.stepStore = scope.stepStore;
+    this.taskStore = scope.agentOrchestrator.taskStore;
+    this.stepStore = scope.agentOrchestrator.stepStore;
     this.eventBus = scope.eventBus;
     this.humanInputBackend = input.humanInputBackend;
   }

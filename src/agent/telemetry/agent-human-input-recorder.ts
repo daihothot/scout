@@ -33,7 +33,7 @@ export class AgentHumanInputRecorder {
       }),
       eventBus.subscribe(AgentEvents.message.consumed, (event) => {
         if (!AgentEvents.message.consumed.is(event)) return;
-        const input = currentRunScope().humanInputStore.findByMessageId(event.payload.messageId);
+        const input = currentRunScope().agentOrchestrator.humanInputStore.findByMessageId(event.payload.messageId);
         if (!input) return;
         this.write(event.payload.agentId, AgentEvents.message.consumed.routeKey, {
           ...event.payload,

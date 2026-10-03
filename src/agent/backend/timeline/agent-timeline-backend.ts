@@ -78,7 +78,7 @@ export class AgentTimelineBackend {
   private logAppServerHealthEvent(entry: AppServerTimelineEntry, agent?: ScoutAgent): void {
     if (entry.kind !== "disconnect") return;
     const activeTask = agent
-      ? this.scope.taskStore.findActiveTaskForAgent(agent.agentId)
+      ? this.scope.agentOrchestrator.taskStore.findActiveTaskForAgent(agent.agentId)
       : undefined;
     this.scope.logger.warn({
       module: "runtime.app_server",

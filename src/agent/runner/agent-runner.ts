@@ -12,7 +12,7 @@ export abstract class AgentRunner {
   private stepSequence = 0;
 
   protected constructor() {
-    this.stepStore = currentRunScope().stepStore;
+    this.stepStore = currentRunScope().agentOrchestrator.stepStore;
   }
 
   /** Prevents this Step runner from accepting another Step. */
@@ -83,7 +83,7 @@ export abstract class AgentRunner {
       turnId: outcome.turn.turnId,
       finalResponse: outcome.finalResponse,
       plan: outcome.plan,
-      toolCallIds: currentRunScope().toolCallStore
+      toolCallIds: currentRunScope().agentOrchestrator.toolCallStore
         .list({ stepId })
         .map((call) => call.toolCallId),
       finishedAt: outcome.turn.finishedAt,

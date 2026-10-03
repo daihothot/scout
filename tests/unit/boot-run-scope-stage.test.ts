@@ -6,12 +6,14 @@ import { agent } from "../../src/agent/context/agent-attachments.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import { WorkflowEvents } from "../../src/core/workflow/index.js";
+import { AgentStepStore } from "../../src/agent/step/agent-step-store.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
 import {
   ExecutionStage,
   DomainStage,
   RunRuntimeStage,
   RunScopeStage,
+  OrchestratorStage,
   RunStageExecutor,
   type RunStage,
 } from "../../src/run/lifecycle/index.js";
@@ -29,7 +31,7 @@ import {
   createDefaultTestGraph,
 } from "../helpers/run-persistence.js";
 
-test("RunScopeStage creates the Run-owned stores and releases the installed scope", async (t) => {
+test("RunScopeStage installs the locator without constructing Agent runtime and releases the scope", async (t) => {
   const runId = "boot-run-scope-test";
   let terminationReason: string | undefined;
   const eventBus = new InMemoryEventBus();
@@ -55,7 +57,7 @@ test("RunScopeStage creates the Run-owned stores and releases the installed scop
   assert.deepEqual(stage.scope.domainRegistry.list(), []);
   assert.equal(stage.scope.config.root, "/repo/assets/scout/config");
   assert.deepEqual(stage.scope.agentRegistry.listAgents(), []);
-  assert.deepEqual(stage.scope.taskStore.listTasks(), []);
+  assert.throws(() => stage.scope.agentOrchestrator, /AgentOrchestrator Service is not available/);
   assert.throws(() => stage.scope.appServer, /app-server is not available/);
   assert.throws(() => stage.scope.executionSystem, /execution system is not available/);
   assert.throws(() => stage.scope.environment, /environment is not available/);
@@ -65,6 +67,98 @@ test("RunScopeStage creates the Run-owned stores and releases the installed scop
 
   await stage.stop();
   assert.throws(() => currentRunScope(), /No active Scout run scope/);
+});
+
+test("OrchestratorStage installs one Store owner and cannot release another Stage's owner", async (t) => {
+  const runId = "orchestrator-stage-owner";
+  const scopeStage = new RunScopeStage(new RunScope({
+    runId, scoutRoot: "/repo", logger: noopLogger(), eventBus: new InMemoryEventBus(),
+    interactionPort: new NoopRuntimeInteractionPort(),
+    ...await createTestRunPersistence(t, runId), terminate: async () => undefined,
+  }));
+  const stage = new OrchestratorStage();
+  const otherStage = new OrchestratorStage();
+  await scopeStage.start();
+  t.after(async () => { await otherStage.stop(); await stage.stop(); await scopeStage.stop(); });
+  await stage.start();
+  const owner = scopeStage.scope.agentOrchestrator;
+  const stores = [owner.taskStore, owner.stepStore, owner.humanInputStore, owner.toolCallStore];
+  await stage.start();
+  assert.equal(scopeStage.scope.agentOrchestrator, owner);
+  assert.deepEqual([owner.taskStore, owner.stepStore, owner.humanInputStore, owner.toolCallStore], stores);
+  assert.equal(scopeStage.scope.workflow.participants.filter((participant) => participant === owner).length, 1);
+  assert.equal("taskStore" in scopeStage.scope, false);
+  await assert.rejects(otherStage.start(), /already available/);
+  await otherStage.stop();
+  assert.equal(scopeStage.scope.agentOrchestrator, owner);
+  assert.equal(owner.snapshot().stopped, false);
+  await stage.stop();
+  assert.equal(owner.snapshot().stopped, true);
+  assert.equal(scopeStage.scope.workflow.participants.includes(owner), false);
+  assert.throws(() => scopeStage.scope.agentOrchestrator, /not available/);
+});
+
+for (const drainFails of [false, true]) {
+  test(`OrchestratorStage waits for ${drainFails ? "failed" : "successful"} Workflow quiescence before disposing Agent Stores`, async (t) => {
+    const runId = `orchestrator-stage-drain-${drainFails}`;
+    const scopeStage = new RunScopeStage(new RunScope({
+      runId, scoutRoot: "/repo", logger: noopLogger(), eventBus: new InMemoryEventBus(),
+      interactionPort: new NoopRuntimeInteractionPort(),
+      ...await createTestRunPersistence(t, runId), terminate: async () => undefined,
+    }));
+    const stage = new OrchestratorStage();
+    await scopeStage.start();
+    await stage.start();
+    const scope = scopeStage.scope;
+    const owner = scope.agentOrchestrator;
+    let release!: () => void;
+    const drained = new Promise<void>((resolve) => { release = resolve; });
+    const observed: string[] = [];
+    const quiesce = scope.workflow.quiesce.bind(scope.workflow);
+    const failure = new Error("Workflow transition failed after draining");
+    t.mock.method(scope.workflow, "quiesce", async () => {
+      await drained;
+      await quiesce();
+      if (drainFails) throw failure;
+    }, { times: 1 });
+    for (const [name, store] of [
+      ["step", owner.stepStore], ["human", owner.humanInputStore], ["tool", owner.toolCallStore],
+    ] as const) {
+      const dispose = store.dispose.bind(store);
+      t.mock.method(store, "dispose", () => { observed.push(name); dispose(); });
+    }
+    t.after(async () => { release(); await stage.stop(); await scopeStage.stop(); });
+    const stopping = stage.stop();
+    const stopped = drainFails ? assert.rejects(stopping, (error) => error === failure) : stopping;
+    await Promise.resolve();
+    assert.deepEqual(observed, []);
+    assert.equal(scope.agentOrchestrator, owner);
+    release();
+    await stopped;
+    assert.deepEqual(observed, ["step", "human", "tool"]);
+    assert.throws(() => scope.agentOrchestrator, /not available/);
+  });
+}
+
+test("OrchestratorStage releases its owner after Store subscription startup fails", async (t) => {
+  const runId = "orchestrator-stage-startup-failure";
+  const scopeStage = new RunScopeStage(new RunScope({
+    runId, scoutRoot: "/repo", logger: noopLogger(), eventBus: new InMemoryEventBus(),
+    interactionPort: new NoopRuntimeInteractionPort(),
+    ...await createTestRunPersistence(t, runId), terminate: async () => undefined,
+  }));
+  const stage = new OrchestratorStage();
+  await scopeStage.start();
+  t.after(async () => { await stage.stop(); await scopeStage.stop(); });
+  t.mock.method(AgentStepStore.prototype, "start", () => { throw new Error("Store subscription failed"); });
+  await assert.rejects(stage.start(), /Store subscription failed/);
+  const owner = scopeStage.scope.agentOrchestrator;
+  assert.equal(owner.snapshot().stopped, true);
+  assert.equal(scopeStage.scope.workflow.participants.includes(owner), true);
+  await assert.rejects(stage.start(), /startup cleanup is pending/);
+  await stage.stop();
+  assert.equal(scopeStage.scope.workflow.participants.includes(owner), false);
+  assert.throws(() => scopeStage.scope.agentOrchestrator, /not available/);
 });
 
 test("DomainStage creates, installs, starts, and clears both Run Domains", async (t) => {
@@ -154,6 +248,7 @@ for (const preparationFails of [false, true]) {
       async close() {},
     }, eventBus));
     const domainStage = new DomainStage();
+    const orchestratorStage = new OrchestratorStage();
     let releasePreparation!: () => void;
     const gate = new Promise<void>((resolve) => { releasePreparation = resolve; });
     let announcePreparation!: () => void;
@@ -163,10 +258,12 @@ for (const preparationFails of [false, true]) {
       releasePreparation();
       await stopping?.catch(() => undefined);
       await domainStage.stop();
+      await orchestratorStage.stop();
       await executionStage.stop();
       await scopeStage.stop();
     });
     await scopeStage.start();
+    await orchestratorStage.start();
     await executionStage.start();
     await domainStage.start();
     await eventBus.publishAndWait(RunEvents.runtime.attached, {

@@ -4166,7 +4166,7 @@ async function createAgentFixture(
   preparedAgents: RunEnvironment["agents"];
   registry: AgentRegistry;
   taskStore: AgentTaskStore;
-  stepStore: RunScope["stepStore"];
+  stepStore: RunScope["agentOrchestrator"]["stepStore"];
   eventBus: InMemoryEventBus;
   domainRegistry: RunScope["domainRegistry"];
   logger: Logger;
@@ -4285,8 +4285,8 @@ async function createAgentFixture(
     releaseScope();
   };
   const registry = scope.agentRegistry;
-  const taskStore = scope.taskStore;
-  const stepStore = scope.stepStore;
+  const taskStore = scope.agentOrchestrator.taskStore;
+  const stepStore = scope.agentOrchestrator.stepStore;
   const options: ScoutAgentOptions = {
     agentMount: mount,
     assetCommit,

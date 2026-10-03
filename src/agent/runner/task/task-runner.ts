@@ -85,7 +85,7 @@ export class TaskRunner {
   }
 
   private get store() {
-    return currentRunScope().taskStore;
+    return currentRunScope().agentOrchestrator.taskStore;
   }
 
   private get eventBus() {
@@ -184,7 +184,7 @@ export class TaskRunner {
     const task = this.activeTask;
     return Boolean(task
       && (task.status === AgentTaskStatuses.Done || isTerminalTaskStatus(task.status))
-      && !currentRunScope().stepStore.list({ agentId: this.host.agentId })
+      && !currentRunScope().agentOrchestrator.stepStore.list({ agentId: this.host.agentId })
         .some((step) => step.taskId === task.taskId && step.status === "running"));
   }
 
@@ -393,7 +393,7 @@ export class TaskRunner {
         );
       }
       if (!currentDisposition) {
-        const unresolvedHumanRequest = currentRunScope().humanInputStore
+        const unresolvedHumanRequest = currentRunScope().agentOrchestrator.humanInputStore
           .listForTask(taskId)
           .find((request) => !request.response);
         if (unresolvedHumanRequest) {
@@ -579,7 +579,7 @@ export class TaskRunner {
     durationMs: number,
     updatedAt: string,
   ): AgentTaskState {
-    const toolUses = currentRunScope().toolCallStore.list({ stepId }).length;
+    const toolUses = currentRunScope().agentOrchestrator.toolCallStore.list({ stepId }).length;
     return {
       ...task,
       usage: {

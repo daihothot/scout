@@ -5,6 +5,7 @@ import {
 } from "../../core/events/index.js";
 import { currentRunScope, type RunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
+import type { AgentHumanInputStore } from "../human-input/agent-human-input-store.js";
 import type { AgentToolCallState } from "../tool-call/types.js";
 import type { AgentStepHumanInputReference, AgentStepState } from "./types.js";
 
@@ -15,14 +16,14 @@ export class AgentStepStore {
   private readonly pendingToolCallReferences = new Map<string, AgentToolCallState[]>();
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
   private eventBus?: RunScope["eventBus"];
-  private humanInputStore?: RunScope["humanInputStore"];
+  private humanInputStore?: AgentHumanInputStore;
 
   /** Starts the Store-owned subscriptions that project related Agent facts into Steps. */
-  start(): void {
+  start(humanInputStore: AgentHumanInputStore): void {
     if (this.unsubscribers.length > 0) return;
     const scope = currentRunScope();
     this.eventBus = scope.eventBus;
-    this.humanInputStore = scope.humanInputStore;
+    this.humanInputStore = humanInputStore;
     try {
       this.unsubscribers.push(
         this.eventBus.subscribe(AgentEvents.humanInput.requested, (event) => {

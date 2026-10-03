@@ -1,4 +1,8 @@
 import { AgentInbox } from "../core/agent-inbox.js";
+import { AgentHumanInputStore } from "../human-input/agent-human-input-store.js";
+import { AgentStepStore } from "../step/agent-step-store.js";
+import { AgentTaskStore } from "../task/agent-task-store.js";
+import { AgentToolCallStore } from "../tool-call/agent-tool-call-store.js";
 import { AgentEvents } from "../events/index.js";
 import { WorkerAgent } from "../roles/worker-agent.js";
 import { resolveSynthesisRole, type WorkflowData, type ScoutWorkflowParticipant } from "../../core/workflow/index.js";
@@ -16,8 +20,12 @@ export interface AgentOrchestratorSnapshot {
   pendingEventCount: number;
 }
 
-/** Owns the task-event subscription and rejects unrelated agent events. */
+/** Owns Agent runtime stores, recovery, and Workflow participation. */
 export class AgentOrchestrator implements ScoutWorkflowParticipant {
+  readonly humanInputStore = new AgentHumanInputStore();
+  readonly stepStore = new AgentStepStore();
+  readonly taskStore = new AgentTaskStore();
+  readonly toolCallStore = new AgentToolCallStore();
   private readonly inbox: AgentInbox;
   private started = false;
   private stopped = false;
@@ -46,14 +54,26 @@ export class AgentOrchestrator implements ScoutWorkflowParticipant {
       throw new Error("Cannot restart a stopped AgentOrchestrator.");
     }
     if (this.started) return;
-    this.started = true;
-    this.inbox.subscribe(AgentEvents.task);
+    try {
+      this.humanInputStore.start();
+      this.stepStore.start(this.humanInputStore);
+      this.inbox.subscribe(AgentEvents.task);
+      this.started = true;
+    } catch (error) {
+      try { this.stop(); }
+      catch (cleanupError) { throw new AggregateError([error, cleanupError], "AgentOrchestrator startup and cleanup failed."); }
+      throw error;
+    }
   }
 
   stop(): void {
-    if (this.stopped) return;
     this.stopped = true;
-    this.inbox.stop();
+    const failures: unknown[] = [];
+    try { this.inbox.stop(); } catch (error) { failures.push(error); }
+    try { this.stepStore.dispose(); } catch (error) { failures.push(error); }
+    try { this.humanInputStore.dispose(); } catch (error) { failures.push(error); }
+    try { this.toolCallStore.dispose(); } catch (error) { failures.push(error); }
+    if (failures.length) throw new AggregateError(failures, "AgentOrchestrator cleanup failed.");
   }
 
   create(): void { this.clearWorkflow(); }
@@ -117,17 +137,16 @@ export class AgentOrchestrator implements ScoutWorkflowParticipant {
   clearWorkflow(): void {
     this.activationPending = false;
     this.contextRecovery.clearWorkflow();
-    const scope = currentRunScope();
     // A terminal tool call can finish the Workflow inside an ongoing Agent Turn.
     // Its Step and references belong to that Agent execution until it finishes.
-    const runningSteps = scope.stepStore.list().filter((step) => step.status === "running");
+    const runningSteps = this.stepStore.list().filter((step) => step.status === "running");
     const stepIds = new Set(runningSteps.map((step) => step.stepId));
     const requestIds = new Set(runningSteps.flatMap((step) => step.humanInputReferences.map((reference) => reference.requestId)));
-    scope.toolCallStore.restore(scope.toolCallStore.list().filter((call) => stepIds.has(call.stepId)));
-    scope.humanInputStore.restore(scope.taskStore.listTasks().flatMap((task) =>
-      scope.humanInputStore.listForTask(task.taskId)).filter((input) => requestIds.has(input.requestId)));
-    scope.stepStore.restore(runningSteps);
-    for (const task of scope.taskStore.listTasks()) scope.taskStore.removeTask(task.taskId);
+    this.toolCallStore.restore(this.toolCallStore.list().filter((call) => stepIds.has(call.stepId)));
+    this.humanInputStore.restore(this.taskStore.listTasks().flatMap((task) =>
+      this.humanInputStore.listForTask(task.taskId)).filter((input) => requestIds.has(input.requestId)));
+    this.stepStore.restore(runningSteps);
+    for (const task of this.taskStore.listTasks()) this.taskStore.removeTask(task.taskId);
   }
 
   async stopEntities(reason: string): Promise<void> { await this.entityRecovery.stop(reason); }

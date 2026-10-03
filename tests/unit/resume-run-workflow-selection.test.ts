@@ -367,7 +367,7 @@ for (const failurePoint of ["ready-subscriber", "ready-log"] as const) {
     // services that would connect to external runtimes in this unit test.
     t.mock.method(RunStageExecutor.prototype, "registerSerial", function (this: RunStageExecutor, ...stages: RunStage[]) {
       register.apply(this, stages.filter((stage) => [
-        "run_scope", "workflow", "restore_workflow",
+        "run_scope", "workflow", "orchestrator", "restore_workflow",
       ].includes(stage.id)));
     });
     const parallel = RunStageExecutor.prototype.registerParallel;
@@ -835,7 +835,7 @@ function createFixture(t: TestContext, domain: string = "rbt", installEnvironmen
     const serial = RunStageExecutor.prototype.registerSerial;
     const parallel = RunStageExecutor.prototype.registerParallel;
     t.mock.method(RunStageExecutor.prototype, "registerSerial", function (this: RunStageExecutor, ...stages: RunStage[]) {
-      serial.apply(this, stages.filter((stage) => ["run_scope", "workflow", "restore_workflow"].includes(stage.id)));
+      serial.apply(this, stages.filter((stage) => ["run_scope", "workflow", "orchestrator", "restore_workflow"].includes(stage.id)));
     });
     t.mock.method(RunStageExecutor.prototype, "registerParallel", function (this: RunStageExecutor, ...stages: RunStage[]) {
       parallel.apply(this, stages.filter((stage) => stage.id === "orchestrator"));

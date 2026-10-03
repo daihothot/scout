@@ -137,14 +137,14 @@ test("Task disposition persists in Task state and stays out of Step telemetry", 
     taskRecorder.stop();
   });
 
-  const task = scope.taskStore.addTask(taskState("researcher-task-0001"));
+  const task = scope.agentOrchestrator.taskStore.addTask(taskState("researcher-task-0001"));
   await eventBus.publishAndWait(AgentEvents.task.assigned, task);
-  const startedStep = scope.stepStore.addStep(stepState(
+  const startedStep = scope.agentOrchestrator.stepStore.addStep(stepState(
     task.taskId,
     "researcher-task-0001-step-0001",
     "turn-1",
   ));
-  const taskWithStep = scope.taskStore.updateTask(task.taskId, (current) => ({
+  const taskWithStep = scope.agentOrchestrator.taskStore.updateTask(task.taskId, (current) => ({
     ...current,
     stepIds: [...current.stepIds, startedStep.stepId],
   }));
@@ -157,7 +157,7 @@ test("Task disposition persists in Task state and stays out of Step telemetry", 
     timestamp: "2026-08-01T00:01:00.000Z",
     outcome: "## Outcome\n\n- artifact: result.md",
   } satisfies AgentTaskDisposition;
-  const disposedTask = scope.taskStore.recordDisposition(task.taskId, disposition);
+  const disposedTask = scope.agentOrchestrator.taskStore.recordDisposition(task.taskId, disposition);
   await eventBus.publishAndWait(AgentEvents.task.dispositionRecorded, {
     task: disposedTask,
     disposition,

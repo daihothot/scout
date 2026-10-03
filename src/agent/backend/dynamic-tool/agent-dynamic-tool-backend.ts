@@ -40,7 +40,7 @@ type AssignTaskToolResponse =
 export class AgentDynamicToolBackend {
   private readonly registry: RunScope["agentRegistry"];
   private readonly domains: RunScope["domainRegistry"];
-  private readonly taskStore: RunScope["taskStore"];
+  private readonly taskStore: RunScope["agentOrchestrator"]["taskStore"];
   private readonly taskBackend: AgentTaskBackend;
   private unsubscribeDynamicTools?: () => void;
   private readonly phaseOutcomeReceipts = new WeakMap<CoordinatorAgent, {
@@ -55,7 +55,7 @@ export class AgentDynamicToolBackend {
     const scope = currentRunScope();
     this.registry = scope.agentRegistry;
     this.domains = scope.domainRegistry;
-    this.taskStore = scope.taskStore;
+    this.taskStore = scope.agentOrchestrator.taskStore;
     const humanInputBackend = new AgentHumanInputBackend();
     this.taskBackend = new AgentTaskBackend({ humanInputBackend });
   }

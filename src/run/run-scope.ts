@@ -2,10 +2,6 @@ import type { CodexAppServerClient } from "../agent-server/codex/app-server-clie
 import type { AssetConfig } from "../asset-store/config/asset-config.js";
 import { AgentRegistry } from "../agent/core/agent-registry.js";
 import type { AgentOrchestrator } from "../agent/orchestration/agent-orchestrator.js";
-import { AgentHumanInputStore } from "../agent/human-input/index.js";
-import { AgentTaskStore } from "../agent/task/agent-task-store.js";
-import { AgentStepStore } from "../agent/step/agent-step-store.js";
-import { AgentToolCallStore } from "../agent/tool-call/agent-tool-call-store.js";
 import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
 import type { Workflow } from "../core/workflow/workflow.js";
@@ -39,9 +35,9 @@ export interface RunScopeOptions {
 }
 
 /**
- * Owns the per-run stores, clients, and prepared environment while stages are
- * executing. It enforces single assignment and run-id consistency but does
- * not create those dependencies or choose stage ordering.
+ * Locates staged domain owners, clients, and the prepared Run environment.
+ * It enforces single assignment and run-id consistency but does not create
+ * those dependencies or choose stage ordering.
  */
 export class RunScope {
   readonly runId: string;
@@ -52,10 +48,6 @@ export class RunScope {
   readonly interactionPort: RuntimeInteractionPort;
   readonly agentRegistry = new AgentRegistry();
   readonly domainRegistry = new DomainRegistry();
-  readonly taskStore = new AgentTaskStore();
-  readonly toolCallStore = new AgentToolCallStore();
-  readonly humanInputStore: AgentHumanInputStore;
-  readonly stepStore: AgentStepStore;
   readonly config: AssetConfig;
   readonly scoutConfig: ScoutConfig;
   readonly manifestStore: RunManifestStore;
@@ -74,8 +66,6 @@ export class RunScope {
     this.logger = options.logger;
     this.eventBus = options.eventBus;
     this.interactionPort = options.interactionPort;
-    this.humanInputStore = new AgentHumanInputStore();
-    this.stepStore = new AgentStepStore();
     this.activeWorkflow = options.workflow;
     this.config = options.config;
     this.scoutConfig = options.scoutConfig ?? defaultScoutConfig;
@@ -203,30 +193,18 @@ export class RunScope {
     return this.terminateRun(reason);
   }
 
-  dispose(): void {
-    this.stepStore.dispose();
-    this.humanInputStore.dispose();
-    this.toolCallStore.dispose();
-  }
+  /** RunScope disposal boundary; staged owners release their own resources. */
+  dispose(): void {}
 }
 
 let activeRunScope: RunScope | undefined;
 
-/** Installs the process-local scope and starts its input store. */
+/** Installs the process-local locator; dependent services are installed by their Stages. */
 export function installRunScope(scope: RunScope): () => void {
   if (activeRunScope) {
     throw new Error(`Run scope already installed: ${activeRunScope.runId}`);
   }
   activeRunScope = scope;
-  try {
-    scope.humanInputStore.start();
-    scope.stepStore.start();
-  } catch (error) {
-    scope.stepStore.dispose();
-    scope.humanInputStore.dispose();
-    activeRunScope = undefined;
-    throw error;
-  }
   return () => {
     if (activeRunScope !== scope) {
       throw new Error(`Cannot release inactive run scope: ${scope.runId}`);

@@ -188,7 +188,7 @@ for (const outcome of ["completed", "error"] as const) {
         description: "Outstanding work", initialPrompt: "Do the work", status,
         isBackgrounded: true, stepIds: [], dispositions: [], createdAt: now, updatedAt: now,
       };
-      const stored = scope.taskStore.addTask(task);
+      const stored = scope.agentOrchestrator.taskStore.addTask(task);
       const beforeGraph = workflow.graph.snapshot();
       const beforeWorkflow = workflow.snapshot();
       const beforeJournal = readFileSync(workflow.journalPath, "utf8");
@@ -204,8 +204,8 @@ for (const outcome of ["completed", "error"] as const) {
         assert.equal(readFileSync(workflow.journalPath, "utf8"), beforeJournal);
         assert.equal(readFileSync(benchmarkPath, "utf8"), beforeBenchmark);
         assert.equal(published, 0);
-        assert.deepEqual(scope.taskStore.getTask(task.taskId), stored);
-        scope.taskStore.updateTask(task.taskId, (current) => ({ ...current, status: AgentTaskStatuses.Done }));
+        assert.deepEqual(scope.agentOrchestrator.taskStore.getTask(task.taskId), stored);
+        scope.agentOrchestrator.taskStore.updateTask(task.taskId, (current) => ({ ...current, status: AgentTaskStatuses.Done }));
       }
 
       const advanced = await workflow.advance(outcome);
@@ -214,7 +214,7 @@ for (const outcome of ["completed", "error"] as const) {
       assert.equal(advanced.result.state.currentPhase, "research-reviewer");
       assert.equal(workflow.snapshot()?.status, "active");
       assert.equal(published, 1);
-      assert.ok(scope.taskStore.getTask(task.taskId), "Phase advancement does not release the Task");
+      assert.ok(scope.agentOrchestrator.taskStore.getTask(task.taskId), "Phase advancement does not release the Task");
     });
   }
 }
@@ -223,7 +223,7 @@ test("Workflow keeps human-waiting and restored earlier-Phase Tasks on the activ
   const scope = await installTestRunScope(t, { runId: "phase-guard-human-wait" });
   await scope.workflow.advance("completed");
   const now = new Date().toISOString();
-  scope.taskStore.addTask({
+  scope.agentOrchestrator.taskStore.addTask({
     type: "local_agent", taskId: "restored-human-task", taskSequence: 1,
     agentId: "researcher", role: "researcher", phase: "research",
     description: "Waiting for a human", initialPrompt: "Need confirmation",
@@ -252,7 +252,7 @@ for (const status of [AgentTaskStatuses.Done, AgentTaskStatuses.Failed, AgentTas
       ? { ...phase, edges: { ...phase.edges, error: "research-reviewer" } } : phase) });
     const scope = await installTestRunScope(t, { runId: `phase-guard-step-${status}`, runtimeGraph });
     const now = new Date().toISOString();
-    scope.taskStore.addTask({
+    scope.agentOrchestrator.taskStore.addTask({
       type: "local_agent", taskId: "ended-task", taskSequence: 1,
       agentId: "researcher", role: "researcher", phase: "research",
       description: "Finishing work", initialPrompt: "Work", status,
@@ -263,18 +263,18 @@ for (const status of [AgentTaskStatuses.Done, AgentTaskStatuses.Failed, AgentTas
       status: AgentStepStatuses.Running, prompt: "Work", toolCallIds: [], humanInputReferences: [],
       startedAt: now, updatedAt: now,
     };
-    scope.stepStore.restore([
+    scope.agentOrchestrator.stepStore.restore([
       workerStep,
       { ...workerStep, stepId: "coordinator-step", agentId: "coordinator", taskId: undefined },
     ]);
     const before = scope.workflow.snapshot();
     await assert.rejects(async () => await scope.workflow.advance("error"), /Worker Step finishing-step for Task ended-task is still running/);
     assert.deepEqual(scope.workflow.snapshot(), before);
-    scope.stepStore.updateStep(workerStep.stepId, (step) => ({ ...step, status: AgentStepStatuses.Completed }));
+    scope.agentOrchestrator.stepStore.updateStep(workerStep.stepId, (step) => ({ ...step, status: AgentStepStatuses.Completed }));
     const advanced = await scope.workflow.advance("error");
     assert.equal(advanced.status, "advanced");
     assert.equal(advanced.result.cycleCompleted, false);
-    assert.equal(scope.stepStore.getStep("coordinator-step")?.status, AgentStepStatuses.Running);
+    assert.equal(scope.agentOrchestrator.stepStore.getStep("coordinator-step")?.status, AgentStepStatuses.Running);
   });
 }
 

@@ -33,9 +33,9 @@ export class AgentContextRecovery {
     const synthesisRole = resolveSynthesisRole(graphData).name;
     const pendingMessages = recoverPendingMessages(projection, synthesisRole);
     const terminal = projection.workflowStatus !== "active";
-    scope.toolCallStore.restore(projection.toolCalls);
-    scope.stepStore.restore(projection.steps);
-    scope.humanInputStore.restore(projection.humanInputRequests);
+    scope.agentOrchestrator.toolCallStore.restore(projection.toolCalls);
+    scope.agentOrchestrator.stepStore.restore(projection.steps);
+    scope.agentOrchestrator.humanInputStore.restore(projection.humanInputRequests);
     for (const step of projection.steps) {
       await scope.interactionPort.restoreStepSnapshot?.(step);
     }

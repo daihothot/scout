@@ -10,11 +10,11 @@ import type { ScoutAgent } from "../../core/scout-agent.js";
  * Task lifecycle policy and disposition remain outside this boundary.
  */
 export class AgentTimelineStepBackend {
-  private readonly stepStore: RunScope["stepStore"];
+  private readonly stepStore: RunScope["agentOrchestrator"]["stepStore"];
 
   constructor() {
     const scope = currentRunScope();
-    this.stepStore = scope.stepStore;
+    this.stepStore = scope.agentOrchestrator.stepStore;
   }
 
   handleAppServerTimelineEntry(

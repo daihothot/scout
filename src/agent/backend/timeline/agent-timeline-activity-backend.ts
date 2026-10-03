@@ -33,7 +33,7 @@ export class AgentTimelineActivityBackend {
       && (entry.kind === "turn_started" || entry.kind === "turn_completed")
       && entry.turnId
     ) {
-      const activeTask = this.scope.taskStore.findActiveTaskForAgent(agent.agentId);
+      const activeTask = this.scope.agentOrchestrator.taskStore.findActiveTaskForAgent(agent.agentId);
       const turn = entry.kind === "turn_completed" ? resolved.turn : undefined;
       this.scope.eventBus.publish(AgentEvents.activity.turnObserved, {
         seq: entry.seq,
@@ -55,7 +55,7 @@ export class AgentTimelineActivityBackend {
       && entry.kind !== "reasoning_summary_delta"
     ) return;
 
-    const activeTask = this.scope.taskStore.findActiveTaskForAgent(agent.agentId);
+    const activeTask = this.scope.agentOrchestrator.taskStore.findActiveTaskForAgent(agent.agentId);
     // Dynamic and MCP calls have their own Tool Call fact stream. Command
     // execution has its own complete fact stream and is not an Activity.
     const progressItem = resolved.progressItem

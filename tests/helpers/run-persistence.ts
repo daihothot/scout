@@ -29,6 +29,7 @@ import { Benchmarks } from "../../src/core/benchmarks/index.js";
 import { testWorkflowParticipant } from "./workflow-participant.js";
 import { WorkflowState } from "../../src/core/workflow/index.js";
 import type { ScoutRecord } from "../../src/core/record/scout-record.js";
+import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 
 const noopLogger = {
   debug: () => undefined,
@@ -199,6 +200,11 @@ export async function installTestRunScope(
   if (options.appServer) scope.setAppServer(options.appServer);
   if (options.environment) scope.setEnvironment(options.environment);
   const release = installRunScope(scope);
+  // Isolated fixtures need real Agent stores, not native Agent entity recovery.
+  // Full participant installation is covered by the orchestration/Run fixtures.
+  const orchestrator = new AgentOrchestrator();
+  scope.setAgentOrchestrator(orchestrator);
+  orchestrator.start();
   const domain = options.domain ?? testDomain;
   const baseDomain = new BaseDomain();
   scope.domainRegistry.register(baseDomain);
@@ -212,6 +218,8 @@ export async function installTestRunScope(
     if (scope.workflow.participants.includes(domain)) scope.workflow.unregisterParticipant(domain);
     if (scope.workflow.participants.includes(baseDomain)) scope.workflow.unregisterParticipant(baseDomain);
     if (options.appServer) scope.clearAppServer(options.appServer);
+    orchestrator.stop();
+    scope.clearAgentOrchestrator(orchestrator);
     release();
   });
   return scope;

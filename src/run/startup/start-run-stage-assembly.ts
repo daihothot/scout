@@ -47,7 +47,7 @@ export class StartRunStageAssembly {
       new PrepareEnvironmentStage(),
     );
     executor.registerParallel(new DomainStage(), new AgentTelemetryStage());
-    executor.registerParallel(new AgentBackendStage(), new OrchestratorStage());
+    executor.registerSerial(new OrchestratorStage(), new AgentBackendStage());
     executor.registerSerial(new AgentsStage(), new StartWorkflowStage());
 
     this.executor = executor;

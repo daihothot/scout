@@ -261,7 +261,7 @@ export class Workflow implements ScoutWorkflowParticipant {
   async startWorkflow(): Promise<void> {
     this.assertAcceptingInput();
     if (this.activeWorkflowData) throw new Error("A Workflow is already active.");
-    if (currentRunScope().stepStore.list().some((step) => step.status === AgentStepStatuses.Running)) {
+    if (currentRunScope().agentOrchestrator.stepStore.list().some((step) => step.status === AgentStepStatuses.Running)) {
       throw new Error("Cannot open a Workflow during an active Agent Step.");
     }
     await this.enterState({ state: WorkflowState.Creating });

@@ -83,7 +83,7 @@ test("Tool Call backend owns provider facts and Step stores only their ids", asy
     eventBus,
   });
   const running = step({ stepId: "tool-step", turnId: "turn-1" });
-  scope.stepStore.addStep(running);
+  scope.agentOrchestrator.stepStore.addStep(running);
   const toolCallBackend = new AgentTimelineToolCallBackend();
 
   const agent = { agentId: "researcher" } as ScoutAgent;
@@ -121,11 +121,11 @@ test("Tool Call backend owns provider facts and Step stores only their ids", asy
   });
   await new Promise<void>((resolve) => setImmediate(resolve));
 
-  const calls = scope.toolCallStore.list({ stepId: running.stepId });
+  const calls = scope.agentOrchestrator.toolCallStore.list({ stepId: running.stepId });
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.toolCallId, "item-tool-1");
   assert.equal(calls[0]?.status, "completed");
-  assert.deepEqual(scope.stepStore.getStep(running.stepId)?.toolCallIds, ["item-tool-1"]);
+  assert.deepEqual(scope.agentOrchestrator.stepStore.getStep(running.stepId)?.toolCallIds, ["item-tool-1"]);
 });
 
 test("Tool Call backend ignores Domain dynamic tools and external MCP tools", async (t) => {
@@ -135,7 +135,7 @@ test("Tool Call backend ignores Domain dynamic tools and external MCP tools", as
     eventBus,
   });
   const running = step({ stepId: "tool-boundary-step", turnId: "turn-1" });
-  scope.stepStore.addStep(running);
+  scope.agentOrchestrator.stepStore.addStep(running);
   const toolCallBackend = new AgentTimelineToolCallBackend();
   const agent = { agentId: "researcher" } as ScoutAgent;
   const entry = {
@@ -175,8 +175,8 @@ test("Tool Call backend ignores Domain dynamic tools and external MCP tools", as
     },
   });
 
-  assert.deepEqual(scope.toolCallStore.list({ stepId: running.stepId }), []);
-  assert.deepEqual(scope.stepStore.getStep(running.stepId)?.toolCallIds, []);
+  assert.deepEqual(scope.agentOrchestrator.toolCallStore.list({ stepId: running.stepId }), []);
+  assert.deepEqual(scope.agentOrchestrator.stepStore.getStep(running.stepId)?.toolCallIds, []);
 });
 
 test("Step lifecycle snapshots retain references that arrive before Step creation", async (t) => {
@@ -224,14 +224,14 @@ test("Step lifecycle snapshots retain references that arrive before Step creatio
     if (AgentEvents.step.started.is(event)) startedEvents.push(event.payload);
   });
 
-  const started = scope.stepStore.startStep(step({ stepId, turnId: "turn-1" }));
+  const started = scope.agentOrchestrator.stepStore.startStep(step({ stepId, turnId: "turn-1" }));
   assert.deepEqual(started.toolCallIds, ["pending-call"]);
   assert.deepEqual(started.humanInputReferences, [{
     requestId: "pending-request",
     kind: "request_produced",
   }]);
   await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.deepEqual(scope.stepStore.getStep(stepId), started);
+  assert.deepEqual(scope.agentOrchestrator.stepStore.getStep(stepId), started);
   assert.deepEqual(startedEvents, [started]);
 });
 
@@ -247,7 +247,7 @@ test("AgentStepStore records one durable Step reference for every Human Input ed
     step({ stepId: "coordinator-response-step", agentId: "coordinator", taskId: undefined }),
     step({ stepId: "worker-response-step" }),
   ];
-  for (const current of steps) scope.stepStore.addStep(current);
+  for (const current of steps) scope.agentOrchestrator.stepStore.addStep(current);
   const request = {
     requestId: "request-1",
     stepId: "worker-request-step",
@@ -297,19 +297,19 @@ test("AgentStepStore records one durable Step reference for every Human Input ed
     turnId: "worker-response-turn",
   });
 
-  assert.deepEqual(scope.stepStore.getStep("worker-request-step")?.humanInputReferences, [{
+  assert.deepEqual(scope.agentOrchestrator.stepStore.getStep("worker-request-step")?.humanInputReferences, [{
     requestId: request.requestId,
     kind: "request_produced",
   }]);
-  assert.deepEqual(scope.stepStore.getStep("coordinator-request-step")?.humanInputReferences, [{
+  assert.deepEqual(scope.agentOrchestrator.stepStore.getStep("coordinator-request-step")?.humanInputReferences, [{
     requestId: request.requestId,
     kind: "request_consumed",
   }]);
-  assert.deepEqual(scope.stepStore.getStep("coordinator-response-step")?.humanInputReferences, [{
+  assert.deepEqual(scope.agentOrchestrator.stepStore.getStep("coordinator-response-step")?.humanInputReferences, [{
     requestId: request.requestId,
     kind: "response_produced",
   }]);
-  assert.deepEqual(scope.stepStore.getStep("worker-response-step")?.humanInputReferences, [{
+  assert.deepEqual(scope.agentOrchestrator.stepStore.getStep("worker-response-step")?.humanInputReferences, [{
     requestId: request.requestId,
     kind: "response_consumed",
   }]);

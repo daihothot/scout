@@ -41,11 +41,11 @@ export class WorkflowRunning implements MachineState<WorkflowState, WorkflowStat
     if (coordinator instanceof CoordinatorAgent && coordinator.pendingWorkflowInputs().length) {
       return { status: "not_advanced", reason: "pending_user_input" };
     }
-    const tasks = scope.taskStore.listTasks();
+    const tasks = scope.agentOrchestrator.taskStore.listTasks();
     const blockers = [
       ...tasks.filter((task) => task.status === AgentTaskStatuses.Queued || task.status === AgentTaskStatuses.Running)
         .map((task) => `Task ${task.taskId} (${task.status})`),
-      ...scope.stepStore.list().filter((step) => step.taskId !== undefined && step.status === AgentStepStatuses.Running)
+      ...scope.agentOrchestrator.stepStore.list().filter((step) => step.taskId !== undefined && step.status === AgentStepStatuses.Running)
         .map((step) => `Worker Step ${step.stepId} for Task ${step.taskId} is still running`),
       ...scope.agentRegistry.listAgents().flatMap((agent) => {
         const snapshot = agent.snapshot();

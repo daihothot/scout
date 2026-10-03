@@ -78,12 +78,12 @@ export class AgentTimelineToolCallBackend {
         observedAt,
         finishedAt: isTerminalStatus(item.status) ? observedAt : undefined,
       };
-    const stored = this.scope.toolCallStore.upsert(state);
+    const stored = this.scope.agentOrchestrator.toolCallStore.upsert(state);
     this.scope.eventBus.publish(AgentEvents.toolCall.observed, stored, { occurredAt: observedAt });
   }
 
   private findStep(agentId: string, turnId: string) {
-    const candidates = this.scope.stepStore.list({ agentId });
+    const candidates = this.scope.agentOrchestrator.stepStore.list({ agentId });
     return candidates.find((step) => step.turnId === turnId)
       ?? candidates.find((step) => step.status === "running");
   }

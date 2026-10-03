@@ -83,6 +83,7 @@ import {
 } from "../../src/run/startup/index.js";
 import { AgentContextRecovery } from "../../src/agent/orchestration/recovery/agent-context-recovery.js";
 import { AgentEntityRecovery } from "../../src/agent/orchestration/recovery/agent-entity-recovery.js";
+import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 import { AgentTaskRecovery } from "../../src/agent/orchestration/recovery/agent-task-recovery.js";
 import { RecordResumeInterruptionsStage, RestoreEnvironmentStage } from "../../src/run/resume/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
@@ -1244,7 +1245,7 @@ test("TaskRunner injects restored context once and consumes restored messages on
         callId,
         timestamp: new Date().toISOString(),
       } as const;
-      const recordedTask = currentRunScope().taskStore.recordDisposition(task.taskId, disposition);
+      const recordedTask = currentRunScope().agentOrchestrator.taskStore.recordDisposition(task.taskId, disposition);
       currentRunScope().eventBus.publish(AgentEvents.task.dispositionRecorded, {
         task: recordedTask,
         disposition,
@@ -1603,8 +1604,17 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
     initialScope.setAppServer(appServer);
     initialScope.setEnvironment(environment);
     const releaseInitialScope = installRunScope(initialScope);
+    const initialOrchestrator = new AgentOrchestrator();
+    initialScope.setAgentOrchestrator(initialOrchestrator);
+    initialOrchestrator.start();
     let initialScopeInstalled = true;
-    t.after(() => { if (initialScopeInstalled) releaseInitialScope(); });
+    t.after(() => {
+      if (initialScopeInstalled) {
+        initialOrchestrator.stop();
+        initialScope.clearAgentOrchestrator(initialOrchestrator);
+        releaseInitialScope();
+      }
+    });
     const initialAgent = new RestorableMessageAgent();
     initialScope.agentRegistry.registerAgent(initialAgent);
     await initialAgent.startThread();
@@ -1629,6 +1639,8 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
     const graphData = initialScope.workflow.graph.snapshot();
     let events = initialScope.workflow.readEvents();
     await initialScope.workflow.stop();
+    initialOrchestrator.stop();
+    initialScope.clearAgentOrchestrator(initialOrchestrator);
     releaseInitialScope();
     initialScopeInstalled = false;
 
@@ -1651,6 +1663,9 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
       scope.setAppServer(appServer);
       scope.setEnvironment(environment);
       const release = installRunScope(scope);
+      const orchestrator = new AgentOrchestrator();
+      scope.setAgentOrchestrator(orchestrator);
+      orchestrator.start();
       try {
         await workflow.start();
         await workflow.enterState({ state: WorkflowState.Restoring, input: workflowRecovery });
@@ -1666,6 +1681,8 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
         await workflow.stop();
       } finally {
         await workflow.stop();
+        orchestrator.stop();
+        scope.clearAgentOrchestrator(orchestrator);
         release();
       }
     }
@@ -1778,7 +1795,7 @@ test("Resume activation continues a Coordinator-only interruption after its user
     const coordinator = fixture.scope.agentRegistry.resolveAgent("coordinator");
     assert.ok(coordinator instanceof CoordinatorAgent);
     assert.equal(coordinator.snapshot().pendingMessageCount, 0);
-    assert.deepEqual(fixture.scope.taskStore.listTasks(), []);
+    assert.deepEqual(fixture.scope.agentOrchestrator.taskStore.listTasks(), []);
     assert.deepEqual(prompts, []);
     inject.activate();
     await coordinator.runToIdle();
@@ -2284,6 +2301,9 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     terminate: async () => undefined,
   });
   const releaseInitialScope = installRunScope(initialScope);
+  const initialOrchestrator = new AgentOrchestrator();
+  initialScope.setAgentOrchestrator(initialOrchestrator);
+  initialOrchestrator.start();
   await new InitializeRunStage().start();
   await initialWorkflow.start();
   await initialWorkflow.startWorkflow();
@@ -2462,6 +2482,8 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   );
   const resumeJournalRoot = initialWorkflow.journalRoot;
   await initialWorkflow.stop();
+  initialOrchestrator.stop();
+  initialScope.clearAgentOrchestrator(initialOrchestrator);
   releaseInitialScope();
   assert.equal(existsSync(join(resumeJournalRoot, ".scout.lock")), false);
   const researcherRolloutPath = writePersistedRollout({
@@ -2615,7 +2637,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     new DomainStage(),
   );
   executor.registerSerial(new AgentTelemetryStage());
-  executor.registerParallel(new AgentBackendStage(), new OrchestratorStage());
+  executor.registerSerial(new OrchestratorStage(), new AgentBackendStage());
   executor.registerSerial(
     new RestoreWorkflowStage(resumedWorkflowRecovery),
     new RecordResumeInterruptionsStage(),

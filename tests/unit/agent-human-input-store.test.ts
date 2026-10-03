@@ -12,7 +12,7 @@ test("AgentHumanInputStore projects requests and matching responses", async (t) 
   const store = await (await installTestRunScope(t, {
     runId: "human-input-projection",
     eventBus,
-  })).humanInputStore;
+  })).agentOrchestrator.humanInputStore;
   const request = {
     requestId: "task-1-human-1",
     stepId: "task-1-step-request",
@@ -91,7 +91,7 @@ test("AgentHumanInputStore projects requests and matching responses", async (t) 
 test("AgentHumanInputStore restores a cloned projection", async (t) => {
   const store = await (await installTestRunScope(t, {
     runId: "human-input-restore",
-  })).humanInputStore;
+  })).agentOrchestrator.humanInputStore;
   const state = {
     requestId: "task-1-human-1",
     stepId: "task-1-step-1",
@@ -118,7 +118,7 @@ test("AgentHumanInputStore does not project an event when persistence fails", as
   const store = await (await installTestRunScope(t, {
     runId: "human-input-persistence-failure",
     eventBus,
-  })).humanInputStore;
+  })).agentOrchestrator.humanInputStore;
   eventBus.subscribe(AgentEvents.humanInput.requested, () => {
     throw new Error("journal write failed");
   }, {

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AgentsStage,
+  OrchestratorStage,
 } from "../../src/run/lifecycle/index.js";
 import { PrepareEnvironmentStage } from "../../src/run/startup/index.js";
 import {
@@ -67,6 +68,8 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
   scope.setExecutionSystem(unavailableExecutionSystem());
   scope.setAppServer(appServer);
   const releaseScope = installRunScope(scope);
+  const orchestratorStage = new OrchestratorStage();
+  await orchestratorStage.start();
   scope.domainRegistry.register(new BaseDomain());
   scope.domainRegistry.register(domain);
   const environment = new PrepareEnvironmentStage({
@@ -75,6 +78,7 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
   const stage = new AgentsStage();
   t.after(async () => {
     await stage.stop("test_cleanup");
+    await orchestratorStage.stop();
     scope.clearAppServer(appServer);
     releaseScope();
     rmSync(root, { recursive: true, force: true });
@@ -104,7 +108,7 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
     scope.agentRegistry.resolveAgent("coordinator").threadPreflightSnapshot?.result.status,
     "passed",
   );
-  assert.deepEqual(scope.taskStore.listTasks(), []);
+  assert.deepEqual(scope.agentOrchestrator.taskStore.listTasks(), []);
 
   await stage.stop("test_shutdown");
   for (const agent of scope.agentRegistry.listAgents()) {
@@ -145,6 +149,8 @@ test("AgentsStage closes started threads when another Agent fails to start", asy
   scope.setExecutionSystem(unavailableExecutionSystem());
   scope.setAppServer(appServer);
   const releaseScope = installRunScope(scope);
+  const orchestratorStage = new OrchestratorStage();
+  await orchestratorStage.start();
   scope.domainRegistry.register(new BaseDomain());
   scope.domainRegistry.register(domain);
   const environment = new PrepareEnvironmentStage({
@@ -153,6 +159,7 @@ test("AgentsStage closes started threads when another Agent fails to start", asy
   const stage = new AgentsStage();
   t.after(async () => {
     await stage.stop("test_cleanup");
+    await orchestratorStage.stop();
     scope.clearAppServer(appServer);
     releaseScope();
     rmSync(root, { recursive: true, force: true });

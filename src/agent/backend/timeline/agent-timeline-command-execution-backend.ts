@@ -21,7 +21,7 @@ export class AgentTimelineCommandExecutionBackend {
     if (!item || item.type !== "commandExecution") return;
     if (!entry.threadId) return;
 
-    const activeTask = this.scope.taskStore.findActiveTaskForAgent(agent.agentId);
+    const activeTask = this.scope.agentOrchestrator.taskStore.findActiveTaskForAgent(agent.agentId);
     const observedAt = entry.receivedAt;
     this.scope.eventBus.publish(AgentEvents.commandExecution.observed, {
       sourceSeq: entry.seq,

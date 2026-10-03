@@ -31,7 +31,7 @@ export class AgentTimelineSubagentBackend {
 
     const item = resolved.item;
     if (item?.type === "collabAgentToolCall") {
-      const activeTask = this.scope.taskStore.findActiveTaskForAgent(agent.agentId);
+      const activeTask = this.scope.agentOrchestrator.taskStore.findActiveTaskForAgent(agent.agentId);
       this.scope.eventBus.publish(AgentEvents.subagent.observed, {
         seq: entry.seq,
         agentId: agent.agentId,
@@ -54,7 +54,7 @@ export class AgentTimelineSubagentBackend {
       return;
     }
     if (item?.type !== "subAgentActivity") return;
-    const activeTask = this.scope.taskStore.findActiveTaskForAgent(agent.agentId);
+    const activeTask = this.scope.agentOrchestrator.taskStore.findActiveTaskForAgent(agent.agentId);
     this.scope.eventBus.publish(AgentEvents.subagent.observed, {
       seq: entry.seq,
       agentId: agent.agentId,

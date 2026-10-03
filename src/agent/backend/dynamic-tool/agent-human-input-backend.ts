@@ -27,13 +27,13 @@ export interface AgentHumanInputResponseTarget {
 export class AgentHumanInputBackend {
   private readonly eventBus: RunScope["eventBus"];
   private readonly registry: RunScope["agentRegistry"];
-  private readonly humanInputStore: RunScope["humanInputStore"];
+  private readonly humanInputStore: RunScope["agentOrchestrator"]["humanInputStore"];
 
   constructor() {
     const scope = currentRunScope();
     this.eventBus = scope.eventBus;
     this.registry = scope.agentRegistry;
-    this.humanInputStore = scope.humanInputStore;
+    this.humanInputStore = scope.agentOrchestrator.humanInputStore;
   }
 
   listForTask(taskId: string): AgentHumanInputState[] {

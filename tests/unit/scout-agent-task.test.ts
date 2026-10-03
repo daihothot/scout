@@ -2,6 +2,7 @@ import test, { type TestContext } from "node:test";
 import { createTestRunPersistence, createDefaultTestGraph, installTestRunScope, createTestGraph } from "../helpers/run-persistence.js";
 import assert from "node:assert/strict";
 import { AgentTimelineStepBackend } from "../../src/agent/backend/timeline/agent-timeline-step-backend.js";
+import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import { WorkerRunner } from "../../src/agent/runner/worker/worker-runner.js";
 import {
@@ -829,8 +830,15 @@ test("AgentTimelineStepBackend reduces app-server plan timeline entries into ste
     terminate: async () => undefined,
   });
   const releaseRunScope = installRunScope(scope);
-  t.after(releaseRunScope);
-  const store = scope.taskStore;
+  const orchestrator = new AgentOrchestrator();
+  scope.setAgentOrchestrator(orchestrator);
+  orchestrator.start();
+  t.after(() => {
+    orchestrator.stop();
+    scope.clearAgentOrchestrator(orchestrator);
+    releaseRunScope();
+  });
+  const store = scope.agentOrchestrator.taskStore;
   const registry = scope.agentRegistry;
   const agent = createScoutAgentStub("verifier");
   registry.registerAgent(agent);
@@ -838,7 +846,7 @@ test("AgentTimelineStepBackend reduces app-server plan timeline entries into ste
     taskId: "task-1",
     agentId: "verifier",
   }));
-  const firstStep = scope.stepStore.addStep(stepState({
+  const firstStep = scope.agentOrchestrator.stepStore.addStep(stepState({
     stepId: "task-1-step-0001",
     taskId: task.taskId,
     agentId: task.agentId,
@@ -862,12 +870,12 @@ test("AgentTimelineStepBackend reduces app-server plan timeline entries into ste
     planTimelineEntry(2, "turn-1"),
     resolvedPlanEntry(completedFirstPlan),
   );
-  scope.stepStore.updateStep(firstStep.stepId, (current) => ({
+  scope.agentOrchestrator.stepStore.updateStep(firstStep.stepId, (current) => ({
     ...current,
     status: AgentStepStatuses.Completed,
     finishedAt: new Date().toISOString(),
   }));
-  const secondStep = scope.stepStore.addStep(stepState({
+  const secondStep = scope.agentOrchestrator.stepStore.addStep(stepState({
     stepId: "task-1-step-0002",
     taskId: task.taskId,
     agentId: task.agentId,
@@ -881,7 +889,7 @@ test("AgentTimelineStepBackend reduces app-server plan timeline entries into ste
     planTimelineEntry(3, "turn-2"),
     resolvedPlanEntry(secondPlan),
   );
-  const steps = scope.stepStore.list({ taskId: task.taskId });
+  const steps = scope.agentOrchestrator.stepStore.list({ taskId: task.taskId });
   assert.deepEqual(steps.map((step) => step.plan?.turnId), ["turn-1", "turn-2"]);
   assert.deepEqual(steps.map((step) => step.plan?.explanation), ["first completed", "second"]);
   assert.deepEqual(steps.map((step) => step.plan?.steps[0]?.status), ["completed", "completed"]);
@@ -1067,7 +1075,7 @@ async function createHarness(t: TestContext, input: {
   deliverTaskOutcome?: (outcome: string, runtime: TestTaskRuntime) => void | Promise<void>;
 } = {}): Promise<{
   runtime: TestTaskRuntime;
-  stepStore: RunScope["stepStore"];
+  stepStore: RunScope["agentOrchestrator"]["stepStore"];
   events: ScoutEvent[];
   terminalTasks: AgentTaskState[];
   deliveredOutcomes: string[];
@@ -1138,7 +1146,7 @@ async function createHarness(t: TestContext, input: {
   }
   return {
     runtime,
-    stepStore: scope.stepStore,
+    stepStore: scope.agentOrchestrator.stepStore,
     events,
     terminalTasks,
     deliveredOutcomes,
@@ -1342,7 +1350,7 @@ async function recordDisposition(
   const task = runtime.getTaskSnapshot(step.taskId ?? "");
   if (!task) throw new Error(`Unknown task for step ${step.stepId}.`);
   const existing = task.dispositions.find((candidate) => candidate.stepId === step.stepId);
-  const updated = scope.taskStore.recordDisposition(task.taskId, disposition);
+  const updated = scope.agentOrchestrator.taskStore.recordDisposition(task.taskId, disposition);
   if (existing) return updated;
   await scope.eventBus.publishAndWait(AgentEvents.task.dispositionRecorded, {
     task: updated,
@@ -1354,7 +1362,7 @@ async function recordDisposition(
 function requireCurrentStep(runtime: TestTaskRuntime): AgentStepState {
   const task = runtime.snapshot().activeTask;
   const stepId = task?.stepIds.at(-1);
-  const step = stepId ? currentRunScope().stepStore.getStep(stepId) : undefined;
+  const step = stepId ? currentRunScope().agentOrchestrator.stepStore.getStep(stepId) : undefined;
   if (!step) throw new Error("Worker runner has no current step.");
   return step;
 }

@@ -8,8 +8,13 @@ import { installTestRunScope } from "../helpers/run-persistence.js";
 
 test("AgentOrchestrator owns its lifecycle and consumes task events", async (t) => {
   const eventBus = new InMemoryEventBus();
-  await installTestRunScope(t, { runId: "agent-orchestrator", eventBus });
+  const scope = await installTestRunScope(t, { runId: "agent-orchestrator", eventBus });
   const orchestrator = new AgentOrchestrator();
+  t.after(() => orchestrator.stop());
+  assert.notEqual(orchestrator.taskStore, scope.agentOrchestrator.taskStore);
+  assert.notEqual(orchestrator.stepStore, scope.agentOrchestrator.stepStore);
+  assert.notEqual(orchestrator.humanInputStore, scope.agentOrchestrator.humanInputStore);
+  assert.notEqual(orchestrator.toolCallStore, scope.agentOrchestrator.toolCallStore);
 
   assert.deepEqual(orchestrator.snapshot(), {
     started: false,
@@ -18,6 +23,27 @@ test("AgentOrchestrator owns its lifecycle and consumes task events", async (t) 
   });
 
   orchestrator.start();
+  orchestrator.start();
+  const request = {
+    requestId: "request-1", stepId: "step-1", taskId: "task-1", agentId: "researcher",
+    body: "Confirm target", requestedAt: "2026-07-14T00:00:00.000Z",
+    message: { messageId: "request-message-1", agentId: "coordinator", body: "Confirm target", queuedAt: "2026-07-14T00:00:00.000Z" },
+  };
+  await eventBus.publishAndWait(AgentEvents.humanInput.requested, request);
+  // Step projection must use this owner's peer Store, not the other installed owner.
+  scope.agentOrchestrator.humanInputStore.restore([]);
+  orchestrator.stepStore.addStep({
+    stepId: "consuming-step", agentId: "coordinator", status: "running", prompt: "Confirm target",
+    toolCallIds: [], humanInputReferences: [],
+    startedAt: request.requestedAt, updatedAt: request.requestedAt,
+  });
+  await eventBus.publishAndWait(AgentEvents.message.consumed, {
+    messageId: request.message.messageId, agentId: "coordinator", stepId: "consuming-step",
+    consumedAt: "2026-07-14T00:00:01.000Z", deliveryMode: "queued",
+  });
+  assert.deepEqual(orchestrator.stepStore.getStep("consuming-step")?.humanInputReferences, [{
+    requestId: request.requestId, kind: "request_consumed",
+  }]);
   await eventBus.publishAndWait(AgentEvents.task.assigned, {
     type: "local_agent",
     taskId: "researcher-task-0001",
@@ -46,4 +72,8 @@ test("AgentOrchestrator owns its lifecycle and consumes task events", async (t) 
     pendingEventCount: 0,
   });
   assert.throws(() => orchestrator.start(), /Cannot restart a stopped AgentOrchestrator/);
+  await eventBus.publishAndWait(AgentEvents.humanInput.requested, {
+    ...request, requestId: "request-2", message: { ...request.message, messageId: "request-message-2" },
+  });
+  assert.equal(orchestrator.humanInputStore.listForTask("task-1").length, 1);
 });

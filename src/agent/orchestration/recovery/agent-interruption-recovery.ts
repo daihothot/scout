@@ -10,7 +10,7 @@ export class AgentInterruptionRecovery {
     const scope = currentRunScope();
     const synthesisRole = resolveSynthesisRole(scope.workflow.graph.snapshot()).name;
     let projection = projectAgentWorkflow(scope.workflow.readEvents(), synthesisRole);
-    scope.stepStore.restore(projection.steps);
+    scope.agentOrchestrator.stepStore.restore(projection.steps);
     for (const turn of projection.turns.filter((candidate) => !candidate.completedAt)) {
       const interruptedAt = new Date().toISOString();
       await scope.eventBus.publishAndWait(AgentEvents.turn.interrupted, {
@@ -24,7 +24,7 @@ export class AgentInterruptionRecovery {
     for (const step of projection.steps) {
       if (step.status !== AgentStepStatuses.Running) continue;
       const interruptedAt = new Date().toISOString();
-      scope.stepStore.interruptStep(step.stepId, {
+      scope.agentOrchestrator.stepStore.interruptStep(step.stepId, {
         finishedAt: interruptedAt,
         durationMs: Math.max(0, Date.parse(interruptedAt) - Date.parse(step.startedAt)), error: reason,
       });
