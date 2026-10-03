@@ -268,9 +268,7 @@ function createPermissionProfiles(input: {
         canonicalSkillRoot,
       ]),
       network: role.network,
-      workspaceRules: Object.fromEntries(input.roleRoots.map((peer) => [
-        `agents/${peer.role}/artifacts`, peer.role === role.role ? "write" : "read",
-      ])),
+      workspaceRules: { [`agents/${role.role}/artifacts`]: "write" },
     } satisfies RunAgentFilesystemPermissionProfile,
   ]));
 }

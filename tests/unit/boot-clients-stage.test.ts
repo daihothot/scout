@@ -10,6 +10,7 @@ import {
   readlinkSync,
   readFileSync,
   realpathSync,
+  renameSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -141,7 +142,7 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   assert.ok(stage.rootConfig.writableRoots.includes(resolve(homedir(), ".guru", "codebase")));
   assert.equal(researcherPermissions?.id, scoutAgentPermissionProfile("researcher"));
   assert.ok(researcherPermissions?.readableRoots.includes(researcherMount));
-  assert.equal(researcherPermissions?.workspaceRules["agents/coordinator/artifacts"], "read");
+  assert.equal(researcherPermissions?.workspaceRules["agents/coordinator/artifacts"], undefined);
   assert.equal(researcherPermissions?.workspaceRules["agents/researcher/artifacts"], "write");
   assert.equal(researcherPermissions?.writableRoots.includes(researcherTemp), false);
   if (process.platform === "darwin") {
@@ -187,7 +188,7 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   );
   assert.match(configToml, new RegExp(escapeRegExp(`"${runsRoot}" = "deny"`)));
   assert.match(configToml, new RegExp(escapeRegExp(`"${researcherMount}" = "read"`)));
-  assert.match(configToml, /"agents\/coordinator\/artifacts" = "read"/);
+  assert.doesNotMatch(configToml, /"agents\/[^"\n]+\/artifacts" = "read"/);
   assert.match(configToml, /"agents\/researcher\/artifacts" = "write"/);
   assert.doesNotMatch(configToml, new RegExp(escapeRegExp(`"${researcherTemp}" = "write"`)));
   if (process.platform === "darwin") {
@@ -248,7 +249,7 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   const ownMountRead = await exec(["/bin/cat", join(researcher.mountRoot, "AGENTS.md")]);
   assert.equal(ownMountRead.exitCode, 0, ownMountRead.stderr);
   assert.equal((await exec(["/bin/cat", ownArtifactFile])).stdout, "own artifact\n");
-  assert.equal((await exec(["/bin/cat", sharedArtifactFile])).stdout, "shared artifact\n");
+  assert.notEqual((await exec(["/bin/cat", sharedArtifactFile])).exitCode, 0);
   assert.equal(
     (await exec(["/bin/cat", join(coordinator.mountRoot, "AGENTS.md")])).exitCode,
     0,
@@ -267,6 +268,9 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
     0,
   );
   assert.equal((await exec(["/bin/cat", realpathSync(mountedSkill)])).exitCode, 0);
+  assert.notEqual((await exec(["/usr/bin/touch", mountedSkill])).exitCode, 0);
+  assert.notEqual((await exec(["/usr/bin/touch", join(researcher.mountRoot, "AGENTS.md")])).exitCode, 0);
+  assert.notEqual((await exec(["/usr/bin/touch", join(researcher.mountRoot, "agents", "worker.AGENTS.md")])).exitCode, 0);
   assert.notEqual(
     (await exec(["/bin/cat", join(coordinatorSkillRoot, "SKILL.md")])).exitCode,
     0,
@@ -299,6 +303,16 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
   );
   assert.equal(coordinatorTool.exitCode, 0, coordinatorTool.stderr);
   assert.match(coordinatorTool.stdout, /SCOUT_ASSETS_OK/);
+
+  const renamedWorkflowRoot = join(runRoot, "workflows", "renamed evidence");
+  renameSync(workflowRoot, renamedWorkflowRoot);
+  try {
+    const renamedOwnRoot = join(renamedWorkflowRoot, "agents", "researcher", "artifacts");
+    assert.equal((await exec(["/bin/cat", join(renamedOwnRoot, "own.txt")], renamedWorkflowRoot)).stdout, "own artifact\n");
+    assert.equal((await exec(["/usr/bin/touch", join(renamedOwnRoot, "after-rename.txt")], renamedWorkflowRoot)).exitCode, 0);
+    assert.notEqual((await exec(["/bin/cat", join(renamedWorkflowRoot, "agents", "coordinator", "artifacts", "shared.txt")], renamedWorkflowRoot)).exitCode, 0);
+    assert.equal((await exec(["/bin/cat", mountedSkill], renamedWorkflowRoot)).exitCode, 0);
+  } finally { renameSync(renamedWorkflowRoot, workflowRoot); }
 
   await stage.stop();
   await stage.stop();

@@ -107,9 +107,7 @@ scout-assets summary
   },
   "roots": {
     "runtimeRoots": [
-      { "name": "mount", "path": ".", "access": "read" },
-      { "name": "artifacts", "path": "../artifacts", "access": "read-write" },
-      { "name": "tmp", "path": "../tmp", "access": "read-write" }
+      { "name": "mount", "path": ".", "access": "read" }
     ],
     "profileRoots": [
       {
@@ -133,7 +131,8 @@ scout-assets summary
 - `profile.phases` 是当前 `role` 参与的完整 Phase 列表，不表示 Scheduler 当前正在执行的 `current_phase`。
 - `profile.domain` 是当前 Workflow Profile 声明的业务 Domain。
 - `profile.resourceParks` 是当前 `role` 使用的 Resource Park 名称列表。
-- `runtimeRoots[*].path` 是以当前 `mount` 为基准的相对路径，例如 `.`、`../artifacts` 和 `../tmp`。使用它们时保持当前 mount 上下文。
+- `runtimeRoots[*].path` 是以当前 `mount` 为基准的相对路径；当前只记录只读 mount `.`，不包含 Workflow artifact 或临时目录。
+- 自身当前 Workflow 的 artifact 路径使用本次 `<workflow_context>` 提供的 `artifactRoot`；`scout-assets` 不查询 Workflow 状态、artifact 路径或临时授权。访问边界遵循 `AGENTS.md`，不从 mount 的父目录推导 artifact 路径。
 - `profileRoots[*].source` 是 profile 的可移植逻辑声明，例如 `~/.guru/knowledge` 或 `${SCOUT_ROOT}`。
 - `profileRoots[*].path` 是 `scout-assets` 按当前设备解析出的绝对路径，始终以 `/` 开头；实际读取或写入使用 `path`。
 - `counts.issues` 只是物化问题数量。它不证明具体资源内容、外部服务或后续操作成功。

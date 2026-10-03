@@ -362,7 +362,7 @@ function resolveProfileRoot(source) {
   const mountRoot = process.cwd();
   const values = {
     SCOUT_ROOT: resolve(mountRoot, "../../../../../"),
-    SCOUT_RUN_ROOT: resolve(mountRoot, "../../../../"),
+    SCOUT_RUN_ROOT: resolve(mountRoot, "../../.."),
     SCOUT_MOUNT_ROOT: mountRoot,
   };
   const expanded = source.replace(/\$\{([A-Za-z0-9_.]+)\}/g, (match, key) => values[key] ?? match);

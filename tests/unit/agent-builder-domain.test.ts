@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { AgentBuilder } from "../../src/agent/builder/agent-builder.js";
-import { resolveWorkflowLocation } from "../../src/core/io/index.js";
+import { resolveWorkflowLocation, workflowAgentPaths } from "../../src/core/io/index.js";
 import { AgentTimelineBackend } from "../../src/agent/backend/timeline/agent-timeline-backend.js";
 import { AgentDynamicToolBackend } from "../../src/agent/backend/dynamic-tool/agent-dynamic-tool-backend.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
@@ -3623,11 +3623,10 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   ));
   assert.ok(handoffTurn?.prompt);
   const handoffContext = JSON.parse(attachments.readTagBlock(handoffTurn.prompt, "workflow_context")[0]!.body);
-  assert.deepEqual(handoffContext.artifactReferences, [{
-    ref: "scout-artifact://workflow-001/verifier/result.md",
-    path: join(currentRunScope().workflow.agentPaths("verifier").artifactRoot, "result.md"),
-  }]);
-  assert.ok(handoffContext.artifacts.every((artifact: object) => !Object.hasOwn(artifact, "referenceRoot")));
+  assert.deepEqual(handoffContext, {
+    workflowId: "workflow-001", status: "active",
+    artifactRoot: currentRunScope().workflow.agentPaths("coordinator").artifactRoot,
+  });
   const submittedOutcome = fixture.journal.readAll().find((event) =>
     AgentEvents.task.outcomeSubmitted.is(event)
   );
@@ -4044,7 +4043,7 @@ test("Coordinator opens each Workflow only after its requesting Turn and reuses 
   }
 });
 
-test("resumed Workflow resolves handoff refs after a directory rename without rewriting evidence", async () => {
+test("resumed Workflow updates its own artifact path after a directory rename without rewriting handoff refs", async () => {
   const appServer = createFakeAppServer({ turnIds: ["before-rename", "after-resume"] });
   await createAgentFixture("artifact-path-resume", { appServer });
   const scope = currentRunScope();
@@ -4086,9 +4085,9 @@ test("resumed Workflow resolves handoff refs after a directory rename without re
       assert.ok(turn.prompt.endsWith(prompt), "business prompt is delivered verbatim");
       return JSON.parse(attachments.readTagBlock(turn.prompt, "workflow_context")[0]!.body);
     });
-    assert.deepEqual(contexts.map((context) => context.artifactReferences), [
-      [{ ref, path: join(artifactRoot, relativePath) }],
-      [{ ref, path: join(renamedRoot, "agents", "researcher", "artifacts", relativePath) }],
+    assert.deepEqual(contexts, [
+      { workflowId: "workflow-001", status: "active", artifactRoot: workflowAgentPaths(originalRoot, "coordinator").artifactRoot },
+      { workflowId: "workflow-001", status: "active", artifactRoot: workflowAgentPaths(renamedRoot, "coordinator").artifactRoot },
     ]);
     assert.equal(appServer.turnInputs[1]!.prompt?.includes(originalRoot), false);
     assert.deepEqual(appServer.turnInputs[1]!.runtimeWorkspaceRoots, [renamedRoot]);

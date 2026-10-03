@@ -22,7 +22,6 @@ import { attachments } from "../context/attachments.js";
 import { randomUUID } from "node:crypto";
 import { workflowRootFromJournalRoot } from "../../core/io/index.js";
 import { writeAgentThreadRecord } from "../thread/agent-thread-record.js";
-import { resolveAgentArtifactReferences } from "../../core/io/index.js";
 
 /** Input contract for one app-server turn owned by a Scout agent. */
 export interface ScoutAgentTurnInput {
@@ -545,24 +544,11 @@ export abstract class ScoutAgent {
     const invocationId = this.nextInvocationId(thread.threadId);
     const workflowData = this.runScope.workflow.snapshot();
     const paths = workflowData ? this.runScope.workflow.agentPaths(this.agentId) : undefined;
-    const artifacts = workflowData
-      ? this.runScope.workflow.graph.snapshot().roles.map(({ name }) => ({
-        agentId: name,
-        path: this.runScope.workflow.agentPaths(name).artifactRoot,
-        access: name === this.agentId ? "read-write" : "read",
-      }))
-      : [];
     const executionContext = attachments.addTagBlock("workflow_context", JSON.stringify(
       workflowData ? {
         workflowId: workflowData.workflowId,
         status: workflowData.status,
         artifactRoot: paths!.artifactRoot,
-        artifacts,
-        artifactReferences: resolveAgentArtifactReferences(input.prompt, {
-          workflowId: workflowData.workflowId,
-          artifacts,
-          readRequests: [],
-        }),
       }
         : { status: "empty", instruction: "没有活动 Workflow。可交流与查看历史；开始新执行前由 Coordinator 调用 StartWorkflow，接受后立即结束当前 Turn。" },
     ));

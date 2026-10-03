@@ -36,7 +36,7 @@ family:tool.scout.dynamic.worker.**
 
 - 正式结论必须写入当前 `<role>` 允许的 artifact，并通过 `SubmitTask` 提交符合当前 Domain Skill 的完整 Markdown `outcome`。
 - 上游或其它 `role` 的 artifact 是输入，不得修改；只写入当前 contract 明确归当前 `<role>` 所有的目标。
-- 读取输入 artifact 时，使用本次 `<workflow_context>` 的 `artifactReferences` 中对应 `ref` 的完整 `path`；交接时原样携带已提供的 `ref`。新产物使用当前 `artifactRoot` 下的实际路径，不自行构造或转换引用格式。outcome 必须说明输入 refs、处理方法、检查结果、未覆盖范围和限制。
+- 读取输入 artifact 时，只使用已提供且已获授权的访问路径，访问边界遵循 `AGENTS.md`；交接时原样携带已提供的 `ref`。新产物使用本次 `<workflow_context>` 的 `artifactRoot` 下的实际路径，不自行构造或转换引用格式。outcome 必须说明输入 refs、处理方法、检查结果、未覆盖范围和限制。
 - 详细事实放在 artifact 或 report 中，并区分已确认事实、候选、推断、失败和未覆盖范围；不要把普通 summary、progress 或 Tool 活动冒充正式 handoff，也不要冒充其它 role 的结论、Runtime 状态或人工确认。
 - `SubmitTask` 被接受后，当前 Step 结束时 handoff 进入 `done`；这不等于领域目标已完成。原任务仍绑定时，可以等待 `coordinator` 向原 `<task-id>` 发送补充或修正消息；任务资源由 Runtime 在替换任务或 Workflow 结束时释放。
 - 当前正式工作轮必须且只能以 `RequestHumanInput` 或 `SubmitTask` 结束；普通 final response、`SendMessage` 或 artifact 写入不能替代它们。

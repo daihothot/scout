@@ -6,6 +6,7 @@ import {
 import {
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -62,8 +63,6 @@ test("scout-assets summary presents current profile, roots, counts, and role too
   assert.deepEqual(output.roots, {
     runtimeRoots: [
       { name: "mount", path: ".", access: "read" },
-      { name: "artifacts", path: "../artifacts", access: "read-write" },
-      { name: "tmp", path: "../tmp", access: "read-write" },
     ],
     profileRoots: [
       { source: "~/.shared-source", path: join(homedir(), ".shared-source"), access: "read" },
@@ -80,6 +79,26 @@ test("scout-assets summary presents current profile, roots, counts, and role too
     ["path-resolved", "absolute", "asset-relative"],
   );
   assert.equal(output.phaseTools.mcpServers[0].name, "jarvis");
+});
+
+test("scout-assets resolves root macros from the Agent entity mount independently of Workflow names", () => {
+  const scoutRoot = realpathSync(createTemporaryRoot());
+  const runRoot = join(scoutRoot, "run", "run-root-macros");
+  const mountRoot = join(runRoot, "agents", "researcher", "mount");
+  mkdirSync(mountRoot, { recursive: true });
+  writeFileSync(join(mountRoot, "mount-manifest.json"), JSON.stringify({
+    domain: "rbt", agentId: "researcher", agentProfile: { phases: ["execute"] }, skills: [],
+    runtimeRoots: [{ name: "mount", path: ".", access: "read" }],
+    profileReadableRoots: ["${SCOUT_ROOT}/assets", "${SCOUT_RUN_ROOT}/logs", "${SCOUT_MOUNT_ROOT}/agents"],
+  }));
+  const expected = [
+    { source: "${SCOUT_ROOT}/assets", path: join(scoutRoot, "assets"), access: "read" },
+    { source: "${SCOUT_RUN_ROOT}/logs", path: join(runRoot, "logs"), access: "read" },
+    { source: "${SCOUT_MOUNT_ROOT}/agents", path: join(mountRoot, "agents"), access: "read" },
+  ];
+  assert.deepEqual(parseSuccessful(mountRoot, "summary").roots.profileRoots, expected);
+  mkdirSync(join(runRoot, "workflows", "renamed workflow"), { recursive: true });
+  assert.deepEqual(parseSuccessful(mountRoot, "summary").roots.profileRoots, expected);
 });
 
 test("scout-assets discovers phase roots only from the selected Domain", () => {
@@ -372,8 +391,6 @@ function createFixture(): {
     profileWritableRoots: ["~/.artifacts"],
     runtimeRoots: [
       { name: "mount", path: ".", access: "read" },
-      { name: "artifacts", path: "../artifacts", access: "read-write" },
-      { name: "tmp", path: "../tmp", access: "read-write" },
     ],
     resourceHash: "resource-hash",
     generatedAt: "2026-08-25T00:00:00.000Z",

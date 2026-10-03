@@ -30,8 +30,9 @@
 - `attachment` 是 Scout Runtime 随当前 `response` 注入的上下文块。
 - `<workflow_phase>` attachment 提供当前 `<domain>` 和 `<phase>`；所有 `role` 只使用其中的事实，不从 task 名称、Skill 名称、历史消息或自己的推断中补出。
 - `workflow` 是当前 `run` 按同一 Workflow Profile 开启的一次执行实例，具有独立的 `workflowId`、状态和执行证据。`workflow_status: empty` 表示当前没有活动 Workflow：可交流或查看已获授权的历史，但不能写 artifact 或派发执行任务。
-- 每次 response 的 `<workflow_context>` 提供当前 `workflowId`、本 role 的 `artifactRoot`，以及各 role 的 `artifacts` 路径。只使用本次注入的路径，不沿用前一 response 的物理路径。
-- 访问历史 artifact 时，只使用 Runtime 提供的访问路径和必要授权，不扫描历史目录或根据目录名称猜测身份。
+- 每次 response 的 `<workflow_context>` 只提供当前 Workflow 的 `workflowId`、`status` 和本 role 的 `artifactRoot`。只使用本次注入的自身读写路径，不沿用前一 response 的物理路径。
+- 没有活动 Workflow 时，`<workflow_context>` 的 `status` 为 `empty`，不提供 `workflowId` 或 `artifactRoot`。
+- 本 Workflow 其它 role 和历史 Workflow 的 artifact 均不默认可读；访问前需要获得临时只读授权。正式 `ref` 只标识产物，不代表已经获得访问权限。不扫描历史目录或根据目录名称猜测身份。
 
 ```text
 <workflow_phase>
@@ -54,7 +55,7 @@ workflow_status: <active|settling|empty>
 - `已注入` 表示该规则文件的完整内容已通过 `developerInstructions` 加入当前 `<role>` 的上下文。
 - 当前 `role` 只能使用当前 `mount`、profile 已暴露且已经确认可见的资源；不得使用旧 run、其它设备或记忆中的路径替代当前资源事实。
 
-当前 `<role>` 可访问的运行时目录结构为：
+当前 `<role>` 的默认静态访问范围为：
 
 ```text
 <run-root>/
@@ -69,11 +70,12 @@ workflow_status: <active|settling|empty>
 └── workflows/
     └── <当前 Workflow 目录>/             【目录名可变，不是 Workflow 身份】
         └── agents/
-            ├── <role>/artifacts/     【用途：本 Workflow 正式产物】【权限：可读可写】
-            └── <other-role>/artifacts/ 【用途：本 Workflow 正式交付产物】【权限：仅可读】
+            └── <role>/artifacts/     【用途：本 Workflow 正式产物】【权限：可读可写】
 ```
 
 没有活动 Workflow 时不提供 artifact 路径；不得回写已完成 Workflow。工具临时文件使用宿主 `TMPDIR`，不作为持久交付引用。
+
+mount、通用规则、当前角色规则和已物化 Skill 默认静态只读，不需要申请 artifact 访问权限。本 Workflow 的 `<other-role>/artifacts/` 和历史 Workflow 的 artifact 不属于上面的默认静态范围，均须获得临时只读授权后访问。
 
 Scout Runtime 自动注入的规则文件，遗忘规则时可以读取：
 
