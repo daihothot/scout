@@ -1,9 +1,9 @@
 import { summarizeAgentServerPreflight } from "../../agent-server/codex/app-server-preflight.js";
-import { sha256Text, stableJson, writeJsonFile } from "../../core/fs.js";
+import { sha256Text, stableJson, writeJsonFile } from "../../core/io/index.js";
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, linkSync, openSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
-import { runPaths } from "../../core/path.js";
+import { runPaths } from "../../core/io/index.js";
 import type {
   RunAgentManifestEntry,
   RunManifest,

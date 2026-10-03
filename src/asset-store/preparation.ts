@@ -5,7 +5,7 @@ import {
   realpathSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { sha256Text, stableJson } from "../core/fs.js";
+import { sha256Text, stableJson } from "../core/io/index.js";
 import { MountContextBuilder } from "./builders/mount-context-builder.js";
 import type { MountManifest } from "./contracts/manifest.js";
 import type {

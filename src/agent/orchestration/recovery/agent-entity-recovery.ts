@@ -20,7 +20,7 @@ import { AgentBuilder } from "../../../agent/builder/agent-builder.js";
 import type { ScoutAgent } from "../../../agent/core/scout-agent.js";
 import { resolveSynthesisRole } from "../../../core/workflow/index.js";
 import { currentRunScope } from "../../../run/run-scope.js";
-import { isPathWithin, runAgentPaths, runPaths } from "../../../core/path.js";
+import { isPathWithin, runAgentPaths, runPaths } from "../../../core/io/index.js";
 import {
   projectAgentWorkflow,
   type AgentWorkflowData,

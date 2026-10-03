@@ -1,12 +1,12 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { runAgentPaths, scoutRunRoot } from "../../core/path.js";
+import { runAgentPaths, scoutRunRoot } from "../../core/io/index.js";
 import {
   hashDirectory,
   sha256File,
   sha256Text,
-} from "../../core/fs.js";
+} from "../../core/io/index.js";
 import type { MaterializeOptions } from "../contracts/materialization.js";
 import type { MountContext } from "../contracts/mount-context.js";
 import type { AgentProfile } from "../contracts/profile.js";

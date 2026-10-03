@@ -3,7 +3,7 @@ import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
 import type { AgentNativeSubagentEvent } from "../subagent/subagent-events.js";
-import { agentTelemetryLogsRoot } from "../../core/path.js";
+import { agentTelemetryLogsRoot } from "../../core/io/index.js";
 
 /** Persists native multi-agent collaboration facts in the owning agent log. */
 export class AgentSubagentRecorder {

@@ -4,7 +4,7 @@ import {
   readdirSync,
 } from "node:fs";
 import { join, relative } from "node:path";
-import { sha256Text } from "../../core/fs.js";
+import { sha256Text } from "../../core/io/index.js";
 import type { BuiltShellTool } from "../builders/shell-tool-builder.js";
 import type { MountManifest } from "../contracts/manifest.js";
 import type { MountContext } from "../contracts/mount-context.js";

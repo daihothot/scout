@@ -4,7 +4,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { AgentEvents } from "../../../../agent/events/index.js";
 import type { AgentTaskOutcomeSubmission } from "../../../../agent/task/task-events.js";
 import type { UnsubscribeEventHandler } from "../../../../core/events/index.js";
-import { isPathWithin } from "../../../../core/path.js";
+import { isPathWithin } from "../../../../core/io/index.js";
 import { currentRunScope } from "../../../../run/run-scope.js";
 import { SystemEvents } from "../../../../system/events/index.js";
 import {

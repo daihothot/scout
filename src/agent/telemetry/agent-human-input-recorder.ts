@@ -2,7 +2,7 @@ import type { UnsubscribeEventHandler } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
-import { agentTelemetryLogsRoot } from "../../core/path.js";
+import { agentTelemetryLogsRoot } from "../../core/io/index.js";
 
 /** Records Human Input request, response, and message-consumption facts. */
 export class AgentHumanInputRecorder {

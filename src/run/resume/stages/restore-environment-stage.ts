@@ -1,7 +1,7 @@
 import { createCodexAppServerMountPreflightBatch } from "../../../agent-server/codex/app-server-preflight.js";
 import type { AgentServerPreflightReport } from "../../../agent-server/types.js";
 import { resolve } from "node:path";
-import { runAgentPaths } from "../../../core/path.js";
+import { runAgentPaths } from "../../../core/io/index.js";
 import { AssetStore, type CodexMount, type MaterializeOptions } from "../../../asset-store/index.js";
 import type { ScoutAgentRole } from "../../../agent/thread/types.js";
 import { currentRunScope } from "../../run-scope.js";

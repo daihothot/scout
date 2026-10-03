@@ -20,9 +20,9 @@ import {
 import { AgentEvents } from "../events/index.js";
 import { attachments } from "../context/attachments.js";
 import { randomUUID } from "node:crypto";
-import { workflowRootFromJournalRoot } from "../../core/path.js";
+import { workflowRootFromJournalRoot } from "../../core/io/index.js";
 import { writeAgentThreadRecord } from "../thread/agent-thread-record.js";
-import { resolveAgentArtifactReferences } from "../task/artifact-references.js";
+import { resolveAgentArtifactReferences } from "../../core/io/index.js";
 
 /** Input contract for one app-server turn owned by a Scout agent. */
 export interface ScoutAgentTurnInput {
@@ -561,6 +561,7 @@ export abstract class ScoutAgent {
         artifactReferences: resolveAgentArtifactReferences(input.prompt, {
           workflowId: workflowData.workflowId,
           artifacts,
+          readRequests: [],
         }),
       }
         : { status: "empty", instruction: "没有活动 Workflow。可交流与查看历史；开始新执行前由 Coordinator 调用 StartWorkflow，接受后立即结束当前 Turn。" },

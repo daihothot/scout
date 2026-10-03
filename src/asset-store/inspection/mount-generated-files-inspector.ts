@@ -3,8 +3,8 @@ import {
   readFileSync,
 } from "node:fs";
 import { relative, resolve } from "node:path";
-import { sha256Text } from "../../core/fs.js";
-import { isPathWithin } from "../../core/path.js";
+import { sha256Text } from "../../core/io/index.js";
+import { isPathWithin } from "../../core/io/index.js";
 import type { BuiltMcpServer } from "../builders/mcp-server-builder.js";
 import type { BuiltMountGeneratedFile } from "../builders/mount-generated-files-builder.js";
 import type { BuiltShellTool } from "../builders/shell-tool-builder.js";

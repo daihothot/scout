@@ -3,7 +3,7 @@ import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
 import type { AgentToolCallState, AgentToolCallStatus } from "../tool-call/types.js";
-import { agentTelemetryLogsRoot } from "../../core/path.js";
+import { agentTelemetryLogsRoot } from "../../core/io/index.js";
 
 interface ToolCallLogSummary extends AgentToolCallState {
   logsRoot: string;

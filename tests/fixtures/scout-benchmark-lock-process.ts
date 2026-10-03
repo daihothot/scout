@@ -39,20 +39,20 @@ if (mode === "pause-before-reclaim" || mode === "pause-before-publish" || mode =
   syncBuiltinESMExports();
 }
 
-const { Benchmarks } = await import("../../src/core/benchmarks/index.js");
-const { ScoutBenchmarks } = await import("../../src/core/benchmarks/scout-benchmarks.js");
-const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
+const { WorkflowStorageLock, inspectWorkflowDirectory, createWorkflowDirectory } = await import("../../src/core/io/index.js");
+const storage = new WorkflowStorageLock(runRoot);
 announce("ready");
 if (waitForCommand() !== "acquire") throw new Error("Acquisition was not requested.");
 try {
-  benchmarks.benchmarks.acquire();
+  storage.acquire();
 } catch (error) {
   announce("rejected", error instanceof Error ? error.message : String(error));
   process.exit(0);
 }
-const prepared = benchmarks.prepareNext();
+const allocation = inspectWorkflowDirectory(storage, "workflow-001");
+const prepared = createWorkflowDirectory(storage, allocation.location);
 fs.writeFileSync(join(prepared.journalRoot, "holder.txt"), String(process.pid));
 announce("acquired");
 if (waitForCommand() !== "release") throw new Error("Release was not requested.");
-benchmarks.benchmarks.release();
+storage.release();
 announce("released");

@@ -1,4 +1,4 @@
-import { sha256File } from "../../core/fs.js";
+import { sha256File } from "../../core/io/index.js";
 import { join } from "node:path";
 import type { MountManifest } from "../contracts/manifest.js";
 import { ScoutAssetLayout } from "../assets/asset-layout.js";

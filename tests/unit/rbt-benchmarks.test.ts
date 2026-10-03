@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { resolveWorkflowLocation } from "../../src/core/io/index.js";
 import test, { type TestContext } from "node:test";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type { ScoutEvent } from "../../src/core/events/index.js";
@@ -479,7 +480,7 @@ test("RBT restore, duplicate handoff and directory rename preserve manually edit
   await f.domain.start();
   await f.domain.restore(state);
   assert.deepEqual(resumed.benchmarks.read("rbt"), manual);
-  assert.equal(resumed.benchmarks.resolve({ workflowId: state.workflowId })?.workflowRoot, renamed);
+  assert.equal(resolveWorkflowLocation(f.scope.runRoot, state.workflowId)?.workflowRoot, renamed);
   await f.submit(executor);
   await f.submit(reviewer);
   assert.deepEqual(resumed.benchmarks.read("rbt"), manual);

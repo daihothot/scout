@@ -1,6 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { ensureDir } from "../fs.js";
+import { ensureDir } from "../io/index.js";
 
 /** Severity labels emitted in the line-oriented runtime log. */
 export type LogLevel = "debug" | "info" | "warn" | "error";

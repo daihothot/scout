@@ -1,6 +1,6 @@
 import { chmodSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { runPaths } from "../../core/path.js";
+import { runPaths } from "../../core/io/index.js";
 import {
   ensureDir,
   recreateDir,
@@ -8,7 +8,7 @@ import {
   sha256File,
   writeJsonFile,
   writeTextFile,
-} from "../../core/fs.js";
+} from "../../core/io/index.js";
 import type {
   CodexMount,
 } from "../contracts/mount.js";

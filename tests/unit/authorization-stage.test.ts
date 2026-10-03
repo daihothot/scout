@@ -6,7 +6,7 @@ import { Authorization } from "../../src/core/authorization/authorization.js";
 import { AuthorizationRecordObject } from "../../src/core/authorization/record/authorization-record-object.js";
 import { RequestHub } from "../../src/core/authorization/request/request-hub.js";
 import type { RequestType, ScoutRequest } from "../../src/core/authorization/request/types.js";
-import { authorizationJournalPaths } from "../../src/core/path.js";
+import { authorizationJournalPaths } from "../../src/core/io/index.js";
 import { readJournalEvents } from "../../src/core/journal/index.js";
 import { WorkflowState } from "../../src/core/workflow/index.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";

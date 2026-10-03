@@ -30,6 +30,9 @@ import { testWorkflowParticipant } from "./workflow-participant.js";
 import { WorkflowState } from "../../src/core/workflow/index.js";
 import type { ScoutRecord } from "../../src/core/record/scout-record.js";
 import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
+import { WorkflowStorageLock } from "../../src/core/io/index.js";
+import { ScoutRecordObject } from "../../src/core/record/scout-record-object.js";
+import { WorkflowCreatingTransition } from "../../src/core/workflow/transition/workflow-creating-transition.js";
 
 const noopLogger = {
   debug: () => undefined,
@@ -45,6 +48,14 @@ const testDomain: ScoutDomain = {
     override async handleDynamicToolCall() { return undefined; }
   }(),
 };
+
+/** Real storage and creation boundaries for fixtures that seed Workflow evidence. */
+export function createTestWorkflowStorage(runRoot: string, graph = createDefaultTestGraph()) {
+  const storage = new WorkflowStorageLock(runRoot);
+  const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot, storage));
+  const transition = new WorkflowCreatingTransition(graph, new ScoutRecordObject(), benchmarks, storage);
+  return { storage, benchmarks, transition };
+}
 
 export async function createTestRunPersistence(
   t: TestContext,
@@ -74,16 +85,16 @@ export async function createTestRunPersistence(
   const runtimeGraph = graphOverride ?? createDefaultTestGraph();
   const workflowRoot = root ?? resolveTestWorkflowRoot(runRoot);
   // This fixture explicitly seeds an active Workflow; production startup remains empty.
-  const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
-  benchmarks.benchmarks.acquire();
-  const prepared = benchmarks.prepareNext();
+  const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot, runtimeGraph);
+  storage.acquire();
+  const prepared = transition.prepareNext();
   const createdAt = new Date().toISOString();
   const seed = Journal.create({ journalId: `${runId}:workflow:scout`, path: join(prepared.journalRoot, "scout.journal"), lockPath: join(prepared.journalRoot, ".scout.lock") });
   seed.append({ id: `${runId}-created`, key: RunEvents.run.created, payload: { runId, scoutRoot, createdAt }, occurredAt: createdAt });
   seed.append({ id: `${runId}-initialized`, key: WorkflowEvents.workflow.initialized, payload: { state: runtimeGraph.snapshot(), initializedAt: createdAt }, occurredAt: createdAt });
   seed.close();
   benchmarks.recordStarted(prepared.workflowId);
-  benchmarks.benchmarks.release();
+  storage.release();
   const workflow = new Workflow(createTestWorkflowAsset(runtimeGraph.snapshot()));
   const config = new AssetStore().config(scoutRoot);
   const scope = new RunScope({

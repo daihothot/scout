@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { runPaths } from "../../../core/path.js";
+import { runPaths } from "../../../core/io/index.js";
 import {
   createCodexAppServerClient,
   type CodexAppServerClientBundle,

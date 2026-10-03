@@ -8,7 +8,7 @@ import type {
   AgentTurnActivity,
 } from "../activity/activity-event.js";
 import { AgentEvents } from "../events/index.js";
-import { agentTelemetryLogsRoot } from "../../core/path.js";
+import { agentTelemetryLogsRoot } from "../../core/io/index.js";
 
 /** Records app-server activity projections into per-agent run logs. */
 export class AgentActivityRecorder {

@@ -6,7 +6,7 @@ import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { attachments } from "../context/attachments.js";
 import { AgentEvents } from "../events/index.js";
-import { agentTelemetryLogsRoot } from "../../core/path.js";
+import { agentTelemetryLogsRoot } from "../../core/io/index.js";
 
 /** Writes step lifecycle events to the owning agent's step log. */
 export class StepEventRecorder {

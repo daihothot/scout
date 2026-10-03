@@ -5,7 +5,7 @@ import {
   sep,
 } from "node:path";
 import type { CodexMount } from "../../../asset-store/contracts/mount.js";
-import { isPathWithin } from "../../../core/path.js";
+import { isPathWithin } from "../../../core/io/index.js";
 import type { AgentServerPreflightReport } from "../../types.js";
 
 /** Keeps portable diagnostics while dropping device-local Codex response payloads. */

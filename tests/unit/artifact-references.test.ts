@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { canonicalizeAgentArtifactReferences, resolveAgentArtifactReferences } from "../../src/agent/task/artifact-references.js";
+import { canonicalizeAgentArtifactReferences, resolveAgentArtifactReferences } from "../../src/core/io/index.js";
 
 test("agent-local artifact paths become stable Workflow identity references", () => {
   const input = [
@@ -56,6 +56,7 @@ test("current Workflow references receive complete access paths without changing
   ].join("\n");
   assert.deepEqual(resolveAgentArtifactReferences(prompt, {
     workflowId: "workflow-001",
+    readRequests: [],
     artifacts: [
       { agentId: "executor", path: "/run/workflows/renamed execution/agents/executor/artifacts" },
       { agentId: "reviewer", path: "/run/workflows/renamed execution/agents/reviewer/artifacts" },
@@ -73,7 +74,7 @@ test("artifact resolution follows the current physical directory while the persi
   for (const directory of ["workflow-001", "renamed evidence"]) {
     const path = `/run/workflows/${directory}/agents/executor/artifacts`;
     assert.deepEqual(resolveAgentArtifactReferences(ref, {
-      workflowId: "workflow-001", artifacts: [{ agentId: "executor", path }],
+      workflowId: "workflow-001", artifacts: [{ agentId: "executor", path }], readRequests: [],
     }), [{ ref, path: `${path}/result.json` }]);
   }
 });
@@ -90,6 +91,7 @@ test("artifact resolution does not expand historical, unknown or escaping refere
   ].join("\n");
   assert.deepEqual(resolveAgentArtifactReferences(prompt, {
     workflowId: "workflow-001",
+    readRequests: [],
     artifacts: [{ agentId: "executor", path: "/run/current/agents/executor/artifacts" }],
   }), []);
 });

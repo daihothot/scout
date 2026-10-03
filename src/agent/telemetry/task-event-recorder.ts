@@ -7,7 +7,7 @@ import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
 import type { AgentTaskNotAssignedEventPayload } from "../task/task-events.js";
 import type { AgentTaskState } from "../task/types.js";
-import { agentTelemetryLogsRoot } from "../../core/path.js";
+import { agentTelemetryLogsRoot } from "../../core/io/index.js";
 
 /** Writes task lifecycle events to the owning agent's task log. */
 export class TaskEventRecorder {

@@ -14,7 +14,7 @@ import {
   authorizationJournalPaths,
   scoutRunRoot,
   scoutRunsRoot,
-} from "../../src/core/path.js";
+} from "../../src/core/io/index.js";
 
 test("isPathWithin distinguishes roots, descendants, siblings, and prefixes", () => {
   const root = resolve(process.cwd(), "path-fixture", "root");
@@ -87,6 +87,7 @@ test("Workflow evidence paths follow physical directory names without interpreti
     const journalRoot = join(workflowRoot, "journal");
     assert.deepEqual(workflowPaths(workflowRoot), {
       identityPath: join(workflowRoot, "workflow.json"),
+      agentsRoot: join(workflowRoot, "agents"),
       journalRoot,
     });
     assert.equal(workflowRootFromJournalRoot(journalRoot), workflowRoot);

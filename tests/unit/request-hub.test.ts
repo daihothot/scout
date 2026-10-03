@@ -8,7 +8,7 @@ import { Authorization, ApprovalCenter, ApprovalEvents, CredentialEvents, Reques
 import type { ScoutRequestRecord, RequestRegisteredRecord } from "../../src/core/authorization/record/authorization-record.js";
 import type { ApprovalSubmittedEvent } from "../../src/core/authorization/approval/approval-events.js";
 import { Journal, readJournalEvents } from "../../src/core/journal/index.js";
-import { authorizationJournalPaths } from "../../src/core/path.js";
+import { authorizationJournalPaths } from "../../src/core/io/index.js";
 import { Workflow } from "../../src/core/workflow/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { createDefaultTestGraph, installTestRunScope, createTestWorkflowAsset } from "../helpers/run-persistence.js";

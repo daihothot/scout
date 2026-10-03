@@ -3,7 +3,7 @@ import type {
   ScoutEvent,
   UnsubscribeEventHandler,
 } from "../../core/events/index.js";
-import { isPathWithin } from "../../core/path.js";
+import { isPathWithin } from "../../core/io/index.js";
 import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";

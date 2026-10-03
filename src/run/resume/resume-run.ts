@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
-import { runPaths, scoutJournalPaths, scoutRunRoot } from "../../core/path.js";
+import { resolveWorkflowLocation, runPaths, scoutJournalPaths, scoutRunRoot } from "../../core/io/index.js";
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import { InMemoryEventBus } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
@@ -59,8 +59,8 @@ export async function resumeRun(
   }
   const scoutRoot = dirname(runDirectory);
   const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
-  const selectedWorkflow = benchmarks.resolve("currentWorkflow");
   const selectedWorkflowId = benchmarks.read()?.currentWorkflow;
+  const selectedWorkflow = selectedWorkflowId ? resolveWorkflowLocation(runRoot, selectedWorkflowId) : undefined;
   const journalRoot = selectedWorkflow?.journalRoot;
   const journalPath = journalRoot ? scoutJournalPaths(journalRoot).path : undefined;
   let persistedEvents: ScoutRecord[] | undefined;

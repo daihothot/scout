@@ -9,7 +9,7 @@ import { Workflow, projectWorkflowData } from "../../src/core/workflow/index.js"
 import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
 import { Benchmarks } from "../../src/core/benchmarks/index.js";
 import { readJournalEvents } from "../../src/core/journal/index.js";
-import { workflowRootFromJournalRoot } from "../../src/core/path.js";
+import { resolveWorkflowLocation, workflowRootFromJournalRoot } from "../../src/core/io/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { projectGraphData } from "../../src/core/workflow/projector/graph-projector.js";
 import { AgentActivityRecorder } from "../../src/agent/telemetry/agent-activity-recorder.js";
@@ -116,7 +116,7 @@ test("An unfinished renamed Workflow resumes its identity, cursor and current ar
   await initial.stop();
   const renamedRoot = join(scope.runRoot, "workflows", "firebase-fallback v1");
   renameSync(join(scope.runRoot, "workflows", workflowData.workflowId), renamedRoot);
-  const selected = benchmarks.resolve("currentWorkflow")!;
+  const selected = resolveWorkflowLocation(scope.runRoot, benchmarks.read()!.currentWorkflow)!;
   assert.equal(selected.workflowId, workflowData.workflowId);
   assert.equal(selected.workflowRoot, renamedRoot);
   const resumed = new Workflow(createTestWorkflowAsset(graphData));

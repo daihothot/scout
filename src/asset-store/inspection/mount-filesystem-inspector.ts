@@ -4,8 +4,8 @@ import {
   readlinkSync,
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { sha256File } from "../../core/fs.js";
-import { isPathWithin } from "../../core/path.js";
+import { sha256File } from "../../core/io/index.js";
+import { isPathWithin } from "../../core/io/index.js";
 import type { MountManifest } from "../contracts/manifest.js";
 import { CodexAgentRuntimeAssetLayout } from "../assets/asset-layout.js";
 import {

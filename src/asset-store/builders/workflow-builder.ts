@@ -1,6 +1,6 @@
 import { join, resolve } from "node:path";
 import { SynthesisPhase } from "../../core/workflow/graph-data.js";
-import { sha256File } from "../../core/fs.js";
+import { sha256File } from "../../core/io/index.js";
 import { parseWorkflowProfile, workflowProfilePath } from "../assets/workflow-profiles.js";
 import { ScoutAssetLayout } from "../assets/asset-layout.js";
 import { AssetJsonReader } from "../files/asset-json-reader.js";

@@ -13,7 +13,7 @@ import {
   type AgentTaskState,
 } from "../../task/types.js";
 import { currentRunScope, type RunScope } from "../../../run/run-scope.js";
-import { canonicalizeAgentArtifactReferences } from "../../task/artifact-references.js";
+import { canonicalizeAgentArtifactReferences } from "../../../core/io/index.js";
 import { AgentHumanInputBackend } from "./agent-human-input-backend.js";
 import type {
   RequestHumanInputToolCall,

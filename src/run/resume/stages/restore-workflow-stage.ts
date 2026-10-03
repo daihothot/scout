@@ -1,7 +1,7 @@
 import { statSync } from "node:fs";
 import { WorkflowState, type WorkflowResumeInput } from "../../../core/workflow/index.js";
 import { ScoutBenchmarks } from "../../../core/benchmarks/scout-benchmarks.js";
-import { scoutJournalPaths } from "../../../core/path.js";
+import { resolveWorkflowLocation, scoutJournalPaths } from "../../../core/io/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../../lifecycle/run-stage.js";
 
@@ -20,7 +20,7 @@ export class RestoreWorkflowStage implements RunStage {
       if (benchmarks.read()?.currentWorkflow !== this.missingWorkflowId) {
         throw new Error("Workflow benchmark selection changed before its runtime lock was acquired; retry resume.");
       }
-      const selected = benchmarks.resolve("currentWorkflow");
+      const selected = resolveWorkflowLocation(scope.runRoot, this.missingWorkflowId);
       if (selected) {
         try {
           statSync(scoutJournalPaths(selected.journalRoot).path);

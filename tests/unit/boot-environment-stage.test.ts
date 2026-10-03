@@ -27,7 +27,7 @@ import {
   type MountManifest,
 } from "../../src/asset-store/index.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
-import { sha256Text, stableJson } from "../../src/core/fs.js";
+import { sha256Text, stableJson } from "../../src/core/io/index.js";
 import { Workflow } from "../../src/core/workflow/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import {

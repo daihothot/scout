@@ -1,5 +1,5 @@
 import type { ScoutEvent } from "../../events/index.js";
-import { authorizationJournalPaths } from "../../path.js";
+import { authorizationJournalPaths } from "../../io/index.js";
 import { RecordableObject, type RecordEvent } from "../../record/index.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 import { RequestEvents } from "../request/request-events.js";

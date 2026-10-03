@@ -5,7 +5,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { runPaths } from "../../core/path.js";
+import { runPaths } from "../../core/io/index.js";
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 
 /** Stable role identity and relative artifact references stored in a manifest. */

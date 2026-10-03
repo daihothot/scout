@@ -13,6 +13,8 @@ import { Journal, readJournalEvents } from "../../src/core/journal/index.js";
 import { Workflow, WorkflowEvents, projectWorkflowData, type WorkflowResumeInput } from "../../src/core/workflow/index.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
+import { WorkflowStorageLock } from "../../src/core/io/index.js";
+import { WorkflowCreatingTransition } from "../../src/core/workflow/transition/workflow-creating-transition.js";
 import { Benchmarks } from "../../src/core/benchmarks/index.js";
 import { BaseDomain, DomainAgentBackend, ScoutDomainId } from "../../src/domain/index.js";
 import type { RecordPreparation } from "../../src/core/record/index.js";
@@ -528,7 +530,7 @@ test("Workflow startup failure retains resource ownership when recording cleanup
     await assert.rejects(next.start(), (error) => error instanceof AggregateError
       && error.errors.includes(writeFailure) && error.errors.includes(closeFailure));
     await assert.rejects(next.advance("completed"), /Workflow is stopping or not started/);
-    assert.throws(() => new ScoutBenchmarks(new Benchmarks(runRoot)).benchmarks.acquire(), /already attached/);
+    assert.throws(() => new WorkflowStorageLock(runRoot).acquire(), /already attached/);
   } finally {
     write.mock.restore();
     close.mock.restore();
@@ -775,7 +777,7 @@ test("An abort failure retains the prepared directory and blocks a destructive r
     cleanupOrder.push("scout.discard");
     discardScout();
   });
-  const discardDirectory = t.mock.method(ScoutBenchmarks.prototype, "discard");
+  const discardDirectory = t.mock.method(WorkflowCreatingTransition.prototype, "discard");
   registerPreparation(() => {
     writeFileSync(join(nextRoot, "held-resource"), "held");
     return {
@@ -819,7 +821,7 @@ test("A postcommit release failure never deletes the new Workflow or pretends to
     releaseScout();
   });
   const discardScout = t.mock.method(workflow.scoutRecordObject, "abortPreparation");
-  const discardDirectory = t.mock.method(ScoutBenchmarks.prototype, "discard");
+  const discardDirectory = t.mock.method(WorkflowCreatingTransition.prototype, "discard");
   registerPreparation(() => ({
     commit() {}, abort() { assert.fail("a committed preparation cannot be aborted"); },
     releasePrevious() {
@@ -1063,7 +1065,7 @@ test("A Workflow stop failure keeps the root lease until its owner successfully 
     await assert.rejects(workflow.stop(), /journal still held/);
     assert.equal(existsSync(rootLock), true);
     assert.equal(existsSync(journalLock), true);
-    assert.throws(() => new ScoutBenchmarks(new Benchmarks(runRoot)).benchmarks.acquire(), /already attached/);
+    assert.throws(() => new WorkflowStorageLock(runRoot).acquire(), /already attached/);
     await assert.rejects(workflow.start(), /still owns resources from a failed cleanup; stop it before restarting/);
     assert.equal(readFileSync(rootLock, "utf8"), rootOwner);
     assert.equal(readFileSync(journalLock, "utf8"), journalOwner);
@@ -1074,9 +1076,9 @@ test("A Workflow stop failure keeps the root lease until its owner successfully 
   }
   assert.equal(existsSync(rootLock), false);
   assert.equal(existsSync(journalLock), false);
-  const nextOwner = new ScoutBenchmarks(new Benchmarks(runRoot));
-  nextOwner.benchmarks.acquire();
-  nextOwner.benchmarks.release();
+  const nextOwner = new WorkflowStorageLock(runRoot);
+  nextOwner.acquire();
+  nextOwner.release();
 });
 
 test("StartWorkflowStage retains the installed service after startup cleanup fails until stop succeeds", async (t) => {
@@ -1098,7 +1100,7 @@ test("StartWorkflowStage retains the installed service after startup cleanup fai
     assert.equal(scope.workflow, next);
     assert.equal(existsSync(rootLock), true);
     await assert.rejects(stage.start(), /cleanup is pending/);
-    assert.throws(() => new ScoutBenchmarks(new Benchmarks(runRoot)).benchmarks.acquire(), /already attached/);
+    assert.throws(() => new WorkflowStorageLock(runRoot).acquire(), /already attached/);
     replace.mock.restore();
     close.mock.restore();
     await stage.stop();
@@ -1128,7 +1130,7 @@ test("StartWorkflowStage retains a service whose stop failed and clears it only 
     await assert.rejects(stage.start(), /cleanup is pending/);
     assert.equal(scope.workflow, workflow);
     assert.equal(readFileSync(rootLock, "utf8"), originalOwner);
-    assert.throws(() => new ScoutBenchmarks(new Benchmarks(runRoot)).benchmarks.acquire(), /already attached/);
+    assert.throws(() => new WorkflowStorageLock(runRoot).acquire(), /already attached/);
     close.mock.restore();
     await stage.stop();
     assert.throws(() => scope.workflow, /Workflow Service is not available/);

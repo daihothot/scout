@@ -3,7 +3,7 @@ import { Logger } from "../../../../../core/logging/index.js";
 import { DomainEvents } from "../../../../domain-events.js";
 import { ScoutDomainId } from "../../../../types.js";
 import { currentRunScope } from "../../../../../run/run-scope.js";
-import { agentTelemetryLogsRoot } from "../../../../../core/path.js";
+import { agentTelemetryLogsRoot } from "../../../../../core/io/index.js";
 
 /** Writes RBT domain dynamic-tool facts to the calling Agent's telemetry log. */
 export class RbtAgentToolCallRecorder {

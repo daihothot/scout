@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { agentEntityPaths } from "../../core/path.js";
+import { agentEntityPaths } from "../../core/io/index.js";
 import type { AgentThreadSnapshot } from "./types.js";
 
 /** Agent-owned recovery identity. Workflow journals are not the authority for a live Thread. */

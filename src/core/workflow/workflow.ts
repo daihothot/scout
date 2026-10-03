@@ -6,7 +6,7 @@ import { currentRunScope } from "../../run/run-scope.js";
 import { SystemEvents } from "../../system/events/index.js";
 import type { EventBus, UnsubscribeEventHandler } from "../events/index.js";
 import { EventSubscriptionPriorities } from "../events/index.js";
-import { workflowAgentPaths, workflowRootFromJournalRoot } from "../path.js";
+import { resolveWorkflowLocation, WorkflowStorageLock, workflowAgentPaths, workflowRootFromJournalRoot } from "../io/index.js";
 import type { ScoutRecord } from "../record/scout-record.js";
 import { ScoutRecordObject } from "../record/scout-record-object.js";
 import { Benchmarks, ScoutBenchmarks } from "../benchmarks/index.js";
@@ -49,6 +49,7 @@ export class Workflow implements ScoutWorkflowParticipant {
   private readonly running: WorkflowRunning;
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
   private scoutBenchmarks?: ScoutBenchmarks;
+  private storageLock?: WorkflowStorageLock;
   private activeWorkflowData?: WorkflowData;
   private eventBus?: EventBus;
   private pendingAdvance?: Promise<WorkflowAdvanceResult>;
@@ -78,16 +79,18 @@ export class Workflow implements ScoutWorkflowParticipant {
 
   async start(): Promise<void> {
     if (this.started) return;
-    if (this.scoutBenchmarks) throw new Error("Workflow still owns resources from a failed cleanup; stop it before restarting.");
+    if (this.scoutBenchmarks || this.storageLock) throw new Error("Workflow still owns resources from a failed cleanup; stop it before restarting.");
     const scope = currentRunScope();
     this.eventBus = scope.eventBus;
-    const benchmarks = new ScoutBenchmarks(new Benchmarks(scope.runRoot));
+    const storage = new WorkflowStorageLock(scope.runRoot);
+    this.storageLock = storage;
+    const benchmarks = new ScoutBenchmarks(new Benchmarks(scope.runRoot, storage));
     this.scoutBenchmarks = benchmarks;
     try {
-      benchmarks.benchmarks.acquire();
+      storage.acquire();
       const machine = new StateMachine<WorkflowState, WorkflowStateRequest>();
       const closing = new WorkflowClosing(this);
-      this.creatingTransition = new WorkflowCreatingTransition(this.graph, this.scoutRecordObject, benchmarks);
+      this.creatingTransition = new WorkflowCreatingTransition(this.graph, this.scoutRecordObject, benchmarks, storage);
       machine.register(WorkflowState.Creating, new WorkflowCreating(this), this.creatingTransition);
       machine.register(WorkflowState.Restoring, new WorkflowRestoring(this));
       machine.register(WorkflowState.Running, this.running);
@@ -118,7 +121,8 @@ export class Workflow implements ScoutWorkflowParticipant {
       try {
         this.scoutRecordObject.stop();
         this.activeWorkflowData = undefined;
-        benchmarks.benchmarks.release();
+        storage.release();
+        this.storageLock = undefined;
         this.scoutBenchmarks = undefined;
       } catch (closeError) { failures.push(closeError); }
       finally {
@@ -155,7 +159,8 @@ export class Workflow implements ScoutWorkflowParticipant {
   selectRecovery(input: WorkflowResumeInput): void {
     if (this.activeWorkflowData) throw new Error("Cannot restore over an active Workflow.");
     const scope = currentRunScope();
-    const selected = this.requireScoutBenchmarks().resolve("currentWorkflow");
+    const selectedId = this.requireScoutBenchmarks().read()?.currentWorkflow;
+    const selected = selectedId ? resolveWorkflowLocation(scope.runRoot, selectedId) : undefined;
     if (selected?.workflowId !== input.workflowData.workflowId || selected.journalRoot !== input.journalRoot) {
       throw new Error("Workflow benchmark selection changed before its runtime lock was acquired; retry resume.");
     }
@@ -204,7 +209,8 @@ export class Workflow implements ScoutWorkflowParticipant {
     try {
       this.scoutRecordObject.stop();
       this.activeWorkflowData = undefined;
-      this.scoutBenchmarks?.benchmarks.release();
+      this.storageLock?.release();
+      this.storageLock = undefined;
       this.scoutBenchmarks = undefined;
     } catch (error) { failures.push(error); }
     finally {

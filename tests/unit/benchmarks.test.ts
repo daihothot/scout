@@ -4,17 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { Benchmarks, type BenchmarkObject, type BenchmarkValue } from "../../src/core/benchmarks/index.js";
+import { resolveWorkflowLocation, WorkflowStorageLock } from "../../src/core/io/index.js";
 
-function fixture(t: TestContext): Benchmarks {
+function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), "scout-benchmark-nodes-"));
-  const benchmarks = new Benchmarks(root);
-  t.after(() => { benchmarks.release(); rmSync(root, { recursive: true, force: true }); });
-  benchmarks.acquire();
-  return benchmarks;
+  const storage = new WorkflowStorageLock(root);
+  const benchmarks = new Benchmarks(root, storage);
+  t.after(() => { storage.release(); rmSync(root, { recursive: true, force: true }); });
+  storage.acquire();
+  return { benchmarks, storage };
 }
 
 test("Benchmarks store business-owned nodes without adding fields and preserve independent chapters", async (t) => {
-  const benchmarks = await fixture(t);
+  const { benchmarks } = fixture(t);
   assert.equal(existsSync(benchmarks.path), false);
   assert.equal(benchmarks.read("scout"), undefined);
   assert.deepEqual(benchmarks.list("rbt"), []);
@@ -40,7 +42,7 @@ test("Benchmarks store business-owned nodes without adding fields and preserve i
 });
 
 test("Node submissions reread manual edits and commit a batch without overwriting unrelated fields", async (t) => {
-  const benchmarks = await fixture(t);
+  const { benchmarks } = fixture(t);
   benchmarks.submit("rbt", [{ path: ["history"], value: { lastRun: { workflowId: "workflow-001" } } }]);
   benchmarks.read("rbt");
   const manual = {
@@ -60,7 +62,7 @@ test("Node submissions reread manual edits and commit a batch without overwritin
 });
 
 test("Only explicit Workflow references are indexed, including references in arrays", async (t) => {
-  const benchmarks = await fixture(t);
+  const { benchmarks } = fixture(t);
   const reference = { workflowId: "workflow-004", pack: { artifact: "execute-file.json", hash: "abc" } };
   benchmarks.submit("scout", [{ path: ["currentWorkflow"], value: { workflowId: "workflow-004" } }]);
   benchmarks.submit("rbt", [{ path: [], value: {
@@ -82,25 +84,25 @@ test("Only explicit Workflow references are indexed, including references in arr
 });
 
 test("Workflow resolution follows its identity after rename, allows missing evidence and rejects duplicates", async (t) => {
-  const benchmarks = await fixture(t);
+  const { benchmarks } = fixture(t);
   const reference = { workflowId: "workflow-008" };
   benchmarks.submit("rbt", [{ path: ["history"], value: reference }]);
-  assert.equal(benchmarks.resolve(reference), undefined);
+  assert.equal(resolveWorkflowLocation(benchmarks.runRoot, reference.workflowId), undefined);
   const initialRoot = join(benchmarks.runRoot, "workflows", "workflow-008");
   const renamedRoot = join(benchmarks.runRoot, "workflows", "firebase 1.2.3");
   mkdirSync(join(initialRoot, "journal"), { recursive: true });
   writeFileSync(join(initialRoot, "workflow.json"), JSON.stringify(reference));
   const contents = readFileSync(benchmarks.path, "utf8");
   renameSync(initialRoot, renamedRoot);
-  assert.deepEqual(benchmarks.resolve(reference), { workflowId: reference.workflowId, workflowRoot: renamedRoot, journalRoot: join(renamedRoot, "journal") });
+  assert.deepEqual(resolveWorkflowLocation(benchmarks.runRoot, reference.workflowId), { workflowId: reference.workflowId, workflowRoot: renamedRoot, journalRoot: join(renamedRoot, "journal") });
   assert.equal(readFileSync(benchmarks.path, "utf8"), contents);
   mkdirSync(initialRoot);
   writeFileSync(join(initialRoot, "workflow.json"), JSON.stringify(reference));
-  assert.throws(() => benchmarks.resolve(reference), /Duplicate Workflow identity/);
+  assert.throws(() => resolveWorkflowLocation(benchmarks.runRoot, reference.workflowId), /Duplicate Workflow identity/);
 });
 
 test("Invalid batches and filesystem write failures leave the previous document intact", async (t) => {
-  const benchmarks = await fixture(t);
+  const { benchmarks } = fixture(t);
   benchmarks.submit("rbt", [{ path: [], value: { kept: 7, leaf: false } }]);
   const before = readFileSync(benchmarks.path, "utf8");
   assert.throws(() => benchmarks.submit("rbt", [
@@ -124,22 +126,24 @@ test("Invalid batches and filesystem write failures leave the previous document 
 });
 
 test("All chapters share the Workflow lease while read-only consumers do not acquire ownership", async (t) => {
-  const benchmarks = await fixture(t);
+  const { benchmarks, storage } = fixture(t);
   benchmarks.submit("scout", [{ path: ["currentWorkflow"], value: { workflowId: "workflow-001" } }]);
   const reader = new Benchmarks(benchmarks.runRoot);
   assert.deepEqual(reader.read("scout"), benchmarks.read("scout"));
   assert.throws(() => reader.submit("rbt", [{ path: [], value: {} }]), /lock must be acquired/);
-  assert.throws(() => reader.acquire(), /already attached/);
-  benchmarks.release();
+  const nextStorage = new WorkflowStorageLock(benchmarks.runRoot);
+  assert.throws(() => nextStorage.acquire(), /already attached/);
+  storage.release();
   assert.throws(() => benchmarks.submit("rbt", [{ path: [], value: {} }]), /lock must be acquired/);
-  reader.acquire();
-  try { reader.submit("rbt", [{ path: [], value: {} }]); }
-  finally { reader.release(); }
+  nextStorage.acquire();
+  const nextWriter = new Benchmarks(benchmarks.runRoot, nextStorage);
+  try { nextWriter.submit("rbt", [{ path: [], value: {} }]); }
+  finally { nextStorage.release(); }
   assert.deepEqual(benchmarks.read("rbt"), {});
 });
 
 test("Malformed documents and references fail without rewriting operator data", async (t) => {
-  const benchmarks = await fixture(t);
+  const { benchmarks } = fixture(t);
   for (const contents of ["{", "[]", "null", '{"version":1}', '{"rbt":[]}', '{"rbt":{"history":{"workflowId":null}}}']) {
     writeFileSync(benchmarks.path, contents);
     assert.throws(() => benchmarks.read("rbt"));

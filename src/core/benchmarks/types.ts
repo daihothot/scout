@@ -28,9 +28,3 @@ export interface BenchmarkReferenceNode {
   path: string[];
   reference: BenchmarkWorkflowReference;
 }
-
-export interface WorkflowLocation {
-  workflowId: string;
-  workflowRoot: string;
-  journalRoot: string;
-}

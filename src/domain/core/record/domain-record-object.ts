@@ -1,5 +1,5 @@
 import type { EventType } from "../../../core/events/index.js";
-import { recordObjectPaths } from "../../../core/path.js";
+import { recordObjectPaths } from "../../../core/io/index.js";
 import { RecordableObject, type RecordEvent, type RecordWriteFailure } from "../../../core/record/index.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 import type { ScoutDomainId } from "../../types.js";

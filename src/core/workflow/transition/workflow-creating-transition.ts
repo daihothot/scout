@@ -1,7 +1,7 @@
-import { mkdirSync } from "node:fs";
 import { currentRunScope } from "../../../run/run-scope.js";
 import type { ScoutBenchmarks } from "../../benchmarks/scout-benchmarks.js";
-import { workflowAgentPaths } from "../../path.js";
+import { createWorkflowAgentDirectories, createWorkflowDirectory, discardWorkflowDirectory,
+  inspectWorkflowDirectory, type WorkflowLocation, type WorkflowStorageLock } from "../../io/index.js";
 import type { ScoutRecordObject } from "../../record/scout-record-object.js";
 import type { StateTransition } from "../../state/statemachine/index.js";
 import type { Graph } from "../graph.js";
@@ -15,21 +15,58 @@ export class WorkflowCreatingTransition implements StateTransition<WorkflowState
     private readonly graph: Graph,
     private readonly recordObject: ScoutRecordObject,
     private readonly benchmarks: ScoutBenchmarks,
+    private readonly storage: WorkflowStorageLock,
   ) {}
+
+  /** Allocates the execution identity and approves replacement before any directory mutation. */
+  prepareNext(): WorkflowLocation {
+    const links = this.benchmarks.read();
+    const last = links?.lastWorkflow;
+    let workflowId = "workflow-001";
+    if (last !== undefined) {
+      const digits = last.slice("workflow-".length);
+      const next = Number.parseInt(digits, 10) + 1;
+      if (!Number.isSafeInteger(next)) throw new Error(`Workflow sequence overflow: ${last}`);
+      workflowId = `workflow-${String(next).padStart(Math.max(3, digits.length), "0")}`;
+    }
+    const { location, replacedWorkflowId } = inspectWorkflowDirectory(this.storage, workflowId);
+    if (replacedWorkflowId !== undefined) {
+      const pinnedBy = links
+        ? (["currentWorkflow", "lastWorkflow", "lastRun", "lastSuccess"] as const)
+          .filter((name) => links[name] === workflowId || links[name] === replacedWorkflowId)
+        : [];
+      if (pinnedBy.length > 0) throw new Error(`Cannot overwrite Workflow ${workflowId}; it is referenced by ${pinnedBy.join(", ")}.`);
+      if (this.benchmarks.benchmarks.referencesTo(replacedWorkflowId).length > 0) {
+        throw new Error(`Cannot overwrite referenced Workflow ${replacedWorkflowId}.`);
+      }
+    }
+    return createWorkflowDirectory(this.storage, location);
+  }
+
+  /** Approves cleanup only after the preparation was released and before its pointer was committed. */
+  discard(prepared: WorkflowLocation): void {
+    this.storage.assertOwned();
+    const links = this.benchmarks.read();
+    const pinnedBy = links
+      ? (["currentWorkflow", "lastWorkflow", "lastRun", "lastSuccess"] as const)
+        .filter((name) => links[name] === prepared.workflowId)
+      : [];
+    if (pinnedBy.length > 0) throw new Error(`Cannot discard Workflow ${prepared.workflowId}; it is referenced by ${pinnedBy.join(", ")}.`);
+    if (this.benchmarks.benchmarks.referencesTo(prepared.workflowId).length > 0) {
+      throw new Error(`Cannot discard referenced Workflow ${prepared.workflowId}.`);
+    }
+    discardWorkflowDirectory(this.storage, prepared);
+  }
 
   async in(_payload: WorkflowStateRequest): Promise<void> {
     this.retryableFailure = undefined;
     const scope = currentRunScope();
-    let prepared: ReturnType<ScoutBenchmarks["prepareNext"]> | undefined;
+    let prepared: WorkflowLocation | undefined;
     let committed = false;
     try {
-      prepared = this.benchmarks.prepareNext();
+      prepared = this.prepareNext();
       const boundary = { workflowId: prepared.workflowId, journalRoot: prepared.journalRoot };
-      for (const role of this.graph.snapshot().roles) {
-        const { artifactRoot, logsRoot } = workflowAgentPaths(prepared.workflowRoot, role.name);
-        mkdirSync(artifactRoot, { recursive: true });
-        mkdirSync(logsRoot, { recursive: true });
-      }
+      createWorkflowAgentDirectories(this.storage, prepared.workflowRoot, this.graph.snapshot().roles.map((role) => role.name));
       await scope.eventBus.publishAndWait(WorkflowEvents.workflow.preparing, boundary);
       this.benchmarks.recordStarted(prepared.workflowId);
       committed = true;
@@ -47,7 +84,7 @@ export class WorkflowCreatingTransition implements StateTransition<WorkflowState
         if (this.recordObject.hasPreparedRecords || failures.length > 1) {
           resourceFailure = new AggregateError(failures, "Failed to release prepared Workflow resources; its directory is retained.");
         } else {
-          try { this.benchmarks.discard(prepared); }
+          try { this.discard(prepared); }
           catch (failure) {
             failures.push(failure);
             resourceFailure = new AggregateError(failures, "Failed to discard uncommitted Workflow resources.");

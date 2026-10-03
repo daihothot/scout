@@ -5,7 +5,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { runAgentPaths, scoutRunsRoot } from "../../../core/path.js";
+import { runAgentPaths, scoutRunsRoot } from "../../../core/io/index.js";
 import {
   buildScoutSkillCatalog,
   listScoutSkillPaths,

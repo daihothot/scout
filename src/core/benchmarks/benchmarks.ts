@@ -1,37 +1,21 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { resolve, join } from "node:path";
-import { runPaths, workflowPaths } from "../path.js";
-import { ScoutBenchmarkLock } from "./scout-benchmark-lock.js";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { runPaths, type WorkflowStorageLock } from "../io/index.js";
 import type {
   BenchmarkNode, BenchmarkObject, BenchmarkReferenceNode, BenchmarkValue,
-  BenchmarkWorkflowReference, BenchmarkWrite, WorkflowLocation,
+  BenchmarkWrite,
 } from "./types.js";
 
 /** Run-local chapter/node storage and Workflow reference queries; no business field semantics. */
 export class Benchmarks {
   readonly runRoot: string;
   readonly path: string;
-  private readonly workflowsRoot: string;
-  private readonly lock: ScoutBenchmarkLock;
-
-  constructor(runRoot: string) {
+  /** Without a Workflow-owned writer lease this instance is read-only. */
+  constructor(runRoot: string, private readonly writer?: WorkflowStorageLock) {
     this.runRoot = resolve(runRoot);
     const paths = runPaths(this.runRoot);
     this.path = paths.benchmarksPath;
-    this.workflowsRoot = paths.workflowsRoot;
-    this.lock = new ScoutBenchmarkLock(paths.workflowLockPath);
   }
-
-  /** Workflow owns this lease throughout the runtime, including its empty state. */
-  acquire(): void {
-    mkdirSync(this.runRoot, { recursive: true });
-    this.lock.acquire();
-  }
-
-  release(): void { this.lock.release(); }
-
-  /** Also guards business-owned directory mutations under the same runtime lease. */
-  assertOwned(): void { this.lock.assertOwned(); }
 
   read(section: string, path: readonly string[] = []): BenchmarkValue | undefined {
     assertAddress(section, path);
@@ -56,7 +40,8 @@ export class Benchmarks {
 
   /** Merges only the submitted nodes, preserving other chapters and manual edits. */
   submit(section: string, writes: readonly BenchmarkWrite[]): void {
-    this.assertOwned();
+    if (!this.writer) throw new Error(`Workflow storage lock must be acquired before mutation: ${this.path}`);
+    this.writer.assertOwned();
     assertAddress(section, []);
     if (writes.length === 0) return;
     for (const write of writes) {
@@ -100,29 +85,6 @@ export class Benchmarks {
     };
     for (const [section, value] of Object.entries(this.readDocument())) visit(section, [], value);
     return matches;
-  }
-
-  /** Finds the current physical location by identity, including after a directory rename. */
-  resolve(reference: BenchmarkWorkflowReference): WorkflowLocation | undefined {
-    const { workflowId } = reference;
-    assertWorkflowId(workflowId);
-    if (!existsSync(this.workflowsRoot)) return undefined;
-    let found: WorkflowLocation | undefined;
-    for (const entry of readdirSync(this.workflowsRoot, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const workflowRoot = join(this.workflowsRoot, entry.name);
-      const { identityPath, journalRoot } = workflowPaths(workflowRoot);
-      if (!existsSync(identityPath)) continue;
-      const identity: unknown = JSON.parse(readFileSync(identityPath, "utf8"));
-      if (typeof identity !== "object" || identity === null || !("workflowId" in identity) || typeof identity.workflowId !== "string") {
-        throw new Error(`Invalid Workflow identity: ${identityPath}`);
-      }
-      assertWorkflowId(identity.workflowId);
-      if (identity.workflowId !== workflowId) continue;
-      if (found) throw new Error(`Duplicate Workflow identity ${workflowId}: ${found.workflowRoot}, ${workflowRoot}`);
-      found = { workflowId, workflowRoot, journalRoot };
-    }
-    return found;
   }
 
   private readDocument(): BenchmarkObject {

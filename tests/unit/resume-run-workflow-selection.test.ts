@@ -1,5 +1,5 @@
 import { Workflow } from "../../src/core/workflow/workflow.js";
-import { createTestGraph } from "../helpers/run-persistence.js";
+import { createTestGraph, createTestWorkflowStorage } from "../helpers/run-persistence.js";
 import assert from "node:assert/strict";
 import {
   cpSync,
@@ -20,6 +20,7 @@ import { Journal } from "../../src/core/journal/index.js";
 import { Logger } from "../../src/core/logging/index.js";
 import { WorkflowEvents } from "../../src/core/workflow/index.js";
 import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
+import { WorkflowStorageLock } from "../../src/core/io/index.js";
 import { Benchmarks } from "../../src/core/benchmarks/index.js";
 import {
   NoopRuntimeInteractionPort,
@@ -151,10 +152,10 @@ test("resume selects the requested Run's benchmark even while another Run holds 
   });
   writeFileSync(repositoryBenchmarkPath, repositoryLinks);
   const otherRoot = join(fixture.root, "run", "run-other");
-  const other = new ScoutBenchmarks(new Benchmarks(otherRoot));
-  other.benchmarks.acquire();
+  const { storage: otherStorage, benchmarks: other, transition: otherTransition } = createTestWorkflowStorage(otherRoot);
+  otherStorage.acquire();
   try {
-    const prepared = other.prepareNext();
+    const prepared = otherTransition.prepareNext();
     other.recordStarted(prepared.workflowId);
     const otherJournalPath = join(prepared.journalRoot, "scout.journal");
     writeFileSync(otherJournalPath, "other Run evidence\n");
@@ -181,7 +182,7 @@ test("resume selects the requested Run's benchmark even while another Run holds 
     assert.equal(existsSync(join(fixture.runRoot, ".workflow.lock")), false);
     assert.deepEqual(fixture.disclosures, []);
   } finally {
-    other.benchmarks.release();
+    otherStorage.release();
   }
 });
 
@@ -694,21 +695,21 @@ for (const change of ["journal-reappeared", "permalink-changed"] as const) {
   test(`missing-journal resume rejects ${change} after taking the runtime lock without overwriting the repaired Workflow`, async (t) => {
     const fixture = await createFixture(t);
     const manifestBefore = readFileSync(fixture.manifestStore.path, "utf8");
-    const acquire = Benchmarks.prototype.acquire;
+    const acquire = WorkflowStorageLock.prototype.acquire;
     let changed = false;
     let repairedPath = "";
     let repairedContents = "";
     let repairedLinks = "";
-    t.mock.method(Benchmarks.prototype, "acquire", function (this: Benchmarks) {
+    t.mock.method(WorkflowStorageLock.prototype, "acquire", function (this: WorkflowStorageLock) {
       if (!changed) {
         changed = true;
         // A competing runtime repairs the selection after ENOENT was observed,
         // and releases the root before the waiting resume obtains its lock.
-        const competing = new ScoutBenchmarks(new Benchmarks(fixture.runRoot));
-        acquire.call(competing.benchmarks);
+        const { storage: competingStorage, benchmarks: competing, transition } = createTestWorkflowStorage(fixture.runRoot);
+        acquire.call(competingStorage);
         try {
           const target = change === "permalink-changed"
-            ? competing.prepareNext()
+            ? transition.prepareNext()
             : { workflowId: "workflow-001", journalRoot: fixture.journalRoot };
           repairedPath = join(target.journalRoot, "scout.journal");
           const repaired = Journal.create({
@@ -733,7 +734,7 @@ for (const change of ["journal-reappeared", "permalink-changed"] as const) {
           repairedContents = readFileSync(repairedPath, "utf8");
           repairedLinks = readFileSync(fixture.benchmarks.path, "utf8");
         } finally {
-          competing.benchmarks.release();
+          competingStorage.release();
         }
       }
       acquire.call(this);
@@ -762,8 +763,8 @@ for (const change of ["journal-reappeared", "permalink-changed"] as const) {
 test("missing-journal resume preserves non-ENOENT failures found under its runtime lock", async (t) => {
   const fixture = await createFixture(t);
   const linksBefore = readFileSync(fixture.benchmarks.path, "utf8");
-  const acquire = Benchmarks.prototype.acquire;
-  t.mock.method(Benchmarks.prototype, "acquire", function (this: Benchmarks) {
+  const acquire = WorkflowStorageLock.prototype.acquire;
+  t.mock.method(WorkflowStorageLock.prototype, "acquire", function (this: WorkflowStorageLock) {
     rmSync(fixture.journalRoot, { recursive: true });
     writeFileSync(fixture.journalRoot, "the Workflow directory is no longer a directory");
     acquire.call(this);
@@ -862,14 +863,14 @@ function createFixture(t: TestContext, domain: string = "rbt", installEnvironmen
   // Workflow-selection fixtures represent an already indexed environment; tests of
   // interrupted initialization explicitly omit this index.
   manifestStore.update((manifest) => ({ ...manifest, agents: {} }));
-  const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
-  benchmarks.benchmarks.acquire();
+  const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot);
+  storage.acquire();
   try {
-    benchmarks.prepareNext();
+    transition.prepareNext();
     benchmarks.recordStarted("workflow-001");
     benchmarks.recordSuccess("workflow-001");
   } finally {
-    benchmarks.benchmarks.release();
+    storage.release();
   }
   const journalRoot = join(runRoot, "workflows", "workflow-001", "journal");
   const journalPath = join(journalRoot, "scout.journal");

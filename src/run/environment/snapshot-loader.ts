@@ -21,8 +21,8 @@ import {
   readJsonFile,
   sha256Text,
   stableJson,
-} from "../../core/fs.js";
-import { agentEntityPaths, isPathWithin, runAgentPaths, runPaths } from "../../core/path.js";
+} from "../../core/io/index.js";
+import { agentEntityPaths, isPathWithin, runAgentPaths, runPaths } from "../../core/io/index.js";
 import type { RunManifest } from "../persistence/index.js";
 import { assertMountPathSegment } from "../../asset-store/files/asset-paths.js";
 import {

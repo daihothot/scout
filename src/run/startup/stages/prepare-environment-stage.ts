@@ -10,7 +10,7 @@ import {
   type MaterializeOptions,
 } from "../../../asset-store/index.js";
 import type { ScoutAgentRole } from "../../../agent/thread/types.js";
-import { isPathWithin, runAgentPaths, runPaths } from "../../../core/path.js";
+import { isPathWithin, runAgentPaths, runPaths } from "../../../core/io/index.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunAgentManifestEntry } from "../../persistence/index.js";
 import type { RunAgentEnvironment, RunRootAccess } from "../../types.js";

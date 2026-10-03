@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { AgentBuilder } from "../../src/agent/builder/agent-builder.js";
+import { resolveWorkflowLocation } from "../../src/core/io/index.js";
 import { AgentTimelineBackend } from "../../src/agent/backend/timeline/agent-timeline-backend.js";
 import { AgentDynamicToolBackend } from "../../src/agent/backend/dynamic-tool/agent-dynamic-tool-backend.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
@@ -104,7 +105,7 @@ import { SystemEvents } from "../../src/system/events/index.js";
 import type { LogEvent, Logger } from "../../src/core/logging/index.js";
 import { WorkerAgent } from "../../src/agent/roles/worker-agent.js";
 import type { RunLifecycleSnapshot } from "../../src/run/lifecycle/index.js";
-import { createDefaultTestGraph, createTestGraph, createTestWorkflowAsset } from "../helpers/run-persistence.js";
+import { createDefaultTestGraph, createTestGraph, createTestWorkflowAsset, createTestWorkflowStorage } from "../helpers/run-persistence.js";
 import {
   AgentTaskDispositionKinds,
   AgentTaskStatuses,
@@ -4067,7 +4068,7 @@ test("resumed Workflow resolves handoff refs after a directory rename without re
     const oldJournal = readFileSync(join(originalRoot, "journal", "scout.journal"), "utf8");
     const renamedRoot = join(scope.runRoot, "workflows", "renamed evidence");
     renameSync(originalRoot, renamedRoot);
-    const selected = new ScoutBenchmarks(new Benchmarks(scope.runRoot)).resolve("currentWorkflow");
+    const selected = resolveWorkflowLocation(scope.runRoot, new ScoutBenchmarks(new Benchmarks(scope.runRoot)).read()!.currentWorkflow);
     assert.ok(selected);
     assert.equal(selected.workflowRoot, renamedRoot);
     const journalPath = join(selected.journalRoot, "scout.journal");
@@ -4190,15 +4191,15 @@ async function createAgentFixture(
   const createdAt = new Date().toISOString();
   let resume: { workflowData: WorkflowData; journalRoot: string } | undefined;
   if (!input.withoutActiveWorkflow) {
-    const benchmarks = new ScoutBenchmarks(new Benchmarks(runRoot));
-    benchmarks.benchmarks.acquire();
-    const prepared = benchmarks.prepareNext();
+    const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot, runtimeGraph);
+    storage.acquire();
+    const prepared = transition.prepareNext();
     const seed = Journal.create({ journalId: runId + ":workflow:scout", path: join(prepared.journalRoot, "scout.journal"), lockPath: join(prepared.journalRoot, ".scout.lock") });
     seed.append({ id: runId + "-created", key: RunEvents.run.created, payload: { runId, scoutRoot: root, createdAt }, occurredAt: createdAt });
     seed.append({ id: runId + "-initialized", key: WorkflowEvents.workflow.initialized, payload: { state: runtimeGraph.snapshot(), initializedAt: createdAt }, occurredAt: createdAt });
     seed.close();
     benchmarks.recordStarted(prepared.workflowId);
-    benchmarks.benchmarks.release();
+    storage.release();
     resume = { workflowData: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot };
   }
   const workflow = new Workflow(createTestWorkflowAsset(runtimeGraph.snapshot()));

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { hashDirectory, sha256File } from "../../core/fs.js";
+import { hashDirectory, sha256File } from "../../core/io/index.js";
 import type {
   MaterializedMcpServer,
   McpServersFile,

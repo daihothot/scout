@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { scoutJournalPaths } from "../path.js";
+import { scoutJournalPaths } from "../io/index.js";
 import { AgentEvents } from "../../agent/events/index.js";
 import { CoordinatorAgent } from "../../agent/roles/coordinator-agent.js";
 import { RunEvents } from "../../run/events/index.js";

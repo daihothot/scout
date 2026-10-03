@@ -15,7 +15,7 @@ import {
   type RunStage,
 } from "../../lifecycle/index.js";
 import { currentRunScope } from "../../run-scope.js";
-import { isPathWithin, runPaths } from "../../../core/path.js";
+import { isPathWithin, runPaths } from "../../../core/io/index.js";
 
 /**
  * Reopens the run-scoped Codex client after validating that its copied home

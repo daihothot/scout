@@ -4,14 +4,17 @@ import {
   fsyncSync,
   linkSync,
   lstatSync,
+  mkdirSync,
   openSync,
   readFileSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { hostname } from "node:os";
+import { resolve } from "node:path";
+import { runPaths } from "./path.js";
 
-interface ScoutBenchmarkLockOwner {
+interface WorkflowStorageLockOwner {
   version: 1;
   hostId: string;
   processId: number;
@@ -20,15 +23,20 @@ interface ScoutBenchmarkLockOwner {
 }
 
 /** Exclusive ownership of one Run's benchmark and Workflow storage, shared by all chapters. */
-export class ScoutBenchmarkLock {
-  private owner?: ScoutBenchmarkLockOwner;
+export class WorkflowStorageLock {
+  readonly runRoot: string;
+  readonly path: string;
+  private owner?: WorkflowStorageLockOwner;
   private readonly reclaimPath: string;
 
-  constructor(readonly path: string) {
-    this.reclaimPath = `${path}.reclaim`;
+  constructor(runRoot: string) {
+    this.runRoot = resolve(runRoot);
+    this.path = runPaths(this.runRoot).workflowLockPath;
+    this.reclaimPath = `${this.path}.reclaim`;
   }
 
   acquire(): void {
+    mkdirSync(this.runRoot, { recursive: true });
     if (this.owner) {
       this.assertOwned();
       return;
@@ -48,7 +56,7 @@ export class ScoutBenchmarkLock {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    const owner: ScoutBenchmarkLockOwner = {
+    const owner: WorkflowStorageLockOwner = {
       version: 1,
       hostId: hostname(),
       processId: process.pid,
@@ -63,7 +71,7 @@ export class ScoutBenchmarkLock {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       }
-      let previous: ScoutBenchmarkLockOwner;
+      let previous: WorkflowStorageLockOwner;
       try {
         previous = this.readOwner(this.path);
       } catch (error) {
@@ -83,7 +91,7 @@ export class ScoutBenchmarkLock {
         recoveryInProgress();
       }
       try {
-        let current: ScoutBenchmarkLockOwner | undefined;
+        let current: WorkflowStorageLockOwner | undefined;
         try {
           current = this.readOwner(this.path);
         } catch (error) {
@@ -132,7 +140,7 @@ export class ScoutBenchmarkLock {
     this.owner = undefined;
   }
 
-  private assertDead(owner: ScoutBenchmarkLockOwner): void {
+  private assertDead(owner: WorkflowStorageLockOwner): void {
     if (owner.hostId !== hostname()) {
       throw new Error(`Workflow root ${this.path} is locked by host ${owner.hostId} process ${owner.processId}; refusing remote-owner recovery.`);
     }
@@ -147,7 +155,7 @@ export class ScoutBenchmarkLock {
     throw new Error(`Workflow root ${this.path} is already attached to process ${owner.processId} on host ${owner.hostId}.`);
   }
 
-  private readOwner(path: string): ScoutBenchmarkLockOwner {
+  private readOwner(path: string): WorkflowStorageLockOwner {
     const stat = lstatSync(path);
     if (!stat.isFile() || stat.isSymbolicLink()) {
       throw new Error(`Workflow lock must be a regular file; refusing automatic recovery: ${path}`);
@@ -167,10 +175,10 @@ export class ScoutBenchmarkLock {
       || !("acquiredAt" in owner) || typeof owner.acquiredAt !== "string" || !Number.isFinite(Date.parse(owner.acquiredAt))) {
       throw new Error(`Invalid Workflow lock owner; refusing automatic recovery: ${path}`);
     }
-    return owner as ScoutBenchmarkLockOwner;
+    return owner as WorkflowStorageLockOwner;
   }
 
-  private publish(path: string, owner: ScoutBenchmarkLockOwner): void {
+  private publish(path: string, owner: WorkflowStorageLockOwner): void {
     const temporaryPath = `${path}.${owner.token}.tmp`;
     try {
       const fd = openSync(temporaryPath, "wx", 0o600);

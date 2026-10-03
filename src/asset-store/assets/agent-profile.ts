@@ -1,4 +1,4 @@
-import { sha256Text, stableJson } from "../../core/fs.js";
+import { sha256Text, stableJson } from "../../core/io/index.js";
 import type { AgentProfile } from "../contracts/profile.js";
 
 /** Returns resource-bearing fields while excluding runtime model and device root bindings. */

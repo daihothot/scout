@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { isPathWithin } from "../../core/path.js";
+import { isPathWithin } from "../../core/io/index.js";
 
 /** Resolves an `assets/...` command argument against the repository asset root. */
 export function resolveAssetArg(argument: string, assetsRoot: string): string {

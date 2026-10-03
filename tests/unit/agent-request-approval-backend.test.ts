@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -16,7 +16,7 @@ import type { AppServerRequestHandler, CodexAppServerClient, DynamicToolCallInpu
 import type { Logger, LogInput } from "../../src/core/logging/index.js";
 import { EventSubscriptionPriorities, type ScoutEvent } from "../../src/core/events/index.js";
 import { ApprovalEvents } from "../../src/core/authorization/approval/approval-events.js";
-import { workflowAgentPaths, workflowPaths, authorizationJournalPaths } from "../../src/core/path.js";
+import { workflowAgentPaths, workflowPaths, authorizationJournalPaths } from "../../src/core/io/index.js";
 import { Journal } from "../../src/core/journal/index.js";
 import { AuthorizationStage } from "../../src/run/lifecycle/stages/authorization-stage.js";
 import { createTestGraph, installTestRunScope } from "../helpers/run-persistence.js";
@@ -468,11 +468,30 @@ test("A failed native approval write denies the RPC without spending quota or is
 test("Workflow identity and unexpected filesystem resolution faults are not hidden as unmatched grants", async (t) => {
   const f = await fixture(t);
   const reference = await f.register();
-  for (const message of ["Duplicate Workflow identity", "Invalid Workflow identity JSON", "EACCES reading Workflow evidence"]) {
-    const fault = t.mock.method(f.scope.workflow.benchmarks, "resolve", () => { throw new Error(message); });
+  const workflowsRoot = join(f.scope.runRoot, "workflows");
+  const duplicateRoot = join(workflowsRoot, "duplicate identity");
+  mkdirSync(duplicateRoot);
+  writeFileSync(workflowPaths(duplicateRoot).identityPath, JSON.stringify({ workflowId: "workflow-001" }));
+  try {
     assert.deepEqual(await f.invoke(reference), denied);
-    fault.mock.restore();
-    assert.ok(f.errorEvents.at(-1)?.message?.includes(message));
+    assert.match(f.errorEvents.at(-1)?.message ?? "", /Duplicate Workflow identity/);
+  } finally { rmSync(duplicateRoot, { recursive: true }); }
+  const identityPath = workflowPaths(join(workflowsRoot, "workflow-001")).identityPath;
+  const identity = readFileSync(identityPath, "utf8");
+  writeFileSync(identityPath, "{");
+  try {
+    assert.deepEqual(await f.invoke(reference), denied);
+    assert.match(f.errorEvents.at(-1)?.message ?? "", /SyntaxError/);
+  } finally { writeFileSync(identityPath, identity); }
+  const movedRoot = join(f.scope.runRoot, "held workflow evidence");
+  renameSync(workflowsRoot, movedRoot);
+  writeFileSync(workflowsRoot, "not a directory");
+  try {
+    assert.deepEqual(await f.invoke(reference), denied);
+    assert.match(f.errorEvents.at(-1)?.message ?? "", /ENOTDIR/);
+  } finally {
+    rmSync(workflowsRoot);
+    renameSync(movedRoot, workflowsRoot);
   }
   assert.equal(f.warnings.length, 0);
   assert.equal(f.scope.authorization.consumed(f.stored(reference.requestId)), 0);

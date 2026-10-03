@@ -1,12 +1,11 @@
-import { lstatSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { realpathSync } from "node:fs";
 import type {
   AppServerRequestController, DynamicToolCallInput, JsonRpcServerRequest,
 } from "../../../agent-server/codex/app-server-client.js";
 import { registerPermissionRequest } from "../../../core/authorization/request/permission/permission-request.js";
 import type { RequestType } from "../../../core/authorization/request/types.js";
 import type { ScoutRequestRecord } from "../../../core/authorization/record/authorization-record.js";
-import { workflowAgentPaths } from "../../../core/path.js";
+import { resolveArtifactTarget } from "../../../core/io/index.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 import type { AgentPermissionConsumer, AgentPermissionRequest, AgentPermissionRequestRecord, AgentPermissionTarget } from "./types.js";
 
@@ -71,7 +70,7 @@ export async function registerAgentPermissionRequest(
   const caller = scope.agentRegistry.resolveToolCaller(delivery.threadId);
   if (!caller) throw new Error(`Unknown permission request producer: ${delivery.threadId}`);
   caller.assertOwnsActiveTurn(delivery);
-  const resolved = resolveReadTarget(input.target);
+  const resolved = resolveArtifactTarget(input.target);
   if ("reason" in resolved) throw new Error(resolved.reason);
   const path = resolved.path;
   const request = await registerPermissionRequest(scope.authorization, agentPermissionRequestType, {
@@ -213,7 +212,7 @@ export class AgentRequestApprovalBackend {
       for (const candidate of registered.allowedGrants) {
         const allowed = candidate.scope;
         if (allowed.workflowId !== workflow.workflowId || allowed.agentId !== caller.agentId || !allowed.phases.includes(phase)) continue;
-        const resolved = resolveReadTarget(candidate.target);
+        const resolved = resolveArtifactTarget(candidate.target);
         if ("reason" in resolved) continue;
         if (resolved.path === input.path) { grant = candidate; path = resolved.path; break; }
       }
@@ -235,39 +234,5 @@ export class AgentRequestApprovalBackend {
       return { result, path };
 
     }
-  }
-}
-
-/** Registration and consumption resolve the same stable target against current physical evidence. */
-function resolveReadTarget(target: AgentPermissionTarget): { path: string } | { reason: string } {
-  const location = currentRunScope().workflow.benchmarks.resolve({ workflowId: target.workflowId });
-  if (!location) return { reason: `Permission target Workflow is unavailable: ${target.workflowId}` };
-  // Identity corruption and duplicate identities from benchmarks are system errors, not refusals.
-  try {
-    const workflowRoot = realpathSync(location.workflowRoot);
-    const artifactRoot = resolve(workflowAgentPaths(workflowRoot, target.agentId).artifactRoot);
-    const ownerPath = relative(join(workflowRoot, "agents"), artifactRoot);
-    if (isAbsolute(ownerPath) || ownerPath.split(sep).length !== 2 || ownerPath.split(sep)[0] === "..") {
-      return { reason: "Permission target escapes its Agent artifact owner." };
-    }
-    if (isAbsolute(target.path)) return { reason: "Permission target path must be relative to Agent artifacts." };
-    const path = resolve(artifactRoot, target.path);
-    const contained = relative(artifactRoot, path);
-    if (contained === ".." || contained.startsWith(`..${sep}`) || isAbsolute(contained)) {
-      return { reason: "Permission target escapes Agent artifacts." };
-    }
-    let cursor = workflowRoot;
-    for (const part of relative(workflowRoot, path).split(sep)) {
-      cursor = join(cursor, part);
-      if (lstatSync(cursor).isSymbolicLink()) return { reason: "Permission target cannot traverse a symbolic link." };
-    }
-    const stats = lstatSync(path);
-    if (!stats.isFile() && !stats.isDirectory()) return { reason: "Permission target must be a file or directory." };
-    return { path: realpathSync(path) };
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
-      return { reason: "Permission target is unavailable." };
-    }
-    throw error;
   }
 }

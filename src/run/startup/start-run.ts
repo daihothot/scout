@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { runPaths, scoutRunRoot } from "../../core/path.js";
+import { runPaths, scoutRunRoot } from "../../core/io/index.js";
 import type { ScoutAgentRole } from "../../agent/thread/types.js";
 import { InMemoryEventBus } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
