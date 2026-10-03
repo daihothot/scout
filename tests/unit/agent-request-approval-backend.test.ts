@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -8,96 +8,154 @@ import {
   AgentRequestApprovalBackend, agentPermissionRequestType, registerAgentPermissionRequest,
 } from "../../src/agent/backend/request/agent-request-approval-backend.js";
 import { AgentRequestBackend } from "../../src/agent/backend/request/agent-request-backend.js";
+import type { AgentPermissionTarget } from "../../src/agent/backend/request/types.js";
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type { AgentTurnCompletedEvent } from "../../src/agent/thread/turn-events.js";
 import type { AppServerRequestHandler, CodexAppServerClient, DynamicToolCallInput } from "../../src/agent-server/codex/app-server-client.js";
 import type { Logger, LogInput } from "../../src/core/logging/index.js";
-import { RequestHubStage } from "../../src/run/lifecycle/stages/request-hub-stage.js";
-import { installTestRunScope } from "../helpers/run-persistence.js";
+import { EventSubscriptionPriorities, type ScoutEvent } from "../../src/core/events/index.js";
+import { ApprovalEvents } from "../../src/core/authorization/approval/approval-events.js";
+import { workflowAgentPaths, workflowPaths, authorizationJournalPaths } from "../../src/core/path.js";
+import { Journal } from "../../src/core/journal/index.js";
+import { AuthorizationStage } from "../../src/run/lifecycle/stages/authorization-stage.js";
+import { createTestGraph, installTestRunScope } from "../helpers/run-persistence.js";
 
 async function fixture(t: TestContext) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "scout-permission-unit-")));
-  const target = join(root, "target");
-  mkdirSync(target);
-  const hubStage = new RequestHubStage();
-  t.after(async () => { await hubStage.stop(); rmSync(root, { recursive: true, force: true }); });
+  const stage = new AuthorizationStage();
+  t.after(() => stage.stop());
   const handlers = new Set<AppServerRequestHandler>();
   const errors: string[] = [];
   const warnings: LogInput[] = [];
   const errorEvents: LogInput[] = [];
-  let active = true;
-  let protocolCompleted = false;
+  const threads = { executor: "thread-executor", reviewer: "thread-reviewer" };
+  const activeTurns = new Map<string, string>([["executor", "execute-turn-1"], ["reviewer", "review-turn-1"]]);
+  const completedTurns = new Set<string>();
   const client = {
     onServerRequest(handler: AppServerRequestHandler) { handlers.add(handler); return () => { handlers.delete(handler); }; },
-    turnSnapshot: () => protocolCompleted ? { status: "completed" } : undefined,
+    turnSnapshot: (threadId: string, turnId: string) => completedTurns.has(threadId + ":" + turnId)
+      ? { status: "completed" } : undefined,
   } as unknown as CodexAppServerClient;
-  const scope = await installTestRunScope(t, { runId: "permission-unit", appServer: client, logger: {
-    debug() {}, info() {},
-    warn(input: LogInput) { warnings.push(input); },
-    error(input: LogInput) { errors.push(input.message ?? ""); errorEvents.push(input); },
-  } as unknown as Logger });
-  await hubStage.start();
-  const caller = {
-    agentId: "executor", spec: { cwd: root },
-    assertOwnsActiveTurn(input: { threadId: string; turnId: string }) {
-      assert.equal(active, true, "Agent turn is not active");
-      assert.equal(input.threadId, "thread-1");
-      assert.equal(input.turnId, "turn-1");
-    },
-  } as unknown as ScoutAgent;
-  scope.agentRegistry.registerAgent(caller);
-  scope.agentRegistry.bindThread(caller.agentId, "thread-1");
-  const delivery: DynamicToolCallInput = {
-    threadId: "thread-1", turnId: "turn-1", callId: "call-1", namespace: "test", tool: "Lookup", arguments: {},
+  const graph = createTestGraph({
+    domain: "test", workflowProfile: "permission-test",
+    phases: [
+      { name: "execute", roles: ["executor"], edges: { completed: "review", error: null } },
+      { name: "review", roles: ["reviewer"], edges: { completed: null, error: "execute" } },
+    ],
+    roles: [
+      { name: "coordinator", phases: ["Synthesis"] },
+      { name: "executor", phases: ["execute"] },
+      { name: "reviewer", phases: ["review"] },
+    ],
+    currentPhase: "execute",
+  });
+  const scope = await installTestRunScope(t, {
+    runId: "permission-unit", runRoot: join(root, "run", "permission-unit"), scoutRoot: root,
+    runtimeGraph: graph, appServer: client, logger: {
+      debug() {}, info() {},
+      warn(input: LogInput) { warnings.push(input); },
+      error(input: LogInput) { errors.push(input.message ?? ""); errorEvents.push(input); },
+    } as unknown as Logger,
+  });
+  await stage.start();
+  for (const agentId of ["executor", "reviewer"] as const) {
+    const caller = {
+      agentId, spec: { cwd: root, phases: agentId === "executor" ? ["execute"] : ["review"] },
+      snapshot: () => ({ activeTask: undefined }),
+      assertOwnsActiveTurn(input: { threadId: string; turnId: string }) {
+        assert.ok(activeTurns.has(agentId), "Agent turn is not active");
+        assert.equal(input.threadId, threads[agentId]);
+        assert.equal(input.turnId, activeTurns.get(agentId), "Agent owns a different Turn");
+      },
+    } as unknown as ScoutAgent;
+    scope.agentRegistry.registerAgent(caller);
+    scope.agentRegistry.bindThread(agentId, threads[agentId]);
+  }
+  const target = join(scope.workflow.agentPaths("executor").artifactRoot, "execution-pack");
+  mkdirSync(target, { recursive: true });
+  const targetRef: AgentPermissionTarget = {
+    workflowId: scope.workflow.snapshot()!.workflowId, agentId: "executor", path: "execution-pack",
   };
-  const invoke = (reference: { path: string; requestId: string }, overrides: Record<string, unknown> = {}) => {
+  const delivery: DynamicToolCallInput = {
+    threadId: threads.executor, turnId: "execute-turn-1", callId: "call-1", namespace: "test", tool: "Lookup", arguments: {},
+  };
+  const register = (maxConsumptions = 2, artifactTarget = targetRef) => registerAgentPermissionRequest(delivery, {
+    target: artifactTarget,
+    allowedConsumers: [{ agentId: "executor", phases: ["execute"] }, { agentId: "reviewer", phases: ["review"] }],
+    maxConsumptions,
+  });
+  const stored = (requestId: string) => scope.authorization.get(agentPermissionRequestType, requestId)!;
+  const invoke = async (reference: { path: string; requestId: string }, overrides: Record<string, unknown> = {}) => {
     const responses: unknown[] = [];
-    new AgentRequestApprovalBackend().handle({ id: 1, method: "item/permissions/requestApproval", params: {
-      threadId: "thread-1", turnId: "turn-1", itemId: "native-item-1", cwd: root,
-      environmentId: "local", reason: `scout-request-id:${reference.requestId}`,
+    await new AgentRequestApprovalBackend().handle({ id: 1, method: "item/permissions/requestApproval", params: {
+      threadId: threads.executor, turnId: activeTurns.get("executor") ?? "execute-turn-1", itemId: "native-item-1", cwd: root,
+      environmentId: "local", reason: "scout-request-id:" + reference.requestId,
       permissions: { fileSystem: { entries: [{ path: { type: "path", path: reference.path }, access: "read" }] } },
       ...overrides,
     } }, { sendResult: (result) => { responses.push(result); }, sendError: () => assert.fail("Expected permission response") });
     assert.equal(responses.length, 1);
     return responses[0];
   };
-  const finish = async (status: "completed" | "failed" | "interrupted" = "completed") => {
-    active = false;
+  const finish = async (agentId: "executor" | "reviewer" = "executor", status: "completed" | "failed" | "interrupted" = "completed") => {
+    const turnId = activeTurns.get(agentId)!;
+    activeTurns.delete(agentId);
     await scope.eventBus.publishAndWait<AgentTurnCompletedEvent>(AgentEvents.turn.completed, { turn: {
-      agentId: "executor", role: "executor", invocationId: "invocation-1", threadId: "thread-1", turnId: "turn-1",
+      agentId, role: agentId, invocationId: "invocation-" + agentId, threadId: threads[agentId], turnId,
       status, startedAt: "2026-09-29T00:00:00.000Z", finishedAt: "2026-09-29T00:00:01.000Z",
     } });
   };
-  return { root, target, scope, delivery, handlers, errors, warnings, errorEvents, invoke, finish,
-    endProtocolTurn: () => { protocolCompleted = true; } };
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return {
+    root, target, targetRef, scope, delivery, handlers, errors, warnings, errorEvents, register, stored, invoke, finish,
+    startTurn(agentId: "executor" | "reviewer", turnId: string) { activeTurns.set(agentId, turnId); },
+    endProtocolTurn() { completedTurns.add(threads.executor + ":" + activeTurns.get("executor")); },
+    async restore() {
+      await stage.stop(); await stage.start();
+      scope.authorization.registerRequestType(agentPermissionRequestType);
+      scope.authorization.restore(scope.workflow.snapshot()!);
+    },
+  };
 }
 
-test("Permission registration uses host delivery and approval grants only the registered read target", async (t) => {
+const denied = { permissions: {}, scope: "turn" };
+
+test("Permission registration records host origin separately from Workflow grants and current native approval", async (t) => {
   const f = await fixture(t);
-  let callbacks = 0;
-  const reference = registerAgentPermissionRequest(f.delivery, f.target, { callback: (result) => {
-    assert.equal(result.decision, "approved"); callbacks += 1;
-  } });
+  const reference = (await f.register());
   assert.deepEqual(Object.keys(reference).sort(), ["path", "requestId"]);
-  const stored = f.scope.requestHub.get(agentPermissionRequestType, reference.requestId)!;
-  assert.deepEqual(stored.payload.producer, { namespace: "test", tool: "Lookup", callId: "call-1" });
-  assert.deepEqual(f.invoke(reference), { permissions: { fileSystem: { entries: [
+  const request = f.stored(reference.requestId);
+  assert.deepEqual(request.origin, {
+    runId: f.scope.runId, agentId: "executor", threadId: "thread-executor", turnId: "execute-turn-1",
+    namespace: "test", tool: "Lookup", callId: "call-1",
+  });
+  assert.equal(request.workflowId, f.targetRef.workflowId);
+  assert.equal(request.state.status, "active");
+  assert.deepEqual(request.allowedGrants[0], {
+    scope: { workflowId: request.workflowId, agentId: "executor", phases: ["execute"], access: "read" },
+    target: f.targetRef,
+  });
+  assert.deepEqual((await f.invoke(reference)), { permissions: { fileSystem: { entries: [
     { path: { type: "path", path: f.target }, access: "read" },
   ] } }, scope: "turn" });
-  assert.deepEqual(f.invoke(reference), { permissions: {}, scope: "turn" });
-  await Promise.resolve();
-  assert.equal(callbacks, 1);
+  const approvals = f.scope.authorization.approvals(request);
+  assert.equal(approvals.length, 1);
+  assert.deepEqual(approvals[0]!.basis, { kind: "new" });
+  assert.deepEqual(approvals[0]!.consumer, {
+    agentId: "executor", threadId: "thread-executor", turnId: "execute-turn-1",
+    itemId: "native-item-1", phase: "execute", cwd: f.root, environmentId: "local",
+  });
+  assert.equal(f.scope.authorization.credentials(request)[0]?.credentialId, approvals[0]!.approvalId);
   await f.finish();
-  assert.equal(f.scope.requestHub.get(agentPermissionRequestType, reference.requestId)?.status, "completed");
+  assert.equal(f.stored(reference.requestId).state.status, "active");
 });
 
-test("Permission approval rejects forged identity, broader rights, and stale context without consuming a valid request", async (t) => {
+test("Permission approval rejects forged identity, broader rights, and stale context without consuming allowance", async (t) => {
   const f = await fixture(t);
-  const reference = registerAgentPermissionRequest(f.delivery, f.target);
+  const reference = (await f.register());
   const readEntry = { path: { type: "path", path: f.target }, access: "read" };
   for (const overrides of [
-    { reason: `scout-request-id:${randomUUID()}` }, { reason: `Please scout-request-id:${reference.requestId}` },
+    { reason: "scout-request-id:" + randomUUID() }, { reason: "Please scout-request-id:" + reference.requestId },
     { threadId: "other-thread" }, { turnId: "other-turn" }, { environmentId: "remote" }, { cwd: f.target },
     { permissions: { network: { enabled: true }, fileSystem: { entries: [readEntry] } } },
     { permissions: { fileSystem: { entries: [{ ...readEntry, access: "write" }] } } },
@@ -108,37 +166,110 @@ test("Permission approval rejects forged identity, broader rights, and stale con
     { permissions: { fileSystem: { entries: [readEntry], read: [f.root] } } },
     { permissions: { fileSystem: { entries: [readEntry], globScanMaxDepth: 1 } } },
   ]) {
-    assert.deepEqual(f.invoke(reference, overrides), { permissions: {}, scope: "turn" });
-    assert.equal(f.scope.requestHub.get(agentPermissionRequestType, reference.requestId)?.status, "pending");
+    assert.deepEqual((await f.invoke(reference, overrides)), denied);
+    assert.equal(f.stored(reference.requestId).state.status, "active");
   }
   f.endProtocolTurn();
-  assert.deepEqual(f.invoke(reference), { permissions: {}, scope: "turn" });
-  await f.finish("interrupted");
-  assert.equal(f.scope.requestHub.get(agentPermissionRequestType, reference.requestId)?.status, "expired");
-  assert.deepEqual(f.invoke(reference), { permissions: {}, scope: "turn" });
-  assert.throws(() => registerAgentPermissionRequest(f.delivery, f.target), /not active/);
+  assert.deepEqual((await f.invoke(reference)), denied);
+  await f.finish("executor", "interrupted");
+  assert.deepEqual((await f.invoke(reference)), denied);
+  assert.equal(f.scope.authorization.consumed(f.stored(reference.requestId)), 0);
+  await assert.rejects(async () => (await f.register()), /not active/);
 });
 
-test("Permission callback failure does not prevent or duplicate the native approval response", async (t) => {
+test("Credential approval returns the same grant in later Turns and after restoring authorization facts", async (t) => {
   const f = await fixture(t);
-  const reference = registerAgentPermissionRequest(f.delivery, f.target, { callback: () => { throw new Error("callback failed"); } });
-  assert.notDeepEqual(f.invoke(reference), { permissions: {}, scope: "turn" });
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(f.errors.length, 1);
-  assert.equal(f.errorEvents[0]?.event, "callback_failed");
-  assert.equal(f.errorEvents[0]?.agentId, "executor");
-  assert.deepEqual(f.errorEvents[0]?.data, {
-    rpcId: 1, requestId: reference.requestId, threadId: "thread-1", turnId: "turn-1", itemId: "native-item-1",
-  });
-  assert.equal(f.warnings.length, 0);
-  assert.equal(f.scope.requestHub.get(agentPermissionRequestType, reference.requestId)?.status, "completed");
+  const reference = (await f.register(1));
+  const firstResponse = (await f.invoke(reference));
+  const firstRequest = f.stored(reference.requestId);
+  const first = f.scope.authorization.approvals(firstRequest)[0]!;
   await f.finish();
+  f.startTurn("executor", "execute-turn-2");
+  assert.deepEqual((await f.invoke(reference)), firstResponse);
+  const second = f.scope.authorization.credentialUses(first.approvalId)[0]!;
+  assert.equal(second.credentialId, first.approvalId);
+  assert.equal(f.scope.authorization.consumed(firstRequest), 1);
+  await f.finish();
+  await f.restore();
+  f.startTurn("executor", "execute-turn-restored");
+  assert.deepEqual((await f.invoke(reference)), firstResponse);
+  const restored = f.stored(reference.requestId);
+  const records = f.scope.authorization.approvals(restored);
+  assert.deepEqual(records, [first]);
+  const uses = f.scope.authorization.credentialUses(first.approvalId);
+  assert.equal(uses.length, 2);
+  assert.deepEqual(uses[0], second);
+  assert.equal(uses[1]!.consumer && "turnId" in uses[1]!.consumer ? uses[1]!.consumer.turnId : undefined, "execute-turn-restored");
+  assert.equal(f.scope.authorization.consumed(restored), 1);
+  assert.equal(f.scope.authorization.credentials(restored).length, 1);
+  assert.equal(restored.origin.turnId, "execute-turn-1");
 });
 
-test("Malformed and unauthorized permission requests remain ordinary correlated denials", async (t) => {
+test("A new request of the same type can use an existing Workflow grant without consuming its new-approval allowance", async (t) => {
   const f = await fixture(t);
-  let callbacks = 0;
-  const reference = registerAgentPermissionRequest(f.delivery, f.target, { callback: () => { callbacks += 1; } });
+  const source = (await f.register(1));
+  const firstResponse = (await f.invoke(source));
+  const sourceRequest = f.stored(source.requestId);
+  const issued = f.scope.authorization.approvals(sourceRequest)[0]!;
+  const next = (await f.register(1));
+  assert.notEqual(next.requestId, source.requestId);
+  assert.deepEqual((await f.invoke(next)), firstResponse);
+  const nextRequest = f.stored(next.requestId);
+  assert.deepEqual(f.scope.authorization.approvals(nextRequest), []);
+  assert.equal(f.scope.authorization.credentialUses(issued.approvalId)[0]!.requestId, nextRequest.requestId);
+  assert.equal(f.scope.authorization.consumed(sourceRequest), 1);
+  assert.equal(f.scope.authorization.consumed(nextRequest), 0);
+  const credentials = f.scope.authorization.credentials(nextRequest);
+  assert.equal(credentials.length, 1);
+  assert.equal(credentials[0]!.credentialId, issued.approvalId);
+  assert.equal(credentials[0]!.requestId, source.requestId, "The signing request remains provenance, not a consumption restriction");
+});
+
+test("The same request can issue a separate Reviewer grant but cannot use an Executor credential across Agents", async (t) => {
+  const f = await fixture(t);
+  const reference = (await f.register());
+  assert.notDeepEqual((await f.invoke(reference)), denied);
+  await f.finish();
+  f.scope.workflow.graph.advance("completed");
+  assert.notDeepEqual((await f.invoke(reference, { threadId: "thread-reviewer", turnId: "review-turn-1" })), denied);
+  const request = f.stored(reference.requestId);
+  const records = f.scope.authorization.approvals(request);
+  assert.equal(records.length, 2);
+  assert.equal(records[0]!.basis.kind, "new");
+  assert.equal(records[1]!.basis.kind, "new");
+  if (records[0]!.result.decision !== "approved" || records[1]!.result.decision !== "approved") assert.fail("Expected grants");
+  assert.equal(records[0]!.result.scope.agentId, "executor");
+  assert.equal(records[1]!.result.scope.agentId, "reviewer");
+  assert.equal(f.scope.authorization.consumed(request), 2);
+  assert.equal(f.scope.authorization.credentials(request).length, 2);
+  await f.finish("reviewer");
+  f.startTurn("reviewer", "review-turn-2");
+  assert.notDeepEqual((await f.invoke(reference, { threadId: "thread-reviewer", turnId: "review-turn-2" })), denied);
+  assert.equal(f.scope.authorization.approvals(request).length, 2);
+  assert.equal(f.scope.authorization.credentialUses(records[1]!.approvalId)[0]!.credentialId, records[1]!.approvalId);
+});
+
+test("A spent new-approval allowance denies another Agent but still permits the already issued grant", async (t) => {
+  const f = await fixture(t);
+  const reference = (await f.register(1));
+  const firstResponse = (await f.invoke(reference));
+  f.scope.workflow.graph.advance("completed");
+  assert.deepEqual((await f.invoke(reference, { threadId: "thread-reviewer", turnId: "review-turn-1" })), denied);
+  const request = f.stored(reference.requestId);
+  const records = f.scope.authorization.approvals(request);
+  assert.equal(records.length, 2);
+  assert.deepEqual(records[1]!.result, { decision: "denied", reason: "Request approval allowance is exhausted." });
+  assert.deepEqual(records[1]!.basis, { kind: "denied" });
+  assert.equal(f.scope.authorization.consumed(request), 1);
+  f.scope.workflow.graph.advance("error");
+  assert.deepEqual((await f.invoke(reference)), firstResponse);
+  assert.equal(f.scope.authorization.consumed(request), 1);
+  assert.equal(f.scope.authorization.credentials(request).length, 1);
+});
+
+test("Malformed and unauthorized permission RPCs remain ordinary correlated denials", async (t) => {
+  const f = await fixture(t);
+  const reference = (await f.register());
   for (const overrides of [
     { permissions: null },
     { permissions: { fileSystem: { entries: null } } },
@@ -148,131 +279,232 @@ test("Malformed and unauthorized permission requests remain ordinary correlated 
     { permissions: { network: { enabled: true } } },
     { threadId: "other-thread" },
   ]) {
-    assert.deepEqual(f.invoke(reference, overrides), { permissions: {}, scope: "turn" });
-    const denial = f.warnings[f.warnings.length - 1]!;
-    assert.equal(denial.event, "request_denied");
-    assert.deepEqual(denial.data, {
+    assert.deepEqual((await f.invoke(reference, overrides)), denied);
+    const refusal = f.warnings.at(-1)!;
+    assert.equal(refusal.event, "request_denied");
+    assert.deepEqual(refusal.data, {
       rpcId: 1, requestId: reference.requestId,
-      threadId: overrides.threadId ?? "thread-1", turnId: "turn-1", itemId: "native-item-1",
+      threadId: overrides.threadId ?? "thread-executor", turnId: "execute-turn-1", itemId: "native-item-1",
     });
-    assert.equal(f.scope.requestHub.get(agentPermissionRequestType, reference.requestId)?.status, "pending");
   }
   assert.equal(f.errorEvents.length, 0);
-  assert.equal(callbacks, 0);
-  await f.finish();
+  assert.equal(f.scope.authorization.approvals(f.stored(reference.requestId)).length, 0);
 });
 
 test("Matching native mirror fields preserve the exact registered read-only grant", async (t) => {
   const f = await fixture(t);
-  for (const network of [null, { enabled: false }, { enabled: null }]) {
-    const reference = registerAgentPermissionRequest(f.delivery, f.target);
+  for (const [index, network] of [null, { enabled: false }, { enabled: null }].entries()) {
+    const reference = (await f.register());
     const entries = [{ path: { type: "path", path: f.target }, access: "read" }];
-    assert.deepEqual(f.invoke(reference, { permissions: {
+    assert.deepEqual((await f.invoke(reference, { permissions: {
       network, fileSystem: { entries, read: [f.target], write: [], globScanMaxDepth: null },
-    } }), { permissions: { fileSystem: { entries } }, scope: "turn" });
-    assert.equal(f.scope.requestHub.get(agentPermissionRequestType, reference.requestId)?.status, "completed");
+    } })), { permissions: { fileSystem: { entries } }, scope: "turn" });
+    const request = f.stored(reference.requestId);
+    assert.equal(f.scope.authorization.consumed(request), index === 0 ? 1 : 0);
+    assert.equal(f.scope.authorization.approvals(request).length, index === 0 ? 1 : 0);
+    if (index > 0) assert.ok(f.scope.authorization.credentials(request).length === 1);
   }
   assert.equal(f.warnings.length, 0);
   assert.equal(f.errorEvents.length, 0);
-  await f.finish();
 });
 
-for (const operation of ["get", "complete"] as const) {
-  test(`RequestHub ${operation} failure denies access but is logged as an internal error`, async (t) => {
+for (const operation of ["lookup", "submit"] as const) {
+  test("Authorization " + operation + " failure denies access but is logged as an internal error", async (t) => {
     const f = await fixture(t);
-    let callbacks = 0;
-    const reference = registerAgentPermissionRequest(f.delivery, f.target, { callback: () => { callbacks += 1; } });
-    const fault = new Error(`Hub ${operation} failure`);
-    const injected = t.mock.method(f.scope.requestHub, operation, () => { throw fault; });
-    assert.deepEqual(f.invoke(reference), { permissions: {}, scope: "turn" });
+    const reference = (await f.register());
+    const fault = new Error("Authorization " + operation + " failure");
+    const injected = operation === "lookup"
+      ? t.mock.method(f.scope.authorization, "get", () => { throw fault; })
+      : t.mock.method(f.scope.authorization, "submit", () => { throw fault; });
+    assert.deepEqual((await f.invoke(reference)), denied);
     injected.mock.restore();
     assert.equal(f.warnings.length, 0);
     assert.equal(f.errorEvents.length, 1);
     assert.equal(f.errorEvents[0]?.event, "request_failed");
     assert.equal(f.errorEvents[0]?.message, fault.stack);
     assert.deepEqual(f.errorEvents[0]?.data, {
-      rpcId: 1, requestId: reference.requestId, threadId: "thread-1", turnId: "turn-1", itemId: "native-item-1",
+      rpcId: 1, requestId: reference.requestId, threadId: "thread-executor", turnId: "execute-turn-1", itemId: "native-item-1",
     });
-    assert.equal(f.scope.requestHub.get(agentPermissionRequestType, reference.requestId)?.status, "pending");
-    assert.equal(callbacks, 0);
-    await f.finish();
+    assert.equal(f.scope.authorization.consumed(f.stored(reference.requestId)), 0);
+    assert.equal(f.scope.authorization.credentials(f.stored(reference.requestId)).length, 0);
   });
 }
 
-test("Lost Agent Turn ownership is a denial rather than a request service fault", async (t) => {
+test("Lost current Turn ownership is a denial rather than an authorization service fault", async (t) => {
   const f = await fixture(t);
-  const reference = registerAgentPermissionRequest(f.delivery, f.target);
-  const caller = f.scope.agentRegistry.resolveAgentByThreadId("thread-1")!;
+  const reference = (await f.register());
+  const caller = f.scope.agentRegistry.resolveAgentByThreadId("thread-executor")!;
   t.mock.method(caller, "assertOwnsActiveTurn", () => { throw new Error("Agent no longer owns this Turn."); });
-  assert.deepEqual(f.invoke(reference), { permissions: {}, scope: "turn" });
+  assert.deepEqual((await f.invoke(reference)), denied);
   assert.equal(f.warnings[0]?.event, "request_denied");
   assert.match(f.warnings[0]?.message ?? "", /no longer owns/);
   assert.equal(f.errorEvents.length, 0);
-  assert.equal(f.scope.requestHub.get(agentPermissionRequestType, reference.requestId)?.status, "pending");
-  await f.finish();
+  assert.equal(f.scope.authorization.consumed(f.stored(reference.requestId)), 0);
 });
 
-test("Permission registration canonicalizes its target and rejects relative or absent paths", async (t) => {
+test("Stable read targets reject escaping, absolute, absent, and symbolic-link paths", async (t) => {
   const f = await fixture(t);
-  assert.throws(() => registerAgentPermissionRequest(f.delivery, "target"), /must be absolute/);
-  assert.throws(() => registerAgentPermissionRequest(f.delivery, join(f.root, "absent")), /ENOENT/);
-  const link = join(f.root, "target-link");
-  symlinkSync(f.target, link);
-  const reference = registerAgentPermissionRequest(f.delivery, link);
-  assert.equal(reference.path, f.target);
-  assert.notDeepEqual(f.invoke(reference), { permissions: {}, scope: "turn" });
-  await f.finish();
+  await assert.rejects(async () => (await f.register(1, { ...f.targetRef, path: "../outside" })), /escapes Agent artifacts/);
+  await assert.rejects(async () => (await f.register(1, { ...f.targetRef, path: f.target })), /must be relative/);
+  await assert.rejects(async () => (await f.register(1, { ...f.targetRef, path: "absent" })), /unavailable/);
+  await assert.rejects(async () => (await f.register(1, { ...f.targetRef, agentId: "../outside" })), /escapes its Agent artifact owner/);
+  const alias = join(f.scope.workflow.agentPaths("executor").artifactRoot, "target-link");
+  symlinkSync(f.target, alias);
+  await assert.rejects(async () => (await f.register(1, { ...f.targetRef, path: "target-link" })), /symbolic link/);
+  const reference = (await f.register());
+  rmSync(f.target, { recursive: true });
+  symlinkSync(f.root, f.target);
+  assert.deepEqual((await f.invoke(reference)), denied);
+  assert.equal(f.scope.authorization.consumed(f.stored(reference.requestId)), 0);
 });
 
-test("A pending business callback does not delay the native response or permit a second approval", async (t) => {
+test("A historical Workflow target is relocated by identity without changing its registered grant or credential", async (t) => {
   const f = await fixture(t);
-  let finishCallback!: () => void;
-  const completion = new Promise<void>((resolve) => { finishCallback = resolve; });
-  let callbacks = 0;
-  const reference = registerAgentPermissionRequest(f.delivery, f.target, { callback: () => {
-    callbacks += 1;
-    return completion;
-  } });
-  assert.notDeepEqual(f.invoke(reference), { permissions: {}, scope: "turn" });
-  assert.equal(f.scope.requestHub.get(agentPermissionRequestType, reference.requestId)?.status, "completed");
-  await Promise.resolve();
-  assert.equal(callbacks, 1);
-  assert.deepEqual(f.invoke(reference), { permissions: {}, scope: "turn" });
-  await f.finish();
-  finishCallback();
-  await completion;
+  const historicalRoot = join(f.scope.runRoot, "workflows", "imported-history");
+  const historicalTarget: AgentPermissionTarget = { workflowId: "workflow-009", agentId: "executor", path: "execution-pack" };
+  const oldPath = join(workflowAgentPaths(historicalRoot, "executor").artifactRoot, historicalTarget.path);
+  mkdirSync(oldPath, { recursive: true });
+  writeFileSync(workflowPaths(historicalRoot).identityPath, JSON.stringify({ workflowId: historicalTarget.workflowId }));
+  const reference = (await f.register(1, historicalTarget));
+  assert.equal(reference.path, realpathSync(oldPath));
+  assert.notDeepEqual((await f.invoke(reference)), denied);
+  const request = f.stored(reference.requestId);
+  const firstResult = f.scope.authorization.approvals(request)[0]!.result;
+  const renamed = join(f.scope.runRoot, "workflows", "renamed-history");
+  renameSync(historicalRoot, renamed);
+  const path = join(workflowAgentPaths(renamed, "executor").artifactRoot, historicalTarget.path);
+  assert.deepEqual((await f.invoke(reference)), denied);
+  assert.notDeepEqual((await f.invoke({ ...reference, path })), denied);
+  assert.deepEqual(f.scope.authorization.approvals(request)[0]!.result, firstResult);
+  assert.equal(f.scope.authorization.credentialUses(f.scope.authorization.approvals(request)[0]!.approvalId).length, 1);
+  assert.equal(f.scope.authorization.consumed(request), 1);
+  assert.deepEqual(f.scope.authorization.credentials(request)[0]!.target, historicalTarget);
 });
 
-test("Turn expiry uses the registered identity, ignores unrelated turns, and retains the expired record", async (t) => {
+test("A registered Agent/Phase can choose any of its explicit targets, including a later matching grant", async (t) => {
   const f = await fixture(t);
-  const reference = registerAgentPermissionRequest(f.delivery, f.target);
+  const original = f.stored((await f.register()).requestId);
+  const secondTarget = { ...f.targetRef, path: "second-pack" };
+  const secondPath = join(f.scope.workflow.agentPaths("executor").artifactRoot, secondTarget.path);
+  mkdirSync(secondPath);
+  const request = await f.scope.authorization.register(agentPermissionRequestType, {
+    origin: original.origin, maxConsumptions: 2,
+    allowedGrants: [
+      original.allowedGrants[0]!,
+      { scope: original.allowedGrants[0]!.scope, target: secondTarget },
+    ],
+  });
+  assert.notDeepEqual((await f.invoke({ requestId: request.requestId, path: secondPath })), denied);
+  const result = f.scope.authorization.approvals(request)[0]!.result;
+  if (result.decision !== "approved") assert.fail("Expected the second target to be approved");
+  assert.deepEqual(result.target, secondTarget);
+  assert.deepEqual(f.scope.authorization.credentials(request)[0]!.target, secondTarget);
+});
+
+test("Turn completion retains the request, but Workflow completion expires it and forbids empty-workflow registration", async (t) => {
+  const f = await fixture(t);
+  const reference = (await f.register());
   f.delivery.turnId = "caller-mutated-delivery";
-  await f.scope.eventBus.publishAndWait<AgentTurnCompletedEvent>(AgentEvents.turn.completed, { turn: {
-    agentId: "executor", role: "executor", invocationId: "invocation-2", threadId: "thread-1", turnId: "other-turn",
-    status: "completed", startedAt: "2026-09-29T00:00:00.000Z", finishedAt: "2026-09-29T00:00:01.000Z",
-  } });
-  assert.equal(f.scope.requestHub.get(agentPermissionRequestType, reference.requestId)?.status, "pending");
-  await f.finish("failed");
-  const record = f.scope.requestHub.get(agentPermissionRequestType, reference.requestId)!;
-  assert.equal(record.status, "expired");
-  assert.equal(record.payload.turnId, "turn-1");
-  assert.deepEqual(f.invoke(reference), { permissions: {}, scope: "turn" });
+  await f.finish("executor", "failed");
+  assert.equal(f.stored(reference.requestId).state.status, "active");
+  assert.equal(f.stored(reference.requestId).origin.turnId, "execute-turn-1");
+  await f.scope.workflow.advance("error");
+  assert.equal(f.scope.workflow.snapshot(), undefined);
+  assert.equal(f.stored(reference.requestId), undefined);
+  assert.deepEqual((await f.invoke(reference)), denied);
+  await assert.rejects(async () => (await f.register()), /requires an active Workflow/);
 });
 
-test("Request Backend subscribes once, leaves dynamic tools unclaimed, and unsubscribes on stop", async (t) => {
+test("Request Backend subscribes once, leaves dynamic tools and native hooks unclaimed, and unsubscribes on stop", async (t) => {
   const f = await fixture(t);
   const backend = new AgentRequestBackend();
   backend.start(); backend.start();
   assert.equal(f.handlers.size, 1);
   const handler = [...f.handlers][0]!;
-  assert.equal(await handler({ id: 1, method: "item/tool/call" }, {
-    sendResult: () => assert.fail("Must use the dynamic-tool entry"), sendError: () => assert.fail(),
-  }), false);
+  for (const method of ["item/tool/call", "item/commandExecution/requestApproval"]) {
+    assert.equal(await handler({ id: 1, method }, {
+      sendResult: () => assert.fail("Must use the existing dedicated entry"), sendError: () => assert.fail(),
+    }), false);
+  }
   const responses: unknown[] = [];
   assert.equal(await handler({ id: 2, method: "item/permissions/requestApproval", params: null }, {
     sendResult: (result) => { responses.push(result); }, sendError: () => assert.fail(),
   }), true);
-  assert.deepEqual(responses, [{ permissions: {}, scope: "turn" }]);
+  assert.deepEqual(responses, [denied]);
   backend.stop(); backend.stop();
   assert.equal(f.handlers.size, 0);
+});
+
+test("Native approval is returned only after recording and runtime credential application succeed", async (t) => {
+  const f = await fixture(t);
+  const reference = await f.register();
+  const request = f.stored(reference.requestId);
+  const append = Journal.prototype.append;
+  let written = false;
+  t.mock.method(Journal.prototype, "append", function (this: Journal, event: ScoutEvent) {
+    assert.equal(f.scope.authorization.consumed(request), 0);
+    assert.deepEqual(f.scope.authorization.credentials(request), []);
+    const recorded = append.call(this, event);
+    written = true;
+    return recorded;
+  });
+  assert.notDeepEqual(await f.invoke(reference), denied);
+  assert.equal(written, true);
+  assert.equal(f.scope.authorization.consumed(request), 1);
+  assert.equal(f.scope.authorization.credentials(request).length, 1);
+});
+
+test("A failed native approval write denies the RPC without spending quota or issuing a credential", async (t) => {
+  const f = await fixture(t);
+  const reference = await f.register();
+  const request = f.stored(reference.requestId);
+  t.mock.method(Journal.prototype, "append", () => { throw new Error("authorization disk unavailable"); });
+  assert.deepEqual(await f.invoke(reference), denied);
+  assert.equal(f.scope.authorization.consumed(request), 0);
+  assert.deepEqual(f.scope.authorization.credentials(request), []);
+  assert.ok(f.errorEvents.some((event) => event.event === "request_failed" && event.message?.includes("authorization disk unavailable")));
+});
+
+test("Workflow identity and unexpected filesystem resolution faults are not hidden as unmatched grants", async (t) => {
+  const f = await fixture(t);
+  const reference = await f.register();
+  for (const message of ["Duplicate Workflow identity", "Invalid Workflow identity JSON", "EACCES reading Workflow evidence"]) {
+    const fault = t.mock.method(f.scope.workflow.benchmarks, "resolve", () => { throw new Error(message); });
+    assert.deepEqual(await f.invoke(reference), denied);
+    fault.mock.restore();
+    assert.ok(f.errorEvents.at(-1)?.message?.includes(message));
+  }
+  assert.equal(f.warnings.length, 0);
+  assert.equal(f.scope.authorization.consumed(f.stored(reference.requestId)), 0);
+});
+
+test("Malformed stored Agent permission scope fails during owner restoration rather than first RPC", async (t) => {
+  const f = await fixture(t);
+  const reference = await f.register();
+  const location = { journalId: `${f.scope.runId}:authorization`, ...authorizationJournalPaths(f.scope.workflow.journalRoot) };
+  // Release the currently installed owner before modifying external persisted data.
+  const owner = f.scope.authorization;
+  owner.stop();
+  const journal = Journal.open(location);
+  const records = journal.readAll();
+  const payload = records[0]!.payload as { request: { allowedGrants: { scope: object }[] } };
+  Object.assign(payload.request.allowedGrants[0]!.scope, { phases: "not-an-array" });
+  journal.replaceAll(records);
+  journal.close();
+  await assert.rejects(f.restore(), /Invalid stored Agent permission grant/);
+  assert.equal(f.scope.authorization.get(agentPermissionRequestType, reference.requestId), undefined);
+  assert.equal(f.scope.authorization.find(reference.requestId), undefined);
+});
+
+test("A Turn interrupted during durable approval does not receive a restored native grant", async (t) => {
+  const f = await fixture(t);
+  const reference = await f.register();
+  f.scope.eventBus.subscribe(ApprovalEvents.authorizationApproval.submitted, () => f.finish("executor", "interrupted"),
+    { priority: EventSubscriptionPriorities.Critical });
+  assert.deepEqual(await f.invoke(reference), denied);
+  const request = f.stored(reference.requestId);
+  assert.equal(f.scope.authorization.consumed(request), 1, "The committed business approval remains a fact.");
+  f.startTurn("executor", "execute-after-interruption");
+  assert.notDeepEqual(await f.invoke(reference), denied);
+  assert.equal(f.scope.authorization.consumed(request), 1, "A new native Turn can consume the existing business credential.");
 });

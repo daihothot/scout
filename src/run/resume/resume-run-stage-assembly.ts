@@ -1,7 +1,7 @@
 import {
   AgentBackendStage, AgentTelemetryStage, DomainStage, ExecutionStage,
   InteractionStage, OrchestratorStage, RunRuntimeStage, RunScopeStage,
-  RequestHubStage, WorkflowStage, RunStageExecutor, type RunStage,
+  AuthorizationStage, WorkflowStage, RunStageExecutor, type RunStage,
 } from "../lifecycle/index.js";
 import type { Workflow, WorkflowResumeInput } from "../../core/workflow/index.js";
 import type { RunScope } from "../run-scope.js";
@@ -19,7 +19,7 @@ export class ResumeRunStageAssembly {
     const executor = input.executor;
     const runScopeStage = new RunScopeStage(input.runScope);
     executor.registerSerial(
-      runScopeStage, new WorkflowStage(input.workflow), new RequestHubStage(),
+      runScopeStage, new WorkflowStage(input.workflow), new AuthorizationStage(),
       input.clientsStage, input.environmentStage, new ExecutionStage(), new InteractionStage(),
       new DomainStage(), new AgentTelemetryStage(),
     );

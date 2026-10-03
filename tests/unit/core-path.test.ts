@@ -11,7 +11,7 @@ import {
   runPaths,
   scoutJournalPaths,
   recordObjectPaths,
-  requestHubJournalPaths,
+  authorizationJournalPaths,
   scoutRunRoot,
   scoutRunsRoot,
 } from "../../src/core/path.js";
@@ -101,8 +101,8 @@ test("Workflow evidence paths follow physical directory names without interpreti
     assert.deepEqual(recordObjectPaths(journalRoot, "base.journal", ".base.lock"), {
       path: join(journalRoot, "base.journal"), lockPath: join(journalRoot, ".base.lock"),
     });
-    assert.deepEqual(requestHubJournalPaths(journalRoot), {
-      path: join(journalRoot, "request-hub.journal"), lockPath: join(journalRoot, ".request-hub.lock"),
+    assert.deepEqual(authorizationJournalPaths(journalRoot), {
+      path: join(journalRoot, "authorization.journal"), lockPath: join(journalRoot, ".authorization.lock"),
     });
   }
 });

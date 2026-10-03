@@ -96,7 +96,7 @@ import {
   OrchestratorStage,
   RunRuntimeStage,
   RunScopeStage,
-  RequestHubStage,
+  AuthorizationStage,
   RunStageExecutor,
   type RunStage,
 } from "../../src/run/lifecycle/index.js";
@@ -2618,7 +2618,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   executor.registerSerial(
     new RunScopeStage(scope),
     new WorkflowStage(resumedWorkflow),
-    new RequestHubStage(),
+    new AuthorizationStage(),
     new RestoreEnvironmentStage({
       preflightMount: async () => ({ status: "passed" }),
     }),

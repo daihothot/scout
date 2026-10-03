@@ -96,8 +96,8 @@ export function recordObjectPaths(journalRoot: string, fileName: string, lockFil
   return { path: join(journalRoot, fileName), lockPath: join(journalRoot, lockFileName) };
 }
 
-export function requestHubJournalPaths(journalRoot: string) {
-  return recordObjectPaths(journalRoot, "request-hub.journal", ".request-hub.lock");
+export function authorizationJournalPaths(journalRoot: string) {
+  return recordObjectPaths(journalRoot, "authorization.journal", ".authorization.lock");
 }
 
 /** Selects execution telemetry storage without creating or retaining a Workflow. */

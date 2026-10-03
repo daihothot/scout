@@ -5,7 +5,7 @@ import type { AgentOrchestrator } from "../agent/orchestration/agent-orchestrato
 import type { EventBus } from "../core/events/index.js";
 import type { Logger } from "../core/logging/index.js";
 import type { Workflow } from "../core/workflow/workflow.js";
-import type { RequestHub } from "../core/requeshub/index.js";
+import type { Authorization } from "../core/authorization/authorization.js";
 import { DomainRegistry } from "../domain/domain-registry.js";
 import type { ExecutionPlatformPort } from "../execution/scout-execution-system.js";
 import type { RuntimeInteractionPort } from "../interaction/protocol/port.js";
@@ -56,7 +56,7 @@ export class RunScope {
   private activeAgentOrchestrator?: AgentOrchestrator;
   private activeExecutionSystem?: ExecutionPlatformPort;
   private activeWorkflow?: Workflow;
-  private activeRequestHub?: RequestHub;
+  private activeAuthorization?: Authorization;
   private preparedEnvironment?: RunEnvironment;
 
   constructor(options: RunScopeOptions) {
@@ -95,19 +95,19 @@ export class RunScope {
     this.activeAgentOrchestrator = undefined;
   }
 
-  get requestHub(): RequestHub {
-    if (!this.activeRequestHub) throw new Error("RequestHub Service is not available.");
-    return this.activeRequestHub;
+  get authorization(): Authorization {
+    if (!this.activeAuthorization) throw new Error("Authorization Service is not available.");
+    return this.activeAuthorization;
   }
 
-  setRequestHub(requestHub: RequestHub): void {
-    if (this.activeRequestHub) throw new Error("RequestHub Service is already available.");
-    this.activeRequestHub = requestHub;
+  setAuthorization(authorization: Authorization): void {
+    if (this.activeAuthorization) throw new Error("Authorization Service is already available.");
+    this.activeAuthorization = authorization;
   }
 
-  clearRequestHub(requestHub: RequestHub): void {
-    if (this.activeRequestHub !== requestHub) throw new Error("Cannot clear an inactive RequestHub Service.");
-    this.activeRequestHub = undefined;
+  clearAuthorization(authorization: Authorization): void {
+    if (this.activeAuthorization !== authorization) throw new Error("Cannot clear an inactive Authorization Service.");
+    this.activeAuthorization = undefined;
   }
 
   get executionSystem(): ExecutionPlatformPort {

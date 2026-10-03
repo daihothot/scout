@@ -1,5 +1,5 @@
 import { currentRunScope } from "../../../run/run-scope.js";
-import { AgentRequestApprovalBackend } from "./agent-request-approval-backend.js";
+import { AgentRequestApprovalBackend, agentPermissionRequestType } from "./agent-request-approval-backend.js";
 
 /** Routes server requests requiring a host response, excluding the dynamic-tool entry. */
 export class AgentRequestBackend {
@@ -9,11 +9,11 @@ export class AgentRequestBackend {
 
   start(): void {
     if (this.unsubscribe) return;
-    // Registration storage must be installed before the approval entry becomes reachable.
-    void this.scope.requestHub;
-    this.unsubscribe = this.scope.appServer.onServerRequest((request, controller) => {
+    // Authorization must be installed before native approval is reachable.
+    this.scope.authorization.registerRequestType(agentPermissionRequestType);
+    this.unsubscribe = this.scope.appServer.onServerRequest(async (request, controller) => {
       if (request.method !== "item/permissions/requestApproval") return false;
-      this.approval.handle(request, controller);
+      await this.approval.handle(request, controller);
       return true;
     });
   }

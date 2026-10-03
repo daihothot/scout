@@ -3,379 +3,527 @@ import test, { type TestContext } from "node:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Authorization, ApprovalCenter, ApprovalEvents, CredentialEvents, RequestEvents, RequestHub,
+  type RequestRegisteredEvent, type RequestType, type ScoutRequest } from "../../src/core/authorization/index.js";
+import type { ScoutRequestRecord, RequestRegisteredRecord } from "../../src/core/authorization/record/authorization-record.js";
+import type { ApprovalSubmittedEvent } from "../../src/core/authorization/approval/approval-events.js";
 import { Journal, readJournalEvents } from "../../src/core/journal/index.js";
-import { RequestHubEvents } from "../../src/core/requeshub/request-hub-events.js";
-import { RequestHub, type RequestType } from "../../src/core/requeshub/index.js";
-import { requestHubJournalPaths } from "../../src/core/path.js";
+import { authorizationJournalPaths } from "../../src/core/path.js";
 import { Workflow } from "../../src/core/workflow/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { createDefaultTestGraph, installTestRunScope, createTestWorkflowAsset } from "../helpers/run-persistence.js";
 
-const calculation: RequestType<{ input: number }, { output: number }> = {
-  name: "calculation",
-  isPayload: (value): value is { input: number } => "input" in value && typeof value.input === "number",
-  isResult: (value): value is { output: number } => "output" in value && typeof value.output === "number",
+interface ArtifactRequest extends ScoutRequest { readonly type: "test.artifact"; readonly purpose: string }
+interface ArtifactRecord extends ScoutRequestRecord { readonly type: "test.artifact"; readonly purpose: string }
+interface ExecutionRequest extends ScoutRequest { readonly type: "test.execution"; readonly task: number }
+interface ExecutionRecord extends ScoutRequestRecord { readonly type: "test.execution"; readonly task: number }
+const artifact: RequestType<ArtifactRequest, ArtifactRecord> = {
+  name: "test.artifact",
+  encode(value) { return { ...value, state: { status: "active" } }; },
+  decode(value) {
+    if (!("purpose" in value) || typeof value.purpose !== "string") throw new Error("Invalid stored artifact purpose.");
+    return { ...value, type: "test.artifact", purpose: value.purpose };
+  },
+  project(value) { return structuredClone(value); },
 };
-const selection: RequestType<{ choices: string[] }, { choice: string }> = {
-  name: "selection",
-  isPayload: (value): value is { choices: string[] } => "choices" in value && Array.isArray(value.choices)
-    && value.choices.every((choice) => typeof choice === "string"),
-  isResult: (value): value is { choice: string } => "choice" in value && typeof value.choice === "string",
+const execution: RequestType<ExecutionRequest, ExecutionRecord> = {
+  name: "test.execution",
+  encode(value) { return { ...value, state: { status: "active" } }; },
+  decode(value) {
+    if (!("task" in value) || typeof value.task !== "number") throw new Error("Invalid stored execution task.");
+    return { ...value, type: "test.execution", task: value.task };
+  },
+  project(value) { return structuredClone(value); },
 };
+const executorGrant = { scope: { agentId: "executor", access: "read" }, target: { path: "pack-a/execute-file.json" } };
+const reviewerGrant = { scope: { agentId: "reviewer", access: "read" }, target: { path: "pack-b/execute-file.json" } };
+const input = () => ({ purpose: "Inspect execution artifact", maxConsumptions: 2, allowedGrants: structuredClone([executorGrant, reviewerGrant]) });
+const approved = (grant = executorGrant) => ({
+  result: { decision: "approved" as const, ...structuredClone(grant) },
+  consumer: { agentId: grant.scope.agentId, threadId: "thread-1", turnId: "turn-1" },
+});
 
-async function createTestHub(t: TestContext) {
-  const root = mkdtempSync(join(tmpdir(), "scout-request-hub-test-"));
-  const scope = await installTestRunScope(t, { runId: "request-hub", scoutRoot: root, runRoot: join(root, "run", "request-hub") });
-  const location = { journalId: `${scope.runId}:request-hub`, path: join(scope.workflow.journalRoot, "request-hub.journal"), lockPath: join(scope.workflow.journalRoot, ".request-hub.lock") };
-  const hubs: RequestHub[] = [];
-  const open = () => {
-    const hub = new RequestHub();
-    hubs.push(hub);
-    hub.start();
-    scope.workflow.registerParticipant(hub);
-    return hub;
-  };
+async function createTestAuthorization(t: TestContext, contracts: readonly RequestType<ScoutRequest>[] = [artifact, execution]) {
+  const root = mkdtempSync(join(tmpdir(), "scout-authorization-test-"));
+  const scope = await installTestRunScope(t, { runId: "authorization", scoutRoot: root, runRoot: join(root, "run", "authorization") });
+  const location = { journalId: `${scope.runId}:authorization`, ...authorizationJournalPaths(scope.workflow.journalRoot) };
+  const instances: Array<{ close(): void }> = [];
+  function open(types = contracts) {
+    const authorization = new Authorization();
+    let installed = false;
+    const close = () => {
+      authorization.stop();
+      if (installed) { scope.workflow.unregisterParticipant(authorization); installed = false; }
+    };
+    try {
+      for (const type of types) authorization.registerRequestType(type);
+      authorization.start(); authorization.restore(scope.workflow.snapshot()!);
+    } catch (error) { close(); throw error; }
+    scope.workflow.registerParticipant(authorization);
+    installed = true;
+    const instance = { authorization, close };
+    instances.push(instance);
+    return instance;
+  }
   t.after(() => {
-    for (const hub of hubs) {
-      hub.stop();
-      if (scope.workflow.participants.includes(hub)) scope.workflow.unregisterParticipant(hub);
-    }
+    for (const instance of instances) instance.close();
     rmSync(root, { recursive: true, force: true });
   });
-  return { hub: open(), location, open, scope };
+  return { ...open(), location, open, scope };
 }
 
-test("RequestHub keeps unrelated typed requests and rejects a mismatched contract", async (t) => {
-  const { hub } = await createTestHub(t);
-  const first = hub.register(calculation, { input: 4 });
-  const second = hub.register(selection, { choices: ["a", "b"] });
-  assert.equal(hub.get(selection, first.requestId), undefined);
-  assert.equal(hub.get({ ...calculation }, first.requestId), undefined);
-  assert.throws(() => hub.register({ ...calculation }, { input: 5 }), /contract already bound/);
-  assert.throws(() => hub.complete(selection, first.requestId, { choice: "a" }), /Unknown/);
-  await hub.complete(calculation, first.requestId, { output: 8 });
-  await hub.complete(selection, second.requestId, { choice: "b" });
-  const completed = hub.get(calculation, first.requestId)!;
-  assert.equal(completed.status, "completed");
-  if (completed.status !== "completed") throw new Error("Expected completed request.");
-  assert.deepEqual(completed.result, { output: 8 });
+test("RequestHub keeps concrete request contracts separate and only parses restored data", async (t) => {
+  const decode = t.mock.fn(artifact.decode);
+  const contract = { ...artifact, decode };
+  const { authorization: auth, close, open } = await createTestAuthorization(t, [contract, execution]);
+  const first = await auth.register(contract, input());
+  const second = await auth.register(execution, { maxConsumptions: 1, allowedGrants: [executorGrant], task: 4 });
+  assert.equal(auth.get(execution, first.requestId), undefined);
+  assert.equal(auth.get({ ...contract }, first.requestId), undefined);
+  await assert.rejects(auth.register({ ...contract }, input()), /contract|bound/i);
+  assert.equal(auth.get(contract, first.requestId)?.purpose, input().purpose);
+  assert.equal(auth.get(execution, second.requestId)?.task, 4);
+  assert.equal(decode.mock.callCount(), 0, "Live typed registration does not decode its own data.");
+  close();
+  const restored = open().authorization;
+  assert.equal(decode.mock.callCount(), 1, "Concrete decoding finishes during restore, not on first lookup.");
+  assert.deepEqual(restored.get(contract, first.requestId), first);
+  assert.deepEqual(restored.get(contract, first.requestId), first);
+  assert.equal(decode.mock.callCount(), 1);
 });
 
-test("RequestHub isolates registration, lookup, result, and callback data", async (t) => {
-  const { hub } = await createTestHub(t);
-  const payload = { choices: ["a"] };
-  const registered = hub.register(selection, payload, { callback: (result) => { result.choice = "changed"; } });
-  payload.choices.push("outside");
-  registered.payload.choices.push("snapshot");
-  assert.deepEqual(hub.get(selection, registered.requestId)?.payload.choices, ["a"]);
-  const result = { choice: "a" };
-  const completion = hub.complete(selection, registered.requestId, result);
-  result.choice = "outside";
-  await completion;
-  const stored = hub.get(selection, registered.requestId)!;
-  assert.equal(stored.status, "completed");
-  if (stored.status !== "completed") throw new Error("Expected completed request.");
-  assert.equal(stored.result.choice, "a");
-  stored.result.choice = "snapshot";
-  assert.notDeepEqual(hub.get(selection, registered.requestId), stored);
+test("Registration and public snapshots cannot mutate request constraints", async (t) => {
+  const { authorization: auth } = await createTestAuthorization(t);
+  const registration = input();
+  const request = await auth.register(artifact, registration);
+  registration.allowedGrants[0]!.target.path = "outside.json";
+  Object.assign(request.allowedGrants[0]!.scope, { agentId: "outside" });
+  Object.assign(request, { maxConsumptions: 99 });
+  const stored = auth.get(artifact, request.requestId)!;
+  assert.deepEqual(stored.allowedGrants, [executorGrant, reviewerGrant]);
+  assert.equal(stored.maxConsumptions, 2);
+  Object.assign(stored.allowedGrants[0]!.target, { path: "changed.json" });
+  assert.deepEqual(auth.get(artifact, request.requestId)?.allowedGrants, [executorGrant, reviewerGrant]);
 });
 
-test("RequestHub commits before callback and never replays failed callbacks", async (t) => {
-  const { hub, open } = await createTestHub(t);
-  let calls = 0;
-  const registered = hub.register(calculation, { input: 1 }, { callback: () => {
-    calls += 1;
-    assert.equal(hub.get(calculation, registered.requestId)?.status, "completed");
-    throw new Error("callback failure");
-  } });
-  const completion = hub.complete(calculation, registered.requestId, { output: 2 });
-  assert.equal(hub.get(calculation, registered.requestId)?.status, "completed");
-  assert.throws(() => hub.complete(calculation, registered.requestId, { output: 3 }), /completed/);
-  await assert.rejects(completion, /callback failure/);
-  assert.equal(calls, 1);
-  assert.equal(hub.expire(registered.requestId, "too_late"), false);
-  hub.stop();
-  const restored = open();
-  assert.deepEqual(restored.get(calculation, registered.requestId), hub.get(calculation, registered.requestId));
-  assert.equal(calls, 1);
-});
-
-test("RequestHub preserves pending requests on close and restores explicit expiry", async (t) => {
-  const { hub, open, location } = await createTestHub(t);
-  let callbacks = 0;
-  const pending = hub.register(calculation, { input: 1 }, { callback: () => { callbacks += 1; } });
-  const completed = hub.register(calculation, { input: 2 });
-  const expired = hub.register(calculation, { input: 3 });
-  await hub.complete(calculation, completed.requestId, { output: 4 });
-  assert.equal(hub.expire(expired.requestId, "consumer_cancelled"), true);
-  assert.equal(hub.expire(expired.requestId, "again"), false);
-  assert.equal(hub.expire("missing", "test"), false);
-  const events = readJournalEvents(location.path);
-  hub.stop();
-  hub.stop();
-  assert.equal(existsSync(location.lockPath), false);
-  assert.deepEqual(readJournalEvents(location.path), events);
-  assert.equal(hub.get(calculation, pending.requestId)?.status, "pending");
-  assert.equal(hub.get(calculation, completed.requestId)?.status, "completed");
-  assert.equal(callbacks, 0);
-  assert.throws(() => hub.register(calculation, { input: 3 }), /closed/);
-  assert.throws(() => hub.complete(calculation, pending.requestId, { output: 2 }), /closed/);
-  assert.throws(() => hub.expire(pending.requestId, "after_close"), /closed/);
-  const restored = open();
-  for (const request of [pending, completed, expired]) {
-    assert.deepEqual(restored.get(calculation, request.requestId), hub.get(calculation, request.requestId));
-  }
-  await restored.complete(calculation, pending.requestId, { output: 2 });
-  assert.equal(callbacks, 0, "Callbacks are process-local and are not deserialized.");
-  assert.throws(() => restored.complete(calculation, expired.requestId, { output: 6 }), /expired/);
-});
-
-test("RequestHub validates actual data without committing malformed payloads or results", async (t) => {
-  const { hub } = await createTestHub(t);
-  // @ts-expect-error A request contract rejects another payload type at compile time too.
-  assert.throws(() => hub.register(calculation, { choices: ["a"] }), /payload/);
-  const pending = hub.register(calculation, { input: 1 });
-  // @ts-expect-error The result must match the selected contract.
-  assert.throws(() => hub.complete(calculation, pending.requestId, { choice: "a" }), /result/);
-  assert.equal(hub.get(calculation, pending.requestId)?.status, "pending");
-});
-
-test("Multiple consumption appends independent results, restores them, and retains them on expiry", async (t) => {
-  const { hub, open, location } = await createTestHub(t);
-  const callbacks: number[] = [];
-  const registered = hub.register(calculation, { input: 1 }, {
-    consumption: "multiple", callback: ({ output }) => { callbacks.push(output); },
+test("An immediate registration subscriber can expire a committed request without state being overwritten", async (t) => {
+  const { authorization: auth, scope, location } = await createTestAuthorization(t);
+  let expiration: Promise<boolean> | undefined;
+  scope.eventBus.subscribe<RequestRegisteredEvent>(RequestEvents.authorizationRequest.registered, ({ payload }) => {
+    assert.equal(auth.get(artifact, payload.request.requestId)?.state.status, "active");
+    expiration = auth.expire(payload.request.requestId, "consumer_cancelled");
+    Object.assign(payload.request, { maxConsumptions: 99 });
   });
-  assert.equal(registered.consumption, "multiple");
-  await hub.complete(calculation, registered.requestId, { output: 2 });
-  await hub.complete(calculation, registered.requestId, { output: 3 });
-  const before = hub.get(calculation, registered.requestId)!;
-  if (before.consumption !== "multiple") throw new Error("Expected multiple consumption.");
-  assert.equal(before.status, "pending");
-  assert.deepEqual(before.completions.map(({ result }) => result.output), [2, 3]);
-  assert.equal(new Set(before.completions.map(({ completionId }) => completionId)).size, 2);
-  assert.deepEqual(callbacks, [2, 3]);
-  hub.stop();
-  const restored = open();
-  assert.deepEqual(restored.get(calculation, registered.requestId), before);
-  await restored.complete(calculation, registered.requestId, { output: 4 });
-  assert.equal(restored.expire(registered.requestId, "workflow_finished"), true);
-  assert.throws(() => restored.complete(calculation, registered.requestId, { output: 5 }), /expired/);
-  const expired = restored.get(calculation, registered.requestId)!;
-  if (expired.consumption !== "multiple" || expired.status !== "expired") throw new Error("Expected expired multiple-consumption request.");
-  assert.equal(expired.reason, "workflow_finished");
-  assert.deepEqual(expired.completions.map(({ result }) => result.output), [2, 3, 4]);
-  assert.deepEqual(callbacks, [2, 3]);
-  restored.stop();
-  assert.deepEqual(open().get(calculation, registered.requestId), expired);
+  const request = await auth.register(artifact, input());
+  await scope.eventBus.drain(RequestEvents.authorizationRequest.registered);
+  assert.equal(await expiration, true);
+  assert.equal(auth.get(artifact, request.requestId)?.state.status, "expired");
+  assert.equal(auth.get(artifact, request.requestId)?.maxConsumptions, 2);
   assert.deepEqual(readJournalEvents(location.path).map(({ key }) => key.routeKey), [
-    RequestHubEvents.requestHub.registered.routeKey,
-    RequestHubEvents.requestHub.completed.routeKey,
-    RequestHubEvents.requestHub.completed.routeKey,
-    RequestHubEvents.requestHub.completed.routeKey,
-    RequestHubEvents.requestHub.expired.routeKey,
+    RequestEvents.authorizationRequest.registered.routeKey, RequestEvents.authorizationRequest.expired.routeKey,
   ]);
 });
 
-test("A failed callback cannot roll back or mutate multiple-consumption records", async (t) => {
-  const { hub } = await createTestHub(t);
-  const registered = hub.register(selection, { choices: ["a", "b"] }, { consumption: "multiple", callback: (result) => {
-    result.choice = "changed";
-    throw new Error("callback failure");
-  } });
-  await assert.rejects(hub.complete(selection, registered.requestId, { choice: "a" }), /callback failure/);
-  await assert.rejects(hub.complete(selection, registered.requestId, { choice: "b" }), /callback failure/);
-  const snapshot = hub.get(selection, registered.requestId)!;
-  if (snapshot.consumption !== "multiple") throw new Error("Expected multiple consumption.");
-  assert.deepEqual(snapshot.completions.map(({ result }) => result.choice), ["a", "b"]);
-  snapshot.completions[0]!.result.choice = "outside";
-  assert.notDeepEqual(hub.get(selection, registered.requestId), snapshot);
+test("New approvals consume a finite quota while denial and credential reuse do not", async (t) => {
+  const { authorization: auth, location } = await createTestAuthorization(t);
+  const request = await auth.register(artifact, input());
+  assert.equal((await auth.submit(request, { result: { decision: "denied", reason: "outside requested scope" }, consumer: {} })).decision, "denied");
+  assert.equal(auth.consumed(request), 0);
+  assert.deepEqual(auth.credentials(request), []);
+  const firstResult = await auth.submit(request, approved());
+  const first = auth.approvals(request)[1]!;
+  await auth.submit(request, approved(reviewerGrant));
+  assert.equal(auth.consumed(request), 2);
+  assert.equal(auth.credentials(request).length, 2);
+  assert.notEqual(first.approvalId, auth.approvals(request)[2]!.approvalId);
+  const reused = await auth.submit(request, { ...approved(), consumer: { agentId: "executor", turnId: "turn-2" } });
+  assert.deepEqual(reused, firstResult);
+  assert.equal(auth.consumed(request), 2);
+  assert.equal(auth.approvals(request).length, 3, "ApprovalCenter only stores new decisions.");
+  assert.equal(auth.credentialUses(first.approvalId).length, 1);
+  assert.equal(auth.get(artifact, request.requestId)?.state.status, "active");
+  assert.equal(readJournalEvents(location.path).length, 5, "New approval and credential use are each recorded once.");
+  const limited = await auth.register(artifact, { ...input(), maxConsumptions: 1 });
+  // Existing matching rights can still be used without spending this new request's allowance.
+  assert.deepEqual(await auth.submit(limited, approved()), firstResult);
+  assert.equal(auth.consumed(limited), 0);
 });
 
-test("Journal append failures leave registration, completion, expiry, and callbacks uncommitted", async (t) => {
-  const { hub, location } = await createTestHub(t);
-  let callbacks = 0;
-  const registered = hub.register(calculation, { input: 1 }, { consumption: "multiple", callback: () => { callbacks += 1; } });
-  const original = hub.get(calculation, registered.requestId);
-  const originalEvents = readJournalEvents(location.path);
-  const fault = t.mock.method(Journal.prototype, "append", () => { throw new Error("disk unavailable"); });
-  assert.throws(() => hub.register(calculation, { input: 2 }), /disk unavailable/);
-  assert.throws(() => hub.complete(calculation, registered.requestId, { output: 2 }), /disk unavailable/);
-  assert.throws(() => hub.expire(registered.requestId, "cancel"), /disk unavailable/);
-  await Promise.resolve();
-  assert.equal(callbacks, 0);
-  assert.deepEqual(hub.get(calculation, registered.requestId), original);
-  assert.deepEqual(readJournalEvents(location.path), originalEvents);
-  fault.mock.restore();
-  await hub.complete(calculation, registered.requestId, { output: 2 });
-  assert.equal(callbacks, 1);
-  assert.equal(hub.expire(registered.requestId, "cancel"), true);
+test("Credential grants serve matching same-type requests while preserving issuance identity across restore", async (t) => {
+  const { authorization: auth, close, open } = await createTestAuthorization(t);
+  const source = await auth.register(artifact, input());
+  const other = await auth.register(artifact, input());
+  const differentType = await auth.register(execution, { task: 1, maxConsumptions: 1, allowedGrants: [executorGrant] });
+  const differentBounds = await auth.register(artifact, { ...input(), allowedGrants: [reviewerGrant] });
+  const first = await auth.submit(source, approved());
+  const credential = auth.credentials(source)[0]!;
+  const reused = await auth.submit(other, approved());
+  assert.deepEqual(reused, first);
+  assert.equal(auth.consumed(source), 1);
+  assert.equal(auth.consumed(other), 0);
+  assert.equal(auth.credentials(other)[0]!.requestId, source.requestId);
+  assert.deepEqual(auth.credentials(differentType), []);
+  await assert.rejects(auth.submit(differentBounds, approved()), /grant.*registered/i);
+  const uses = auth.credentialUses(credential.credentialId);
+  assert.equal(uses[0]!.requestId, other.requestId);
+  close();
+  const restored = open().authorization;
+  const resumed = restored.get(artifact, other.requestId)!;
+  assert.deepEqual(restored.credential(resumed, credential.credentialId), credential);
+  assert.deepEqual(restored.credentialUses(credential.credentialId), uses);
+  assert.equal(restored.consumed(resumed), 0);
+  assert.equal(restored.consumed(restored.get(artifact, source.requestId)!), 1);
 });
 
-test("RequestHub rejects lossy JSON payloads and results before recording them", async (t) => {
-  const { hub, location } = await createTestHub(t);
-  const data: RequestType<object, object> = {
-    name: "json", isPayload: (value): value is object => typeof value === "object",
-    isResult: (value): value is object => typeof value === "object",
-  };
-  const request = hub.register(data, { valid: ["text", 1, null, true] });
-  for (const invalid of [{ value: undefined }, { value: Infinity }, { date: new Date() }, { map: new Map() }, [undefined]]) {
-    assert.throws(() => hub.register(data, invalid), /lossless JSON/);
-    assert.throws(() => hub.complete(data, request.requestId, invalid), /lossless JSON/);
-  }
-  assert.equal(readJournalEvents(location.path).length, 1);
+test("Submission uses registered constraints rather than a caller-modified request snapshot", async (t) => {
+  const { authorization: auth } = await createTestAuthorization(t);
+  const request = await auth.register(artifact, { ...input(), maxConsumptions: 1 });
+  Object.assign(request, { maxConsumptions: 99 });
+  await auth.submit(request, approved());
+  assert.equal((await auth.submit(request, approved(reviewerGrant))).decision, "denied");
+  assert.equal(auth.consumed(request), 1);
+  assert.equal(auth.get(artifact, request.requestId)?.maxConsumptions, 1);
 });
 
-test("Restore validates payloads and every result against the supplied host contract before rebinding", async (t) => {
-  const { hub, open } = await createTestHub(t);
-  const request = hub.register(calculation, { input: 1 }, { consumption: "multiple" });
-  await hub.complete(calculation, request.requestId, { output: 2 });
-  hub.stop();
-  const restored = open();
-  const wrongPayload: RequestType<{ input: number }, { output: number }> = {
-    ...calculation, isPayload: (value): value is { input: number } => "input" in value && value.input === 99,
-  };
-  const wrongResult: RequestType<{ input: number }, { output: number }> = {
-    ...calculation, isResult: (value): value is { output: number } => "output" in value && value.output === 99,
-  };
-  assert.throws(() => restored.get(wrongPayload, request.requestId), /stored calculation payload/);
-  assert.throws(() => restored.complete(wrongResult, request.requestId, { output: 99 }), /stored calculation result/);
-  assert.deepEqual(restored.get(calculation, request.requestId), hub.get(calculation, request.requestId));
-  assert.equal(restored.get({ ...calculation }, request.requestId), undefined);
+test("New approval cannot expand registered grants through a modified request handle", async (t) => {
+  const { authorization: auth, location, close, open } = await createTestAuthorization(t);
+  const request = await auth.register(artifact, input());
+  const unregistered = { scope: { agentId: "other", access: "write" }, target: { path: "outside.json" } };
+  const before = readFileSync(location.path, "utf8");
+  await assert.rejects(auth.submit({ ...request, allowedGrants: [unregistered] }, approved(unregistered)), /grant.*registered/i);
+  assert.deepEqual(auth.approvals(request), []);
+  assert.deepEqual(auth.credentials(request), []);
+  assert.equal(auth.consumed(request), 0);
+  assert.equal(readFileSync(location.path, "utf8"), before);
+  const accepted = await auth.submit(request, approved());
+  close();
+  const restored = open().authorization;
+  const resumed = restored.get(artifact, request.requestId)!;
+  assert.deepEqual(resumed.allowedGrants, [executorGrant, reviewerGrant]);
+  assert.deepEqual(restored.approvals(resumed)[0]!.result, accepted);
+  assert.deepEqual(restored.credentials(resumed)[0]!.target, executorGrant.target);
 });
 
-test("RequestHub refuses invalid replay transitions and releases its Journal lock on startup failure", async (t) => {
-  for (const corruption of ["duplicate_registration", "after_completion", "unknown_request", "unknown_event"]) {
-    await t.test(corruption, async (t) => {
-      const { hub, open, location } = await createTestHub(t);
-      const request = hub.register(calculation, { input: 1 });
-      hub.stop();
-      const journal = Journal.open(location);
-      const occurredAt = new Date().toISOString();
-      const completed = { requestId: request.requestId, result: { output: 2 } };
-      if (corruption === "duplicate_registration") {
-        journal.append({ id: "duplicate", key: RequestHubEvents.requestHub.registered, occurredAt,
-          payload: { requestId: request.requestId, type: calculation.name, consumption: "single", payload: { input: 1 } } });
-      } else if (corruption === "after_completion") {
-        journal.append({ id: "completed", key: RequestHubEvents.requestHub.completed, occurredAt, payload: completed });
-        journal.append({ id: "again", key: RequestHubEvents.requestHub.completed, occurredAt, payload: completed });
-      } else if (corruption === "unknown_request") {
-        journal.append({ id: "unknown", key: RequestHubEvents.requestHub.completed, occurredAt, payload: { ...completed, requestId: "missing" } });
-      } else {
-        journal.append({ id: "unknown", key: { ...RequestHubEvents.requestHub.completed, routeKey: "system.request_hub.unknown" }, occurredAt, payload: completed });
-      }
-      journal.close();
-      assert.throws(open, /already registered|not pending|Unknown RequestHub event/);
-      assert.equal(existsSync(location.lockPath), false);
-    });
-  }
-});
-
-test("RequestHub requires startup and refuses a second live writer", async (t) => {
-  const { hub, location, open } = await createTestHub(t);
-  assert.throws(open, /already attached/);
-  hub.start();
-  const unstarted = new RequestHub();
-  assert.throws(() => unstarted.register(calculation, { input: 1 }), /not started/);
-  unstarted.stop();
-  assert.throws(() => unstarted.start(), /closed/);
-});
-
-test("RequestHub rejects malformed registration, completion, and expiry facts during replay", async (t) => {
-  const invalidFacts = [
-    { key: RequestHubEvents.requestHub.registered, payload: { requestId: "invalid", type: "calculation", consumption: "unlimited", payload: { input: 1 } } },
-    { key: RequestHubEvents.requestHub.registered, payload: { requestId: "invalid", type: "calculation", consumption: "single", payload: null } },
-    { key: RequestHubEvents.requestHub.completed, payload: { requestId: "pending", result: null } },
-    { key: RequestHubEvents.requestHub.expired, payload: { requestId: "pending", reason: "" } },
-  ];
-  for (const [index, invalid] of invalidFacts.entries()) {
-    await t.test(`invalid fact ${index + 1}`, async (t) => {
-      const { hub, location, open } = await createTestHub(t);
-      const pending = hub.register(calculation, { input: 1 });
-      hub.stop();
-      const journal = Journal.open(location);
-      journal.append({ id: `invalid-${index}`, occurredAt: new Date().toISOString(), key: invalid.key,
-        payload: { ...invalid.payload, requestId: invalid.payload.requestId === "pending" ? pending.requestId : invalid.payload.requestId } });
-      journal.close();
-      assert.throws(open, /Invalid RequestHub/);
-      assert.equal(existsSync(location.lockPath), false);
-    });
-  }
-});
-
-test("Replay refuses repeated completion identities on a multiple-consumption request", async (t) => {
-  const { hub, location, open } = await createTestHub(t);
-  const request = hub.register(calculation, { input: 1 }, { consumption: "multiple" });
-  await hub.complete(calculation, request.requestId, { output: 2 });
-  hub.stop();
-  const journal = Journal.open(location);
-  journal.append(journal.readAll().at(-1)!);
-  journal.close();
-  assert.throws(open, /Duplicate RequestHub completion/);
-  assert.equal(existsSync(location.lockPath), false);
-});
-
-test("RequestHub retains request identities across awaited Workflow boundaries and restores results without callbacks", async (t) => {
-  const { hub, location, open, scope } = await createTestHub(t);
-  let callbacks = 0;
-  const request = hub.register(calculation, { input: 1 }, {
-    consumption: "multiple", callback: () => { callbacks += 1; },
+test("Committed approval and credential data are isolated from callers and event subscribers", async (t) => {
+  const { authorization: auth, scope, location } = await createTestAuthorization(t);
+  const request = await auth.register(artifact, input());
+  let observed: { consumed: number; hasCredential: boolean } | undefined;
+  scope.eventBus.subscribe<ApprovalSubmittedEvent>(ApprovalEvents.authorizationApproval.submitted, ({ payload }) => {
+    observed = { consumed: auth.consumed(request), hasCredential: auth.credential(request, payload.approvalId) !== undefined };
+    if (payload.result.decision === "approved") Object.assign(payload.result.target, { path: "event-mutation.json" });
+    Object.assign(payload.consumer, { agentId: "event-mutation" });
   });
-  await hub.complete(calculation, request.requestId, { output: 2 });
-  const previous = readFileSync(location.path, "utf8");
-  await scope.workflow.advance("error");
+  scope.eventBus.subscribe(CredentialEvents.authorizationCredential.issued, () => { throw new Error("observer failure"); });
+  const submission = approved();
+  const result = await auth.submit(request, submission);
+  submission.result.target.path = "caller-mutation.json";
+  submission.consumer.agentId = "caller-mutation";
+  if (result.decision === "approved") Object.assign(result.scope, { agentId: "snapshot-mutation" });
+  await scope.eventBus.drain(ApprovalEvents.authorizationApproval.submitted);
+  await scope.eventBus.drain(CredentialEvents.authorizationCredential.issued);
+  assert.deepEqual(observed, { consumed: 1, hasCredential: true });
+  const original = auth.approvals(request)[0]!;
+  assert.deepEqual(original.result, { decision: "approved", ...executorGrant });
+  const credential = auth.credential(request, original.approvalId)!;
+  Object.assign(credential.target, { path: "credential-mutation.json" });
+  assert.deepEqual(auth.credential(request, original.approvalId)?.target, executorGrant.target);
+  assert.deepEqual(readJournalEvents(location.path).at(-1)!.payload, original);
+});
 
+test("Closing preserves requests and restoration rebuilds approvals and credentials without republishing", async (t) => {
+  const { authorization: auth, close, open, location, scope } = await createTestAuthorization(t);
+  const request = await auth.register(artifact, { ...input(), maxConsumptions: 1 });
+  await auth.submit(request, approved());
+  const credential = auth.credentials(request)[0]!;
+  await auth.submit(request, approved());
+  const before = readFileSync(location.path, "utf8");
+  const approvals = auth.approvals(request), credentials = auth.credentials(request), uses = auth.credentialUses(credential.credentialId);
+  close(); close();
+  assert.equal(existsSync(location.lockPath), false);
+  let notifications = 0;
+  const subscriptions = [
+    scope.eventBus.subscribe(ApprovalEvents.authorizationApproval.submitted, () => { notifications += 1; }),
+    scope.eventBus.subscribe(CredentialEvents.authorizationCredential.issued, () => { notifications += 1; }),
+    scope.eventBus.subscribe(CredentialEvents.authorizationCredential.used, () => { notifications += 1; }),
+  ];
+  const restored = open().authorization;
+  const resumed = restored.get(artifact, request.requestId)!;
+  assert.deepEqual(resumed, request);
+  assert.deepEqual(restored.approvals(resumed), approvals);
+  assert.deepEqual(restored.credentials(resumed), credentials);
+  assert.deepEqual(restored.credentialUses(credential.credentialId), uses);
+  assert.equal(notifications, 0);
+  assert.equal(readFileSync(location.path, "utf8"), before);
+  for (const unsubscribe of subscriptions) unsubscribe();
+  await restored.submit(resumed, approved());
+  assert.equal(restored.consumed(resumed), 1);
+  assert.equal(restored.credentialUses(credential.credentialId).length, 2);
+});
+
+test("Explicit expiry is restored and rejects new approval and existing credential use", async (t) => {
+  const { authorization: auth, close, open } = await createTestAuthorization(t);
+  const request = await auth.register(artifact, input());
+  await auth.submit(request, approved());
+  assert.equal(await auth.expire(request.requestId, "consumer_cancelled"), true);
+  assert.equal(await auth.expire(request.requestId, "again"), false);
+  assert.equal(await auth.expire("missing", "test"), false);
+  await assert.rejects(auth.submit(request, approved()), /expired|not active/i);
+  close();
+  const restored = open().authorization;
+  const expired = restored.get(artifact, request.requestId)!;
+  assert.equal(expired.state.status, "expired");
+  if (expired.state.status !== "expired") assert.fail();
+  assert.equal(expired.state.reason, "consumer_cancelled");
+  await assert.rejects(restored.submit(expired, approved()), /expired|not active/i);
+  assert.equal(restored.approvals(expired).length, 1);
+});
+
+test("Append failure leaves registration, approval, credential issuance, and expiry uncommitted", async (t) => {
+  const { authorization: auth, location, scope } = await createTestAuthorization(t);
+  const request = await auth.register(artifact, input());
+  const original = auth.get(artifact, request.requestId);
+  const events = readJournalEvents(location.path);
+  let notifications = 0;
+  scope.eventBus.subscribe(ApprovalEvents.authorizationApproval.submitted, () => { notifications += 1; });
+  scope.eventBus.subscribe(CredentialEvents.authorizationCredential.issued, () => { notifications += 1; });
+  const fault = t.mock.method(Journal.prototype, "append", () => { throw new Error("disk unavailable"); });
+  await assert.rejects(auth.register(artifact, input()), /disk unavailable/);
+  await assert.rejects(auth.submit(request, approved()), /disk unavailable/);
+  await assert.rejects(auth.expire(request.requestId, "cancel"), /disk unavailable/);
+  assert.deepEqual(auth.get(artifact, request.requestId), original);
+  assert.deepEqual(auth.approvals(request), []);
+  assert.deepEqual(auth.credentials(request), []);
+  assert.equal(auth.consumed(request), 0);
+  assert.equal(notifications, 0);
+  assert.deepEqual(readJournalEvents(location.path), events);
+  fault.mock.restore();
+  await auth.submit(request, approved());
+  const credential = auth.credentials(request)[0]!;
+  const usesBefore = readJournalEvents(location.path);
+  const useFault = t.mock.method(Journal.prototype, "append", () => { throw new Error("use write failed"); });
+  await assert.rejects(auth.submit(request, approved()), /use write failed/);
+  assert.deepEqual(auth.credentialUses(credential.credentialId), []);
+  assert.equal(auth.consumed(request), 1);
+  assert.deepEqual(readJournalEvents(location.path), usesBefore);
+  useFault.mock.restore();
+  await auth.submit(request, approved());
+  assert.equal(auth.credentialUses(credential.credentialId).length, 1);
+});
+
+test("Restored concrete request parsing fails before aggregation without exposing partial runtime data", async (t) => {
+  const { authorization: auth, close, open } = await createTestAuthorization(t);
+  await auth.register(artifact, input());
+  close();
+  const wrong = { ...artifact, decode() { throw new Error("Invalid stored purpose"); } };
+  assert.throws(() => open([wrong, execution]), /Invalid stored purpose/);
+  assert.doesNotThrow(open);
+});
+
+test("Extra persisted payload fields cannot change authorization facts during recovery", async (t) => {
+  const { authorization: auth, close, open, location } = await createTestAuthorization(t);
+  const request = await auth.register(artifact, input());
+  await auth.submit(request, approved());
+  await auth.submit(request, approved());
+  await auth.expire(request.requestId, "finished");
+  const expectedRequest = auth.get(artifact, request.requestId);
+  const expectedApprovals = auth.approvals(request);
+  const expectedCredentials = auth.credentials(request);
+  const credentialId = expectedCredentials[0]!.credentialId;
+  const expectedUses = auth.credentialUses(credentialId);
+  close();
+
+  const journal = Journal.open(location);
+  const facts = journal.readAll();
+  Object.assign(facts[0]!.payload as object, { consumer: {}, result: { decision: "denied" } });
+  Object.assign(facts[1]!.payload as object, {
+    request: { ...artifact.encode(request), requestId: "unexpected-request" },
+  });
+  Object.assign(facts[2]!.payload as object, { result: { decision: "denied" } });
+  Object.assign(facts[3]!.payload as object, { consumer: {}, result: { decision: "approved" } });
+  journal.replaceAll(facts);
+  journal.close();
+
+  const restored = open().authorization;
+  assert.deepEqual(restored.get(artifact, request.requestId), expectedRequest);
+  assert.equal(restored.find("unexpected-request"), undefined);
+  assert.deepEqual(restored.approvals(request), expectedApprovals);
+  assert.equal(restored.consumed(request), 1);
+  assert.deepEqual(restored.credentials(request), expectedCredentials);
+  assert.deepEqual(restored.credentialUses(credentialId), expectedUses);
+});
+
+test("Authorization refuses duplicate and invalid replay transitions and cleanup releases the journal", async (t) => {
+  for (const corruption of ["duplicate_registration", "duplicate_approval", "unknown_request", "after_expiry", "unknown_event", "quota_exceeded"]) {
+    await t.test(corruption, async (t) => {
+      const { authorization: auth, close, open, location } = await createTestAuthorization(t);
+      const request = await auth.register(artifact, { ...input(), maxConsumptions: 1 });
+      await auth.submit(request, approved());
+      const first = auth.approvals(request)[0]!;
+      if (corruption === "after_expiry") await auth.expire(request.requestId, "cancelled");
+      close();
+      const journal = Journal.open(location);
+      const events = journal.readAll();
+      const event = structuredClone(corruption === "duplicate_registration" ? events[0]! : events[1]!);
+      if (corruption !== "duplicate_approval") {
+        event.id = `${first.approvalId}-${corruption}`;
+        if (corruption !== "duplicate_registration") Object.assign(event.payload as object, { approvalId: event.id });
+      }
+      if (corruption === "unknown_request") Object.assign(event.payload as object, { requestId: "missing" });
+      if (corruption === "unknown_event") event.key = { ...event.key, routeKey: "system.authorization.unknown" };
+      journal.append(event); journal.close();
+      assert.throws(open, /duplicate|registered|unknown|active|expired|quota|invalid/i);
+      assert.equal(existsSync(location.lockPath), false);
+    });
+  }
+});
+
+test("Authorization validates malformed persisted requests, decisions, and expiry at the restore boundary", async (t) => {
+  for (const corruption of ["quota", "grants", "purpose", "unknown_type", "decision", "basis", "grant", "expiry"]) {
+    await t.test(corruption, async (t) => {
+      const { authorization: auth, close, location, open } = await createTestAuthorization(t);
+      const request = await auth.register(artifact, input());
+      await auth.submit(request, approved()); await auth.expire(request.requestId, "cancelled"); close();
+      const journal = Journal.open(location), facts = journal.readAll();
+      const payload = facts[0]!.payload as RequestRegisteredRecord;
+      if (corruption === "quota") Object.assign(payload.request, { maxConsumptions: "unlimited" });
+      else if (corruption === "grants") Object.assign(payload.request, { allowedGrants: null });
+      else if (corruption === "purpose") Object.assign(payload.request, { purpose: false });
+      else if (corruption === "unknown_type") Object.assign(payload.request, { type: "missing" });
+      else if (corruption === "decision") Object.assign(facts[1]!.payload as object, { result: null });
+      else if (corruption === "basis") Object.assign(facts[1]!.payload as object, { basis: { kind: "unknown" } });
+      else if (corruption === "grant") Object.assign(facts[1]!.payload as object, { result: { decision: "approved", scope: executorGrant.scope, target: { path: "unregistered.json" } } });
+      else Object.assign(facts[2]!.payload as object, { reason: "" });
+      journal.replaceAll(facts); journal.close();
+      assert.throws(open, /invalid|malformed|unknown/i);
+      assert.equal(existsSync(location.lockPath), false);
+    });
+  }
+});
+
+test("Restored credential use requires an earlier matching issuance fact", async (t) => {
+  for (const corruption of ["missing_credential", "use_before_issuance", "wrong_type", "wrong_bounds", "after_expiry", "wrong_workflow"]) {
+    await t.test(corruption, async (t) => {
+      const { authorization: auth, close, location, open } = await createTestAuthorization(t);
+      const request = await auth.register(artifact, input());
+      await auth.submit(request, approved()); await auth.submit(request, approved());
+      if (corruption === "after_expiry") await auth.expire(request.requestId, "cancelled");
+      close();
+      const journal = Journal.open(location), facts = journal.readAll();
+      if (corruption === "missing_credential") Object.assign(facts[2]!.payload as object, { credentialId: "missing" });
+      else if (corruption === "use_before_issuance") [facts[1], facts[2]] = [facts[2]!, facts[1]!];
+      else if (corruption === "wrong_workflow") Object.assign(facts[2]!.payload as object, { workflowId: "other" });
+      else if (corruption === "after_expiry") [facts[2], facts[3]] = [facts[3]!, facts[2]!];
+      else {
+        const another: ScoutRequestRecord = { ...artifact.encode(request), requestId: "consumer",
+          type: corruption === "wrong_type" ? "test.execution" : "test.artifact",
+          allowedGrants: corruption === "wrong_bounds" ? [reviewerGrant] : request.allowedGrants };
+        facts.splice(2, 0, { ...structuredClone(facts[0]!), id: "another-registration", payload: { request: { ...another, task: 1 } } });
+        Object.assign(facts[3]!.payload as object, { requestId: "consumer" });
+      }
+      journal.replaceAll(facts); journal.close();
+      assert.throws(open, /credential/i);
+      assert.equal(existsSync(location.lockPath), false);
+    });
+  }
+});
+
+test("Authorization requires startup and closed services refuse mutations", async (t) => {
+  const { authorization: auth, close, open } = await createTestAuthorization(t);
+  assert.throws(open, /already attached/i);
+  auth.start();
+  const request = await auth.register(artifact, input());
+  const unstarted = new Authorization();
+  await assert.rejects(unstarted.register(artifact, input()), /not started/i);
+  await assert.rejects(unstarted.submit(request, approved()), /not started/i);
+  unstarted.stop();
+  assert.throws(() => unstarted.start(), /closed/i);
+  const hub = new RequestHub(new Map());
+  assert.throws(() => hub.register(artifact, input(), request.workflowId), /not started/i);
+  const center = new ApprovalCenter();
+  assert.throws(() => center.submit(request, approved()), /not started/i);
+  hub.stop(); center.stop();
+  assert.throws(() => hub.start(), /closed/i); assert.throws(() => center.start(), /closed/i);
+  close();
+  await assert.rejects(auth.register(artifact, input()), /closed/i);
+  await assert.rejects(auth.submit(request, approved()), /closed/i);
+  await assert.rejects(auth.expire(request.requestId, "after_close"), /closed/i);
+});
+
+test("Workflow completion ends authorization use and a new Workflow does not copy historical requests", async (t) => {
+  const { authorization: auth, location, open, close, scope } = await createTestAuthorization(t);
+  const request = await auth.register(artifact, input());
+  await auth.submit(request, approved());
+  const credential = auth.credentials(request)[0]!;
+  await scope.workflow.advance("error");
   assert.equal(scope.workflow.snapshot(), undefined);
   assert.equal(existsSync(location.lockPath), false);
-  await hub.complete(calculation, request.requestId, { output: 3 });
-  assert.equal(readFileSync(location.path, "utf8"), previous, "idle activity cannot mutate historical evidence");
-  assert.equal(existsSync(join(scope.runRoot, "request-hub.journal")), false);
+  const historical = readFileSync(location.path, "utf8");
+  await assert.rejects(auth.register(artifact, input()), /active.*workflow|workflow.*active/i);
+  await assert.rejects(auth.submit(request, approved()), /active.*workflow|workflow.*active|expired/i);
+  assert.equal(existsSync(join(scope.runRoot, "authorization.journal")), false);
   await scope.workflow.startWorkflow();
   assert.equal(scope.workflow.snapshot()?.workflowId, "workflow-002");
-  const current = requestHubJournalPaths(scope.workflow.journalRoot);
-  const events = readJournalEvents(current.path);
-  assert.deepEqual(events.map((event) => event.key.routeKey), [
-    RequestHubEvents.requestHub.registered.routeKey,
-    RequestHubEvents.requestHub.completed.routeKey,
-    RequestHubEvents.requestHub.completed.routeKey,
-  ]);
-  assert.equal(new Set(events.map((event) => event.id)).size, 3);
-  assert.equal(readFileSync(location.path, "utf8"), previous);
-  const before = hub.get(calculation, request.requestId);
-  hub.stop();
-  assert.equal(existsSync(current.lockPath), false);
-  const restored = open();
-  assert.deepEqual(restored.get(calculation, request.requestId), before);
-  assert.equal(callbacks, 2);
-  await restored.complete(calculation, request.requestId, { output: 4 });
-  assert.equal(callbacks, 2, "restored results and later consumption never resurrect a process-local callback");
-  assert.equal(readJournalEvents(current.path).length, 4);
-  assert.equal(readFileSync(location.path, "utf8"), previous);
+  assert.deepEqual(readJournalEvents(authorizationJournalPaths(scope.workflow.journalRoot).path), []);
+  assert.equal(auth.get(artifact, request.requestId), undefined);
+  assert.deepEqual(auth.approvals(request), []); assert.deepEqual(auth.credentials(request), []);
+  await assert.rejects(auth.submit(request, approved()), /Unknown request/);
+  const next = await auth.register(artifact, input());
+  assert.equal(next.workflowId, "workflow-002");
+  assert.notEqual(next.requestId, request.requestId);
+  assert.equal(auth.credential(next, credential.credentialId), undefined);
+  await auth.submit(next, approved());
+  assert.equal(auth.consumed(next), 1);
+  assert.equal(readFileSync(location.path, "utf8"), historical);
+  close();
+  const restored = open().authorization;
+  assert.equal(restored.get(artifact, request.requestId), undefined);
+  assert.deepEqual(restored.get(artifact, next.requestId), next);
+  assert.equal(restored.consumed(next), 1); assert.equal(restored.credentials(next).length, 1);
 });
 
-test("RequestHub starts in an empty runtime without creating recording files and seeds its first explicit Workflow", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "scout-request-hub-idle-"));
-  const runId = "request-hub-idle";
-  const runRoot = join(root, "run", runId);
+test("Authorization starts in an empty runtime but registration waits for an explicitly started Workflow", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "scout-authorization-idle-"));
+  const runId = "authorization-idle", runRoot = join(root, "run", runId);
   const manifestStore = new RunManifestStore(runRoot);
   manifestStore.create({ runId, scoutRoot: root, createdAt: new Date().toISOString(), checkpointSeq: 0 });
   const workflow = new Workflow(createTestWorkflowAsset(createDefaultTestGraph().snapshot()));
   const scope = await installTestRunScope(t, { runId, scoutRoot: root, runRoot, workflow, manifestStore });
   await workflow.start();
-  const hub = new RequestHub();
-  t.after(async () => { hub.stop(); await workflow.stop(); rmSync(root, { recursive: true, force: true }); });
-  hub.start();
-  scope.workflow.registerParticipant(hub);
-  const request = hub.register(calculation, { input: 1 });
-  assert.equal(existsSync(join(runRoot, "request-hub.journal")), false);
+  const auth = new Authorization();
+  t.after(async () => { auth.stop(); workflow.unregisterParticipant(auth); await workflow.stop(); rmSync(root, { recursive: true, force: true }); });
+  auth.start(); workflow.registerParticipant(auth);
+  await assert.rejects(auth.register(artifact, input()), /active.*workflow|workflow.*active/i);
+  assert.equal(existsSync(join(runRoot, "authorization.journal")), false);
   assert.equal(existsSync(join(runRoot, "workflows")), false);
-  assert.equal(hub.recordObject.hasActiveRecord, false);
   await workflow.startWorkflow();
-  const paths = requestHubJournalPaths(scope.workflow.journalRoot);
-  assert.equal(existsSync(paths.path), true);
-  assert.equal(existsSync(paths.lockPath), true);
-  assert.equal(readJournalEvents(paths.path).length, 1);
-  assert.deepEqual(hub.get(calculation, request.requestId)?.payload, { input: 1 });
-  await hub.complete(calculation, request.requestId, { output: 2 });
+  const paths = authorizationJournalPaths(scope.workflow.journalRoot);
+  assert.deepEqual(readJournalEvents(paths.path), []);
+  const request = await auth.register(artifact, input());
+  await auth.submit(request, approved());
   assert.equal(readJournalEvents(paths.path).length, 2);
+});
+
+test("Concurrent approval candidates cannot exceed quota, and matching candidates reuse the committed credential", async (t) => {
+  const { authorization: auth } = await createTestAuthorization(t);
+  const request = await auth.register(artifact, { ...input(), maxConsumptions: 1 });
+  const results = await Promise.all([auth.submit(request, approved()), auth.submit(request, approved()), auth.submit(request, approved(reviewerGrant))]);
+  assert.deepEqual(results.map((result) => result.decision), ["approved", "approved", "denied"]);
+  assert.equal(auth.consumed(request), 1);
+  assert.equal(auth.credentials(request).length, 1);
+  assert.equal(auth.credentialUses(auth.credentials(request)[0]!.credentialId).length, 1);
+});
+
+test("A stalled or failed observational subscriber cannot block a committed authorization result", async (t) => {
+  const { authorization: auth, scope } = await createTestAuthorization(t);
+  const request = await auth.register(artifact, input());
+  let release!: () => void;
+  const stalled = new Promise<void>((resolve) => { release = resolve; });
+  scope.eventBus.subscribe(ApprovalEvents.authorizationApproval.submitted, () => stalled);
+  try {
+    const result = await auth.submit(request, approved());
+    assert.equal(result.decision, "approved");
+    assert.equal(auth.consumed(request), 1);
+    assert.equal(auth.credentials(request).length, 1);
+  } finally { release(); }
+  await scope.eventBus.drain(ApprovalEvents.authorizationApproval.submitted);
 });

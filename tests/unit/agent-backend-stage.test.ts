@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import { AgentBackendStage } from "../../src/run/lifecycle/stages/agent-backend-stage.js";
-import { RequestHubStage } from "../../src/run/lifecycle/stages/request-hub-stage.js";
+import { AuthorizationStage } from "../../src/run/lifecycle/stages/authorization-stage.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
 test("AgentBackendStage rolls back partial subscriptions and can retry all three entries", async (t) => {
-  const hubStage = new RequestHubStage();
+  const authorizationStage = new AuthorizationStage();
   const stage = new AgentBackendStage();
-  t.after(async () => { await stage.stop(); await hubStage.stop(); });
+  t.after(async () => { await stage.stop(); await authorizationStage.stop(); });
   const live = new Set<string>();
   let rejectRequest = true;
   const client = {
@@ -20,9 +20,9 @@ test("AgentBackendStage rolls back partial subscriptions and can retry all three
     },
   } as unknown as CodexAppServerClient;
   await installTestRunScope(t, { runId: "backend-stage", appServer: client });
-  await assert.rejects(stage.start(), /RequestHub Service is not available/);
+  await assert.rejects(stage.start(), /Authorization Service is not available/);
   assert.equal(live.size, 0);
-  await hubStage.start();
+  await authorizationStage.start();
   await assert.rejects(stage.start(), /request subscription failed/);
   assert.equal(live.size, 0);
   rejectRequest = false;
