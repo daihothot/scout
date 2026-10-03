@@ -121,6 +121,53 @@ test("RBT review report renderer rejects invalid timeline points", () => {
   }
 });
 
+for (const formatDefect of ["missing-summary", "invalid-summary", "empty-summary", "missing-id", "invalid-id", "invalid-id-format", "duplicate-point",
+  "missing-title", "invalid-title", "missing-comparison", "invalid-comparison", "missing-expected", "missing-actual", "invalid-note",
+  "invalid-refs", "refs-not-object", "refs-nonstring"] as const) {
+  test(`RBT review report renderer still rejects ${formatDefect} document formatting`, () => {
+    const root = mkdtempSync(join(tmpdir(), "scout-rbt-review-report-format-"));
+    try {
+      const input = join(root, "review-result.json");
+      const output = join(root, "review-report.html");
+      const point: Record<string, unknown> = {
+        id: "SR-001", title: "Signal", status: "match", expected: true, actual: true, comparison: "Compared evidence",
+      };
+      const timeline = [point];
+      const value: Record<string, unknown> = {
+        bddId: "bdd.example", targetVersion: "v1", campaignId: "campaign", executorHistoryRef: "history/001.json",
+        summary: "Comparison facts", timeline,
+      };
+      let expected: RegExp;
+      switch (formatDefect) {
+        case "missing-summary": delete value.summary; expected = /summary 必须是非空字符串/; break;
+        case "invalid-summary": value.summary = 1; expected = /summary 必须是非空字符串/; break;
+        case "empty-summary": value.summary = ""; expected = /summary 必须是非空字符串/; break;
+        case "missing-id": delete point.id; expected = /\.id 必须是非空字符串/; break;
+        case "invalid-id": point.id = 1; expected = /\.id 必须是非空字符串/; break;
+        case "invalid-id-format": point.id = "EXP-001"; expected = /必须是 JR-\* 或 SR-\*/; break;
+        case "duplicate-point": timeline.push({ ...point }); expected = /timeline ID 重复/; break;
+        case "missing-title": delete point.title; expected = /\.title 必须是非空字符串/; break;
+        case "invalid-title": point.title = 1; expected = /\.title 必须是非空字符串/; break;
+        case "missing-comparison": delete point.comparison; expected = /\.comparison 必须是非空字符串/; break;
+        case "invalid-comparison": point.comparison = 1; expected = /\.comparison 必须是非空字符串/; break;
+        case "missing-expected": delete point.expected; expected = /必须包含 expected 和 actual/; break;
+        case "missing-actual": delete point.actual; expected = /必须包含 expected 和 actual/; break;
+        case "invalid-note": point.note = 1; expected = /\.note 必须是字符串/; break;
+        case "invalid-refs": point.refs = { runtime: 1 }; expected = /\.refs\.runtime 必须是字符串数组/; break;
+        case "refs-not-object": point.refs = []; expected = /\.refs 必须是对象/; break;
+        case "refs-nonstring": point.refs = { runtime: [1] }; expected = /\.refs\.runtime 必须是字符串数组/; break;
+      }
+      writeFileSync(input, JSON.stringify(value));
+      assert.throws(
+        () => execFileSync(process.execPath, [script, "--input", input, "--output", output], { encoding: "utf8", stdio: "pipe" }),
+        expected,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
 test("RBT review report renderer applies pass and attention totals", () => {
   const root = mkdtempSync(join(tmpdir(), "scout-rbt-review-report-totals-"));
   try {

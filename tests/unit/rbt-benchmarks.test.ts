@@ -339,30 +339,84 @@ test("Passed platforms accumulate across Workflows and deduplicate without mixin
   assert.deepEqual(f.warnings, []);
 });
 
-for (const corruption of ["execute-file", "execute-pack", "history", "bdd", "campaign", "missing-timeline", "unknown-status", "duplicate-point", "invalid-refs", "missing-formal-pack"] as const) {
+for (const corruption of ["execute-file", "execute-pack", "history", "bdd", "campaign", "missing-timeline", "unknown-status", "missing-formal-pack",
+  "review-not-object", "point-not-object", "bdd-type", "version-type", "version-identity", "history-reference-type", "unknown-history", "scenario-type", "scenario-identity"] as const) {
   test(`Review ${corruption} does not become successful benchmark evidence`, async (t) => {
     const f = await fixture(t);
     const { history } = await f.execute();
     if (corruption !== "missing-formal-pack") await f.submit(f.executionHandoff());
     const review = f.review(history);
     const before = f.scope.workflow.benchmarks.read("rbt");
+    const value: Record<string, unknown> = { ...review.value };
+    let content: unknown = value;
     switch (corruption) {
       case "execute-file": f.write("operator", `${bddId}/${targetVersion}/execute-file.json`, "changed"); break;
       case "execute-pack": f.write("operator", `${bddId}/${targetVersion}/execute-pack/bdd-evidence.md`, "changed"); break;
       case "history": f.write("operator", "history/001.json", "changed"); break;
-      case "bdd": review.value.bddId = "different"; break;
-      case "campaign": review.value.campaignId = "different"; break;
-      case "missing-timeline": review.value.timeline = []; break;
+      case "bdd": value.bddId = "different"; break;
+      case "campaign": value.campaignId = "different"; break;
+      case "missing-timeline": value.timeline = []; break;
       case "unknown-status": review.value.timeline[0]!.status = "success"; break;
-      case "duplicate-point": review.value.timeline.push(review.value.timeline[0]!); break;
-      case "invalid-refs": Object.assign(review.value.timeline[0]!, { refs: { runtime: 1 } }); break;
       case "missing-formal-pack": break;
+      case "review-not-object": content = []; break;
+      case "point-not-object": value.timeline = [null]; break;
+      case "bdd-type": value.bddId = 1; break;
+      case "version-type": value.targetVersion = 1; break;
+      case "version-identity": value.targetVersion = "different"; break;
+      case "history-reference-type": value.executorHistoryRef = 1; break;
+      case "unknown-history": value.executorHistoryRef = f.ref("operator", "history/999.json"); break;
+      case "scenario-type": value.scenarioId = 1; break;
+      case "scenario-identity": value.scenarioId = "different"; break;
     }
-    writeFileSync(review.path, JSON.stringify(review.value));
+    writeFileSync(review.path, JSON.stringify(content));
     await f.submit(review.input);
     assert.deepEqual(f.scope.workflow.benchmarks.read("rbt"), before);
     assert.equal(new RbtDomainProjector().project(f.domain.recordObject.read()).reviews.length, 0);
     assert.equal(f.warnings.length, 1);
+  });
+}
+
+for (const formatDefect of ["missing-summary", "invalid-summary", "empty-summary", "missing-id", "invalid-id", "invalid-id-format", "duplicate-point",
+  "missing-title", "invalid-title", "missing-comparison", "invalid-comparison", "missing-expected", "missing-actual", "invalid-note",
+  "invalid-refs", "refs-not-object", "refs-nonstring"] as const) {
+  test(`Review ${formatDefect} does not prevent publishing associated result facts`, async (t) => {
+    const f = await fixture(t);
+    const { history } = await f.execute();
+    await f.submit(f.executionHandoff());
+    const review = f.review(history);
+    const point: Record<string, unknown> = { ...review.value.timeline[0]! };
+    const timeline = [point];
+    const value: Record<string, unknown> = { ...review.value, timeline };
+    switch (formatDefect) {
+      case "missing-summary": delete value.summary; break;
+      case "invalid-summary": value.summary = 1; break;
+      case "empty-summary": value.summary = ""; break;
+      case "missing-id": delete point.id; break;
+      case "invalid-id": point.id = 1; break;
+      case "invalid-id-format": point.id = "EXP-001"; break;
+      case "duplicate-point": timeline.push({ ...point }); break;
+      case "missing-title": delete point.title; break;
+      case "invalid-title": point.title = 1; break;
+      case "missing-comparison": delete point.comparison; break;
+      case "invalid-comparison": point.comparison = 1; break;
+      case "missing-expected": delete point.expected; break;
+      case "missing-actual": delete point.actual; break;
+      case "invalid-note": point.note = 1; break;
+      case "invalid-refs": point.refs = { runtime: 1 }; break;
+      case "refs-not-object": point.refs = []; break;
+      case "refs-nonstring": point.refs = { runtime: [1] }; break;
+    }
+    // Document formatting belongs to the report producer; Artifact extraction consumes only associated facts.
+    writeFileSync(review.path, JSON.stringify(value));
+    await f.submit(review.input);
+    const facts = new RbtDomainProjector().project(f.domain.recordObject.read());
+  assert.equal(facts.reviews.length, 1);
+    assert.equal(facts.reviews[0]!.pack.result, "pass");
+    assert.equal(facts.reviews[0]!.pack.execution.executorHistory.digest, history.executorHistoryDigest);
+    assert.deepEqual(f.entry()!.history.lastReviewerPack, { workflowId: "workflow-001" });
+    assert.deepEqual(f.entry()!.history.lastReviewSuccess, { workflowId: "workflow-001" });
+    assert.deepEqual(f.entry()!.statistics?.passedPlatforms, ["unity-editor"]);
+    assert.deepEqual(f.warnings, []);
   });
 }
 
