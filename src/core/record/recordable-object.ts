@@ -54,6 +54,11 @@ export abstract class RecordableObject<TRecord extends RecordEvent = RecordEvent
   /** Supplies initial facts for a newly prepared file; never reads or projects history. */
   protected baselineEvents(): readonly ScoutEvent[] { return []; }
 
+  protected readonly requiredEventWrites: boolean = false;
+
+  /** Converts live event payloads to this file's record contracts. */
+  protected encode(event: ScoutEvent): ScoutEvent { return event; }
+
   protected onWriteSuccess(): void {}
 
   protected onWriteFailure(failure: RecordWriteFailure): void {
@@ -266,6 +271,8 @@ export abstract class RecordableObject<TRecord extends RecordEvent = RecordEvent
       this.writer = new JournalWriter({
         eventBus: currentRunScope().eventBus,
         eventTypes: this.eventTypes,
+        required: this.requiredEventWrites,
+        serialize: (event) => this.encode(event),
         journal: () => this.requireJournal(),
         onSuccess: () => this.onWriteSuccess(),
         onFailure: ({ journalId, ...failure }) => this.onWriteFailure({ ...failure, recordId: journalId }),

@@ -73,6 +73,20 @@ test("JournalWriter failure disclosure cannot replace the explicit persistence e
   assert.throws(() => writer.write(runtimeAttached()), (error) => error === failure);
 });
 
+test("JournalWriter required recording rejects before downstream consumers and preserves the write error", async (t) => {
+  const { eventBus, journal } = createWriter(t);
+  const error = new Error("required recording failed");
+  const writer = new JournalWriter({ eventBus, journal: () => journal,
+    eventTypes: [RunEvents.runtime.attached], required: true });
+  writer.start();
+  t.after(() => writer.stop());
+  t.mock.method(journal, "append", () => { throw error; });
+  let consumed = false;
+  eventBus.subscribe(RunEvents.runtime.attached, () => { consumed = true; });
+  await assert.rejects(eventBus.publishAndWait(RunEvents.runtime.attached, runtimeAttached().payload), (failure) => failure === error);
+  assert.equal(consumed, false);
+});
+
 function createWriter(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), "scout-journal-writer-"));
   const eventBus = new InMemoryEventBus();

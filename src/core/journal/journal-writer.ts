@@ -18,6 +18,8 @@ export class JournalWriter {
     eventBus: EventBus;
     eventTypes: readonly EventType[];
     journal: () => Journal;
+    required?: boolean;
+    serialize?(event: ScoutEvent): ScoutEvent;
     onSuccess?(): void;
     onFailure?(failure: JournalWriteFailure): void;
   }) {}
@@ -31,22 +33,24 @@ export class JournalWriter {
       this.unsubscribers.push(this.input.eventBus.subscribe(type, (event) => {
         try {
           this.write(event);
-        } catch {
+        } catch (error) {
+          if (this.input.required) throw error;
           // Observational event recording remains best effort. Explicit writes
           // use write() directly when their caller requires a durable fact.
         }
-      }, { priority: EventSubscriptionPriorities.High }));
+      }, { priority: this.input.required ? EventSubscriptionPriorities.Critical : EventSubscriptionPriorities.High }));
     }
   }
 
   /** Appends one durable fact, reporting and throwing after both attempts fail. */
   write(event: ScoutEvent): JournalEvent {
     const journal = this.input.journal();
+    const serialized = this.input.serialize?.(event) ?? event;
     let failure: unknown;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       let recorded: JournalEvent;
       try {
-        recorded = journal.append(event);
+        recorded = journal.append(serialized);
       } catch (error) {
         failure = error;
         continue;
