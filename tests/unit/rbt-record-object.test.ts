@@ -17,6 +17,8 @@ import {
   RbtRecordObject,
   JarvisBehaviorToolStore,
   type RbtExecutionHistoryReadyEvent,
+  type RbtExecutionPackSubmission,
+  type RbtReviewSubmission,
 } from "../../src/domain/domains/rbt/index.js";
 import { RunEvents } from "../../src/run/events/index.js";
 import { installTestRunScope, createTestWorkflowAsset } from "../helpers/run-persistence.js";
@@ -39,14 +41,16 @@ test("RbtRecordObject owns event subscription, history projection, and lock rele
   });
   assert.equal(existsSync(lockPath), true);
   assert.equal(journal.read().length, 1);
-  assert.deepEqual(readJournalEvents(path), journal.read());
+  assert.deepEqual(readJournalEvents(path), journal.read().map(({ kind: _kind, ...record }) => record));
   assert.deepEqual(new RbtDomainProjector().project(journal.read()), {
     domainId: "rbt",
     journalSeq: 1,
     updatedAt: event.occurredAt,
-    histories: [{ ...history(1), occurredAt: event.occurredAt }],
-    executionPacks: [],
-    reviews: [],
+    artifacts: {
+      histories: new Map([[history(1).executorHistoryRef, { history: history(1), occurredAt: event.occurredAt }]]),
+      executionPacks: [],
+      acceptedSubmissions: new Set(),
+    },
   });
   assert.equal(scope.workflow.readEvents().some((entry) => RbtEvents.history.ready.is(entry)), false);
 
@@ -56,7 +60,7 @@ test("RbtRecordObject owns event subscription, history projection, and lock rele
   journal.start();
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(3));
   assert.deepEqual(journal.read().map((entry) => entry.seq), [1, 2]);
-  assert.deepEqual(new RbtDomainProjector().project(journal.read()).histories.map((entry) => entry.runtimeSequence), [1, 3]);
+  assert.deepEqual([...new RbtDomainProjector().project(journal.read()).artifacts.histories.values()].map(({ history }) => history.runtimeSequence), [1, 3]);
 
   journal.close();
   journal.close();
@@ -64,6 +68,66 @@ test("RbtRecordObject owns event subscription, history projection, and lock rele
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(4));
   assert.equal(readJournalEvents(path).length, 2);
   assert.throws(() => journal.read(), /RBT Domain journal is unavailable/);
+});
+
+test("RBT encoding preserves the Journal payload format while projection owns independent runtime indexes", async (t) => {
+  const scope = await installTestRunScope(t, { runId: "rbt-record-runtime-boundary" });
+  const journal = new RbtRecordObject();
+  t.after(() => journal.close());
+  journal.start();
+  const ready = history(1);
+  const occurredAt = "2026-09-29T01:00:00.000Z";
+  const executeFile = {
+    workflowId: "workflow-001", agentId: "executor", path: "account/1.0/execute-file.json",
+    digest: ready.executeFileDigest, algorithm: "sha256" as const,
+  };
+  const submitted: RbtExecutionPackSubmission = {
+    bddId: "account", targetVersion: "1.0", taskId: "execute-task", stepId: "execute-step", submittedAt: occurredAt,
+    pack: { ...executeFile, path: "account/1.0/execute-pack", algorithm: "scout-directory-sha256-v1", executeFile },
+  };
+  const reviewed: RbtReviewSubmission = {
+    bddId: "account", targetVersion: "1.0", taskId: "review-task", stepId: "review-step", submittedAt: occurredAt,
+    pack: {
+      workflowId: "workflow-001", agentId: "reviewer", path: "account/1.0/review-pack",
+      digest: submitted.pack.digest, algorithm: "scout-directory-sha256-v1", result: "pass",
+      executionPack: submitted.pack,
+      execution: {
+        workflowId: "workflow-001", agentId: "executor", runtimeSequence: 1, campaignId: "campaign", scenarioId: "scenario",
+        platform: { ...ready.platform }, executeFile,
+        executorHistory: { ...executeFile, path: "history/001.json", digest: ready.executorHistoryDigest },
+      },
+    },
+  };
+  const payloads = [ready, submitted, reviewed];
+  await scope.eventBus.publishAndWait(RbtEvents.history.ready, { ...ready, liveOnly: { transient: true } }, { occurredAt });
+  await scope.eventBus.publishAndWait(RbtEvents.artifact.executionPackSubmitted, { ...submitted, liveOnly: { transient: true } }, { occurredAt });
+  await scope.eventBus.publishAndWait(RbtEvents.artifact.reviewSubmitted, { ...reviewed, liveOnly: { transient: true } }, { occurredAt });
+  const stored = readJournalEvents(journal.path);
+  assert.deepEqual(stored.map((record) => record.payload), payloads);
+  assert.ok(stored.every((record) => !("kind" in record)), "Decoded discrimination must not change the Journal envelope");
+  const records = journal.read();
+  assert.deepEqual(records.map((record) => record.kind), ["execution-history", "execution-pack", "review"]);
+  const data = new RbtDomainProjector().project(records);
+  assert.equal(data.artifacts.histories.get(ready.executorHistoryRef)!.occurredAt, occurredAt);
+  assert.deepEqual(data.artifacts.acceptedSubmissions, new Set([
+    "execute-task\0execute-step\0workflow-001\0executor\0account/1.0/execute-pack",
+    "review-task\0review-step\0workflow-001\0reviewer\0account/1.0/review-pack",
+  ]));
+  const historyRecord = records.find((record) => record.kind === "execution-history")!;
+  const packRecord = records.find((record) => record.kind === "execution-pack")!;
+  const reviewRecord = records.find((record) => record.kind === "review")!;
+  historyRecord.payload.platform.type = "record-only";
+  packRecord.payload.pack.executeFile.path = "record-only";
+  reviewRecord.payload.pack.agentId = "record-only";
+  assert.equal(data.artifacts.histories.get(ready.executorHistoryRef)!.history.platform.type, ready.platform.type);
+  assert.equal(data.artifacts.executionPacks[0]!.pack.executeFile.path, executeFile.path);
+  assert.ok(data.artifacts.acceptedSubmissions.has("review-task\0review-step\0workflow-001\0reviewer\0account/1.0/review-pack"));
+  data.artifacts.histories.get(ready.executorHistoryRef)!.history.platform.version = "runtime-only";
+  data.artifacts.executionPacks[0]!.pack.path = "runtime-only";
+  data.artifacts.acceptedSubmissions.clear();
+  assert.equal(historyRecord.payload.platform.version, ready.platform.version);
+  assert.equal(packRecord.payload.pack.path, submitted.pack.path);
+  assert.deepEqual(readJournalEvents(journal.path), stored, "Neither runtime nor decoded-record mutation rewrites storage");
 });
 
 test("RbtRecordObject switches Workflow files without retaining the previous writer target", async (t) => {
@@ -94,9 +158,9 @@ test("RbtRecordObject switches Workflow files without retaining the previous wri
   assert.equal(existsSync(join(nextRoot, ".rbt-events.lock")), true);
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(2));
   assert.deepEqual(journal.read().map((entry) => entry.seq), [1]);
-  assert.deepEqual(new RbtDomainProjector().project(journal.read()).histories.map((entry) => entry.runtimeSequence), [2]);
+  assert.deepEqual([...new RbtDomainProjector().project(journal.read()).artifacts.histories.values()].map(({ history }) => history.runtimeSequence), [2]);
   assert.equal(readFileSync(firstPath, "utf8"), firstContents);
-  assert.deepEqual(readJournalEvents(join(nextRoot, "rbt-events.jsonl")), journal.read());
+  assert.deepEqual(readJournalEvents(join(nextRoot, "rbt-events.jsonl")), journal.read().map(({ kind: _kind, ...record }) => record));
   journal.close();
   assert.equal(existsSync(join(nextRoot, ".rbt-events.lock")), false);
 });
@@ -141,7 +205,7 @@ test("RbtRecordObject resume preserves existing events and creates a missing jou
       await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(2));
       assert.deepEqual(resumedJournal.read().map((entry) => entry.seq), existing ? [1, 2] : [1]);
       assert.deepEqual(
-        new RbtDomainProjector().project(resumedJournal.read()).histories.map((entry) => entry.runtimeSequence),
+        [...new RbtDomainProjector().project(resumedJournal.read()).artifacts.histories.values()].map(({ history }) => history.runtimeSequence),
         existing ? [1, 2] : [2],
       );
       resumedJournal.close();
@@ -159,7 +223,7 @@ test("Domain recovery owns its record and projector without shared Run journal t
   assert.ok(base instanceof BaseDomain);
   const records = domain.recordObject.read();
   const runtimeObject = new RbtDomainProjector().project(records);
-  assert.deepEqual(runtimeObject.histories.map((entry) => entry.runtimeSequence), [1]);
+  assert.deepEqual([...runtimeObject.artifacts.histories.values()].map(({ history }) => history.runtimeSequence), [1]);
   await domain.restore(scope.workflow.snapshot()!);
   domain.recordObject.close();
   assert.throws(() => domain.recordObject.read(), /RBT Domain journal is unavailable/);
@@ -217,17 +281,17 @@ test("RbtDomain releases journal resources after startup failure and delegates W
   await domain.start();
   await domain.run();
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(2));
-  assert.deepEqual(readJournalEvents(path), domain.recordObject.read());
+  assert.deepEqual(readJournalEvents(path), domain.recordObject.read().map(({ kind: _kind, ...record }) => record));
   const firstContents = readFileSync(path, "utf8");
   const nextRoot = join(scope.runRoot, "next-workflow");
   const clearBehavior = t.mock.method(JarvisBehaviorToolStore.prototype, "clear");
   const boundary = { workflowId: "workflow-002", journalRoot: nextRoot };
   await scope.eventBus.publishAndWait(WorkflowEvents.workflow.preparing, boundary);
   assert.equal(clearBehavior.mock.callCount(), 0);
-  assert.deepEqual(new RbtDomainProjector().project(domain.recordObject.read()).histories.map((entry) => entry.runtimeSequence), [2]);
+  assert.deepEqual([...new RbtDomainProjector().project(domain.recordObject.read()).artifacts.histories.values()].map(({ history }) => history.runtimeSequence), [2]);
   await scope.eventBus.publishAndWait(WorkflowEvents.workflow.aborting, boundary);
   assert.equal(clearBehavior.mock.callCount(), 0);
-  assert.deepEqual(new RbtDomainProjector().project(domain.recordObject.read()).histories.map((entry) => entry.runtimeSequence), [2]);
+  assert.deepEqual([...new RbtDomainProjector().project(domain.recordObject.read()).artifacts.histories.values()].map(({ history }) => history.runtimeSequence), [2]);
   const retryBoundary = { ...boundary, journalRoot: join(scope.runRoot, "next-workflow-retry") };
   await scope.eventBus.publishAndWait(WorkflowEvents.workflow.preparing, retryBoundary);
   await scope.eventBus.publishAndWait(WorkflowEvents.workflow.committing, retryBoundary);
@@ -236,9 +300,9 @@ test("RbtDomain releases journal resources after startup failure and delegates W
   await scope.eventBus.publishAndWait(WorkflowEvents.workflow.releasingPrevious, retryBoundary);
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(3));
   assert.equal(readFileSync(path, "utf8"), firstContents);
-  assert.deepEqual(readJournalEvents(join(retryBoundary.journalRoot, "rbt-events.jsonl")), domain.recordObject.read());
+  assert.deepEqual(readJournalEvents(join(retryBoundary.journalRoot, "rbt-events.jsonl")), domain.recordObject.read().map(({ kind: _kind, ...record }) => record));
   await domain.restore({ workflowId: "workflow-002", status: "active", checkpointSeq: 0 });
-  assert.deepEqual(new RbtDomainProjector().project(domain.recordObject.read()).histories.map((entry) => entry.runtimeSequence), [3]);
+  assert.deepEqual([...new RbtDomainProjector().project(domain.recordObject.read()).artifacts.histories.values()].map(({ history }) => history.runtimeSequence), [3]);
   await domain.stop();
   assert.equal(existsSync(join(retryBoundary.journalRoot, ".rbt-events.lock")), false);
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(4));

@@ -1,4 +1,6 @@
 import type { BenchmarkWorkflowReference } from "../../../../core/benchmarks/index.js";
+import type { ScoutAgentRole } from "../../../../agent/thread/types.js";
+import type { ExecutionPlatformIdentity } from "../../../../execution/scout-execution-system.js";
 
 /** Content identity at the time a fact was recorded; path is relative to an Agent artifact root. */
 export interface RbtArtifactReference extends BenchmarkWorkflowReference {
@@ -31,4 +33,48 @@ export interface RbtReviewerPackReference extends RbtArtifactReference {
   result: RbtReviewResult;
   executionPack: RbtExecutionPackReference;
   execution: RbtExecutionHistoryReference;
+}
+
+/** Finalized execution facts used for artifact association and Coordinator delivery. */
+export interface RbtExecutionHistory {
+  bddId: string;
+  targetVersion: string;
+  platform: ExecutionPlatformIdentity;
+  executorHistoryRef: string;
+  executorHistoryDigest: string;
+  executeFileRef: string;
+  executeFileDigest: string;
+  runtimeSequence: number;
+  campaignId: string;
+  scenarioId: string;
+  status: "completed" | "failed";
+  agentId: string;
+  role: ScoutAgentRole;
+}
+
+/** One accepted formal Execution Pack submission. */
+export interface RbtExecutionPackSubmission {
+  bddId: string;
+  targetVersion: string;
+  taskId: string;
+  stepId: string;
+  submittedAt: string;
+  pack: RbtExecutionPackReference;
+}
+
+/** One accepted review of a submitted Execution Pack and its execution evidence. */
+export interface RbtReviewSubmission {
+  bddId: string;
+  targetVersion: string;
+  taskId: string;
+  stepId: string;
+  submittedAt: string;
+  pack: RbtReviewerPackReference;
+}
+
+/** Complete Workflow-scoped artifact indexes, ready to install after projection. */
+export interface RbtArtifactData {
+  histories: Map<string, { history: RbtExecutionHistory; occurredAt: string }>;
+  executionPacks: RbtExecutionPackSubmission[];
+  acceptedSubmissions: Set<string>;
 }

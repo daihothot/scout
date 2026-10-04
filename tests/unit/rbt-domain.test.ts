@@ -48,6 +48,7 @@ import type { ExecutionHandlerValue } from "../../src/execution/execution-handle
 import type { ScoutDomainDynamicToolCall } from "../../src/domain/types.js";
 import type { RunEnvironment } from "../../src/run/types.js";
 import { currentRunScope, type RunScope } from "../../src/run/run-scope.js";
+import { workflowAgentPaths, workflowPaths } from "../../src/core/io/index.js";
 import { RunEvents } from "../../src/run/events/index.js";
 import { installTestRunScope, createTestGraph } from "../helpers/run-persistence.js";
 
@@ -352,7 +353,7 @@ test("RBT repeated restore replaces the previous pending history subscription", 
   };
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history);
   await domain.restore(scope.workflow.snapshot()!);
-  await scope.eventBus.publishAndWait(RbtEvents.history.ready, { ...history, runtimeSequence: 2 });
+  await scope.eventBus.publishAndWait(RbtEvents.history.ready, { ...history, runtimeSequence: 2, executorHistoryRef: "history/2.json" });
   await domain.restore(scope.workflow.snapshot()!);
   const deliveries: SendAgentMessageInput[] = [];
   scope.agentRegistry.registerAgent({
@@ -1891,7 +1892,8 @@ test("RBT Agent tool-call recorder consumes the shared Domain event", async (t) 
   assert.doesNotMatch(log, /contentItems/);
 });
 
-test("RBT Domain records one campaign history from dynamic behavior inputs and host outputs", async (t) => {
+for (const inputOwner of ["current", "historical"] as const) {
+test(`RBT executes a ${inputOwner} Pack input through the same pipeline and records current campaign history`, async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = rbtDomain();
   const scope = await installTestRunScope(t, {
@@ -1928,12 +1930,21 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
   await domain.run();
   t.after(() => domain.stop());
 
-  const { executeFilePath } = writeTestExecuteFile(roots.artifactRoot);
+  const sourceRoot = inputOwner === "current" ? roots.artifactRoot
+    : workflowAgentPaths(join(scope.runRoot, "workflows", "imported Pack"), "old-executor").artifactRoot;
+  const { executeFilePath } = writeTestExecuteFile(sourceRoot);
+  if (inputOwner === "historical") {
+    writeFileSync(workflowPaths(join(scope.runRoot, "workflows", "imported Pack")).identityPath,
+      JSON.stringify({ workflowId: "workflow-009" }));
+  }
+  const originalInput = readFileSync(executeFilePath, "utf8");
+  const executeFileRef = `scout-artifact://${inputOwner === "current" ? "workflow-001/executor" : "workflow-009/old-executor"}/account-anon-restore-existing-account/26.7.0-rc.2/execute-file.json`;
+  const executeInput = inputOwner === "current" ? executeFilePath : executeFileRef;
   const execution = await domain.backend.handleDynamicToolCall(dynamicCall({
     callId: "call-execute-file",
     namespace: "rbt_behavior",
     tool: "JarvisBehavior",
-    arguments: { execute_file: executeFilePath },
+    arguments: { execute_file: executeInput },
     role: "executor",
   }));
 
@@ -1971,8 +1982,7 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
       hostCommands: Array<{ executable: string; args: string[]; result: { stdout: string } }>;
     }>;
   };
-  assert.equal(history.executeFileRef,
-    "scout-artifact://workflow-001/executor/account-anon-restore-existing-account/26.7.0-rc.2/execute-file.json");
+  assert.equal(history.executeFileRef, executeFileRef);
   assert.equal(history.runtimeSequence, 1);
   assert.equal(history.campaignId, "account.restore.success/campaign/main");
   assert.equal(history.scenarioId, "account.restore.success");
@@ -1981,7 +1991,7 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
     version: "6000.0.80f1",
   });
   assert.equal(history.status, "completed");
-  const recorded = new RbtDomainProjector().project(domain.recordObject.read()).histories.at(-1)!;
+  const recorded = [...new RbtDomainProjector().project(domain.recordObject.read()).artifacts.histories.values()].at(-1)!.history;
   assert.equal(recorded.bddId, "account-anon-restore-existing-account");
   assert.equal(recorded.targetVersion, "26.7.0-rc.2");
   assert.deepEqual(recorded.platform, history.platform);
@@ -2019,7 +2029,7 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
   )[0]?.body ?? "";
   assert.match(historyObservation, /### RBT Execution History Ready/);
   assert.match(historyObservation, /executor_history_ref: scout-artifact:\/\/workflow-001\/executor\/history\/001\.json/);
-  assert.match(historyObservation, /execute_file_ref: scout-artifact:\/\/workflow-001\/executor\/account-anon-restore-existing-account\/26\.7\.0-rc\.2\/execute-file\.json/);
+  assert.ok(historyObservation.includes(`execute_file_ref: ${executeFileRef}`));
   assert.match(historyObservation, /campaign_id: account\.restore\.success\/campaign\/main/);
   assert.match(historyObservation, /scenario_id: account\.restore\.success/);
   assert.match(historyObservation, /status: completed/);
@@ -2030,7 +2040,7 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
     callId: "call-execute-file-replay",
     namespace: "rbt_behavior",
     tool: "JarvisBehavior",
-    arguments: { execute_file: executeFilePath },
+    arguments: { execute_file: executeInput },
     role: "executor",
   }));
   assert.equal(replay?.success, true);
@@ -2044,8 +2054,14 @@ test("RBT Domain records one campaign history from dynamic behavior inputs and h
   assert.equal(replayHistory.executeFileRef, history.executeFileRef);
   assert.deepEqual(replayHistory.platform, history.platform);
   assert.equal(coordinatorMessages.length, 2);
-  assert.deepEqual(new RbtDomainProjector().project(domain.recordObject.read()).histories.map((fact) => fact.runtimeSequence), [1, 2]);
+  assert.deepEqual([...new RbtDomainProjector().project(domain.recordObject.read()).artifacts.histories.values()].map(({ history }) => history.runtimeSequence), [1, 2]);
+  assert.equal(readFileSync(executeFilePath, "utf8"), originalInput);
+  if (inputOwner === "historical") {
+    assert.equal(existsSync(join(sourceRoot, "history")), false);
+    assert.equal(existsSync(join(roots.artifactRoot, "account-anon-restore-existing-account")), false);
+  }
 });
+}
 
 test("RBT execute-file rejects an array-shaped evidenceCapture before Runtime", async (t) => {
   const eventBus = new InMemoryEventBus();

@@ -35,6 +35,7 @@ import { RbtEvents, type RbtExecutionHistoryReadyEvent } from "./rbt-events.js";
 import { RbtRecordObject } from "./record/rbt-record-object.js";
 import { RbtDomainProjector } from "./projector/rbt-domain-projector.js";
 import { RbtArtifact } from "./artifacts/rbt-artifact.js";
+import type { RbtExecutionHistory } from "./artifacts/types.js";
 import { RbtBenchmarks } from "./rbt-benchmarks.js";
 
 export interface RbtDomainRuntimeOptions {
@@ -172,7 +173,7 @@ export class RbtDomain implements ScoutDomain {
     this.unsubscribeRestoredHistoryReady?.();
     this.unsubscribeRestoredHistoryReady = undefined;
     this.behaviorStore.clear();
-    this.artifact.restore({ histories: [], executionPacks: [], reviews: [] });
+    this.artifact.clear();
   }
 
   async restore(workflowData: WorkflowData): Promise<void> {
@@ -184,10 +185,10 @@ export class RbtDomain implements ScoutDomain {
     await this.websocket.stop();
     this.recordObject.attach(currentRunScope().workflow.journalRoot);
     const records = this.recordObject.read();
-    const restoredFacts = new RbtDomainProjector().project(records);
-    this.artifact.restore(restoredFacts);
-    const { histories } = restoredFacts;
-    if (histories.length === 0) {
+    const runtimeData = new RbtDomainProjector().project(records);
+    this.artifact.restore(runtimeData.artifacts);
+    const { histories } = runtimeData.artifacts;
+    if (histories.size === 0) {
       return;
     }
     const scope = currentRunScope();
@@ -208,11 +209,11 @@ export class RbtDomain implements ScoutDomain {
             ? [event.payload.messageId]
             : [],
         ));
-        for (const history of histories) {
+        for (const { history, occurredAt } of histories.values()) {
           if (cancelled) return;
           const messageId = `${scope.runId}-${workflowData.workflowId}-rbt-history-${history.agentId}-${history.runtimeSequence}`;
           if (acceptedMessages.has(messageId)) continue;
-          await this.deliverHistoryRef(history, history.occurredAt);
+          await this.deliverHistoryRef(history, occurredAt);
           acceptedMessages.add(messageId);
         }
       } finally {
@@ -246,7 +247,7 @@ export class RbtDomain implements ScoutDomain {
 
   clearWorkflow(): void {
     this.behaviorStore.clear();
-    this.artifact.restore({ histories: [], executionPacks: [], reviews: [] });
+    this.artifact.clear();
     this.campaignHistoryStore.clearWorkflow();
     this.recordObject.release();
   }
@@ -301,7 +302,7 @@ export class RbtDomain implements ScoutDomain {
     }
   }
 
-  private async deliverHistoryRef(history: RbtExecutionHistoryReadyEvent, occurredAt: string): Promise<void> {
+  private async deliverHistoryRef(history: RbtExecutionHistory, occurredAt: string): Promise<void> {
     const scope = currentRunScope();
     const workflowData = scope.workflow.snapshot();
     if (!workflowData) throw new Error("RBT history delivery requires an active Workflow.");

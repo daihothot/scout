@@ -1,25 +1,52 @@
 import type { RbtRecord } from "../record/rbt-record.js";
 import type { ScoutDomainRuntimeFact } from "../../../types.js";
-import { RbtEvents, type RbtExecutionHistoryReadyEvent, type RbtExecutionPackSubmittedEvent, type RbtReviewSubmittedEvent } from "../rbt-events.js";
+import type { RbtArtifactData, RbtExecutionHistory, RbtExecutionPackSubmission } from "../artifacts/types.js";
 
-export interface RbtRuntimeFact extends ScoutDomainRuntimeFact {
+export interface RbtDomainRuntimeData extends ScoutDomainRuntimeFact {
   domainId: "rbt";
-  histories: Array<RbtExecutionHistoryReadyEvent & { occurredAt: string }>;
-  executionPacks: RbtExecutionPackSubmittedEvent[];
-  reviews: RbtReviewSubmittedEvent[];
+  artifacts: RbtArtifactData;
 }
 
 /** Rebuilds RBT runtime facts without publishing historical events or executing commands. */
 export class RbtDomainProjector {
-  project(events: readonly RbtRecord[]): RbtRuntimeFact {
-    const fact: RbtRuntimeFact = { domainId: "rbt", journalSeq: 0, histories: [], executionPacks: [], reviews: [] };
-    for (const event of events) {
-      fact.journalSeq = event.seq;
-      fact.updatedAt = event.occurredAt;
-      if (RbtEvents.history.ready.is(event)) fact.histories.push({ ...structuredClone(event.payload), occurredAt: event.occurredAt });
-      else if (RbtEvents.artifact.executionPackSubmitted.is(event)) fact.executionPacks.push(structuredClone(event.payload));
-      else if (RbtEvents.artifact.reviewSubmitted.is(event)) fact.reviews.push(structuredClone(event.payload));
+  project(records: readonly RbtRecord[]): RbtDomainRuntimeData {
+    const data: RbtDomainRuntimeData = {
+      domainId: "rbt", journalSeq: 0,
+      artifacts: { histories: new Map(), executionPacks: [], acceptedSubmissions: new Set() },
+    };
+    for (const record of records) {
+      data.journalSeq = record.seq;
+      data.updatedAt = record.occurredAt;
+      switch (record.kind) {
+        case "execution-history": {
+          const saved = record.payload;
+          const history: RbtExecutionHistory = {
+            bddId: saved.bddId, targetVersion: saved.targetVersion, platform: { ...saved.platform },
+            executorHistoryRef: saved.executorHistoryRef, executorHistoryDigest: saved.executorHistoryDigest,
+            executeFileRef: saved.executeFileRef, executeFileDigest: saved.executeFileDigest,
+            runtimeSequence: saved.runtimeSequence, campaignId: saved.campaignId, scenarioId: saved.scenarioId,
+            status: saved.status, agentId: saved.agentId, role: saved.role,
+          };
+          data.artifacts.histories.set(history.executorHistoryRef, { history, occurredAt: record.occurredAt });
+          break;
+        }
+        case "execution-pack": {
+          const saved = record.payload;
+          const submission: RbtExecutionPackSubmission = {
+            bddId: saved.bddId, targetVersion: saved.targetVersion, taskId: saved.taskId,
+            stepId: saved.stepId, submittedAt: saved.submittedAt, pack: structuredClone(saved.pack),
+          };
+          data.artifacts.executionPacks.push(submission);
+          data.artifacts.acceptedSubmissions.add(`${submission.taskId}\0${submission.stepId}\0${submission.pack.workflowId}\0${submission.pack.agentId}\0${submission.pack.path}`);
+          break;
+        }
+        case "review": {
+          const saved = record.payload;
+          data.artifacts.acceptedSubmissions.add(`${saved.taskId}\0${saved.stepId}\0${saved.pack.workflowId}\0${saved.pack.agentId}\0${saved.pack.path}`);
+          break;
+        }
+      }
     }
-    return fact;
+    return data;
   }
 }

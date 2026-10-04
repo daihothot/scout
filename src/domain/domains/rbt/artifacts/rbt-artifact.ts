@@ -1,41 +1,32 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import { AgentEvents } from "../../../../agent/events/index.js";
 import type { AgentTaskOutcomeSubmission } from "../../../../agent/task/task-events.js";
 import type { UnsubscribeEventHandler } from "../../../../core/events/index.js";
-import { isPathWithin } from "../../../../core/io/index.js";
+import { parseArtifactReference, resolveArtifactTarget, type ScoutArtifactReference } from "../../../../core/io/index.js";
 import { currentRunScope } from "../../../../run/run-scope.js";
 import { SystemEvents } from "../../../../system/events/index.js";
-import {
-  RbtEvents,
-  type RbtCampaignExecutionHistoryFileEvent,
-  type RbtExecutionHistoryReadyEvent,
-  type RbtExecutionPackSubmittedEvent,
-  type RbtReviewSubmittedEvent,
-} from "../rbt-events.js";
-import type { RbtArtifactReference, RbtExecutionHistoryReference, RbtReviewResult } from "./types.js";
+import { RbtEvents, type RbtCampaignExecutionHistoryFileEvent } from "../rbt-events.js";
+import type {
+  RbtArtifactData, RbtArtifactReference, RbtExecutionHistory, RbtExecutionHistoryReference,
+  RbtExecutionPackSubmission, RbtReviewResult, RbtReviewSubmission,
+} from "./types.js";
 
 /** Extracts and publishes RBT file facts, never from Outcome text; not a full document-format validator. */
 export class RbtArtifact {
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
-  private readonly histories = new Map<string, RbtExecutionHistoryReadyEvent>();
-  private readonly executionPacks: RbtExecutionPackSubmittedEvent[] = [];
-  private readonly acceptedSubmissions = new Set<string>();
+  private data: RbtArtifactData = { histories: new Map(), executionPacks: [], acceptedSubmissions: new Set() };
 
   /** The Domain restores previously published facts without replaying them to consumers. */
-  restore(facts: {
-    histories: readonly RbtExecutionHistoryReadyEvent[];
-    executionPacks: readonly RbtExecutionPackSubmittedEvent[];
-    reviews: readonly RbtReviewSubmittedEvent[];
-  }): void {
-    this.histories.clear();
-    for (const history of facts.histories) this.histories.set(history.executorHistoryRef, structuredClone(history));
-    this.executionPacks.splice(0, this.executionPacks.length, ...structuredClone(facts.executionPacks));
-    this.acceptedSubmissions.clear();
-    for (const fact of [...facts.executionPacks, ...facts.reviews]) {
-      this.acceptedSubmissions.add(`${fact.taskId}\0${fact.stepId}\0${fact.pack.agentId}\0${fact.pack.path}`);
-    }
+  restore(data: RbtArtifactData): void {
+    this.data = data;
+  }
+
+  clear(): void {
+    this.data.histories.clear();
+    this.data.executionPacks.length = 0;
+    this.data.acceptedSubmissions.clear();
   }
 
   start(): void {
@@ -49,13 +40,13 @@ export class RbtArtifact {
     this.unsubscribers.push(scope.eventBus.subscribe<RbtCampaignExecutionHistoryFileEvent>(RbtEvents.history.campaignExecutionHistory, async (event) => {
       try {
         const history = this.readHistory(event.payload);
-        const previous = this.histories.get(history.executorHistoryRef);
+        const previous = this.data.histories.get(history.executorHistoryRef);
         if (previous) {
-          if (previous.executorHistoryDigest !== history.executorHistoryDigest) throw new Error("A finalized execution history was modified.");
+          if (previous.history.executorHistoryDigest !== history.executorHistoryDigest) throw new Error("A finalized execution history was modified.");
           return;
         }
-        this.histories.set(history.executorHistoryRef, history);
-        await scope.eventBus.publishAndWait(RbtEvents.history.ready, history, { occurredAt: event.occurredAt });
+        this.data.histories.set(history.executorHistoryRef, { history, occurredAt: event.occurredAt });
+        await scope.eventBus.publishAndWait(RbtEvents.history.ready, structuredClone(history), { occurredAt: event.occurredAt });
       } catch (error) {
         warn(error, { executorHistoryRef: event.payload.executorHistoryRef });
       }
@@ -73,51 +64,68 @@ export class RbtArtifact {
 
   stop(): void {
     while (this.unsubscribers.length) this.unsubscribers.pop()?.();
-    this.restore({ histories: [], executionPacks: [], reviews: [] });
+    this.clear();
   }
 
   private async captureHandoff(input: Pick<AgentTaskOutcomeSubmission, "task" | "stepId" | "submittedAt">): Promise<void> {
     const scope = currentRunScope();
     const workflow = scope.workflow.snapshot();
     if (!workflow) throw new Error("RBT artifact submission requires an active Workflow.");
+    const workflowId = workflow.workflowId;
     const submissionId = `${input.task.taskId}\0${input.stepId}`;
     const { agentId, phase } = input.task;
     const artifactRoot = scope.workflow.agentPaths(agentId).artifactRoot;
     const formalFile = phase === "execute" ? "execute-file.json" : "review-pack/review-result.json";
     const packDirectory = phase === "execute" ? "execute-pack" : "review-pack";
 
-    // Discover one candidate at a time so later scan failures do not suppress earlier facts.
+    const executedInputs = new Map<string, { bddId: string; targetVersion: string; packPath: string; source: ScoutArtifactReference }>();
+    if (phase === "execute") {
+      for (const { history } of this.data.histories.values()) {
+        if (history.agentId !== agentId) continue;
+        executedInputs.set(`${history.bddId}\0${history.targetVersion}`, {
+          bddId: history.bddId, targetVersion: history.targetVersion,
+          packPath: `${history.bddId}/${history.targetVersion}/${packDirectory}`,
+          source: parseArtifactReference(history.executeFileRef),
+        });
+      }
+    }
+
+    // Actual execution identifies the input. File discovery covers formal deliveries without an execution.
+    // Keep discovery incremental so a later scan failure does not suppress earlier published facts.
     function* formalPacks() {
+      yield* executedInputs.values();
       for (const bdd of readdirSync(artifactRoot, { withFileTypes: true })) {
         if (!bdd.isDirectory()) continue;
         for (const version of readdirSync(join(artifactRoot, bdd.name), { withFileTypes: true })) {
           if (!version.isDirectory()) continue;
           const prefix = `${bdd.name}/${version.name}`;
+          if (executedInputs.has(`${bdd.name}\0${version.name}`)) continue;
           if (!existsSync(join(artifactRoot, prefix, formalFile))) continue;
-          yield { bddId: bdd.name, targetVersion: version.name, packPath: `${prefix}/${packDirectory}` };
+          yield { bddId: bdd.name, targetVersion: version.name, packPath: `${prefix}/${packDirectory}`,
+            source: { workflowId, agentId, path: `${prefix}/${formalFile}` } };
         }
       }
     }
 
     let captured = 0;
     const failures: unknown[] = [];
-    for (const { bddId, targetVersion, packPath } of formalPacks()) {
+    for (const { bddId, targetVersion, packPath, source } of formalPacks()) {
       captured += 1;
-      const artifactSubmissionId = `${submissionId}\0${agentId}\0${packPath}`;
-      if (this.acceptedSubmissions.has(artifactSubmissionId)) continue;
+      const artifactSubmissionId = `${submissionId}\0${source.workflowId}\0${source.agentId}\0${packPath}`;
+      if (this.data.acceptedSubmissions.has(artifactSubmissionId)) continue;
       const submission = {
         bddId, targetVersion, taskId: input.task.taskId, stepId: input.stepId, submittedAt: input.submittedAt,
       };
       try {
         if (phase === "execute") {
-          const fact = this.captureExecutionPack(agentId, submission);
-          this.executionPacks.push(fact);
-          this.acceptedSubmissions.add(artifactSubmissionId);
-          await scope.eventBus.publishAndWait(RbtEvents.artifact.executionPackSubmitted, fact, { occurredAt: input.submittedAt });
+          const fact = this.captureExecutionPack(source, submission);
+          this.data.executionPacks.push(fact);
+          this.data.acceptedSubmissions.add(artifactSubmissionId);
+          await scope.eventBus.publishAndWait(RbtEvents.artifact.executionPackSubmitted, structuredClone(fact), { occurredAt: input.submittedAt });
         } else {
           const fact = this.captureReview(agentId, submission);
-          this.acceptedSubmissions.add(artifactSubmissionId);
-          await scope.eventBus.publishAndWait(RbtEvents.artifact.reviewSubmitted, fact, { occurredAt: input.submittedAt });
+          this.data.acceptedSubmissions.add(artifactSubmissionId);
+          await scope.eventBus.publishAndWait(RbtEvents.artifact.reviewSubmitted, structuredClone(fact), { occurredAt: input.submittedAt });
         }
       } catch (error) { failures.push(error); }
     }
@@ -126,23 +134,23 @@ export class RbtArtifact {
     if (failures.length > 1) throw new AggregateError(failures, "RBT artifact files failed validation.");
   }
 
-  private captureExecutionPack(agentId: string, submission: Omit<RbtExecutionPackSubmittedEvent, "pack">): RbtExecutionPackSubmittedEvent {
+  private captureExecutionPack(source: ScoutArtifactReference, submission: Omit<RbtExecutionPackSubmission, "pack">): RbtExecutionPackSubmission {
     const { bddId, targetVersion } = submission;
     const prefix = `${bddId}/${targetVersion}`;
-    const executeFile = this.artifact(agentId, `${prefix}/execute-file.json`, "sha256");
-    const pack = this.artifact(agentId, `${prefix}/execute-pack`, "scout-directory-sha256-v1");
+    const executeFile = this.artifact(source, "sha256");
+    const pack = this.artifact({ ...source, path: `${prefix}/execute-pack` }, "scout-directory-sha256-v1");
     // Existence and content identity are not format-validity or execution-success claims.
     return { ...submission, pack: { ...pack, executeFile } };
   }
 
-  private readHistory(input: RbtCampaignExecutionHistoryFileEvent): RbtExecutionHistoryReadyEvent {
+  private readHistory(input: Pick<RbtExecutionHistory, "agentId" | "role" | "runtimeSequence" | "executorHistoryRef" | "executorHistoryDigest">): RbtExecutionHistory {
     const scope = currentRunScope();
     const workflow = scope.workflow.snapshot();
     if (!workflow) throw new Error("RBT execution history requires an active Workflow.");
     const historyPath = `history/${String(input.runtimeSequence).padStart(3, "0")}.json`;
     const root = `scout-artifact://${workflow.workflowId}/${input.agentId}/`;
     if (input.executorHistoryRef !== `${root}${historyPath}`) throw new Error("Execution history reference does not match its Workflow and Agent.");
-    const { reference: file, content } = this.readArtifactFile(input.agentId, historyPath);
+    const { reference: file, content } = this.readArtifactFile({ workflowId: workflow.workflowId, agentId: input.agentId, path: historyPath });
     if (file.digest !== input.executorHistoryDigest) throw new Error("Execution history changed after it was finalized.");
     const value: unknown = JSON.parse(content.toString("utf8"));
     if (!isRecord(value)) throw new Error("Execution history must be an object.");
@@ -162,9 +170,8 @@ export class RbtArtifact {
       throw new Error("Execution history has an invalid platform.");
     }
     const executeFileRef = required("executeFileRef");
-    if (!executeFileRef.startsWith(root)) throw new Error("Execution file belongs to a different Workflow or Agent.");
-    const parts = executeFileRef.slice(root.length).split("/");
-    if (parts.length !== 3 || parts[2] !== "execute-file.json" || parts.some((part) => !part || part === "." || part === "..")) {
+    const parts = parseArtifactReference(executeFileRef).path.split("/");
+    if (parts.length !== 3 || parts[2] !== "execute-file.json") {
       throw new Error("Execution file must use <bdd-id>/<version>/execute-file.json.");
     }
     return {
@@ -178,7 +185,7 @@ export class RbtArtifact {
 
   private readReview(agentId: string, prefix: string) {
     const reviewPath = `${prefix}/review-pack/review-result.json`;
-    const { content } = this.readArtifactFile(agentId, reviewPath);
+    const { content } = this.readArtifactFile({ workflowId: currentRunScope().workflow.snapshot()!.workflowId, agentId, path: reviewPath });
     const value: unknown = JSON.parse(content.toString("utf8"));
     if (!isRecord(value)) throw new Error("Review result must be an object.");
     const review = value;
@@ -207,7 +214,7 @@ export class RbtArtifact {
     };
   }
 
-  private captureReview(agentId: string, submission: Omit<RbtReviewSubmittedEvent, "pack">): RbtReviewSubmittedEvent {
+  private captureReview(agentId: string, submission: Omit<RbtReviewSubmission, "pack">): RbtReviewSubmission {
     const scope = currentRunScope();
     const workflow = scope.workflow.snapshot();
     if (!workflow) throw new Error("RBT review requires an active Workflow.");
@@ -216,37 +223,39 @@ export class RbtArtifact {
     const review = this.readReview(agentId, prefix);
     // Associate the formal Review with one published execution.
     if (review.bddId !== bddId || review.targetVersion !== targetVersion) throw new Error("Review identity differs from its Pack location.");
-    const previous = this.histories.get(review.executorHistoryRef);
+    const previous = this.data.histories.get(review.executorHistoryRef);
     if (!previous) throw new Error("Review must identify one published Executor history.");
 
     // Re-read finalized evidence; a published fact does not replace checking its current bytes.
-    const history = this.readHistory(previous);
+    const history = this.readHistory(previous.history);
     if (history.bddId !== bddId || history.targetVersion !== targetVersion || history.campaignId !== review.campaignId
       || (review.scenarioId !== undefined && history.scenarioId !== review.scenarioId)) {
       throw new Error("Review does not match its execution history.");
     }
-    const executePath = `${prefix}/execute-file.json`;
+    const executeSource = parseArtifactReference(history.executeFileRef);
+    const executePath = executeSource.path;
     const historyPath = `history/${String(history.runtimeSequence).padStart(3, "0")}.json`;
     // readHistory has just checked this file's ownership, bytes and digest.
     const executorHistory: RbtArtifactReference = {
       workflowId: workflow.workflowId, agentId: history.agentId, path: historyPath,
       algorithm: "sha256", digest: history.executorHistoryDigest,
     };
-    const executeFile = this.artifact(history.agentId, executePath, "sha256");
+    const executeFile = this.artifact(executeSource, "sha256");
     if (executeFile.digest !== history.executeFileDigest) throw new Error("Reviewed execution evidence changed after execution.");
 
     // Match the execution to its formal Pack handoff and verify that Pack has not changed.
-    const submitted = [...this.executionPacks].reverse().find((fact) =>
+    const submitted = [...this.data.executionPacks].reverse().find((fact) =>
       fact.bddId === bddId && fact.targetVersion === targetVersion
-      && fact.pack.executeFile.agentId === history.agentId && fact.pack.executeFile.path === executePath
+      && fact.pack.executeFile.workflowId === executeSource.workflowId
+      && fact.pack.executeFile.agentId === executeSource.agentId && fact.pack.executeFile.path === executePath
       && fact.pack.executeFile.digest === history.executeFileDigest);
     if (!submitted) throw new Error("Review has no matching formal Execution Pack handoff.");
-    const executionPack = this.artifact(history.agentId, `${prefix}/execute-pack`, "scout-directory-sha256-v1");
+    const executionPack = this.artifact(submitted.pack, "scout-directory-sha256-v1");
     if (executionPack.digest !== submitted.pack.digest) throw new Error("Execution Pack changed after its formal handoff.");
 
     // Capture the complete Reviewer Pack and link the exact evidence in the published fact.
-    this.artifact(agentId, `${prefix}/review-pack/review-report.html`, "sha256");
-    const pack = this.artifact(agentId, `${prefix}/review-pack`, "scout-directory-sha256-v1");
+    this.artifact({ workflowId: workflow.workflowId, agentId, path: `${prefix}/review-pack/review-report.html` }, "sha256");
+    const pack = this.artifact({ workflowId: workflow.workflowId, agentId, path: `${prefix}/review-pack` }, "scout-directory-sha256-v1");
     const execution: RbtExecutionHistoryReference = {
       workflowId: workflow.workflowId, agentId: history.agentId, runtimeSequence: history.runtimeSequence,
       campaignId: history.campaignId, scenarioId: history.scenarioId, platform: { ...history.platform }, executeFile, executorHistory,
@@ -254,37 +263,26 @@ export class RbtArtifact {
     return { ...submission, pack: { ...pack, result: review.result, executionPack: submitted.pack, execution } };
   }
 
-  /** Checks the active owner's artifact path before either a file or a directory is read. */
-  private artifactLocation(agentId: string, path: string): { workflowId: string; target: string } {
-    const workflow = currentRunScope().workflow;
-    const state = workflow.snapshot();
-    if (!state) throw new Error("RBT artifact capture requires an active Workflow.");
-    const root = workflow.agentPaths(agentId).artifactRoot;
-    const target = resolve(root, path);
-    if (!isPathWithin(root, target, { allowRoot: false })) throw new Error("RBT artifact path escapes its Agent root.");
-    const segments = path.split("/");
-    for (const [index] of segments.entries()) {
-      if (lstatSync(join(root, ...segments.slice(0, index + 1))).isSymbolicLink()) throw new Error("RBT artifact references must not traverse symlinks.");
-    }
-    return { workflowId: state.workflowId, target };
-  }
-
   /** JSON parsing and content identity use the same safely read bytes, without caching them. */
-  private readArtifactFile(agentId: string, path: string): { reference: RbtArtifactReference; content: Buffer } {
-    const { workflowId, target } = this.artifactLocation(agentId, path);
+  private readArtifactFile(source: ScoutArtifactReference): { reference: RbtArtifactReference; content: Buffer } {
+    const location = resolveArtifactTarget(source);
+    if ("reason" in location) throw new Error(location.reason);
+    const target = location.path;
     if (!lstatSync(target).isFile()) throw new Error("Expected a regular artifact file.");
     const content = readFileSync(target);
     const reference: RbtArtifactReference = {
-      workflowId, agentId, path, algorithm: "sha256",
+      workflowId: source.workflowId, agentId: source.agentId, path: source.path, algorithm: "sha256",
       digest: `sha256:${createHash("sha256").update(content).digest("hex")}`,
     };
     return { reference, content };
   }
 
   /** Same byte-level directory digest contract as scout-artifact-digest; neither real paths nor mtimes enter it. */
-  private artifact(agentId: string, path: string, algorithm: RbtArtifactReference["algorithm"]): RbtArtifactReference {
-    if (algorithm === "sha256") return this.readArtifactFile(agentId, path).reference;
-    const { workflowId, target } = this.artifactLocation(agentId, path);
+  private artifact(source: ScoutArtifactReference, algorithm: RbtArtifactReference["algorithm"]): RbtArtifactReference {
+    if (algorithm === "sha256") return this.readArtifactFile(source).reference;
+    const location = resolveArtifactTarget(source);
+    if ("reason" in location) throw new Error(location.reason);
+    const target = location.path;
     if (!lstatSync(target).isDirectory()) throw new Error("Expected an artifact directory.");
     const files: string[] = [];
     const visit = (directory: string): void => {
@@ -304,7 +302,7 @@ export class RbtArtifact {
       hash.update("file\0").update(relative(target, file).split(sep).join("/")).update("\0")
         .update(String(content.byteLength)).update("\0").update(content).update("\0");
     }
-    return { workflowId, agentId, path, algorithm, digest: `sha256:${hash.digest("hex")}` };
+    return { workflowId: source.workflowId, agentId: source.agentId, path: source.path, algorithm, digest: `sha256:${hash.digest("hex")}` };
   }
 }
 

@@ -1,61 +1,125 @@
 import type { RecordEvent } from "../../../../core/record/index.js";
-import type { RbtExecutionHistoryReadyEvent, RbtExecutionPackSubmittedEvent, RbtReviewSubmittedEvent } from "../rbt-events.js";
+import type { RbtArtifactReference, RbtExecutionPackReference, RbtReviewerPackReference } from "../artifacts/types.js";
 
-/** Decoded RBT evidence facts; projection and business indexing are separate consumers. */
+/** The flat persisted history payload; event and runtime fields do not define this format. */
+export interface RbtExecutionHistoryRecord {
+  bddId: string;
+  targetVersion: string;
+  platform: { type: string; version: string };
+  executorHistoryRef: string;
+  executorHistoryDigest: string;
+  executeFileRef: string;
+  executeFileDigest: string;
+  runtimeSequence: number;
+  campaignId: string;
+  scenarioId: string;
+  status: "completed" | "failed";
+  agentId: string;
+  role: string;
+}
+
+export interface RbtExecutionPackSubmissionRecord {
+  bddId: string;
+  targetVersion: string;
+  taskId: string;
+  stepId: string;
+  submittedAt: string;
+  pack: RbtExecutionPackReference;
+}
+
+export interface RbtReviewSubmissionRecord {
+  bddId: string;
+  targetVersion: string;
+  taskId: string;
+  stepId: string;
+  submittedAt: string;
+  pack: RbtReviewerPackReference;
+}
+
+/** kind discriminates decoded records only; the Journal retains its existing event envelope. */
 export type RbtRecord =
-  | RecordEvent<RbtExecutionHistoryReadyEvent, "domain.rbt.history.ready">
-  | RecordEvent<RbtExecutionPackSubmittedEvent, "domain.rbt.artifact.execution_pack_submitted">
-  | RecordEvent<RbtReviewSubmittedEvent, "domain.rbt.artifact.review_submitted">;
+  | (RecordEvent<RbtExecutionHistoryRecord, "domain.rbt.history.ready"> & { kind: "execution-history" })
+  | (RecordEvent<RbtExecutionPackSubmissionRecord, "domain.rbt.artifact.execution_pack_submitted"> & { kind: "execution-pack" })
+  | (RecordEvent<RbtReviewSubmissionRecord, "domain.rbt.artifact.review_submitted"> & { kind: "review" });
 
 export function decodeRbtRecords(records: readonly RecordEvent[]): RbtRecord[] {
-  return records.map((record) => {
+  return records.map((record): RbtRecord => {
     const invalid = (field: string): never => { throw new Error(`Invalid RBT record ${record.seq} (${record.key.routeKey}): ${field}`); };
     const object = (value: unknown, field: string): Record<string, unknown> => {
-      if (!value || typeof value !== "object" || Array.isArray(value)) invalid(field);
+      if (!value || typeof value !== "object" || Array.isArray(value)) return invalid(field);
       return value as Record<string, unknown>;
     };
-    const strings = (value: Record<string, unknown>, fields: readonly string[]): void => {
-      for (const field of fields) if (typeof value[field] !== "string" || !value[field]) invalid(field);
+    const text = (value: Record<string, unknown>, field: string): string => {
+      const result = value[field];
+      if (typeof result !== "string" || !result) return invalid(field);
+      return result;
     };
-    const platform = (value: unknown): void => { strings(object(value, "platform"), ["type", "version"]); };
-    const reference = (value: unknown): Record<string, unknown> => {
-      const ref = object(value, "artifact reference");
-      strings(ref, ["workflowId", "agentId", "path", "digest"]);
-      if (ref.algorithm !== "sha256" && ref.algorithm !== "scout-directory-sha256-v1") invalid("artifact algorithm");
-      return ref;
+    const platform = (value: unknown): { type: string; version: string } => {
+      const identity = object(value, "platform");
+      return { type: text(identity, "type"), version: text(identity, "version") };
     };
-    const executionPack = (value: unknown): void => { reference(reference(value).executeFile); };
-    const sequence = (value: unknown): void => {
-      if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) invalid("runtimeSequence");
+    const reference = (ref: Record<string, unknown>): RbtArtifactReference => {
+      const algorithm = ref.algorithm;
+      if (algorithm !== "sha256" && algorithm !== "scout-directory-sha256-v1") return invalid("artifact algorithm");
+      return {
+        workflowId: text(ref, "workflowId"), agentId: text(ref, "agentId"), path: text(ref, "path"),
+        digest: text(ref, "digest"), algorithm,
+      };
+    };
+    const executionPack = (value: unknown): RbtExecutionPackReference => {
+      const pack = object(value, "execution pack");
+      return { ...reference(pack), executeFile: reference(object(pack.executeFile, "executeFile reference")) };
+    };
+    const sequence = (value: unknown): number => {
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) return invalid("runtimeSequence");
+      return value;
     };
     const payload = object(record.payload, "payload");
-    strings(payload, ["bddId", "targetVersion"]);
+    const bddId = text(payload, "bddId");
+    const targetVersion = text(payload, "targetVersion");
     switch (record.key.routeKey) {
-      case "domain.rbt.history.ready":
-        strings(payload, ["executorHistoryRef", "executorHistoryDigest", "executeFileRef", "executeFileDigest", "campaignId", "scenarioId", "agentId", "role"]);
-        platform(payload.platform);
-        sequence(payload.runtimeSequence);
-        if (payload.status !== "completed" && payload.status !== "failed") invalid("status");
-        break;
+      case "domain.rbt.history.ready": {
+        const status = payload.status;
+        if (status !== "completed" && status !== "failed") return invalid("status");
+        return {
+          ...record, key: { ...record.key, routeKey: "domain.rbt.history.ready" }, kind: "execution-history",
+          payload: {
+            bddId, targetVersion, platform: platform(payload.platform),
+            executorHistoryRef: text(payload, "executorHistoryRef"), executorHistoryDigest: text(payload, "executorHistoryDigest"),
+            executeFileRef: text(payload, "executeFileRef"), executeFileDigest: text(payload, "executeFileDigest"),
+            runtimeSequence: sequence(payload.runtimeSequence), campaignId: text(payload, "campaignId"),
+            scenarioId: text(payload, "scenarioId"), status, agentId: text(payload, "agentId"), role: text(payload, "role"),
+          },
+        };
+      }
       case "domain.rbt.artifact.execution_pack_submitted":
       case "domain.rbt.artifact.review_submitted": {
-        strings(payload, ["taskId", "stepId", "submittedAt"]);
-        if (record.key.routeKey === "domain.rbt.artifact.execution_pack_submitted") executionPack(payload.pack);
-        else {
-          const pack = reference(payload.pack);
-          if (pack.result !== "pass" && pack.result !== "attention" && pack.result !== "fail") invalid("review result");
-          executionPack(pack.executionPack);
-          const execution = object(pack.execution, "execution reference");
-          strings(execution, ["workflowId", "agentId", "campaignId", "scenarioId"]);
-          sequence(execution.runtimeSequence);
-          platform(execution.platform);
-          reference(execution.executeFile);
-          reference(execution.executorHistory);
+        const submission = { bddId, targetVersion, taskId: text(payload, "taskId"), stepId: text(payload, "stepId"), submittedAt: text(payload, "submittedAt") };
+        if (record.key.routeKey === "domain.rbt.artifact.execution_pack_submitted") {
+          return {
+            ...record, key: { ...record.key, routeKey: "domain.rbt.artifact.execution_pack_submitted" }, kind: "execution-pack",
+            payload: { ...submission, pack: executionPack(payload.pack) },
+          };
         }
-        break;
+        const pack = object(payload.pack, "reviewer pack");
+        const result = pack.result;
+        if (result !== "pass" && result !== "attention" && result !== "fail") return invalid("review result");
+        const execution = object(pack.execution, "execution reference");
+        return {
+          ...record, key: { ...record.key, routeKey: "domain.rbt.artifact.review_submitted" }, kind: "review",
+          payload: { ...submission, pack: {
+            ...reference(pack), result, executionPack: executionPack(pack.executionPack),
+            execution: {
+              workflowId: text(execution, "workflowId"), agentId: text(execution, "agentId"),
+              campaignId: text(execution, "campaignId"), scenarioId: text(execution, "scenarioId"),
+              runtimeSequence: sequence(execution.runtimeSequence), platform: platform(execution.platform),
+              executeFile: reference(object(execution.executeFile, "executeFile reference")),
+              executorHistory: reference(object(execution.executorHistory, "executorHistory reference")),
+            },
+          } },
+        };
       }
-      default: invalid("unsupported event route");
+      default: return invalid("unsupported event route");
     }
-    return structuredClone(record) as RbtRecord;
   });
 }

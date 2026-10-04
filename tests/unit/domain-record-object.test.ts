@@ -105,11 +105,11 @@ test("Base and RBT decode their persisted contracts before Projectors reconstruc
   const rbtRecords = rbt.read();
   const rbtFact = new RbtDomainProjector().project(rbtRecords);
   assert.equal(baseFact.toolCalls[0]?.callId, "call");
-  assert.equal(rbtFact.histories[0]?.runtimeSequence, 1);
+  assert.equal(rbtFact.artifacts.histories.get("history/1.json")?.history.runtimeSequence, 1);
   Object.assign(baseRecords[0]!.payload, { callId: "changed" });
   Object.assign(rbtRecords[0]!.payload, { runtimeSequence: 99 });
   assert.equal(baseFact.toolCalls[0]?.callId, "call");
-  assert.equal(rbtFact.histories[0]?.runtimeSequence, 1);
+  assert.equal(rbtFact.artifacts.histories.get("history/1.json")?.history.runtimeSequence, 1);
 
   const basePath = base.recordObject.path;
   const root = scope.workflow.journalRoot;
