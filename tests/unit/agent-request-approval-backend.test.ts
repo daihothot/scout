@@ -4,11 +4,12 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { AgentRequestApprovalBackend } from "../../src/agent/backend/request/agent-request-approval-backend.js";
 import {
-  AgentRequestApprovalBackend, agentPermissionRequestType, registerAgentPermissionRequest,
-} from "../../src/agent/backend/request/agent-request-approval-backend.js";
+  agentPermissionRequestType, registerAgentPermissionRequest,
+} from "../../src/core/authorization/request/permission/agent-permission-request.js";
 import { AgentRequestBackend } from "../../src/agent/backend/request/agent-request-backend.js";
-import type { AgentPermissionTarget } from "../../src/agent/backend/request/types.js";
+import type { AgentPermissionTarget } from "../../src/core/authorization/request/permission/types.js";
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type { AgentTurnCompletedEvent } from "../../src/agent/thread/turn-events.js";

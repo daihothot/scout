@@ -1,5 +1,6 @@
 import { currentRunScope } from "../../../run/run-scope.js";
-import { AgentRequestApprovalBackend, agentPermissionRequestType } from "./agent-request-approval-backend.js";
+import { agentPermissionRequestType } from "../../../core/authorization/request/permission/agent-permission-request.js";
+import { AgentRequestApprovalBackend } from "./agent-request-approval-backend.js";
 
 /** Routes server requests requiring a host response, excluding the dynamic-tool entry. */
 export class AgentRequestBackend {
