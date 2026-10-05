@@ -472,7 +472,7 @@ test("Workflow completion ends authorization use and a new Workflow does not cop
   await assert.rejects(auth.register(artifact, input()), /active.*workflow|workflow.*active/i);
   await assert.rejects(auth.submit(artifact, { workflowId: request.workflowId, ...approved() }), /active.*workflow|workflow.*active|expired/i);
   assert.equal(existsSync(join(scope.runRoot, "authorization.journal")), false);
-  await scope.workflow.startWorkflow();
+  await scope.workflow.startWorkflow("test");
   assert.equal(scope.workflow.snapshot()?.workflowId, "workflow-002");
   assert.deepEqual(readJournalEvents(authorizationJournalPaths(scope.workflow.journalRoot).path), []);
   assert.equal(auth.get(artifact, request.sourceId), undefined);
@@ -506,7 +506,7 @@ test("Authorization starts in an empty runtime but registration waits for an exp
   await assert.rejects(auth.register(artifact, input()), /active.*workflow|workflow.*active/i);
   assert.equal(existsSync(join(runRoot, "authorization.journal")), false);
   assert.equal(existsSync(join(runRoot, "workflows")), false);
-  await workflow.startWorkflow();
+  await workflow.startWorkflow("test");
   const paths = authorizationJournalPaths(scope.workflow.journalRoot);
   assert.deepEqual(readJournalEvents(paths.path), []);
   const request = await auth.register(artifact, input());

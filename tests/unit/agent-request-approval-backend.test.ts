@@ -511,7 +511,7 @@ test("Workflow identity and unexpected filesystem resolution faults are not hidd
     assert.deepEqual(await f.invoke(reference), denied);
     assert.match(f.errorEvents.at(-1)?.message ?? "", /Duplicate Workflow identity/);
   } finally { rmSync(duplicateRoot, { recursive: true }); }
-  const identityPath = workflowPaths(join(workflowsRoot, "workflow-001")).identityPath;
+  const identityPath = workflowPaths(join(workflowsRoot, "test--workflow-001")).identityPath;
   const identity = readFileSync(identityPath, "utf8");
   writeFileSync(identityPath, "{");
   try {

@@ -300,7 +300,7 @@ test("A failed execution in the next Workflow keeps earlier execution and review
   await f.submit(f.review(first.history).input);
   await f.scope.workflow.advance("error");
 
-  await f.scope.workflow.startWorkflow();
+  await f.scope.workflow.startWorkflow("test");
   const second = await f.execute({ platform: "android", status: "failed" });
   await f.submit(f.handoff("execute", "operator", "success"));
   await f.submit(f.review(second.history, ["not_match"]).input);
@@ -324,7 +324,7 @@ test("A historical Pack remains owned by its source while execution, restored ha
   const oldJournal = readFileSync(join(f.scope.workflow.journalRoot, "rbt-events.jsonl"), "utf8");
   const oldJournalPath = join(f.scope.workflow.journalRoot, "rbt-events.jsonl");
   await f.scope.workflow.advance("error");
-  await f.scope.workflow.startWorkflow();
+  await f.scope.workflow.startWorkflow("test");
   const current = await f.execute({ agentId: "new-operator", platform: "android", executeFileRef: first.history.executeFileRef });
   assert.equal(current.history.executeFileRef, first.history.executeFileRef);
   assert.equal(current.history.executorHistoryRef, "scout-artifact://workflow-002/new-operator/history/001.json");
@@ -393,7 +393,7 @@ test("Passed platforms accumulate across Workflows and deduplicate without mixin
   await f.scope.workflow.advance("error");
 
   assert.deepEqual(f.entry()!.history.lastReviewSuccess, firstPack);
-  await f.scope.workflow.startWorkflow();
+  await f.scope.workflow.startWorkflow("test");
   for (const [agentId, platform] of [["android-first", "android"], ["android-second", "android"], ["editor", "unity-editor"]]) {
     const executed = await f.execute({ agentId, platform });
     await f.submit(f.executionHandoff(agentId));

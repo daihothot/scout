@@ -66,11 +66,11 @@ test("Workflow benchmark mutations require their own root lease while reads rema
   const { storage: ownerStorage, benchmarks: owner, transition: ownerTransition } = createTestWorkflowStorage(runRoot);
   const { storage: observerStorage, benchmarks: observer, transition: observerTransition } = createTestWorkflowStorage(runRoot);
   assert.equal(observer.read(), undefined);
-  assert.throws(() => observerTransition.prepareNext(), /must be acquired before mutation/);
+  assert.throws(() => observerTransition.prepareNext("test"), /must be acquired before mutation/);
   ownerStorage.acquire();
   ownerStorage.acquire();
   try {
-    const prepared = ownerTransition.prepareNext();
+    const prepared = ownerTransition.prepareNext("test");
     owner.recordStarted(prepared.workflowId);
     assert.equal(resolveWorkflowLocation(runRoot, observer.read()!.currentWorkflow)?.workflowId, prepared.workflowId);
     assert.throws(() => observerStorage.acquire(), /already attached/);
@@ -101,7 +101,7 @@ test("Two actual processes cannot overwrite each other's uncommitted Workflow di
   const winner = results[0].type === "acquired" ? left : right;
   const owner = JSON.parse(readFileSync(lockPath, "utf8")) as { processId: number };
   assert.equal(owner.processId, winner.child.pid);
-  assert.equal(readFileSync(join(runRoot, "workflows", "workflow-001", "journal", "holder.txt"), "utf8"), String(winner.child.pid));
+  assert.equal(readFileSync(join(runRoot, "workflows", "test--workflow-001", "journal", "holder.txt"), "utf8"), String(winner.child.pid));
   winner.command("release");
   assert.equal((await winner.next()).type, "released");
   assert.equal(existsSync(lockPath), false);
@@ -120,7 +120,7 @@ test("A SIGKILLed root owner can be reclaimed without deleting its historical Wo
   next.acquire();
   try {
     assert.notEqual(readFileSync(lockPath, "utf8"), contents);
-    assert.equal(readFileSync(join(runRoot, "workflows", "workflow-001", "journal", "holder.txt"), "utf8"), String(holder.child.pid));
+    assert.equal(readFileSync(join(runRoot, "workflows", "test--workflow-001", "journal", "holder.txt"), "utf8"), String(holder.child.pid));
     assert.equal(existsSync(`${lockPath}.reclaim`), false);
   } finally {
     next.release();
@@ -177,7 +177,7 @@ test("A delayed second stale reclaimer cannot unlink the first reclaimer's new l
   assert.equal(rejected.type, "rejected");
   assert.match(rejected.message!, /lock changed during stale recovery/);
   assert.equal(readFileSync(lockPath, "utf8"), activeOwner);
-  assert.equal(readFileSync(join(runRoot, "workflows", "workflow-001", "journal", "holder.txt"), "utf8"), String(first.child.pid));
+  assert.equal(readFileSync(join(runRoot, "workflows", "test--workflow-001", "journal", "holder.txt"), "utf8"), String(first.child.pid));
   first.command("release");
   assert.equal((await first.next()).type, "released");
 });
@@ -239,7 +239,7 @@ test("A runtime whose lock token was replaced cannot mutate or unlink the replac
   const original = readFileSync(lockPath, "utf8");
   const replacement = JSON.stringify({ ...JSON.parse(original), token: "different-owner" });
   writeFileSync(lockPath, replacement);
-  assert.throws(() => transition.prepareNext(), /no longer owned/);
+  assert.throws(() => transition.prepareNext("test"), /no longer owned/);
   assert.throws(() => storage.release(), /no longer owned/);
   assert.equal(readFileSync(lockPath, "utf8"), replacement);
   writeFileSync(lockPath, original);

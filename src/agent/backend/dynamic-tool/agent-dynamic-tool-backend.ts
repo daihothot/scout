@@ -319,7 +319,7 @@ export class AgentDynamicToolBackend {
       }
       case "StartWorkflow":
         if (!(caller instanceof CoordinatorAgent)) throw new Error("StartWorkflow is only available to the Coordinator.");
-        caller.requestWorkflowStart(delivery, call.prompt);
+        caller.requestWorkflowStart(delivery, call.name);
         return { status: "accepted", instruction: "结束当前 Turn。Runtime 将在该 Turn 和 Step 结束后开启新 Workflow，并在下一 Turn 继续执行。" };
       case "AssignTask":
         return this.handleAssignTaskToolCall(call);

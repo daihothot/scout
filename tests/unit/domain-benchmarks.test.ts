@@ -36,7 +36,7 @@ test("Domain submissions use the shared Workflow service and preserve other chap
   assert.equal(scope.workflow.snapshot(), undefined);
   assert.equal(scope.workflow.benchmarks, service);
   assert.deepEqual(service.read("rbt", ["history", "lastRun"]), { workflowId: "workflow-001" });
-  await scope.workflow.startWorkflow();
+  await scope.workflow.startWorkflow("test");
   assert.equal(scope.workflow.benchmarks, service);
   rbt.record(scope.workflow.snapshot()!.workflowId);
   assert.deepEqual(service.read("rbt", ["history", "lastRun"]), { workflowId: "workflow-002" });

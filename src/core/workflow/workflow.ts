@@ -1,6 +1,10 @@
 import type { WorkflowProfileAsset } from "../../asset-store/contracts/workflow-profile.js";
+import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { AgentEvents } from "../../agent/events/index.js";
+import { CoordinatorAgent } from "../../agent/roles/coordinator-agent.js";
 import { AgentStepStatuses } from "../../agent/step/types.js";
+import { AgentTaskStatuses } from "../../agent/task/types.js";
 import { RunEvents } from "../../run/events/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { SystemEvents } from "../../system/events/index.js";
@@ -14,7 +18,7 @@ import { StateMachine } from "../state/statemachine/index.js";
 import type { GraphData, WorkflowPhaseOutcome } from "./graph-data.js";
 import { Graph, type GraphAdvanceResult } from "./graph.js";
 import { projectGraphData } from "./projector/graph-projector.js";
-import { WorkflowCreatingTransition, WorkflowClosingTransition, reportWorkflowTransitionError } from "./transition/index.js";
+import { WorkflowCreatingTransition, WorkflowCreationRolledBackError, WorkflowClosingTransition, reportWorkflowTransitionError } from "./transition/index.js";
 import { WorkflowEvents, type WorkflowBoundaryEvent } from "./workflow-events.js";
 import { projectWorkflowData, type WorkflowData } from "./workflow-data.js";
 import type { ScoutWorkflowParticipant } from "./workflow-participant.js";
@@ -33,8 +37,9 @@ export interface WorkflowResumeInput {
 }
 
 export type WorkflowStateRequest =
+  | { state: WorkflowState.Creating; name: string }
   | { state: WorkflowState.Restoring; input: WorkflowResumeInput }
-  | { state: Exclude<WorkflowState, WorkflowState.Restoring> };
+  | { state: Exclude<WorkflowState, WorkflowState.Creating | WorkflowState.Restoring> };
 
 export type WorkflowAdvanceResult =
   | { status: "advanced"; result: GraphAdvanceResult }
@@ -46,7 +51,6 @@ export class Workflow implements ScoutWorkflowParticipant {
   readonly scoutRecordObject = new ScoutRecordObject();
   private machine = new StateMachine<WorkflowState, WorkflowStateRequest>();
   private readonly owners = new Set<ScoutWorkflowParticipant>([this]);
-  private readonly running: WorkflowRunning;
   private readonly unsubscribers: UnsubscribeEventHandler[] = [];
   private scoutBenchmarks?: ScoutBenchmarks;
   private storageLock?: WorkflowStorageLock;
@@ -55,12 +59,10 @@ export class Workflow implements ScoutWorkflowParticipant {
   private pendingAdvance?: Promise<WorkflowAdvanceResult>;
   private stopRequested = false;
   private lifecycleFailure?: unknown;
-  private creatingTransition?: WorkflowCreatingTransition;
   private started = false;
 
   constructor(readonly profileAsset: WorkflowProfileAsset) {
     this.graph = new Graph(profileAsset);
-    this.running = new WorkflowRunning(this);
   }
 
   get state(): WorkflowState | undefined { return this.machine.currentState; }
@@ -90,10 +92,10 @@ export class Workflow implements ScoutWorkflowParticipant {
       storage.acquire();
       const machine = new StateMachine<WorkflowState, WorkflowStateRequest>();
       const closing = new WorkflowClosing(this);
-      this.creatingTransition = new WorkflowCreatingTransition(this.graph, this.scoutRecordObject, benchmarks, storage);
-      machine.register(WorkflowState.Creating, new WorkflowCreating(this), this.creatingTransition);
+      machine.register(WorkflowState.Creating, new WorkflowCreating(this),
+        new WorkflowCreatingTransition(this.graph, this.scoutRecordObject, benchmarks, storage));
       machine.register(WorkflowState.Restoring, new WorkflowRestoring(this));
-      machine.register(WorkflowState.Running, this.running);
+      machine.register(WorkflowState.Running, new WorkflowRunning(this));
       machine.register(WorkflowState.Closing, closing,
         new WorkflowClosingTransition(this, closing, benchmarks));
       machine.register(WorkflowState.Aborting, new WorkflowAborting(this));
@@ -141,9 +143,7 @@ export class Workflow implements ScoutWorkflowParticipant {
     try { await this.machine.enterState(request.state, request); }
     catch (error) {
       let failure = error;
-      const retryable = this.creatingTransition?.retryableFailure;
-      if (request.state === WorkflowState.Creating
-        && retryable && retryable.error === error) {
+      if (request.state === WorkflowState.Creating && error instanceof WorkflowCreationRolledBackError) {
         try { await this.machine.enterState(WorkflowState.Idle, { state: WorkflowState.Idle }); }
         catch (cleanupError) {
           failure = new AggregateError([error, cleanupError], "Workflow preparation rolled back but blank-state cleanup failed.");
@@ -246,8 +246,58 @@ export class Workflow implements ScoutWorkflowParticipant {
 
   async advance(outcome: WorkflowPhaseOutcome): Promise<WorkflowAdvanceResult> {
     this.requireActiveWorkflow();
+    if (this.state !== WorkflowState.Running) throw new Error("Workflow must be running to advance.");
     if (this.pendingAdvance) throw new Error("Workflow is already advancing.");
-    const pending = Promise.resolve().then(() => this.running.advance(outcome))
+    const pending = Promise.resolve().then(async (): Promise<WorkflowAdvanceResult> => {
+      const scope = currentRunScope();
+      const coordinator = scope.agentRegistry.listAgents().find((agent) => agent instanceof CoordinatorAgent);
+      let inputArrived = false;
+      const unsubscribe = scope.eventBus.subscribe(SystemEvents.interaction.userMessageSubmitted, () => {
+        inputArrived = true;
+      }, { priority: EventSubscriptionPriorities.Critical });
+      try {
+        await scope.eventBus.drain(AgentEvents.task.outcomeSubmitted);
+        do {
+          inputArrived = false;
+          await scope.eventBus.drain(SystemEvents.interaction.userMessageSubmitted);
+          if (coordinator instanceof CoordinatorAgent) await coordinator.drainInput();
+        } while (inputArrived);
+      } finally { unsubscribe(); }
+      const data = this.requireActiveWorkflow();
+      if (coordinator instanceof CoordinatorAgent && coordinator.pendingWorkflowInputs().length) {
+        return { status: "not_advanced", reason: "pending_user_input" };
+      }
+      const tasks = scope.agentOrchestrator.taskStore.listTasks();
+      const blockers = [
+        ...tasks.filter((task) => task.status === AgentTaskStatuses.Queued || task.status === AgentTaskStatuses.Running)
+          .map((task) => `Task ${task.taskId} (${task.status})`),
+        ...scope.agentOrchestrator.stepStore.list().filter((step) => step.taskId !== undefined && step.status === AgentStepStatuses.Running)
+          .map((step) => `Worker Step ${step.stepId} for Task ${step.taskId} is still running`),
+        ...scope.agentRegistry.listAgents().flatMap((agent) => {
+          const snapshot = agent.snapshot();
+          const task = tasks.find((task) => task.taskId === snapshot.activeTask?.taskId);
+          return task?.status === AgentTaskStatuses.Done && snapshot.pendingMessageCount > 0
+            ? [`Task ${task.taskId} has ${snapshot.pendingMessageCount} pending Worker message(s)`] : [];
+        }),
+      ];
+      if (blockers.length) throw new Error(`Cannot advance Workflow Phase ${this.graph.snapshot().currentPhase}: ${blockers.join(", ")}. Finish or stop the outstanding Worker execution first.`);
+      const advanced = this.graph.previewAdvance(outcome);
+      const advancedAt = new Date().toISOString();
+      const event = { id: randomUUID(), key: WorkflowEvents.workflow.advanced,
+        payload: { ...advanced, outcome, advancedAt }, occurredAt: advancedAt };
+      const persisted = this.scoutRecordObject.write(event);
+      this.graph.advance(outcome);
+      this.updateData(advanced.cycleCompleted
+        ? { workflowId: data.workflowId, status: "settling", checkpointSeq: persisted.seq }
+        : { ...data, checkpointSeq: persisted.seq });
+      scope.eventBus.publish(event.key, event.payload, event);
+      await scope.eventBus.drain(WorkflowEvents.workflow.advanced);
+      if (advanced.cycleCompleted) {
+        try { await this.enterState({ state: WorkflowState.Closing }); }
+        catch { /* Entry reports the failure and blocks further work; the Graph decision is already committed. */ }
+      }
+      return { status: "advanced", result: advanced };
+    })
       .finally(() => { if (this.pendingAdvance === pending) this.pendingAdvance = undefined; });
     this.pendingAdvance = pending;
     return pending;
@@ -264,13 +314,13 @@ export class Workflow implements ScoutWorkflowParticipant {
     return workflowAgentPaths(workflowRootFromJournalRoot(this.journalRoot), agentId);
   }
 
-  async startWorkflow(): Promise<void> {
+  async startWorkflow(name: string): Promise<void> {
     this.assertAcceptingInput();
     if (this.activeWorkflowData) throw new Error("A Workflow is already active.");
     if (currentRunScope().agentOrchestrator.stepStore.list().some((step) => step.status === AgentStepStatuses.Running)) {
       throw new Error("Cannot open a Workflow during an active Agent Step.");
     }
-    await this.enterState({ state: WorkflowState.Creating });
+    await this.enterState({ state: WorkflowState.Creating, name });
   }
 
   readEvents(): ScoutRecord[] { return this.activeWorkflowData ? this.scoutRecordObject.read() : []; }

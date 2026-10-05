@@ -320,7 +320,7 @@ test("RBT history delivery separates identical sequence numbers across Workflows
     if (workflowId === "workflow-001") {
       await scope.workflow.advance("error");
 
-      await scope.workflow.startWorkflow();
+      await scope.workflow.startWorkflow("test");
     }
   }
   assert.deepEqual([...accepted.keys()], [
@@ -2612,8 +2612,8 @@ function roleRoots(runRoot: string, role: string): {
   logsRoot: string;
 } {
   return {
-    artifactRoot: join(runRoot, "workflows", "workflow-001", "agents", role, "artifacts"),
-    logsRoot: join(runRoot, "workflows", "workflow-001", "agents", role, "logs"),
+    artifactRoot: join(runRoot, "workflows", "test--workflow-001", "agents", role, "artifacts"),
+    logsRoot: join(runRoot, "workflows", "test--workflow-001", "agents", role, "logs"),
   };
 }
 

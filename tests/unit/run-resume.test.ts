@@ -1033,6 +1033,49 @@ test("Coordinator resume packet uses its own interrupted Step prompt only", () =
   );
 });
 
+for (const status of [undefined, AgentStepStatuses.Running, AgentStepStatuses.Interrupted,
+  AgentStepStatuses.Completed, AgentStepStatuses.Failed]) {
+  test(`Initial Phase recovery ${status === undefined ? "continues before its first Step" : `preserves a ${status} first Step`}`, () => {
+    const graph = createDefaultTestGraph().initialSnapshot();
+    const step = { ...agentStepState({ agentId: "coordinator", stepId: "first-phase-step" }), taskId: undefined };
+    const finishedEvent = status === AgentStepStatuses.Interrupted ? AgentEvents.step.interrupted
+      : status === AgentStepStatuses.Completed ? AgentEvents.step.completed : AgentEvents.step.failed;
+    const projection = projectAgentWorkflow(journalEvents(
+      scoutEvent(WorkflowEvents.workflow.initialized, { state: graph, initializedAt: "2026-07-22T00:00:00.000Z" }),
+      ...(status === undefined ? [] : [scoutEvent(AgentEvents.step.started, step)]),
+      ...(status === undefined || status === AgentStepStatuses.Running ? [] : [scoutEvent(finishedEvent, { ...step, status })]),
+    ));
+
+    assert.equal(projection.pendingPhase, status === undefined ? graph.currentPhase : undefined);
+    assert.deepEqual(planResumeActions({
+      projection, agentId: "coordinator", role: "coordinator", synthesisRole: "coordinator",
+    }), status === undefined
+      ? [{ type: ResumeActionTypes.ContinuePhase, phase: graph.currentPhase }]
+      : status === AgentStepStatuses.Running || status === AgentStepStatuses.Interrupted
+        ? [{ type: ResumeActionTypes.ResumeCoordinatorStep, stepId: step.stepId }] : []);
+    assert.deepEqual(planResumeActions({
+      projection, agentId: "researcher", role: "researcher", synthesisRole: "coordinator",
+    }), []);
+  });
+}
+
+test("A completed Workflow clears its unconsumed initial Phase instead of scheduling a new execution", () => {
+  const graph = createDefaultTestGraph().initialSnapshot();
+  const projection = projectAgentWorkflow(journalEvents(
+    scoutEvent(WorkflowEvents.workflow.initialized, { state: graph, initializedAt: "2026-07-22T00:00:00.000Z" }),
+    scoutEvent(WorkflowEvents.workflow.advanced, {
+      state: graph, previousPhase: graph.currentPhase, outcome: "error", cycleCompleted: true,
+      advancedAt: "2026-07-22T00:00:01.000Z",
+    }),
+    scoutEvent(WorkflowEvents.workflow.completed, { completedAt: "2026-07-22T00:00:02.000Z" }),
+  ));
+  assert.equal(projection.workflowStatus, "completed");
+  assert.equal(projection.pendingPhase, undefined);
+  assert.deepEqual(planResumeActions({
+    projection, agentId: "coordinator", role: "coordinator", synthesisRole: "coordinator",
+  }), []);
+});
+
 for (const nextStepStarted of [false, true]) {
   test(`Phase handoff recovery ${nextStepStarted ? "resumes the started Step" : "wakes the committed Phase without another input"}`, () => {
     const graph = createDefaultTestGraph().snapshot();
@@ -1626,7 +1669,7 @@ for (const hasCurrentWorkflowTurn of [false, true]) {
     await initialScope.workflow.advance("error");
 
     assert.equal(initialScope.workflow.snapshot(), undefined);
-    await initialScope.workflow.startWorkflow();
+    await initialScope.workflow.startWorkflow("test");
     assert.equal(projectAgentWorkflow(initialScope.workflow.readEvents()).turns.length, 0);
     const second = hasCurrentWorkflowTurn
       ? await initialAgent.runTurn({ prompt: "second Workflow before restore" })
@@ -1803,6 +1846,72 @@ test("Resume activation continues a Coordinator-only interruption after its user
     assert.match(prompts[0] ?? "", /resume_coordinator_step/);
     assert.match(prompts[0] ?? "", /recover my interrupted request/);
     assert.equal(projectAgentWorkflow(fixture.scope.workflow.readEvents()).coordinatorMessages.length, 1);
+  } finally {
+    await restoreAgents.stop("test_cleanup");
+  }
+});
+
+test("Resume activation continues the same Workflow before its first Coordinator Step without another user input", async (t) => {
+  const turns: Array<{ threadId: string; prompt: string }> = [];
+  const resumedThreads: string[] = [];
+  let threadSequence = 0;
+  const appServer = {
+    async startThread(startInput: Record<string, unknown>) {
+      const threadId = `initial-phase-worker-${++threadSequence}`;
+      return { threadId, startInput, response: { thread: { id: threadId } } };
+    },
+    async resumeThread(resumeInput: { threadId: string }) {
+      resumedThreads.push(resumeInput.threadId);
+      return { threadId: resumeInput.threadId, resumeInput, response: { thread: { id: resumeInput.threadId } } };
+    },
+    async runTurn(input: { threadId: string; prompt: string; onTurnStarted?(turnId: string): void }) {
+      turns.push({ threadId: input.threadId, prompt: input.prompt });
+      input.onTurnStarted?.("initial-phase-turn");
+      return { turnId: "initial-phase-turn", finalResponse: "initial phase resumed" };
+    },
+    async request() { return {}; },
+  } as unknown as CodexAppServerClient;
+  const fixture = await installRolloutLocatorFixture(t, "initial-phase", { includeTurn: false, appServer });
+  const thread = {
+    ...fixture.thread, agentId: "coordinator", role: "coordinator", phases: ["Synthesis"],
+    threadId: "initial-phase-coordinator-thread",
+    startInput: {
+      ...fixture.thread.startInput, cwd: fixture.scope.environment.agents.coordinator.mount.mountRoot,
+      permissions: scoutAgentPermissionProfile("coordinator"),
+    },
+    startResponse: { thread: { id: "initial-phase-coordinator-thread" } },
+  } satisfies AgentThreadSnapshot;
+  writeAgentThreadRecord(fixture.scope.environment.agents[thread.agentId]!.mount.agentRoot, { version: 1, thread, hasTurns: true });
+  await fixture.scope.eventBus.publishAndWait(AgentEvents.thread.started, thread);
+  writePersistedRollout({ scoutRoot: fixture.fixtureRoot, runId: fixture.scope.runId, threadId: thread.threadId });
+  const workflowId = fixture.scope.workflow.snapshot()!.workflowId;
+  const journalPath = fixture.scope.workflow.journalPath;
+  const restoreAgents = new AgentEntityRecovery();
+  await restoreAgents.restore(projectCurrentAgentWorkflow());
+  try {
+    await new AgentTaskRecovery().restore(projectCurrentAgentWorkflow()!);
+    const inject = new AgentContextRecovery();
+    await inject.restore(projectCurrentAgentWorkflow()!);
+    const coordinator = fixture.scope.agentRegistry.resolveAgent("coordinator");
+    assert.ok(coordinator instanceof CoordinatorAgent);
+    assert.equal(coordinator.snapshot().pendingMessageCount, 0);
+    assert.equal(turns.length, 0);
+    inject.activate();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(turns.length, 1, "activation must schedule the Turn without runToIdle starting it");
+    await coordinator.runToIdle();
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0]!.threadId, thread.threadId);
+    assert.match(turns[0]!.prompt, /continue_phase/);
+    assert.match(turns[0]!.prompt, /research/);
+    assert.equal(resumedThreads.filter((threadId) => threadId === thread.threadId).length, 1);
+    assert.equal(fixture.scope.workflow.snapshot()!.workflowId, workflowId);
+    assert.equal(fixture.scope.workflow.journalPath, journalPath);
+    assert.deepEqual(fixture.scope.agentOrchestrator.taskStore.listTasks(), []);
+    assert.equal(projectAgentWorkflow(fixture.scope.workflow.readEvents()).pendingPhase, undefined);
+    inject.activate();
+    await coordinator.runToIdle();
+    assert.equal(turns.length, 1);
   } finally {
     await restoreAgents.stop("test_cleanup");
   }
@@ -2030,7 +2139,7 @@ test(`AgentEntityRecovery resumes Agent entity memory with ${completedWorkflow ?
   await stage.stop("test_cleanup");
   if (oldJournalPath) {
     assert.equal(readFileSync(oldJournalPath, "utf8"), oldEvidence);
-    assert.equal(existsSync(join(zeroTurn.scope.runRoot, "workflows", "workflow-002")), false);
+    assert.equal(existsSync(join(zeroTurn.scope.runRoot, "workflows", "test--workflow-002")), false);
   }
 });
 }
@@ -2306,7 +2415,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
   initialOrchestrator.start();
   await new InitializeRunStage().start();
   await initialWorkflow.start();
-  await initialWorkflow.startWorkflow();
+  await initialWorkflow.startWorkflow("test");
   await new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
   }).start();
@@ -2826,7 +2935,7 @@ test("RunStageExecutor releases the journal lock when startup fails after instal
   assert.equal(executor.snapshot().status, "failed");
   assert.throws(() => currentRunScope(), /No active Scout run scope/);
   assert.equal(
-    existsSync(join(runRoot, "workflows", "workflow-001", "journal", ".scout.lock")),
+    existsSync(join(runRoot, "workflows", "test--workflow-001", "journal", ".scout.lock")),
     false,
   );
 });

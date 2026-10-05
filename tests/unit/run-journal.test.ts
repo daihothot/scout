@@ -534,7 +534,7 @@ test("Workflow starts a numbered Workflow while retaining the completed scout.jo
 
 
   assert.equal(persistence.workflow.snapshot(), undefined);
-  await persistence.workflow.startWorkflow();
+  await persistence.workflow.startWorkflow("test");
   await eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
     messageId: "workflow-replay-message",
     text: "重新执行",

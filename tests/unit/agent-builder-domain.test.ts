@@ -3222,7 +3222,7 @@ test("A failed Worker release preserves completion, releases peers and blocks th
     assert.equal(advanced.status, "advanced");
     assert.equal(advanced.result.cycleCompleted, true);
     const before = new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read();
-    await assert.rejects(workflow.startWorkflow(), /resource release failed/);
+    await assert.rejects(workflow.startWorkflow("test"), /resource release failed/);
     assert.equal(workflow.snapshot()?.status, "completed");
     assert.equal(workflow.graph.completedOutcome, "completed");
     assert.deepEqual(new ScoutBenchmarks(new Benchmarks(currentRunScope().runRoot)).read(), before);
@@ -3983,7 +3983,7 @@ test("Coordinator opens each Workflow only after its requesting Turn and reuses 
         assert.equal(scope.workflow.snapshot(), undefined);
         const input = {
           threadId: "thread-test", turnId: calls === 1 ? "open-1" : "open-2", callId: "request-" + calls,
-          namespace: AGENT_START_WORKFLOW_TOOL_NAMESPACE, tool: "StartWorkflow", arguments: { prompt: "Run the requested BDD." },
+          namespace: AGENT_START_WORKFLOW_TOOL_NAMESPACE, tool: "StartWorkflow", arguments: { name: "test" },
         };
         const accepted = await backend.handleDynamicToolCall(input);
         assert.equal(accepted.success, true, JSON.stringify(accepted));
@@ -4022,7 +4022,7 @@ test("Coordinator opens each Workflow only after its requesting Turn and reuses 
     assert.equal(appServer.threadInputs.length, 1);
     assert.equal(coordinatorAgent.threadId, "thread-test");
     assert.deepEqual(appServer.turnInputs.map((turn) => turn.runtimeWorkspaceRoots), [
-      [], [join(scope.runRoot, "workflows", "workflow-001")], [], [], [join(scope.runRoot, "workflows", "workflow-002")],
+      [], [join(scope.runRoot, "workflows", "test--workflow-001")], [], [], [join(scope.runRoot, "workflows", "test--workflow-002")],
     ]);
     assert.ok(appServer.turnInputs.every((turn) => turn.cwd === fixture.mount.mountRoot));
     const contexts = appServer.turnInputs.map((turn) => {
@@ -4035,8 +4035,8 @@ test("Coordinator opens each Workflow only after its requesting Turn and reuses 
     assert.deepEqual(contexts.map((context) => context.status), ["empty", "active", "empty", "empty", "active"]);
     assert.deepEqual(contexts.map((context) => context.workflowId), [undefined, "workflow-001", undefined, undefined, "workflow-002"]);
     assert.equal(contexts[0].artifactRoot, undefined);
-    assert.equal(contexts[1].artifactRoot, join(scope.runRoot, "workflows", "workflow-001", "agents", "coordinator", "artifacts"));
-    assert.equal(contexts[4].artifactRoot, join(scope.runRoot, "workflows", "workflow-002", "agents", "coordinator", "artifacts"));
+    assert.equal(contexts[1].artifactRoot, join(scope.runRoot, "workflows", "test--workflow-001", "agents", "coordinator", "artifacts"));
+    assert.equal(contexts[4].artifactRoot, join(scope.runRoot, "workflows", "test--workflow-002", "agents", "coordinator", "artifacts"));
     assert.match(appServer.turnInputs[1]!.prompt ?? "", /workflow-001/);
     assert.match(appServer.turnInputs[4]!.prompt ?? "", /workflow-002/);
     assert.doesNotMatch(appServer.turnInputs[4]!.prompt ?? "", /workflow-001/);
@@ -4045,6 +4045,76 @@ test("Coordinator opens each Workflow only after its requesting Turn and reuses 
     assert.equal(events.some((event) => AgentEvents.turn.completed.is(event) && event.payload.turn.turnId === "open-2"), false);
   } finally {
     await coordinatorAgent.stopAgent("test_cleanup");
+  }
+});
+
+test("Workflow start carries only a name; task prompt is produced and assigned in the fresh phase Turn", async () => {
+  let backend: AgentDynamicToolBackend;
+  const name = "gurusdk.behavior.firebase-fallback--26.9.0";
+  const taskInput = {
+    bdd_id: "gurusdk.behavior.firebase-fallback",
+    bdd_source_path: "Behaviors/firebase-fallback.md",
+    target_version: "26.9.0",
+    human_constraints: "none",
+  };
+  const appServer = createFakeAppServer({
+    threadIds: ["thread-test", "thread-worker"],
+    turnIds: ["prepare", "assign", "worker"],
+    onRunTurn: async () => {
+      const scope = currentRunScope();
+      const index = appServer.turnInputs.length - 1;
+      if (index === 0) {
+        const result = await backend.handleDynamicToolCall({
+          threadId: "thread-test", turnId: "prepare", callId: "start", namespace: AGENT_START_WORKFLOW_TOOL_NAMESPACE,
+          tool: "StartWorkflow", arguments: { name },
+        });
+        assert.equal(result.success, true);
+        assert.equal(scope.workflow.snapshot(), undefined);
+        assert.equal(scope.agentOrchestrator.taskStore.listTasks().length, 0);
+        await assert.rejects(scope.workflow.startWorkflow(name), /during an active Agent Step/);
+        const assignment = await backend.handleDynamicToolCall({
+          threadId: "thread-test", turnId: "prepare", callId: "too-early", namespace: AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
+          tool: "AssignTask", arguments: { description: "Too early", prompt: "Must not create work" },
+        });
+        assert.equal(assignment.success, false);
+      } else if (index === 1) {
+        assert.equal(scope.workflow.snapshot()?.workflowId, "workflow-001");
+        const context = JSON.parse(attachments.readTagBlock(appServer.turnInputs[index]!.prompt!, "workflow_context")[0]!.body);
+        assert.equal(context.artifactRoot, join(scope.runRoot, "workflows", `${name}--workflow-001`, "agents", "coordinator", "artifacts"));
+        const result = await backend.handleDynamicToolCall({
+          threadId: "thread-test", turnId: "assign", callId: "task", namespace: AGENT_ASSIGN_TASK_TOOL_NAMESPACE,
+          tool: "AssignTask", arguments: { description: "Validate confirmed target", prompt: JSON.stringify(taskInput) },
+        });
+        assert.equal(result.success, true, JSON.stringify(result));
+        assert.equal(JSON.parse(result.contentItems[0]!.text!).status, "assigned");
+      }
+    },
+  });
+  const fixture = await createAgentFixture("workflow-name-and-task", { appServer, withoutActiveWorkflow: true });
+  const scope = currentRunScope();
+  scope.domainRegistry.get(ScoutDomainId.Base)!.start!();
+  const coordinator = new AgentBuilder().buildCoordinator();
+  await coordinator.startThread();
+  const mount = createMount(fixture.root, "researcher");
+  prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
+  const worker = new AgentBuilder().buildWorker("researcher");
+  assert.ok(worker instanceof WorkerAgent);
+  await worker.startThread();
+  backend = new AgentDynamicToolBackend();
+  try {
+    await coordinator.sendMessage({ message: agent.turn.message("Start the confirmed verification.") });
+    await coordinator.runToIdle();
+    await worker.runToIdle();
+    const task = scope.agentOrchestrator.taskStore.listTasks()[0]!;
+    assert.deepEqual(JSON.parse(attachments.readTagBlock(task.initialPrompt, "message")[0]!.body), taskInput);
+    assert.ok(appServer.turnInputs.some((turn) => turn.prompt?.includes(JSON.stringify(taskInput))), "Worker received the separately assigned task input");
+    assert.equal(appServer.turnInputs[1]!.prompt?.includes(taskInput.bdd_source_path), false, "Runtime did not forward a prebuilt execution prompt");
+    const records = scope.workflow.readEvents();
+    assert.equal(records.some((event) => AgentEvents.turn.completed.is(event) && event.payload.turn.turnId === "prepare"), false);
+    assert.equal(records.some((event) => AgentEvents.task.assigned.is(event) && event.payload.taskId === task.taskId), true);
+  } finally {
+    await worker.stopAgent("test_cleanup");
+    await coordinator.stopAgent("test_cleanup");
   }
 });
 
@@ -4134,7 +4204,7 @@ for (const status of ["failed", "interrupted"] as const) {
     const appServer = createFakeAppServer({ turnStatus: status, onRunTurn: async () => {
       const result = await backend.handleDynamicToolCall({
         threadId: "thread-test", turnId: "turn-test", callId: "request", namespace: AGENT_START_WORKFLOW_TOOL_NAMESPACE,
-        tool: "StartWorkflow", arguments: { prompt: "Start execution" },
+        tool: "StartWorkflow", arguments: { name: "test" },
       });
       assert.equal(result.success, true);
     } });
@@ -4247,7 +4317,7 @@ async function createAgentFixture(
   if (!input.withoutActiveWorkflow) {
     const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot, runtimeGraph);
     storage.acquire();
-    const prepared = transition.prepareNext();
+    const prepared = transition.prepareNext("test");
     const seed = Journal.create({ journalId: runId + ":workflow:scout", path: join(prepared.journalRoot, "scout.journal"), lockPath: join(prepared.journalRoot, ".scout.lock") });
     seed.append({ id: runId + "-created", key: RunEvents.run.created, payload: { runId, scoutRoot: root, createdAt }, occurredAt: createdAt });
     seed.append({ id: runId + "-initialized", key: WorkflowEvents.workflow.initialized, payload: { state: runtimeGraph.snapshot(), initializedAt: createdAt }, occurredAt: createdAt });

@@ -92,7 +92,7 @@ test("resume finishes interrupted environment initialization in the same Run and
   assert.equal(restoring.mock.callCount(), 1);
   assert.equal(readFileSync(fixture.journalPath, "utf8"), journalBefore);
   assert.equal(readFileSync(fixture.benchmarks.path, "utf8"), linksBefore);
-  assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+  assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
   assert.equal(existsSync(join(fixture.journalRoot, ".scout.lock")), false);
 });
 
@@ -137,7 +137,7 @@ for (const evidence of ["agent", "advanced", "missing-journal"] as const) {
     assert.equal(readFileSync(fixture.manifestStore.path, "utf8"), manifestBefore);
     assert.equal(readFileSync(fixture.benchmarks.path, "utf8"), linksBefore);
     if (journalBefore !== undefined) assert.equal(readFileSync(fixture.journalPath, "utf8"), journalBefore);
-    assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+    assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
     assert.deepEqual(fixture.disclosures, []);
   });
 }
@@ -155,7 +155,7 @@ test("resume selects the requested Run's benchmark even while another Run holds 
   const { storage: otherStorage, benchmarks: other, transition: otherTransition } = createTestWorkflowStorage(otherRoot);
   otherStorage.acquire();
   try {
-    const prepared = otherTransition.prepareNext();
+    const prepared = otherTransition.prepareNext("test");
     other.recordStarted(prepared.workflowId);
     const otherJournalPath = join(prepared.journalRoot, "scout.journal");
     writeFileSync(otherJournalPath, "other Run evidence\n");
@@ -240,7 +240,7 @@ test("resume rejects a Workflow without run.created rather than treating it as m
 
   assert.equal(clients.mock.callCount(), 0);
   assert.equal(existsSync(join(fixture.runRoot, "logs")), false);
-  assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+  assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
   assert.deepEqual(fixture.disclosures, []);
 });
 
@@ -267,7 +267,7 @@ test("resume opens a matching Run's Workflow without replacing it", async (t) =>
   assert.equal(reachedWorkflow, true);
   assert.equal(readFileSync(fixture.manifestStore.path, "utf8"), manifestBefore);
   assert.equal(readFileSync(fixture.journalPath, "utf8"), journalBefore);
-  assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+  assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
   assert.deepEqual(fixture.disclosures, []);
 });
 
@@ -336,7 +336,7 @@ for (const change of ["tail", "graph", "identity"] as const) {
     assert.equal(readFileSync(fixture.benchmarks.path, "utf8"), before);
     assert.equal(readFileSync(fixture.journalPath, "utf8"), changedContents);
     assert.equal(existsSync(join(fixture.journalRoot, ".scout.lock")), false);
-    assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+    assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
     race.mock.restore();
     const reopened = open({ journalId: "verification", path: fixture.journalPath,
       lockPath: join(fixture.journalRoot, ".scout.lock") });
@@ -470,7 +470,7 @@ test("RestoreWorkflowStage leaves a completed resume empty without replaying its
     assert.equal(scope.workflow.snapshot(), undefined);
     assert.doesNotThrow(() => scope.workflow.assertAcceptingInput());
     assert.deepEqual(scope.workflow.readEvents(), []);
-    assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+    assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
     assert.equal(readFileSync(fixture.journalPath, "utf8"), before);
     throw stopBeforeExternalClients;
   });
@@ -531,7 +531,7 @@ test("resume retains a settling Workflow together with its bound Task and pendin
   assert.equal(clients.mock.callCount(), 1);
   assert.equal(readFileSync(fixture.journalPath, "utf8"), before);
   assert.deepEqual(fixture.benchmarks.read(), linksBefore);
-  assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+  assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
 });
 
 for (const pending of ["task", "message", "turn", "running-step", "interrupted-step"] as const) {
@@ -606,7 +606,7 @@ for (const pending of ["task", "message", "turn", "running-step", "interrupted-s
     assert.equal(clients.mock.callCount(), pending === "interrupted-step" ? 1 : 0);
     assert.equal(readFileSync(fixture.journalPath, "utf8"), before);
     assert.equal(readFileSync(fixture.benchmarks.path, "utf8"), linksBefore);
-    assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+    assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
     assert.equal(existsSync(join(fixture.journalRoot, ".scout.lock")), false);
     assert.equal(existsSync(join(fixture.runRoot, ".workflow.lock")), false);
   });
@@ -637,7 +637,7 @@ for (const scenario of [
     }
     assert.equal(clients.mock.callCount(), scenario.matches ? 1 : 0);
     assert.equal(readFileSync(fixture.journalPath, "utf8"), before);
-    assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+    assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
   });
 }
 
@@ -645,7 +645,7 @@ for (const missing of ["directory", "file"] as const) {
   test(`resume stays empty in the same Run when the benchmark target ${missing} is missing`, async (t) => {
     const fixture = await createFixture(t);
     const abandonedDomainPath = join(fixture.journalRoot, "rbt.journal");
-    if (missing === "directory") rmSync(join(fixture.runRoot, "workflows", "workflow-001"), { recursive: true });
+    if (missing === "directory") rmSync(join(fixture.runRoot, "workflows", "test--workflow-001"), { recursive: true });
     if (missing === "file") {
       mkdirSync(fixture.journalRoot, { recursive: true });
       writeFileSync(abandonedDomainPath, "retained domain evidence\n", "utf8");
@@ -661,7 +661,7 @@ for (const missing of ["directory", "file"] as const) {
       assert.equal(scope.workflow.snapshot(), undefined);
       assert.deepEqual(scope.workflow.readEvents(), []);
       assert.deepEqual(scope.workflow.graph.snapshot(), fixture.graphData);
-      assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+      assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
       assert.equal(fixture.disclosures.length, 1, "warning precedes service startup");
       assert.equal(fixture.disclosures[0]!.level, "warn");
       assert.equal(readFileSync(fixture.manifestStore.path, "utf8"), manifestBefore);
@@ -709,7 +709,7 @@ for (const change of ["journal-reappeared", "permalink-changed"] as const) {
         acquire.call(competingStorage);
         try {
           const target = change === "permalink-changed"
-            ? transition.prepareNext()
+            ? transition.prepareNext("test")
             : { workflowId: "workflow-001", journalRoot: fixture.journalRoot };
           repairedPath = join(target.journalRoot, "scout.journal");
           const repaired = Journal.create({
@@ -752,9 +752,9 @@ for (const change of ["journal-reappeared", "permalink-changed"] as const) {
     assert.equal(readFileSync(repairedPath, "utf8"), repairedContents);
     assert.equal(readFileSync(fixture.benchmarks.path, "utf8"), repairedLinks);
     assert.equal(readFileSync(fixture.manifestStore.path, "utf8"), manifestBefore);
-    assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-003")), false);
+    assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-003")), false);
     if (change === "journal-reappeared") {
-      assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+      assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
     }
     assert.equal(existsSync(join(fixture.runRoot, ".workflow.lock")), false);
   });
@@ -779,7 +779,7 @@ test("missing-journal resume preserves non-ENOENT failures found under its runti
   assert.equal(clients.mock.callCount(), 0);
   assert.equal(readFileSync(fixture.benchmarks.path, "utf8"), linksBefore);
   assert.equal(readFileSync(fixture.journalRoot, "utf8"), "the Workflow directory is no longer a directory");
-  assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+  assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
   assert.equal(existsSync(join(fixture.runRoot, ".workflow.lock")), false);
 });
 
@@ -797,7 +797,7 @@ test("resume does not silently start a new Workflow when its missing-journal war
   assert.equal(clients.mock.callCount(), 0);
   assert.equal(readFileSync(fixture.benchmarks.path, "utf8"), benchmarksBefore);
   assert.equal(existsSync(join(fixture.runRoot, "logs")), false);
-  assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+  assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
 });
 
 for (const failure of ["empty", "malformed", "io-error", "empty-permalink"] as const) {
@@ -825,7 +825,7 @@ for (const failure of ["empty", "malformed", "io-error", "empty-permalink"] as c
     assert.equal(clients.mock.callCount(), 0);
     assert.equal(readFileSync(fixture.benchmarks.path, "utf8"), benchmarksBefore);
     assert.equal(existsSync(join(fixture.runRoot, "logs")), false);
-    assert.equal(existsSync(join(fixture.runRoot, "workflows", "workflow-002")), false);
+    assert.equal(existsSync(join(fixture.runRoot, "workflows", "test--workflow-002")), false);
     assert.deepEqual(fixture.disclosures, []);
   });
 }
@@ -866,13 +866,13 @@ function createFixture(t: TestContext, domain: string = "rbt", installEnvironmen
   const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot);
   storage.acquire();
   try {
-    transition.prepareNext();
+    transition.prepareNext("test");
     benchmarks.recordStarted("workflow-001");
     benchmarks.recordSuccess("workflow-001");
   } finally {
     storage.release();
   }
-  const journalRoot = join(runRoot, "workflows", "workflow-001", "journal");
+  const journalRoot = join(runRoot, "workflows", "test--workflow-001", "journal");
   const journalPath = join(journalRoot, "scout.journal");
   const graphData = new Workflow(new AssetStore().buildWorkflow(root, "rbt")).graph.snapshot();
   const disclosures: RuntimeDisclosureEvent[] = [];

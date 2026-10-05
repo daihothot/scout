@@ -36,9 +36,14 @@ test("StartWorkflow exposes only the formal tool, namespace and guidance Skill c
   assert.equal(tool.name, "StartWorkflow");
   assert.equal(tool.namespace, "scout_agent_startworkflow");
   assert.doesNotThrow(() => assertAgentToolNamespace("scout_agent_startworkflow", "StartWorkflow"));
-  assert.deepEqual(parseAgentDynamicToolCall("StartWorkflow", { prompt: "Execute the requested work" }), {
-    tool: "StartWorkflow", prompt: "Execute the requested work",
+  assert.deepEqual(parseAgentDynamicToolCall("StartWorkflow", { name: "requested-work" }), {
+    tool: "StartWorkflow", name: "requested-work",
   });
+  const schema = tool.inputSchema as { required: string[]; properties: Record<string, unknown> };
+  assert.deepEqual(schema.required, ["name"]);
+  assert.deepEqual(Object.keys(schema.properties), ["name"]);
+  assert.throws(() => parseAgentDynamicToolCall("StartWorkflow", { prompt: "Execute the requested work" }), /requires a non-empty name/);
+  assert.throws(() => parseAgentDynamicToolCall("StartWorkflow", { name: "  " }), /requires a non-empty name/);
   assert.throws(() => assertAgentToolNamespace("scout_agent_startflow", "StartWorkflow"), /must use namespace/);
   assert.throws(() => assertAgentToolNamespace("scout_agent_startflow", "StartFlow"), /Unsupported agent tool/);
   assert.throws(() => parseAgentDynamicToolCall("StartFlow", { prompt: "Execute the requested work" }), /Unsupported/);
@@ -150,7 +155,7 @@ async function installNamespaceScope(t: TestContext): Promise<RunScope> {
   await orchestrator.start();
   scope.manifestStore.create({ runId, scoutRoot: root, createdAt: new Date().toISOString(), checkpointSeq: 0 });
   await scope.workflow.start();
-  await scope.workflow.startWorkflow();
+  await scope.workflow.startWorkflow("test");
   t.after(async () => {
     await scope.workflow.stop();
     await orchestrator.stop();

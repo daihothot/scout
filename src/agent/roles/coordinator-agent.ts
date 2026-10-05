@@ -37,7 +37,7 @@ export class CoordinatorAgent extends ScoutAgent {
   private resumeContext?: string;
   private workflowPhaseStepRequested = false;
   private readonly userInputs = new Map<string, ScoutEvent<UserMessageSubmittedPayload>>();
-  private pendingWorkflowStart?: { threadId: string; turnId: string; callId: string; prompt: string };
+  private pendingWorkflowStart?: { threadId: string; turnId: string; callId: string; name: string };
 
   constructor(options: ScoutAgentOptions) {
     const scope = currentRunScope();
@@ -94,8 +94,8 @@ export class CoordinatorAgent extends ScoutAgent {
             this.workflowPhaseStepRequested = false;
           }
           if (request && completed) {
-            await scope.workflow.startWorkflow();
-            await this.sendMessage({ message: agent.turn.message(request.prompt), deliveryMode: "queued" });
+            await scope.workflow.startWorkflow(request.name);
+            this.scheduleCurrentPhaseStep();
           }
         }
       },
@@ -111,18 +111,16 @@ export class CoordinatorAgent extends ScoutAgent {
   }
 
   /** Accepts intent without moving the Workflow boundary inside the caller's Turn. */
-  requestWorkflowStart(delivery: DynamicToolCallInput, prompt: string): void {
+  requestWorkflowStart(delivery: DynamicToolCallInput, name: string): void {
     this.assertOwnsActiveTurn(delivery);
     if (this.runScope.workflow.snapshot()) throw new Error("Finish the active Workflow before requesting another.");
-    // Reject invalid runtime-tagged input before accepting an execution intent.
-    attachments.compose(agent.turn.message(prompt));
     const current = this.pendingWorkflowStart;
     if (current) {
       if (current.threadId === delivery.threadId && current.turnId === delivery.turnId
-        && current.callId === delivery.callId && current.prompt === prompt) return;
+        && current.callId === delivery.callId && current.name === name) return;
       throw new Error("This Turn already requested a Workflow. End the current Turn.");
     }
-    this.pendingWorkflowStart = { threadId: delivery.threadId, turnId: delivery.turnId, callId: delivery.callId, prompt };
+    this.pendingWorkflowStart = { threadId: delivery.threadId, turnId: delivery.turnId, callId: delivery.callId, name };
   }
 
   async sendMessage(input: SendAgentMessageInput): Promise<Result<void, string>> {

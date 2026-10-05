@@ -46,6 +46,8 @@ test("Workflow Asset stays static while each Graph independently owns its cursor
   assert.equal(Object.hasOwn(asset.profile, "currentPhase"), false);
   const first = new Workflow(asset);
   const second = new Workflow(asset);
+  assert.equal(first.profileAsset, asset);
+  assert.deepEqual(asset.profile.roles.executor!.artifactReaders, ["reviewer"]);
   const initial = first.graph.initialSnapshot();
   const advanced = first.graph.advance("completed");
   assert.notEqual(advanced.state.currentPhase, initial.currentPhase);
@@ -351,6 +353,11 @@ test("Workflow Profile validation rejects entry fields and invalid graph referen
       () => buildWorkflow(fixtureRoot, "invalid"),
       /roles\.coordinator cannot declare phases/,
     );
+
+    const withUnknownReader = structuredClone(original) as { roles: { executor: { artifactReaders: string[] } } };
+    withUnknownReader.roles.executor.artifactReaders = ["missing-reader"];
+    writeFileSync(targetPath, JSON.stringify(withUnknownReader), "utf8");
+    assert.throws(() => buildWorkflow(fixtureRoot, "invalid"), /artifactReaders references unknown role missing-reader/);
 
     const withoutDefaultResource = structuredClone(original) as {
       resources: Record<string, { default?: true; phases: string[] }>;

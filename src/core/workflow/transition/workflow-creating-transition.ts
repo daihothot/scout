@@ -7,10 +7,18 @@ import type { StateTransition } from "../../state/statemachine/index.js";
 import type { Graph } from "../graph.js";
 import type { WorkflowStateRequest } from "../workflow.js";
 import { WorkflowEvents } from "../workflow-events.js";
+import { WorkflowState } from "../state/workflow-state.js";
+
+/** A failed, uncommitted creation has released its preparation resources. */
+export class WorkflowCreationRolledBackError extends Error {
+  constructor(cause: unknown) {
+    super(`Workflow creation preparation was rolled back: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    this.name = "WorkflowCreationRolledBackError";
+  }
+}
 
 /** Registered pre-entry transaction for Creating; the state machine owns its awaited lifetime. */
-export class WorkflowCreatingTransition implements StateTransition<WorkflowStateRequest> {
-  retryableFailure?: { readonly error: unknown };
+export class WorkflowCreatingTransition implements StateTransition<Extract<WorkflowStateRequest, { state: WorkflowState.Creating }>> {
   constructor(
     private readonly graph: Graph,
     private readonly recordObject: ScoutRecordObject,
@@ -19,7 +27,7 @@ export class WorkflowCreatingTransition implements StateTransition<WorkflowState
   ) {}
 
   /** Allocates the execution identity and approves replacement before any directory mutation. */
-  prepareNext(): WorkflowLocation {
+  prepareNext(name: string): WorkflowLocation {
     const links = this.benchmarks.read();
     const last = links?.lastWorkflow;
     let workflowId = "workflow-001";
@@ -29,7 +37,7 @@ export class WorkflowCreatingTransition implements StateTransition<WorkflowState
       if (!Number.isSafeInteger(next)) throw new Error(`Workflow sequence overflow: ${last}`);
       workflowId = `workflow-${String(next).padStart(Math.max(3, digits.length), "0")}`;
     }
-    const { location, replacedWorkflowId } = inspectWorkflowDirectory(this.storage, workflowId);
+    const { location, replacedWorkflowId } = inspectWorkflowDirectory(this.storage, workflowId, name);
     if (replacedWorkflowId !== undefined) {
       const pinnedBy = links
         ? (["currentWorkflow", "lastWorkflow", "lastRun", "lastSuccess"] as const)
@@ -58,13 +66,12 @@ export class WorkflowCreatingTransition implements StateTransition<WorkflowState
     discardWorkflowDirectory(this.storage, prepared);
   }
 
-  async in(_payload: WorkflowStateRequest): Promise<void> {
-    this.retryableFailure = undefined;
+  async in(payload: Extract<WorkflowStateRequest, { state: WorkflowState.Creating }>): Promise<void> {
     const scope = currentRunScope();
     let prepared: WorkflowLocation | undefined;
     let committed = false;
     try {
-      prepared = this.prepareNext();
+      prepared = this.prepareNext(payload.name);
       const boundary = { workflowId: prepared.workflowId, journalRoot: prepared.journalRoot };
       createWorkflowAgentDirectories(this.storage, prepared.workflowRoot, this.graph.snapshot().roles.map((role) => role.name));
       await scope.eventBus.publishAndWait(WorkflowEvents.workflow.preparing, boundary);
@@ -91,8 +98,7 @@ export class WorkflowCreatingTransition implements StateTransition<WorkflowState
           }
         }
       }
-      if (!resourceFailure) this.retryableFailure = { error };
-      throw resourceFailure ?? error;
+      throw resourceFailure ?? new WorkflowCreationRolledBackError(error);
     }
   }
 

@@ -40,7 +40,7 @@ test("New runtime has no active Workflow until explicitly requested; completed r
   assert.equal(workflow.snapshot(), undefined);
   assert.deepEqual(workflow.readEvents(), []);
   assert.throws(() => workflow.agentPaths("coordinator"), /Workflow is unavailable/);
-  assert.equal(existsSync(join(runRoot, "workflows", "workflow-001")), false);
+  assert.equal(existsSync(join(runRoot, "workflows", "test--workflow-001")), false);
   await scope.eventBus.publishAndWait(SystemEvents.interaction.userMessageSubmitted, {
     messageId: "history-question", text: "查看历史", attachment: "查看历史", submittedAt: new Date().toISOString(),
   });
@@ -50,25 +50,25 @@ test("New runtime has no active Workflow until explicitly requested; completed r
   assert.match(readFileSync(entityLog, "utf8"), /history only/);
   assert.equal(existsSync(join(agentRoot, "artifacts")), false);
   assert.deepEqual(workflow.readEvents(), []);
-  assert.equal(existsSync(join(runRoot, "workflows", "workflow-001")), false);
+  assert.equal(existsSync(join(runRoot, "workflows", "test--workflow-001")), false);
 
-  await workflow.startWorkflow();
+  await workflow.startWorkflow("test");
   assert.equal(workflow.benchmarks, sharedBenchmarks);
   assert.equal(workflow.snapshot()?.workflowId, "workflow-001");
   const journalRoot = workflow.journalRoot;
-  assert.equal(workflowRootFromJournalRoot(journalRoot), join(runRoot, "workflows", "workflow-001"));
+  assert.equal(workflowRootFromJournalRoot(journalRoot), join(runRoot, "workflows", "test--workflow-001"));
   const journalPath = workflow.journalPath;
   assert.equal(workflow.readEvents().some((event) => event.id === "history-question"), false);
   assert.deepEqual(workflow.agentPaths("coordinator"), {
-    artifactRoot: join(runRoot, "workflows", "workflow-001", "agents", "coordinator", "artifacts"),
-    logsRoot: join(runRoot, "workflows", "workflow-001", "agents", "coordinator", "logs"),
+    artifactRoot: join(runRoot, "workflows", "test--workflow-001", "agents", "coordinator", "artifacts"),
+    logsRoot: join(runRoot, "workflows", "test--workflow-001", "agents", "coordinator", "logs"),
   });
-  await assert.rejects(workflow.startWorkflow(), /already active/);
+  await assert.rejects(workflow.startWorkflow("test"), /already active/);
   await workflow.advance("error");
 
   assert.equal(workflow.benchmarks, sharedBenchmarks);
   assert.equal(workflow.snapshot(), undefined);
-  assert.equal(existsSync(join(runRoot, "workflows", "workflow-002")), false);
+  assert.equal(existsSync(join(runRoot, "workflows", "test--workflow-002")), false);
   assert.equal(existsSync(join(journalRoot, ".scout.lock")), false);
   assert.equal(existsSync(join(journalRoot, ".base.lock")), false);
   const contents = readFileSync(journalPath, "utf8");
@@ -94,7 +94,7 @@ test("New runtime has no active Workflow until explicitly requested; completed r
   assert.match(emptyWorkflowLog, /resumed history question/);
   assert.equal(readFileSync(journalPath, "utf8"), contents);
   assert.equal(readFileSync(join(runRoot, "benchmarks.json"), "utf8"), benchmarkContents);
-  assert.equal(existsSync(join(runRoot, "workflows", "workflow-002")), false);
+  assert.equal(existsSync(join(runRoot, "workflows", "test--workflow-002")), false);
 });
 
 test("An unfinished renamed Workflow resumes its identity, cursor and current artifact paths", async (t) => {
@@ -110,12 +110,13 @@ test("An unfinished renamed Workflow resumes its identity, cursor and current ar
   await initial.advance("completed");
   const workflowData = initial.snapshot()!;
   const graphData = initial.graph.snapshot();
+  const originalRoot = workflowRootFromJournalRoot(initial.journalRoot);
   const benchmarks = new ScoutBenchmarks(new Benchmarks(scope.runRoot));
   const before = readFileSync(benchmarks.path, "utf8");
   for (const domain of scope.domainRegistry.list()) await domain.close();
   await initial.stop();
   const renamedRoot = join(scope.runRoot, "workflows", "firebase-fallback v1");
-  renameSync(join(scope.runRoot, "workflows", workflowData.workflowId), renamedRoot);
+  renameSync(originalRoot, renamedRoot);
   const selected = resolveWorkflowLocation(scope.runRoot, benchmarks.read()!.currentWorkflow)!;
   assert.equal(selected.workflowId, workflowData.workflowId);
   assert.equal(selected.workflowRoot, renamedRoot);
@@ -160,7 +161,7 @@ test("Agent telemetry keeps idle-runtime activity on the entity without backfill
   const entityContents = readFileSync(entityLog, "utf8");
   assert.match(entityContents, /empty-workflow-retained/);
   assert.doesNotMatch(entityContents, /first-workflow-only/);
-  await scope.workflow.startWorkflow();
+  await scope.workflow.startWorkflow("test");
   const secondLog = join(scope.workflow.agentPaths("coordinator").logsRoot, "activity.log");
   await publish("second-workflow-only");
   assert.notEqual(firstLog, secondLog);

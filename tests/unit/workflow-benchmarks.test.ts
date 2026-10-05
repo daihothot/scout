@@ -32,16 +32,16 @@ test("Different Runs keep their Workflow directories, permalinks and locks insid
   assert.equal(right.path, join(rightRoot, "benchmarks.json"));
   assert.equal(existsSync(join(leftRoot, ".workflow.lock")), true);
   assert.equal(existsSync(join(rightRoot, ".workflow.lock")), true);
-  const firstLeft = leftTransition.prepareNext();
-  const firstRight = rightTransition.prepareNext();
-  assert.deepEqual(firstLeft, { workflowId: "workflow-001", workflowRoot: join(leftRoot, "workflows", "workflow-001"), journalRoot: join(leftRoot, "workflows", "workflow-001", "journal") });
-  assert.deepEqual(firstRight, { workflowId: "workflow-001", workflowRoot: join(rightRoot, "workflows", "workflow-001"), journalRoot: join(rightRoot, "workflows", "workflow-001", "journal") });
+  const firstLeft = leftTransition.prepareNext("test");
+  const firstRight = rightTransition.prepareNext("test");
+  assert.deepEqual(firstLeft, { workflowId: "workflow-001", workflowRoot: join(leftRoot, "workflows", "test--workflow-001"), journalRoot: join(leftRoot, "workflows", "test--workflow-001", "journal") });
+  assert.deepEqual(firstRight, { workflowId: "workflow-001", workflowRoot: join(rightRoot, "workflows", "test--workflow-001"), journalRoot: join(rightRoot, "workflows", "test--workflow-001", "journal") });
   left.recordStarted(firstLeft.workflowId);
   right.recordStarted(firstRight.workflowId);
   right.recordSuccess(firstRight.workflowId);
   const rightLinks = readFileSync(right.path, "utf8");
   const rightLock = readFileSync(join(rightRoot, ".workflow.lock"), "utf8");
-  const nextLeft = leftTransition.prepareNext();
+  const nextLeft = leftTransition.prepareNext("test");
   left.recordStarted(nextLeft.workflowId);
   assert.equal(left.read()?.currentWorkflow, "workflow-002");
   assert.equal(readFileSync(right.path, "utf8"), rightLinks);
@@ -54,15 +54,16 @@ test("Different Runs keep their Workflow directories, permalinks and locks insid
   assert.equal(existsSync(join(scoutRoot, "run", "workflow-001")), false);
 });
 
-test("Workflow benchmarks allocate numbered Workflow directories and preserve stable permalinks", (t) => {
+test("Workflow allocates named directories directly and preserves numbered identities and stable permalinks", (t) => {
   const runRoot = mkdtempSync(join(tmpdir(), "scout-workflow-benchmarks-"));
   t.after(() => { storage.release(); rmSync(runRoot, { recursive: true, force: true }); });
   const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot);
   storage.acquire();
 
-  const first = transition.prepareNext();
+  const name = "gurusdk.behavior.firebase-fallback--26.9.0";
+  const first = transition.prepareNext(name);
   assert.equal(first.workflowId, "workflow-001");
-  assert.equal(basename(first.workflowRoot), first.workflowId);
+  assert.equal(basename(first.workflowRoot), `${name}--${first.workflowId}`);
   assert.deepEqual(JSON.parse(readFileSync(join(first.workflowRoot, "workflow.json"), "utf8")), {
     workflowId: "workflow-001",
   });
@@ -71,10 +72,10 @@ test("Workflow benchmarks allocate numbered Workflow directories and preserve st
   benchmarks.recordStarted(first.workflowId);
   benchmarks.recordSuccess(first.workflowId);
 
-  const collision = join(runRoot, "workflows", "workflow-002");
+  const collision = join(runRoot, "workflows", `${name}--workflow-002`);
   mkdirSync(collision, { recursive: true });
   writeFileSync(join(collision, "stale"), "stale", "utf8");
-  const preparedCollision = transition.prepareNext();
+  const preparedCollision = transition.prepareNext(name);
   assert.equal(preparedCollision.workflowRoot, collision);
   assert.equal(existsSync(join(collision, "stale")), false);
   // The permalink is deliberately unchanged until the prepared Workflow is valid.
@@ -94,6 +95,27 @@ test("Workflow benchmarks allocate numbered Workflow directories and preserve st
     lastSuccess: { workflowId: "workflow-001" },
   } });
   assert.equal(existsSync(join(first.journalRoot, "scout.journal")), true);
+  assert.equal(existsSync(join(runRoot, "workflows", "workflow-001")), false, "no intermediate identity-named directory is created");
+});
+
+test("Workflow name cannot select a path outside its allocation root or mutate existing evidence", (t) => {
+  const runRoot = mkdtempSync(join(tmpdir(), "scout-workflow-invalid-name-"));
+  const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot);
+  t.after(() => { storage.release(); rmSync(runRoot, { recursive: true, force: true }); });
+  storage.acquire();
+  const prepared = transition.prepareNext("current");
+  benchmarks.recordStarted(prepared.workflowId);
+  const identity = readFileSync(join(prepared.workflowRoot, "workflow.json"), "utf8");
+  const pointers = readFileSync(benchmarks.path, "utf8");
+  for (const name of ["", "  ", "../agents", "/tmp/evidence", "a/b", "a\\b", "a\nvalue", "a\u0000value"]) {
+    assert.throws(() => transition.prepareNext(name), /Invalid Workflow name/);
+    assert.equal(readFileSync(join(prepared.workflowRoot, "workflow.json"), "utf8"), identity);
+    assert.equal(readFileSync(benchmarks.path, "utf8"), pointers);
+  }
+  const next = transition.prepareNext("next target");
+  transition.discard(next);
+  assert.equal(existsSync(next.workflowRoot), false, "uncommitted named allocation is removed at its actual path");
+  assert.equal(existsSync(prepared.workflowRoot), true);
 });
 
 test("Workflow contracts do not resolve legacy Flow field or identity-file aliases", (t) => {
@@ -124,7 +146,7 @@ test("Workflow benchmarks reject an explicitly empty permalink", (t) => {
   t.after(() => { storage.release(); rmSync(runRoot, { recursive: true, force: true }); });
   const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot);
   storage.acquire();
-  const first = transition.prepareNext();
+  const first = transition.prepareNext("test");
   benchmarks.recordStarted(first.workflowId);
   const links = JSON.parse(readFileSync(benchmarks.path, "utf8")) as Record<string, unknown>;
   (links.scout as Record<string, unknown>).currentWorkflow = "";
@@ -141,9 +163,9 @@ test("Workflow benchmarks do not overwrite a Workflow still pinned by a permalin
   t.after(() => { storage.release(); rmSync(runRoot, { recursive: true, force: true }); });
   const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot);
   storage.acquire();
-  const first = transition.prepareNext();
+  const first = transition.prepareNext("test");
   benchmarks.recordStarted(first.workflowId);
-  const pinned = join(runRoot, "workflows", "workflow-002");
+  const pinned = join(runRoot, "workflows", "test--workflow-002");
   mkdirSync(pinned, { recursive: true });
   writeFileSync(join(pinned, "scout.journal"), "pinned\n", "utf8");
   const document = JSON.parse(readFileSync(benchmarks.path, "utf8"));
@@ -152,7 +174,7 @@ test("Workflow benchmarks do not overwrite a Workflow still pinned by a permalin
   }, null, 2)}\n`, "utf8");
 
   assert.throws(
-    () => transition.prepareNext(),
+    () => transition.prepareNext("test"),
     /referenced by lastSuccess/,
   );
   assert.equal(existsSync(join(pinned, "scout.journal")), true);
@@ -163,7 +185,7 @@ test("Workflow benchmarks refuse to discard a committed Workflow", (t) => {
   t.after(() => { storage.release(); rmSync(runRoot, { recursive: true, force: true }); });
   const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot);
   storage.acquire();
-  const prepared = transition.prepareNext();
+  const prepared = transition.prepareNext("test");
   const journalPath = join(prepared.journalRoot, "scout.journal");
   writeFileSync(journalPath, "committed\n", "utf8");
   benchmarks.recordStarted(prepared.workflowId);
@@ -178,9 +200,9 @@ test("Explicit Domain references protect Workflow evidence; ordinary business st
   const shared = scout.benchmarks;
   t.after(() => { storage.release(); rmSync(runRoot, { recursive: true, force: true }); });
   storage.acquire();
-  const first = transition.prepareNext();
+  const first = transition.prepareNext("test");
   scout.recordStarted(first.workflowId);
-  const second = transition.prepareNext();
+  const second = transition.prepareNext("test");
   const journalPath = join(second.journalRoot, "scout.journal");
   writeFileSync(journalPath, "retained evidence\n");
   shared.submit("rbt", [
@@ -188,7 +210,7 @@ test("Explicit Domain references protect Workflow evidence; ordinary business st
     { path: ["note"], value: second.workflowId },
   ]);
   const before = readFileSync(shared.path, "utf8");
-  assert.throws(() => transition.prepareNext(), /Cannot overwrite referenced Workflow/);
+  assert.throws(() => transition.prepareNext("test"), /Cannot overwrite referenced Workflow/);
   assert.throws(() => transition.discard(second), /Cannot discard referenced Workflow/);
   assert.equal(readFileSync(journalPath, "utf8"), "retained evidence\n");
   assert.equal(readFileSync(shared.path, "utf8"), before);
@@ -197,7 +219,7 @@ test("Explicit Domain references protect Workflow evidence; ordinary business st
   const document = JSON.parse(before);
   document.rbt.history.lastPack.workflowId = first.workflowId;
   writeFileSync(shared.path, JSON.stringify(document));
-  const replacement = transition.prepareNext();
+  const replacement = transition.prepareNext("test");
   assert.equal(replacement.workflowRoot, second.workflowRoot);
   assert.equal(existsSync(journalPath), false);
   assert.deepEqual(shared.read("rbt"), document.rbt);
@@ -229,7 +251,7 @@ test("Scout pointer updates preserve other namespaces and renamed Workflow ident
   const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot);
   t.after(() => { storage.release(); rmSync(runRoot, { recursive: true, force: true }); });
   storage.acquire();
-  const preparedWorkflow = transition.prepareNext();
+  const preparedWorkflow = transition.prepareNext("test");
   benchmarks.recordStarted(preparedWorkflow.workflowId);
   const rbt = { bddCatalog: { bdd: { "1.0": { history: { lastRun: { workflowId: preparedWorkflow.workflowId } }, arbitraryFact: ["keep", 42] } } } };
   const document = JSON.parse(readFileSync(benchmarks.path, "utf8"));
@@ -260,9 +282,9 @@ test("Workflow lookup and allocation only use workflows, not sibling Run directo
 
   assert.equal(resolveWorkflowLocation(runRoot, "workflow-001"), undefined);
   assert.equal(existsSync(join(runRoot, "workflows")), false);
-  const prepared = transition.prepareNext();
+  const prepared = transition.prepareNext("test");
   benchmarks.recordStarted(prepared.workflowId);
-  assert.equal(prepared.workflowRoot, join(runRoot, "workflows", "workflow-001"));
+  assert.equal(prepared.workflowRoot, join(runRoot, "workflows", "test--workflow-001"));
   assert.deepEqual(resolveWorkflowLocation(runRoot, benchmarks.read()!.currentWorkflow), prepared);
   assert.equal(readFileSync(join(siblingWorkflow, "workflow.json"), "utf8"), siblingIdentity);
   for (const name of ["agents", "codex-home", "logs"]) {
@@ -275,7 +297,7 @@ test("Prepared Workflow cleanup rejects a sibling Run directory and preserves th
   const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot);
   t.after(() => { storage.release(); rmSync(runRoot, { recursive: true, force: true }); });
   storage.acquire();
-  const prepared = transition.prepareNext();
+  const prepared = transition.prepareNext("test");
   const siblingWorkflow = join(runRoot, prepared.workflowId);
   mkdirSync(join(siblingWorkflow, "journal"), { recursive: true });
   writeFileSync(join(siblingWorkflow, "journal", "scout.journal"), "preserve sibling evidence\n");

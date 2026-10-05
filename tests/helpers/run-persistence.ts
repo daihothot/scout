@@ -87,7 +87,7 @@ export async function createTestRunPersistence(
   // This fixture explicitly seeds an active Workflow; production startup remains empty.
   const { storage, benchmarks, transition } = createTestWorkflowStorage(runRoot, runtimeGraph);
   storage.acquire();
-  const prepared = transition.prepareNext();
+  const prepared = transition.prepareNext("test");
   const createdAt = new Date().toISOString();
   const seed = Journal.create({ journalId: `${runId}:workflow:scout`, path: join(prepared.journalRoot, "scout.journal"), lockPath: join(prepared.journalRoot, ".scout.lock") });
   seed.append({ id: `${runId}-created`, key: RunEvents.run.created, payload: { runId, scoutRoot, createdAt }, occurredAt: createdAt });

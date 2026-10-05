@@ -90,10 +90,10 @@ export interface SubmitPhaseOutcomeToolCall {
   outcome: WorkflowPhaseOutcome;
 }
 
-/** Confirmed user intent carried into the next Workflow, without runtime path choices. */
+/** A display name for an explicitly requested Workflow; task inputs are assigned separately. */
 export interface StartWorkflowToolCall {
   tool: "StartWorkflow";
-  prompt: string;
+  name: string;
 }
 
 export interface ResolveArtifactReferenceToolCall {
@@ -136,7 +136,7 @@ export function buildStartWorkflowDynamicTool(): AgentDynamicToolSpec {
     namespace: AGENT_START_WORKFLOW_TOOL_NAMESPACE,
     name: "StartWorkflow",
     description: "Coordinator 根据用户明确的新执行需求请求开启 Workflow；接受后立即结束当前 Turn。",
-    inputSchema: objectSchema({ prompt: { type: "string", description: "用户已确认的新执行目标与必要上下文；不是历史查看或一般讨论。" } }, ["prompt"]),
+    inputSchema: objectSchema({ name: { type: "string", description: "Domain Skill 确认必要输入后生成的 Workflow 名称，不是路径；执行 prompt 由开启后的 AssignTask 交付。" } }, ["name"]),
   };
 }
 
@@ -265,8 +265,8 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
     case "ResolveArtifactReference":
       return { tool, reference: readArtifactReference(input.reference) };
     case "StartWorkflow": {
-      if (typeof input.prompt !== "string" || !input.prompt.trim()) throw new Error("StartWorkflow requires a non-empty prompt.");
-      return { tool, prompt: input.prompt };
+      if (typeof input.name !== "string" || !input.name.trim()) throw new Error("StartWorkflow requires a non-empty name.");
+      return { tool, name: input.name.trim() };
     }
     case "AssignTask": {
       const description = input.description;

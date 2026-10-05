@@ -149,12 +149,15 @@ export function resolveWorkflowLocation(runRoot: string, workflowId: string): Wo
 }
 
 /** Inspects an allocation target under the runtime lease; replacement policy belongs to Workflow. */
-export function inspectWorkflowDirectory(storage: WorkflowStorageLock, workflowId: string): {
+export function inspectWorkflowDirectory(storage: WorkflowStorageLock, workflowId: string, name: string): {
   location: WorkflowLocation;
   replacedWorkflowId: string | undefined;
 } {
   storage.assertOwned();
-  const workflowRoot = join(runPaths(storage.runRoot).workflowsRoot, workflowId);
+  // The Agent supplies a name, never an allocation path. This IO boundary
+  // must reject separators before the exact target can be replaced.
+  if (!name.trim() || /[/\\\u0000-\u001f]/.test(name)) throw new Error(`Invalid Workflow name: ${name}`);
+  const workflowRoot = join(runPaths(storage.runRoot).workflowsRoot, `${name}--${workflowId}`);
   const existing = resolveWorkflowLocation(storage.runRoot, workflowId);
   if (existing && existing.workflowRoot !== workflowRoot) {
     throw new Error(`Cannot allocate existing Workflow identity ${workflowId}: ${existing.workflowRoot}`);
@@ -189,10 +192,12 @@ export function createWorkflowAgentDirectories(storage: WorkflowStorageLock, wor
 /** Removes one uncommitted allocation, never a sibling Run directory or the storage root. */
 export function discardWorkflowDirectory(storage: WorkflowStorageLock, prepared: WorkflowLocation): void {
   storage.assertOwned();
-  const expectedRoot = join(runPaths(storage.runRoot).workflowsRoot, prepared.workflowId);
+  const expectedRoot = resolve(prepared.workflowRoot);
+  const workflowsRoot = runPaths(storage.runRoot).workflowsRoot;
   if (!/^workflow-[0-9]{3,}$/.test(prepared.workflowId)
-    || resolve(prepared.workflowRoot) !== expectedRoot
-    || resolve(prepared.journalRoot) !== workflowPaths(expectedRoot).journalRoot) {
+    || dirname(expectedRoot) !== workflowsRoot
+    || resolve(prepared.journalRoot) !== workflowPaths(expectedRoot).journalRoot
+    || readWorkflowIdentity(expectedRoot) !== prepared.workflowId) {
     throw new Error(`Prepared Workflow root does not match ${prepared.workflowId}: ${prepared.journalRoot}`);
   }
   rmSync(expectedRoot, { recursive: true, force: true });

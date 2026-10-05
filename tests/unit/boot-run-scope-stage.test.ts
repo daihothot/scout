@@ -6,6 +6,7 @@ import { agent } from "../../src/agent/context/agent-attachments.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import type { Logger } from "../../src/core/logging/index.js";
 import { WorkflowEvents } from "../../src/core/workflow/index.js";
+import { WorkflowCreationRolledBackError } from "../../src/core/workflow/transition/workflow-creating-transition.js";
 import { AgentStepStore } from "../../src/agent/step/agent-step-store.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
 import {
@@ -274,7 +275,7 @@ for (const preparationFails of [false, true]) {
     const previousWorkflow = scope.workflow.snapshot()!;
     const previousRoot = scope.workflow.journalRoot;
     for (let phase = 0; phase < 4; phase += 1) await scope.workflow.advance("completed");
-    const nextRoot = join(scope.runRoot, "workflows", "workflow-002", "journal");
+    const nextRoot = join(scope.runRoot, "workflows", "test--workflow-002", "journal");
 
     assert.equal(scope.workflow.snapshot(), undefined);
     const domains = scope.domainRegistry.list();
@@ -310,14 +311,14 @@ for (const preparationFails of [false, true]) {
       attachment: agent.turn.message(text),
       submittedAt: new Date().toISOString(),
     });
-    const input = scope.workflow.startWorkflow();
+    const input = scope.workflow.startWorkflow("test");
     const inputDone = preparationFails
-      ? assert.rejects(input, (error) => error === preparationError)
+      ? assert.rejects(input, (error) => error instanceof WorkflowCreationRolledBackError && error.cause === preparationError)
       : input;
     await enteredPreparation;
     stopping = domainStage.stop();
     const stopped = preparationFails
-      ? assert.rejects(stopping, (error) => error === preparationError)
+      ? assert.rejects(stopping, (error) => error instanceof WorkflowCreationRolledBackError && error.cause === preparationError)
       : stopping;
     let stopSettled = false;
     void stopping.then(() => { stopSettled = true; }, () => { stopSettled = true; });

@@ -332,7 +332,7 @@ for (const [event, withEnvironment] of [
     }
 
     assert.ok(runRoot);
-    assert.equal(existsSync(join(runRoot, "workflows", "workflow-001")), false);
+    assert.equal(existsSync(join(runRoot, "workflows")), false);
     assert.equal(existsSync(join(runRoot, ".workflow.lock")), false);
     assert.throws(() => currentRunScope(), /No active Scout run scope/);
   });

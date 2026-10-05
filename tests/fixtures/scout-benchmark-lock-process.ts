@@ -49,7 +49,7 @@ try {
   announce("rejected", error instanceof Error ? error.message : String(error));
   process.exit(0);
 }
-const allocation = inspectWorkflowDirectory(storage, "workflow-001");
+const allocation = inspectWorkflowDirectory(storage, "workflow-001", "test");
 const prepared = createWorkflowDirectory(storage, allocation.location);
 fs.writeFileSync(join(prepared.journalRoot, "holder.txt"), String(process.pid));
 announce("acquired");

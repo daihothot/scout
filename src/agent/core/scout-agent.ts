@@ -550,7 +550,7 @@ export abstract class ScoutAgent {
         status: workflowData.status,
         artifactRoot: paths!.artifactRoot,
       }
-        : { status: "empty", instruction: "没有活动 Workflow。可交流与查看历史；开始新执行前由 Coordinator 调用 StartWorkflow，接受后立即结束当前 Turn。" },
+        : { status: "empty", instruction: "没有活动 Workflow。可交流、查看历史或只读准备 Domain 所需开启输入；新执行输入确认后由 Coordinator 生成 name、调用 StartWorkflow，接受后立即结束当前 Turn。" },
     ));
     const startedAt = new Date().toISOString();
     const activeTask = this.runScope.agentOrchestrator.taskStore.findActiveTaskForAgent(this.agentId);

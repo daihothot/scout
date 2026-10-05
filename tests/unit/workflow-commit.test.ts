@@ -14,7 +14,7 @@ import { Workflow, WorkflowEvents, projectWorkflowData, type WorkflowResumeInput
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { ScoutBenchmarks } from "../../src/core/benchmarks/index.js";
 import { WorkflowStorageLock } from "../../src/core/io/index.js";
-import { WorkflowCreatingTransition } from "../../src/core/workflow/transition/workflow-creating-transition.js";
+import { WorkflowCreatingTransition, WorkflowCreationRolledBackError } from "../../src/core/workflow/transition/workflow-creating-transition.js";
 import { Benchmarks } from "../../src/core/benchmarks/index.js";
 import { BaseDomain, DomainAgentBackend, ScoutDomainId } from "../../src/domain/index.js";
 import type { RecordPreparation } from "../../src/core/record/index.js";
@@ -31,11 +31,11 @@ test("Workflow startup isolates different Runs in the same Scout repository", as
   const secondRoot = join(root, "run", "run-second");
   const first = await createTestRunPersistence(t, "run-first", root, new InMemoryEventBus(), firstRoot);
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  assert.equal(first.workflow.journalPath, join(firstRoot, "workflows", "workflow-001", "journal", "scout.journal"));
+  assert.equal(first.workflow.journalPath, join(firstRoot, "workflows", "test--workflow-001", "journal", "scout.journal"));
   const firstContents = readFileSync(first.workflow.journalPath, "utf8");
   const firstLinks = readFileSync(join(firstRoot, "benchmarks.json"), "utf8");
   const second = await createTestRunPersistence(t, "run-second", root, new InMemoryEventBus(), secondRoot);
-  assert.equal(second.workflow.journalPath, join(secondRoot, "workflows", "workflow-001", "journal", "scout.journal"));
+  assert.equal(second.workflow.journalPath, join(secondRoot, "workflows", "test--workflow-001", "journal", "scout.journal"));
   assert.equal(readFileSync(first.workflow.journalPath, "utf8"), firstContents);
   assert.equal(readFileSync(join(firstRoot, "benchmarks.json"), "utf8"), firstLinks);
   assert.equal(existsSync(join(firstRoot, ".workflow.lock")), true);
@@ -69,7 +69,7 @@ test("Registered Workflow transitions bracket participant work before entering R
   assert.deepEqual(trace, ["owner.close", "record.complete", "record.release", "owner.clear"]);
   assert.equal(workflow.state, WorkflowState.Idle);
   trace.length = 0;
-  await workflow.startWorkflow();
+  await workflow.startWorkflow("test");
   assert.deepEqual(trace, ["record.prepare", "record.commit", "owner.create", "owner.run"]);
   assert.equal(workflow.state, WorkflowState.Running);
 });
@@ -105,7 +105,7 @@ test("Closing participant failure still finalizes records once and prevents entr
   assert.equal(existsSync(join(journalRoot, ".scout.lock")), false);
   assert.equal(existsSync(join(journalRoot, ".base.lock")), false);
   assert.equal(disclosures.length, 1);
-  await assert.rejects(workflow.startWorkflow(), /participant cleanup or resource release failed/);
+  await assert.rejects(workflow.startWorkflow("test"), /participant cleanup or resource release failed/);
 });
 
 test("Terminal advance waits for accepted outcome consumers before closing Workflow records", async (t) => {
@@ -330,7 +330,7 @@ test("Terminal recovery finishes runtime transactions without a Coordinator Turn
     assert.equal(restored.snapshot(), undefined);
     assert.equal(readJournalEvents(path).filter((event) => WorkflowEvents.workflow.completed.is(event)).length, 1);
     assert.equal(benchmarks.read()?.currentWorkflow, "workflow-001");
-    assert.equal(existsSync(join(scope.runRoot, "workflows", "workflow-002")), false);
+    assert.equal(existsSync(join(scope.runRoot, "workflows", "test--workflow-002")), false);
     assert.equal(existsSync(join(journalRoot, ".scout.lock")), false);
     assert.equal(existsSync(join(journalRoot, ".base.lock")), false);
   } finally {
@@ -448,7 +448,7 @@ test("A success permalink failure is disclosed without undoing Graph completion 
   const seq = workflow.lastSeq;
   await assert.rejects(async () => await workflow.advance("completed"), /Workflow is unavailable/);
   assert.equal(workflow.lastSeq, seq);
-  await workflow.startWorkflow();
+  await workflow.startWorkflow("test");
   assert.equal(workflow.snapshot()?.workflowId, "workflow-002");
   assert.equal(workflow.graph.completedOutcome, undefined);
 });
@@ -571,7 +571,7 @@ test("Completed Workflow recovery stays empty and stopping never prepares anothe
     assert.equal(prepare.mock.callCount(), 0);
     assert.deepEqual(benchmarks.read(), links);
     assert.deepEqual(readJournalEvents(previousPath), events);
-    assert.equal(existsSync(join(scope.runRoot, "workflows", "workflow-002")), false);
+    assert.equal(existsSync(join(scope.runRoot, "workflows", "test--workflow-002")), false);
   } finally {
     await next.stop(); scope.clearWorkflow(next); scope.setWorkflow(workflow);
   }
@@ -593,7 +593,7 @@ test("Explicit Workflow start prepares installed Domains without copying previou
 
 
   assert.equal(preparations, 0);
-  await workflow.startWorkflow();
+  await workflow.startWorkflow("test");
 
   const attachments = workflow.readEvents().filter((event) => RunEvents.runtime.attached.is(event));
   assert.equal(attachments.length, 0);
@@ -615,7 +615,7 @@ test("An error terminal finishes its Workflow without replacing lastSuccess", as
   assert.equal(benchmarks.read()?.lastSuccess, "workflow-001");
   await submit("next");
   assert.equal(workflow.snapshot(), undefined);
-  await workflow.startWorkflow();
+  await workflow.startWorkflow("test");
   const advanced = await workflow.advance("error");
   assert.equal(advanced.status, "advanced");
   assert.equal(advanced.result.cycleCompleted, true);
@@ -648,7 +648,7 @@ test("Exit releases independent records despite cleanup errors and blocks reuse 
   const advanced = await workflow.advance("error");
   assert.equal(advanced.status, "advanced");
   assert.equal(advanced.result.cycleCompleted, true);
-  await assert.rejects(workflow.startWorkflow(), /resource release failed/);
+  await assert.rejects(workflow.startWorkflow("test"), /resource release failed/);
   assert.deepEqual(cleanup, ["base.finish", "rbt.finish", "record.release"]);
   assert.equal(existsSync(join(journalRoot, ".scout.lock")), false);
   assert.equal(existsSync(join(journalRoot, ".base.lock")), false);
@@ -669,8 +669,8 @@ test("Exit releases independent records despite cleanup errors and blocks reuse 
     WorkflowEvents.workflow.releasing.routeKey,
   ].includes(event.key.routeKey)), false, "runtime boundaries must never be replayable evidence");
   assert.throws(() => workflow.assertAcceptingInput(), /resource release failed/);
-  await assert.rejects(workflow.startWorkflow(), /resource release failed/);
-  assert.equal(existsSync(join(scope.runRoot, "workflows", "workflow-002")), false);
+  await assert.rejects(workflow.startWorkflow("test"), /resource release failed/);
+  assert.equal(existsSync(join(scope.runRoot, "workflows", "test--workflow-002")), false);
 });
 
 test("Concurrent explicit starts cannot create two Workflows", async (t) => {
@@ -691,8 +691,8 @@ test("Concurrent explicit starts cannot create two Workflows", async (t) => {
   await submit("must-not-start-workflow");
   assert.equal(preparations, 0);
 
-  const first = workflow.startWorkflow();
-  const second = assert.rejects(workflow.startWorkflow(), /Workflow is transitioning/);
+  const first = workflow.startWorkflow("test");
+  const second = assert.rejects(workflow.startWorkflow("test"), /Workflow is transitioning/);
   await prepared;
   await assert.rejects(submit("during-switch"), /Workflow is transitioning/);
   await assert.rejects(async () => await workflow.advance("completed"), /Workflow is transitioning/);
@@ -716,6 +716,7 @@ test("A later Domain prepare failure preserves completed evidence and leaves an 
   const { runRoot, workflow, base, benchmarks, submit, registerPreparation } = await fixture(t);
   const oldPath = workflow.journalPath;
   const oldLinks = benchmarks.read();
+  const preparationFailure = new Error("RBT prepare failed");
   const original = base.recordObject.write({
     id: "base-original", key: RunEvents.runtime.attached,
     payload: { mode: "start" }, occurredAt: new Date().toISOString(),
@@ -723,20 +724,27 @@ test("A later Domain prepare failure preserves completed evidence and leaves an 
   await workflow.advance("error");
   let fail = true;
   registerPreparation(() => {
-    if (fail) throw new Error("RBT prepare failed");
+    if (fail) throw preparationFailure;
     return { commit() {}, abort() {}, releasePrevious() {} };
   });
 
   const oldContents = readFileSync(oldPath, "utf8");
-  await assert.rejects(workflow.startWorkflow(), /RBT prepare failed/);
+  await assert.rejects(workflow.startWorkflow("test"), (error: unknown) => {
+    assert.ok(error instanceof WorkflowCreationRolledBackError);
+    assert.equal(error.cause, preparationFailure);
+    assert.match(error.message, /RBT prepare failed/);
+    return true;
+  });
+  assert.equal(workflow.state, WorkflowState.Idle);
   assert.equal(workflow.snapshot(), undefined);
   assert.deepEqual(base.recordObject.read(), []);
   assert.equal(readFileSync(oldPath, "utf8"), oldContents);
   assert.deepEqual(benchmarks.read(), oldLinks);
-  assert.equal(existsSync(join(runRoot, "workflows", "workflow-002")), false);
-  assert.deepEqual(readJournalEvents(join(runRoot, "workflows", "workflow-001", "journal", "base.journal")), [original]);
+  assert.equal(existsSync(join(runRoot, "workflows", "test--workflow-002")), false);
+  assert.deepEqual(readJournalEvents(join(runRoot, "workflows", "test--workflow-001", "journal", "base.journal")), [original]);
   fail = false;
-  await workflow.startWorkflow();
+  await workflow.startWorkflow("test");
+  assert.equal(workflow.state, WorkflowState.Running);
   assert.equal(workflow.snapshot()?.workflowId, "workflow-002");
   assert.deepEqual(base.recordObject.read(), []);
 });
@@ -749,15 +757,59 @@ test("A boundary permalink failure aborts all preparations without switching act
 
   const oldContents = readFileSync(oldPath, "utf8");
   const mock = t.mock.method(ScoutBenchmarks.prototype, "recordStarted", () => { throw new Error("start permalink failed"); });
-  await assert.rejects(workflow.startWorkflow(), /start permalink failed/);
+  await assert.rejects(workflow.startWorkflow("test"), /start permalink failed/);
   assert.equal(workflow.snapshot(), undefined);
   assert.equal(readFileSync(oldPath, "utf8"), oldContents);
   assert.deepEqual(base.recordObject.read(), []);
   assert.deepEqual(benchmarks.read(), links);
-  assert.equal(existsSync(join(runRoot, "workflows", "workflow-002")), false);
+  assert.equal(existsSync(join(runRoot, "workflows", "test--workflow-002")), false);
   mock.mock.restore();
-  await workflow.startWorkflow();
+  await workflow.startWorkflow("test");
   assert.equal(workflow.snapshot()?.workflowId, "workflow-002");
+});
+
+test("A rolled-back creation cannot retry when returning to Idle fails", async (t) => {
+  const { workflow, registerPreparation } = await fixture(t);
+  await workflow.advance("error");
+  const preparationFailure = new Error("preparation rejected");
+  const cleanupFailure = new Error("owner blank-state cleanup failed");
+  let failCleanup = true;
+  workflow.registerParticipant({
+    ...testWorkflowParticipant,
+    clearWorkflow() { if (failCleanup) throw cleanupFailure; },
+  });
+  registerPreparation(() => { throw preparationFailure; });
+  try {
+    let blockedFailure: AggregateError | undefined;
+    await assert.rejects(workflow.startWorkflow("test"), (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      const [rollback, cleanup] = error.errors;
+      assert.ok(rollback instanceof WorkflowCreationRolledBackError);
+      assert.equal(rollback.cause, preparationFailure);
+      assert.ok(cleanup instanceof AggregateError);
+      assert.deepEqual(cleanup.errors, [cleanupFailure]);
+      blockedFailure = error;
+      return true;
+    });
+    assert.equal(workflow.state, undefined);
+    await assert.rejects(workflow.startWorkflow("test"), (error: unknown) => error === blockedFailure);
+  } finally { failCleanup = false; }
+});
+
+test("A participant creation failure after commit is not a rolled-back preparation", async (t) => {
+  const { workflow, benchmarks, runRoot } = await fixture(t);
+  await workflow.advance("error");
+  const failure = new Error("participant creation failed");
+  workflow.registerParticipant({
+    ...testWorkflowParticipant,
+    create() { throw failure; },
+  });
+  await assert.rejects(workflow.startWorkflow("test"), (error: unknown) => error === failure);
+  assert.equal(workflow.state, undefined);
+  assert.equal(workflow.snapshot()?.workflowId, "workflow-002");
+  assert.equal(benchmarks.read()?.currentWorkflow, "workflow-002");
+  assert.equal(existsSync(join(runRoot, "workflows", "test--workflow-002", "journal", "scout.journal")), true);
+  await assert.rejects(workflow.startWorkflow("test"), (error: unknown) => error === failure);
 });
 
 test("An abort failure retains the prepared directory and blocks a destructive retry", async (t) => {
@@ -765,7 +817,7 @@ test("An abort failure retains the prepared directory and blocks a destructive r
   const completedRoot = workflow.journalRoot;
   await workflow.advance("error");
 
-  const nextRoot = join(runRoot, "workflows", "workflow-002");
+  const nextRoot = join(runRoot, "workflows", "test--workflow-002");
   const cleanupOrder: string[] = [];
   const abortBase = base.recordObject.abortPreparation.bind(base.recordObject);
   t.mock.method(base.recordObject, "abortPreparation", () => {
@@ -790,14 +842,18 @@ test("An abort failure retains the prepared directory and blocks a destructive r
     };
   });
   t.mock.method(ScoutBenchmarks.prototype, "recordStarted", () => { throw new Error("start failed"); });
-  await assert.rejects(workflow.startWorkflow(), /prepared Workflow resources/);
+  await assert.rejects(workflow.startWorkflow("test"), (error: unknown) => {
+    assert.ok(error instanceof AggregateError);
+    assert.match(error.message, /prepared Workflow resources/);
+    return true;
+  });
   assert.deepEqual(cleanupOrder, ["scout.discard", "base.abort", "rbt.abort"]);
   assert.equal(discardDirectory.mock.callCount(), 0);
   assert.equal(existsSync(join(nextRoot, "journal", ".base.lock")), false);
   assert.equal(existsSync(join(nextRoot, "journal", ".scout.lock")), false);
   assert.equal(workflow.snapshot(), undefined);
   assert.equal(existsSync(join(nextRoot, "held-resource")), true);
-  await assert.rejects(workflow.startWorkflow(), /prepared Workflow resources/);
+  await assert.rejects(workflow.startWorkflow("test"), /prepared Workflow resources/);
   assert.deepEqual(cleanupOrder, ["scout.discard", "base.abort", "rbt.abort"]);
   assert.equal(discardDirectory.mock.callCount(), 0);
   assert.equal(existsSync(join(nextRoot, "held-resource")), true);
@@ -829,7 +885,12 @@ test("A postcommit release failure never deletes the new Workflow or pretends to
       throw new Error("old resource release failed");
     },
   }));
-  await assert.rejects(workflow.startWorkflow(), /committed but its entry transaction failed/);
+  await assert.rejects(workflow.startWorkflow("test"), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error instanceof WorkflowCreationRolledBackError, false);
+    assert.match(error.message, /committed but its entry transaction failed/);
+    return true;
+  });
   assert.deepEqual(cleanupOrder, ["scout.releasePrevious", "base.releasePrevious", "rbt.releasePrevious"]);
   assert.equal(discardScout.mock.callCount(), 0);
   assert.equal(discardDirectory.mock.callCount(), 0);
@@ -840,7 +901,7 @@ test("A postcommit release failure never deletes the new Workflow or pretends to
   assert.equal(workflow.snapshot()?.workflowId, "workflow-002");
   assert.equal(benchmarks.read()?.currentWorkflow, "workflow-002");
   assert.equal(readJournalEvents(workflow.journalPath).length, 2);
-  assert.equal(existsSync(join(runRoot, "workflows", "workflow-001", "journal", "scout.journal")), true);
+  assert.equal(existsSync(join(runRoot, "workflows", "test--workflow-001", "journal", "scout.journal")), true);
   assert.equal(existsSync(join(workflow.journalRoot, "base.journal")), true);
   await assert.rejects(async () => await workflow.advance("completed"), /committed but its entry transaction failed/);
   await assert.rejects(submit("retry"), /committed but its entry transaction failed/);
@@ -861,7 +922,7 @@ test("Quiescing rejects new input and drains an accepted Workflow transition bef
     await gate;
     return { commit() { committed = true; }, abort() {}, releasePrevious() {} };
   });
-  const accepted = workflow.startWorkflow();
+  const accepted = workflow.startWorkflow("test");
   await prepared;
   let drained = false;
   const stop = workflow.quiesce().then(() => { drained = true; });
@@ -961,7 +1022,7 @@ test("Workflow settlement drains admitted input without implicitly creating or r
   assert.ok(oldEvents.some((event) => SystemEvents.interaction.userMessageSubmitted.is(event)));
   assert.equal(oldEvents.filter((event) => WorkflowEvents.workflow.completed.is(event)).length, 1);
   assert.deepEqual(workflow.readEvents(), []);
-  await workflow.startWorkflow();
+  await workflow.startWorkflow("test");
   assert.equal(preparations, 1);
   assert.deepEqual(projectAgentWorkflow(workflow.readEvents(), "coordinator").pendingMessages, []);
   assert.deepEqual(readJournalEvents(oldPath), oldEvents);
@@ -1001,7 +1062,7 @@ test("Completed Workflow resume preserves historical benchmarks and does not rep
     assert.equal(benchmarks.read()?.currentWorkflow, "workflow-001");
     assert.equal(next.snapshot(), undefined);
     assert.deepEqual(next.readEvents(), []);
-    assert.equal(existsSync(join(runRoot, "workflows", "workflow-002")), false);
+    assert.equal(existsSync(join(runRoot, "workflows", "test--workflow-002")), false);
     assert.deepEqual(readJournalEvents(previousPath), previousEvents);
   } finally {
     await next.stop();
@@ -1028,13 +1089,13 @@ test("An initial baseline write failure cannot move published benchmarks and a r
   });
   try {
     await next.start();
-    await assert.rejects(next.startWorkflow(), /initial baseline could not be persisted/);
+    await assert.rejects(next.startWorkflow("test"), /initial baseline could not be persisted/);
     assert.deepEqual(benchmarks.read(), previousLinks);
     assert.equal(readFileSync(previousPath, "utf8"), previousContents);
     assert.deepEqual(scope.manifestStore.read(), manifest);
     assert.equal(existsSync(join(scope.runRoot, ".workflow.lock")), true);
     replace.mock.restore();
-    await next.startWorkflow();
+    await next.startWorkflow("test");
     assert.equal(benchmarks.read()?.currentWorkflow, "workflow-002");
     const events = next.readEvents();
     assert.deepEqual(events.map((event) => event.key.routeKey), [

@@ -216,7 +216,7 @@ test("RunAppServerStage creates the isolated app-server session and owns its sto
     runId,
     agentId: "coordinator",
   });
-  const workflowRoot = join(runRoot, "workflows", "workflow-001");
+  const workflowRoot = join(runRoot, "workflows", "test--workflow-001");
   const researcherArtifacts = join(workflowRoot, "agents", "researcher", "artifacts");
   const coordinatorArtifacts = join(workflowRoot, "agents", "coordinator", "artifacts");
   const researcherLogs = join(workflowRoot, "agents", "researcher", "logs");

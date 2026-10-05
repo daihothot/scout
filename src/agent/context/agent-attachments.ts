@@ -63,7 +63,7 @@ export const agent = {
         ...(workflowData?.status === "settling"
           ? ["Graph 已终止，Runtime 正在完成 Workflow 事务；不得新建 Task、再次推进 Graph 或代替 Runtime 收尾。"]
           : []),
-        ...(!workflowData ? ["无活动 Workflow。仅交流或查看历史；明确的新执行需求由 Coordinator 调用 StartWorkflow，接受后结束本次 response。"] : []),
+        ...(!workflowData ? ["无活动 Workflow。可交流、查看历史或只读准备 Domain 所需开启输入；用户明确要求新执行且输入已确认后，由 Coordinator 生成 name、调用 StartWorkflow，接受后结束本次 response。"] : []),
       ].join("\n"));
     },
   },

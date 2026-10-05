@@ -140,6 +140,10 @@ export function projectAgentWorkflow(
   let pendingPhase: string | undefined;
 
   for (const event of events) {
+    if (WorkflowEvents.workflow.initialized.is(event)) {
+      pendingPhase = event.payload.state.currentPhase;
+      continue;
+    }
     if (WorkflowEvents.workflow.advanced.is(event)) {
       workflowStatus = event.payload.cycleCompleted ? "settling" : "active";
       pendingPhase = event.payload.cycleCompleted ? undefined : event.payload.state.currentPhase;
