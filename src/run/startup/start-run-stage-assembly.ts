@@ -1,5 +1,4 @@
 import {
-  AgentBackendStage,
   AgentTelemetryStage,
   AgentsStage,
   DomainStage,
@@ -47,7 +46,7 @@ export class StartRunStageAssembly {
       new PrepareEnvironmentStage(),
     );
     executor.registerParallel(new DomainStage(), new AgentTelemetryStage());
-    executor.registerSerial(new OrchestratorStage(), new AgentBackendStage());
+    executor.registerSerial(new OrchestratorStage());
     executor.registerSerial(new AgentsStage(), new StartWorkflowStage());
 
     this.executor = executor;

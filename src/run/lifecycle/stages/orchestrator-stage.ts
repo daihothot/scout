@@ -24,6 +24,7 @@ export class OrchestratorStage implements RunStage {
     this.orchestrator = orchestrator;
     scope.workflow.registerParticipant(orchestrator);
     orchestrator.start();
+    orchestrator.startBackends();
     this.started = true;
   }
 

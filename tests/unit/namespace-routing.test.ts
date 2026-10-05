@@ -4,6 +4,7 @@ import test, { type TestContext } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 import { AgentDynamicToolBackend } from "../../src/agent/backend/dynamic-tool/agent-dynamic-tool-backend.js";
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
@@ -152,6 +153,8 @@ async function installNamespaceScope(t: TestContext): Promise<RunScope> {
   );
   const release = installRunScope(scope);
   const orchestrator = new OrchestratorStage();
+  // Routing is exercised directly; this fixture has no native protocol subscriptions.
+  t.mock.method(AgentOrchestrator.prototype, "startBackends", () => undefined);
   await orchestrator.start();
   scope.manifestStore.create({ runId, scoutRoot: root, createdAt: new Date().toISOString(), checkpointSeq: 0 });
   await scope.workflow.start();

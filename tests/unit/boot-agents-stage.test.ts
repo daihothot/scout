@@ -1,4 +1,7 @@
 import { testWorkflowParticipant } from "../helpers/workflow-participant.js";
+import { AgentDynamicToolBackend } from "../../src/agent/backend/dynamic-tool/agent-dynamic-tool-backend.js";
+import { AgentTimelineBackend } from "../../src/agent/backend/timeline/agent-timeline-backend.js";
+import { AgentRequestBackend } from "../../src/agent/backend/request/agent-request-backend.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -69,6 +72,10 @@ test("AgentsStage starts all role threads in parallel on the installed RunScope"
   scope.setAppServer(appServer);
   const releaseScope = installRunScope(scope);
   const orchestratorStage = new OrchestratorStage();
+  // This fixture verifies Thread startup, not protocol subscriptions.
+  t.mock.method(AgentTimelineBackend.prototype, "start", () => undefined);
+  t.mock.method(AgentDynamicToolBackend.prototype, "start", () => undefined);
+  t.mock.method(AgentRequestBackend.prototype, "start", () => undefined);
   await orchestratorStage.start();
   scope.domainRegistry.register(new BaseDomain());
   scope.domainRegistry.register(domain);
@@ -150,6 +157,10 @@ test("AgentsStage closes started threads when another Agent fails to start", asy
   scope.setAppServer(appServer);
   const releaseScope = installRunScope(scope);
   const orchestratorStage = new OrchestratorStage();
+  // This fixture verifies Thread startup, not protocol subscriptions.
+  t.mock.method(AgentTimelineBackend.prototype, "start", () => undefined);
+  t.mock.method(AgentDynamicToolBackend.prototype, "start", () => undefined);
+  t.mock.method(AgentRequestBackend.prototype, "start", () => undefined);
   await orchestratorStage.start();
   scope.domainRegistry.register(new BaseDomain());
   scope.domainRegistry.register(domain);

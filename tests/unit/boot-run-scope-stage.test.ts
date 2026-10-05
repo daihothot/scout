@@ -8,6 +8,8 @@ import type { Logger } from "../../src/core/logging/index.js";
 import { WorkflowEvents } from "../../src/core/workflow/index.js";
 import { WorkflowCreationRolledBackError } from "../../src/core/workflow/transition/workflow-creating-transition.js";
 import { AgentStepStore } from "../../src/agent/step/agent-step-store.js";
+import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
+import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/protocol/port.js";
 import {
   ExecutionStage,
@@ -15,6 +17,7 @@ import {
   RunRuntimeStage,
   RunScopeStage,
   OrchestratorStage,
+  AuthorizationStage,
   RunStageExecutor,
   type RunStage,
 } from "../../src/run/lifecycle/index.js";
@@ -70,7 +73,7 @@ test("RunScopeStage installs the locator without constructing Agent runtime and 
   assert.throws(() => currentRunScope(), /No active Scout run scope/);
 });
 
-test("OrchestratorStage installs one Store owner and cannot release another Stage's owner", async (t) => {
+test("OrchestratorStage installs one Store and Backend owner and cannot release another Stage's owner", async (t) => {
   const runId = "orchestrator-stage-owner";
   const scopeStage = new RunScopeStage(new RunScope({
     runId, scoutRoot: "/repo", logger: noopLogger(), eventBus: new InMemoryEventBus(),
@@ -79,24 +82,126 @@ test("OrchestratorStage installs one Store owner and cannot release another Stag
   }));
   const stage = new OrchestratorStage();
   const otherStage = new OrchestratorStage();
+  const authorizationStage = new AuthorizationStage();
+  const live = new Set<string>();
+  const released: string[] = [];
+  const client = {
+    onTimeline() { live.add("timeline"); return () => { live.delete("timeline"); released.push("timeline"); }; },
+    setDynamicToolCallHandler() { live.add("dynamic-tool"); return () => { live.delete("dynamic-tool"); released.push("dynamic-tool"); }; },
+    onServerRequest() { live.add("request"); return () => { live.delete("request"); released.push("request"); }; },
+  } as unknown as CodexAppServerClient;
   await scopeStage.start();
-  t.after(async () => { await otherStage.stop(); await stage.stop(); await scopeStage.stop(); });
+  scopeStage.scope.setAppServer(client);
+  t.after(async () => {
+    await otherStage.stop(); await stage.stop(); await authorizationStage.stop();
+    scopeStage.scope.clearAppServer(client); await scopeStage.stop();
+  });
+  await authorizationStage.start();
   await stage.start();
   const owner = scopeStage.scope.agentOrchestrator;
   const stores = [owner.taskStore, owner.stepStore, owner.humanInputStore, owner.toolCallStore];
+  const backends = [owner.timelineBackend, owner.dynamicToolBackend, owner.requestBackend];
   await stage.start();
   assert.equal(scopeStage.scope.agentOrchestrator, owner);
   assert.deepEqual([owner.taskStore, owner.stepStore, owner.humanInputStore, owner.toolCallStore], stores);
+  assert.deepEqual([owner.timelineBackend, owner.dynamicToolBackend, owner.requestBackend], backends);
+  assert.deepEqual([...live], ["timeline", "dynamic-tool", "request"]);
   assert.equal(scopeStage.scope.workflow.participants.filter((participant) => participant === owner).length, 1);
   assert.equal("taskStore" in scopeStage.scope, false);
   await assert.rejects(otherStage.start(), /already available/);
   await otherStage.stop();
   assert.equal(scopeStage.scope.agentOrchestrator, owner);
   assert.equal(owner.snapshot().stopped, false);
+  assert.deepEqual([...live], ["timeline", "dynamic-tool", "request"]);
+  assert.deepEqual(released, []);
   await stage.stop();
   assert.equal(owner.snapshot().stopped, true);
   assert.equal(scopeStage.scope.workflow.participants.includes(owner), false);
   assert.throws(() => scopeStage.scope.agentOrchestrator, /not available/);
+  assert.equal(live.size, 0);
+  assert.deepEqual(released, ["request", "dynamic-tool", "timeline"]);
+});
+
+test("OrchestratorStage backend startup failure rolls back the owner before downstream stages run", async (t) => {
+  const runId = "orchestrator-stage-backend-failure";
+  const scopeStage = new RunScopeStage(new RunScope({
+    runId, scoutRoot: "/repo", logger: noopLogger(), eventBus: new InMemoryEventBus(),
+    interactionPort: new NoopRuntimeInteractionPort(),
+    ...await createTestRunPersistence(t, runId), terminate: async () => undefined,
+  }));
+  const authorizationStage = new AuthorizationStage();
+  const stage = new OrchestratorStage();
+  const live = new Set<string>();
+  const client = {
+    onTimeline() { live.add("timeline"); return () => { live.delete("timeline"); }; },
+    setDynamicToolCallHandler() { live.add("dynamic-tool"); return () => { live.delete("dynamic-tool"); }; },
+    onServerRequest() { throw new Error("request subscription failed"); },
+  } as unknown as CodexAppServerClient;
+  await scopeStage.start();
+  const scope = scopeStage.scope;
+  scope.setAppServer(client);
+  t.after(async () => {
+    await stage.stop(); await authorizationStage.stop();
+    scope.clearAppServer(client); await scopeStage.stop();
+  });
+  await authorizationStage.start();
+  const participants = [...scope.workflow.participants];
+  const dispose = t.mock.method(AgentStepStore.prototype, "dispose");
+  let downstreamStarted = false;
+  const executor = new RunStageExecutor({ runId, logger: noopLogger() });
+  executor.registerSerial(stage, { id: "agent-consumer", async start() { downstreamStarted = true; } });
+  await assert.rejects(executor.startup(), /request subscription failed/);
+  assert.equal(executor.snapshot().status, "failed");
+  assert.equal(downstreamStarted, false);
+  assert.equal(live.size, 0);
+  assert.equal(dispose.mock.callCount(), 1);
+  assert.deepEqual(scope.workflow.participants, participants);
+  assert.throws(() => scope.agentOrchestrator, /not available/);
+});
+
+test("OrchestratorStage keeps its owner when a Backend fails to release and retries cleanup", async (t) => {
+  const runId = "orchestrator-stage-backend-cleanup";
+  const scopeStage = new RunScopeStage(new RunScope({
+    runId, scoutRoot: "/repo", logger: noopLogger(), eventBus: new InMemoryEventBus(),
+    interactionPort: new NoopRuntimeInteractionPort(),
+    ...await createTestRunPersistence(t, runId), terminate: async () => undefined,
+  }));
+  const authorizationStage = new AuthorizationStage();
+  const stage = new OrchestratorStage();
+  let rejectCleanup = true;
+  const live = new Set<string>();
+  const client = {
+    onTimeline() { live.add("timeline"); return () => { live.delete("timeline"); }; },
+    setDynamicToolCallHandler() {
+      live.add("dynamic-tool");
+      return () => {
+        if (rejectCleanup) throw new Error("dynamic cleanup failed");
+        live.delete("dynamic-tool");
+      };
+    },
+    onServerRequest() { live.add("request"); return () => { live.delete("request"); }; },
+  } as unknown as CodexAppServerClient;
+  await scopeStage.start();
+  const scope = scopeStage.scope;
+  scope.setAppServer(client);
+  t.after(async () => {
+    rejectCleanup = false; await stage.stop(); await authorizationStage.stop();
+    scope.clearAppServer(client); await scopeStage.stop();
+  });
+  await authorizationStage.start();
+  await stage.start();
+  const owner = scope.agentOrchestrator;
+  const backend = owner.dynamicToolBackend;
+  await assert.rejects(stage.stop(), /AgentOrchestrator cleanup failed/);
+  assert.equal(scope.agentOrchestrator, owner);
+  assert.equal(scope.workflow.participants.includes(owner), true);
+  assert.equal(owner.dynamicToolBackend, backend);
+  assert.deepEqual([...live], ["dynamic-tool"]);
+  rejectCleanup = false;
+  await stage.stop();
+  assert.equal(live.size, 0);
+  assert.equal(scope.workflow.participants.includes(owner), false);
+  assert.throws(() => scope.agentOrchestrator, /not available/);
 });
 
 for (const drainFails of [false, true]) {
@@ -109,6 +214,8 @@ for (const drainFails of [false, true]) {
     }));
     const stage = new OrchestratorStage();
     await scopeStage.start();
+    // Store disposal ordering is independent of native protocol subscriptions.
+    t.mock.method(AgentOrchestrator.prototype, "startBackends", () => undefined);
     await stage.start();
     const scope = scopeStage.scope;
     const owner = scope.agentOrchestrator;
@@ -264,6 +371,8 @@ for (const preparationFails of [false, true]) {
       await scopeStage.stop();
     });
     await scopeStage.start();
+    // This fixture exercises Domain boundary draining, not native protocol subscriptions.
+    t.mock.method(AgentOrchestrator.prototype, "startBackends", () => undefined);
     await orchestratorStage.start();
     await executionStage.start();
     await domainStage.start();

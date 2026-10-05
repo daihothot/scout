@@ -83,12 +83,14 @@ import {
 } from "../../src/run/startup/index.js";
 import { AgentContextRecovery } from "../../src/agent/orchestration/recovery/agent-context-recovery.js";
 import { AgentEntityRecovery } from "../../src/agent/orchestration/recovery/agent-entity-recovery.js";
+import { AgentDynamicToolBackend } from "../../src/agent/backend/dynamic-tool/agent-dynamic-tool-backend.js";
+import { AgentTimelineBackend } from "../../src/agent/backend/timeline/agent-timeline-backend.js";
+import { AgentRequestBackend } from "../../src/agent/backend/request/agent-request-backend.js";
 import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 import { AgentTaskRecovery } from "../../src/agent/orchestration/recovery/agent-task-recovery.js";
 import { RecordResumeInterruptionsStage, RestoreEnvironmentStage } from "../../src/run/resume/index.js";
 import { SystemEvents } from "../../src/system/events/index.js";
 import {
-  AgentBackendStage,
   AgentTelemetryStage,
   DomainStage,
   ExecutionStage,
@@ -2746,7 +2748,7 @@ test("resume stages restore tasks, messages, and interruptions from a Test RunSc
     new DomainStage(),
   );
   executor.registerSerial(new AgentTelemetryStage());
-  executor.registerSerial(new OrchestratorStage(), new AgentBackendStage());
+  executor.registerSerial(new OrchestratorStage());
   executor.registerSerial(
     new RestoreWorkflowStage(resumedWorkflowRecovery),
     new RecordResumeInterruptionsStage(),
@@ -3039,6 +3041,11 @@ async function assertThreadRestoreFailure(
     appServer,
     domain: runtimeTestDomain(),
   });
+  // Native Thread recovery is independent of protocol entry subscription.
+  t.mock.method(AgentTimelineBackend.prototype, "start", () => undefined);
+  t.mock.method(AgentDynamicToolBackend.prototype, "start", () => undefined);
+  t.mock.method(AgentRequestBackend.prototype, "start", () => undefined);
+  scope.agentOrchestrator.startBackends();
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   await new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),
@@ -3136,6 +3143,11 @@ async function installRolloutLocatorFixture(
     appServer: options.appServer ?? ({} as CodexAppServerClient),
     domain: runtimeTestDomain(),
   });
+  // Native Thread recovery is independent of protocol entry subscription.
+  t.mock.method(AgentTimelineBackend.prototype, "start", () => undefined);
+  t.mock.method(AgentDynamicToolBackend.prototype, "start", () => undefined);
+  t.mock.method(AgentRequestBackend.prototype, "start", () => undefined);
+  scope.agentOrchestrator.startBackends();
   t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
   await new PrepareEnvironmentStage({
     preflightMount: async () => ({ status: "passed" }),

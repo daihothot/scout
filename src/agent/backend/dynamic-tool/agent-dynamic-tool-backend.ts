@@ -71,8 +71,8 @@ export class AgentDynamicToolBackend {
 
   stop(): void {
     const unsubscribe = this.unsubscribeDynamicTools;
-    this.unsubscribeDynamicTools = undefined;
     unsubscribe?.();
+    this.unsubscribeDynamicTools = undefined;
   }
 
   async handleDynamicToolCall(input: DynamicToolCallInput): Promise<DynamicToolCallResponse> {

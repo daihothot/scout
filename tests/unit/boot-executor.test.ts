@@ -13,6 +13,7 @@ import { startRun } from "../../src/run/startup/start-run.js";
 import { PrepareEnvironmentStage } from "../../src/run/startup/stages/prepare-environment-stage.js";
 import { currentRunScope } from "../../src/run/run-scope.js";
 import { NoopRuntimeInteractionPort, type RuntimeDisclosureEvent } from "../../src/interaction/index.js";
+import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 
 interface CapturedLog {
   level: LogLevel;
@@ -290,6 +291,8 @@ for (const [event, withEnvironment] of [
       cpSync(join(process.cwd(), "assets", "agent-runtimes"), join(root, "assets", "agent-runtimes"), { recursive: true });
     }
     const failure = new Error(`${event} unavailable`);
+    // This fixture keeps real Run/Workflow cleanup but excludes external protocol subscriptions.
+    t.mock.method(AgentOrchestrator.prototype, "startBackends", () => undefined);
     const register = RunStageExecutor.prototype.registerSerial;
     t.mock.method(RunStageExecutor.prototype, "registerSerial", function (this: RunStageExecutor, ...stages: RunStage[]) {
       register.apply(this, stages.flatMap((stage) => {

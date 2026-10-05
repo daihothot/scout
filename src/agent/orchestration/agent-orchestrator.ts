@@ -1,5 +1,8 @@
 import { formatArtifactReference } from "../../core/io/index.js";
 import { AgentInbox } from "../core/agent-inbox.js";
+import { AgentDynamicToolBackend } from "../backend/dynamic-tool/agent-dynamic-tool-backend.js";
+import { AgentTimelineBackend } from "../backend/timeline/agent-timeline-backend.js";
+import { AgentRequestBackend } from "../backend/request/agent-request-backend.js";
 import { AgentHumanInputStore } from "../human-input/agent-human-input-store.js";
 import { AgentStepStore } from "../step/agent-step-store.js";
 import { AgentTaskStore } from "../task/agent-task-store.js";
@@ -22,12 +25,16 @@ export interface AgentOrchestratorSnapshot {
   pendingEventCount: number;
 }
 
-/** Owns Agent runtime stores, recovery, and Workflow participation. */
+/** Owns Agent runtime stores, backends, recovery, and Workflow participation. */
 export class AgentOrchestrator implements ScoutWorkflowParticipant {
   readonly humanInputStore = new AgentHumanInputStore();
   readonly stepStore = new AgentStepStore();
   readonly taskStore = new AgentTaskStore();
   readonly toolCallStore = new AgentToolCallStore();
+  private timeline?: AgentTimelineBackend;
+  private dynamicTool?: AgentDynamicToolBackend;
+  private request?: AgentRequestBackend;
+  private backendsStarted = false;
   private readonly inbox: AgentInbox;
   private started = false;
   private stopped = false;
@@ -53,6 +60,52 @@ export class AgentOrchestrator implements ScoutWorkflowParticipant {
     });
   }
 
+  get timelineBackend(): AgentTimelineBackend {
+    if (!this.timeline) throw new Error("Agent timeline backend is not installed.");
+    return this.timeline;
+  }
+
+  get dynamicToolBackend(): AgentDynamicToolBackend {
+    if (!this.dynamicTool) throw new Error("Agent dynamic-tool backend is not installed.");
+    return this.dynamicTool;
+  }
+
+  get requestBackend(): AgentRequestBackend {
+    if (!this.request) throw new Error("Agent request backend is not installed.");
+    return this.request;
+  }
+
+  /** Creates and subscribes the entries after this owner has been installed into Scope. */
+  startBackends(): void {
+    if (this.stopped) throw new Error("Cannot start backends on a stopped AgentOrchestrator.");
+    if (this.backendsStarted) return;
+    if (this.timeline || this.dynamicTool || this.request) {
+      throw new Error("Agent backend cleanup must finish before startup.");
+    }
+    try {
+      this.timeline = new AgentTimelineBackend();
+      this.dynamicTool = new AgentDynamicToolBackend();
+      this.request = new AgentRequestBackend();
+      this.timeline.start();
+      this.dynamicTool.start();
+      this.request.start();
+      this.backendsStarted = true;
+    } catch (error) {
+      try { this.stopBackends(); }
+      catch (cleanupError) { throw new AggregateError([error, cleanupError], "Agent backend startup and cleanup failed."); }
+      throw error;
+    }
+  }
+
+  stopBackends(): void {
+    this.backendsStarted = false;
+    const failures: unknown[] = [];
+    try { this.request?.stop(); this.request = undefined; } catch (error) { failures.push(error); }
+    try { this.dynamicTool?.stop(); this.dynamicTool = undefined; } catch (error) { failures.push(error); }
+    try { this.timeline?.stop(); this.timeline = undefined; } catch (error) { failures.push(error); }
+    if (failures.length) throw new AggregateError(failures, "Agent backend cleanup failed.");
+  }
+
   start(): void {
     if (this.stopped) {
       throw new Error("Cannot restart a stopped AgentOrchestrator.");
@@ -73,6 +126,7 @@ export class AgentOrchestrator implements ScoutWorkflowParticipant {
   stop(): void {
     this.stopped = true;
     const failures: unknown[] = [];
+    try { this.stopBackends(); } catch (error) { failures.push(error); }
     try { this.inbox.stop(); } catch (error) { failures.push(error); }
     try { this.stepStore.dispose(); } catch (error) { failures.push(error); }
     try { this.humanInputStore.dispose(); } catch (error) { failures.push(error); }

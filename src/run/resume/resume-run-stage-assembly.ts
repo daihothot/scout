@@ -1,5 +1,5 @@
 import {
-  AgentBackendStage, AgentTelemetryStage, DomainStage, ExecutionStage,
+  AgentTelemetryStage, DomainStage, ExecutionStage,
   InteractionStage, OrchestratorStage, RunRuntimeStage, RunScopeStage,
   AuthorizationStage, WorkflowStage, RunStageExecutor, type RunStage,
 } from "../lifecycle/index.js";
@@ -23,7 +23,7 @@ export class ResumeRunStageAssembly {
       input.clientsStage, input.environmentStage, new ExecutionStage(), new InteractionStage(),
       new DomainStage(), new AgentTelemetryStage(),
     );
-    executor.registerSerial(new OrchestratorStage(), new AgentBackendStage());
+    executor.registerSerial(new OrchestratorStage());
     executor.registerSerial(
       new RestoreWorkflowStage(input.recovery, input.missingWorkflowId),
       new RecordResumeInterruptionsStage(), new RunRuntimeStage("resume"),

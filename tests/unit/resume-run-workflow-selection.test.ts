@@ -34,6 +34,7 @@ import { AgentEntityRecovery } from "../../src/agent/orchestration/recovery/agen
 import { AgentTaskRecovery } from "../../src/agent/orchestration/recovery/agent-task-recovery.js";
 import { RestoreWorkflowStage } from "../../src/run/resume/stages/restore-workflow-stage.js";
 import { AgentContextRecovery } from "../../src/agent/orchestration/recovery/agent-context-recovery.js";
+import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 import { RestoreEnvironmentStage } from "../../src/run/resume/stages/restore-environment-stage.js";
 import { PrepareEnvironmentStage } from "../../src/run/startup/stages/prepare-environment-stage.js";
 import { ExecutionStage, RunAppServerStage, RunStageExecutor, type RunStage } from "../../src/run/lifecycle/index.js";
@@ -833,6 +834,7 @@ for (const failure of ["empty", "malformed", "io-error", "empty-permalink"] as c
 function createFixture(t: TestContext, domain: string = "rbt", installEnvironment = false) {
   if (!installEnvironment) {
     // Exercise the real Workflow and owner recovery driver, without external clients.
+    t.mock.method(AgentOrchestrator.prototype, "startBackends", () => undefined);
     const serial = RunStageExecutor.prototype.registerSerial;
     const parallel = RunStageExecutor.prototype.registerParallel;
     t.mock.method(RunStageExecutor.prototype, "registerSerial", function (this: RunStageExecutor, ...stages: RunStage[]) {
