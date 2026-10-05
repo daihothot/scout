@@ -10,7 +10,6 @@ export * from "./backend/dynamic-tool/agent-dynamic-tool-backend.js";
 export * from "./backend/timeline/agent-timeline-tool-call-backend.js";
 export * from "./backend/dynamic-tool/agent-human-input-backend.js";
 export * from "./backend/timeline/agent-timeline-subagent-backend.js";
-export * from "./backend/types.js";
 export * from "./backend/request/types.js";
 export * from "./backend/request/agent-request-backend.js";
 export * from "./backend/request/agent-request-approval-backend.js";
