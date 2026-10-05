@@ -12,13 +12,13 @@ tags: [scout, rbt, bdd, review, evidence, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [domain-rbt-review-pack, signal-rbt-evidence, signal-rbt-evidence-via-rbt-behavior, tool-rbt-behavior, tool-execution-platform, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**]
+    required: [domain-rbt, domain-rbt-review-pack, signal-rbt-evidence, signal-rbt-evidence-via-rbt-behavior, tool-rbt-behavior, tool-execution-platform, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**]
 summary: 沿 JR → SR 比较 campaign evidence，覆盖全部声明并交付结果。
 ---
 
 # Domain RBT Reviewer
 
-当 Reviewer 在 Runtime Behavioral Test（RBT）Domain 中收到有效 JR/SR，需要独立查询同次 campaign evidence 并比较预期时使用本技能。后续 `RBT` 均表示 Runtime Behavioral Test。
+公共术语与 Artifact 引用结构见 `domain-rbt`。本技能消费 JR/SR，查询同次 campaign evidence 并比较预期。
 
 本技能拥有 JR/SR 与实际 evidence 的比较和本轮审查结论。BDD、源码到声明的语义映射由 Executor 负责；Execution Pack 的格式约束不属于 Reviewer。Behavioral 查询的 dynamic-tool contract 由 `tool-rbt-behavior` 所有。
 
@@ -62,7 +62,7 @@ Interface 定义完整 Evidence expectation，Via 只使用 campaign 历史 meta
 
 ## RBT Review Model
 
-- Reviewer 从 `pack_ref` 直接读取 `journal-expected.md` 和 `signal-expected.md`。`pack_ref` 只用于定位这两份交付，不展开其他 Pack artifacts 或读取其编写 Skill/模板。
+- Reviewer 从 `execute-pack-ref` 定位并读取 `journal-expected.md` 和 `signal-expected.md`。`execute-pack-ref` 只用于定位这两份交付，不展开其他 Pack artifacts 或读取其编写 Skill/模板。
 - JR/SR 作为有效输入消费；正常读取中遇到无法解析、缺失引用或语义不明时，报告影响比较的输入缺口，不开展 Pack 格式巡检，也不回读 BDD/源码修复解释。
 - Runtime 单独提供精确 `executor_history_ref`；Reviewer 读取该 history 的 `executeFileRef`、`campaignId`、`scenarioId`、`status` 和 `runtimeSequence`，不打开执行计划。
 - Reviewer 只通过自己的 `JarvisBehavior` dynamic tool 查询；WebSocket session 由 Scout Runtime 隔离和管理。RBT Runtime 保存的 campaign historical journal 是当次执行的 Signal 来源；Executor 的自然语言总结不能替代。
@@ -75,7 +75,7 @@ Interface 定义完整 Evidence expectation，Via 只使用 campaign 历史 meta
 - 只有消费 JR/SR 时遇到的输入缺口，且无需新 Runtime 事实即可由 Executor 修正，才能形成 correction request；只报告具体缺口，不代替 Executor 审查来源或补写预期。
 - 如果缺口需要新 platform run、新 trigger、新 capture 或其它新执行事实，本轮形成 evidence insufficient / invalid execution 结论，不要求重跑。
 - Scenario 和 campaign lifecycle 由 Executor 推进、Runtime 记录。Reviewer 可以保留已有审计限制，但不调用 cleanup，也不将其成功与否作为业务 Evidence。
-- 正式 Reviewer artifact、时间线状态和 handoff 由 `domain-rbt-review-pack` 定义；本技能只提供 JR/SR 比较事实。
+- 正式 Reviewer artifact 和时间线状态由 `domain-rbt-review-pack` 定义；本技能提供 JR/SR 比较事实和正式 handoff。
 
 ## Inputs
 
@@ -84,7 +84,7 @@ Interface 定义完整 Evidence expectation，Via 只使用 campaign 历史 meta
 
 描述：
 
-- 正式交付中的 BDD identity、`target_version`、`pack_ref` 和 `execute_file_ref`，用于定位 JR/SR 与关联执行。BDD/source refs 作为追溯引用保留，不展开正文。
+- Coordinator 从 Executor formal handoff 原样转交的 `bdd_id`、`target_version`、`execute-pack-ref`，用于定位 JR/SR 与关联执行；`bdd_id` 和 `target_version` 是本 Workflow 已确认的目标，不重新选择。BDD/source refs 作为追溯引用保留，不展开正文。
 - Runtime 提供的精确 `executor_history_ref`。
 
 注意事项：
@@ -97,7 +97,7 @@ Interface 定义完整 Evidence expectation，Via 只使用 campaign 历史 meta
 描述：
 
 - 从精确 history ref 读取 `executeFileRef`、`campaignId`、`scenarioId`、`status` 和 `runtimeSequence`，再与正式交付及 JR/SR Query Scope 核对。
-- `executor_history_ref` 为当前 run root 下的稳定相对 ref；只以 `${SCOUT_RUN_ROOT}` 解析该路径，不扫描 history 目录寻找替代文件。
+- `execute-pack-ref` 与 `executor_history_ref` 均是 `ScoutArtifactReference`，先按 `tool-scout-resolve-artifact-reference` 解析并取得本 Turn 的只读权限，再读取 Pack 中的 JR/SR 和精确 history 文件。
 
 注意事项：
 
@@ -218,7 +218,7 @@ Partial：
 ## Phase 4: Submit Review
 ---
 
-把本技能产生的业务事实按 `domain-rbt-review-pack` 的 `templates/review-result.md` 写入当前 Reviewer artifact root 下的 `review-pack/review-result.json`，再通过已挂载的 `rbt-review-report` 工具生成同目录 `review-report.html`。正式产物完成后调用 `ExecutionPlatform` 的 `shutdown`，成功关闭当前执行平台会话，再提交该 Pack 的正式 handoff。Via 的 `unresolved` 或证据不足应作为 `warning` 写入时间线；`match`、`not_match`、evidence insufficient 和 invalid execution 均作为完整审查结果正常提交。
+把本技能产生的业务事实按 `domain-rbt-review-pack` 的 `templates/review-result.md` 写入当前 Reviewer artifact root 下的 `pack/review-result.json`，再通过已挂载的 `rbt-review-report` 工具生成同目录 `review-report.html`。正式产物完成后调用 `ExecutionPlatform` 的 `shutdown`，成功关闭当前执行平台会话，再提交该 Pack 的正式 handoff。Via 的 `unresolved` 或证据不足应作为 `warning` 写入时间线；`match`、`not_match`、evidence insufficient 和 invalid execution 均作为完整审查结果正常提交。
 
 JR/SR 输入缺口确需 Executor 修正且无需新执行事实时，提交 correction request，指出无法消费的位置及原因；不要求 Reviewer 回读来源确认改法，也不允许重新运行平台或 Runtime。
 
@@ -233,6 +233,23 @@ Blocked：
 Partial：
 
 - 允许提交 `not_match`、证据不足、执行无效或上游 cleanup 不完整的独立判断；不得把它们改写成 workflow error 或重跑请求。
+
+## Handoff Contract
+
+审查完成时，交付结论与本 Workflow 的 Review Pack 引用：
+
+```json
+{
+  "review-pack-ref": {
+    "workflowId": "<当前 workflow_context.workflowId>",
+    "agentId": "reviewer",
+    "internalSymbols": ["pack"]
+  },
+  "result": "<pass | attention | fail>"
+}
+```
+
+`result` 使用报告工具根据比较事实计算的结果，不自行改写。需要 correction 时，交付无需重新执行即可修正的具体输入缺口与原始引用；不冒充已完成的 Review Pack。
 
 ## Workflow Exit Rules (Enforcement)
 
@@ -283,4 +300,4 @@ Partial：
 - 报告覆盖全部 JR/SR；JR 表的 order 与实际 sequence 已比较，SR 的全部字段已整体比较。
 - 没有检查 Execution Pack 格式或回读 BDD/E-CODE/codebase；没有 activate、invoke、复用 Executor dynamic-tool 上下文或重新执行测试。
 - 没有调用 cleanup 命令，也没有替 Executor 修复 lifecycle 状态。
-- 正式 handoff 由 Review Pack Skill 形成；本技能不定义 Pack schema、HTML/CSS 或状态汇总实现。
+- 正式 handoff 使用本技能的交付约定；本技能不定义 Pack schema、HTML/CSS 或状态汇总实现。

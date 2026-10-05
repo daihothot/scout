@@ -12,15 +12,17 @@ artifact_version: 1
 执行文件位于：
 
 ```text
-<artifactRoot>/<bdd-id>/<version>/execute-file.json
+<artifactRoot>/pack/execute-file.json
 ```
 
-`<artifactRoot>` 使用当前 `workflow_context` 中的路径，遵循 `AGENTS.md` 的 Workflow Context。相邻的 `<artifactRoot>/<bdd-id>/<version>/execute-pack/` 保存 Agent 证据和预期。
+`<artifactRoot>` 使用当前 `workflow_context` 中的路径，遵循 `AGENTS.md` 的 Workflow Context。同一 `pack/` 目录保存执行依据和预期。
 
 ## File Contract
 
 ```json
 {
+  "bddId": "<bdd-id>",
+  "targetVersion": "<version>",
   "commands": [
     {
       "command": "behavior.campaign.start",
@@ -80,7 +82,7 @@ artifact_version: 1
 }
 ```
 
-`bdd-id` 和目标版本只由文件路径确定，不重复写入 JSON。命令顺序由 `commands` 数组位置确定，不增加 `sequence` 字段。
+`bddId` 和 `targetVersion` 标识本 Pack 的 Verification Target。命令顺序由 `commands` 数组位置确定，不增加 `sequence` 字段。
 
 ## Sequence Boundary
 
@@ -99,23 +101,27 @@ artifact_version: 1
 
 ```json
 {
-  "execute_file": "<bdd-id>/<version>/execute-file.json"
+  "execute_file": {
+    "workflowId": "<当前 workflowId>",
+    "agentId": "executor",
+    "internalSymbols": ["pack", "execute-file.json"]
+  }
 }
 ```
 
-只提交执行文件路径，不拆分或逐条重复提交其中的 mutation 命令。以 Dynamic Tool 返回的执行摘要判断本次调用是否完成或明确失败。
+只提交执行文件的 `ScoutArtifactReference`，不拆分或逐条重复提交其中的 mutation 命令。以 Dynamic Tool 返回的执行摘要判断本次调用是否完成或明确失败。
 
 ## Prohibited Content
 
-- 不写 BDD ID、目标版本、sequence、correlationId、request version、endpoint 或 timeout。
+- 不写 sequence、correlationId、request version、endpoint 或 timeout。
 - 不写 WebSocket session、schema path、Jarvis CLI、宿主 executable、shell command 或 shell output。
 - 不写 dynamic-tool 返回值、Campaign Journal、trace、evidence 或审查结论。
 - 不加入第二个 Scenario 或第二次 trigger。
 
 ## Checklist
 
-- 文件是单个合法 JSON object，路径符合 `<bdd-id>/<version>/execute-file.json`。
+- 文件是单个合法 JSON object，位置为 `pack/execute-file.json`，`bddId` 与 `targetVersion` 对应已确认的验证目标。
 - `commands` 首尾和唯一命令数量正确。
 - `campaignId`、`scenarioId`、`rootId`、activation `id/variantId`、capture `nodeId/sourceId/captureId/variantId` 与 `triggerCommandId` 都与同版本 Pack 的 JR/SR identity 一致。
 - 每个 capture 的 `nodeId`、`timing` 和可选 `variantId` 与同版本源码声明及 Runtime descriptor 一致。
-- 文件中只有 `commands` 及其 `command + payload`，没有 session、shell 或实际执行结果。
+- 文件中只有 `bddId`、`targetVersion`、`commands` 及其 `command + payload`，没有 session、shell 或实际执行结果。

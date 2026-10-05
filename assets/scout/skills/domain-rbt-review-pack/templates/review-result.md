@@ -18,7 +18,11 @@ artifact_version: 4
   "bddId": "<bdd-id>",
   "targetVersion": "<version>",
   "campaignId": "<campaign-id>",
-  "executorHistoryRef": "<executor-history-ref>",
+  "executorHistoryRef": {
+    "workflowId": "<本次执行的 workflowId>",
+    "agentId": "executor",
+    "internalSymbols": ["history", "<Runtime 提供的历史文件名>"]
+  },
   "scenarioId": "<scenario-id>",
   "summary": "<中文总体说明>",
   "timeline": [
@@ -82,7 +86,7 @@ artifact_version: 4
 | `bddId` | yes | 当前审查的 BDD identity。 |
 | `targetVersion` | yes | 正式交付声明的目标版本。 |
 | `campaignId` | yes | Reviewer 实际查询的 campaign identity。 |
-| `executorHistoryRef` | yes | 同一 `execute-file.json` 最后一次 Executor 执行历史文件的稳定 ref，用于追溯执行侧；由 Runtime/执行顺序确认，不按修改时间猜测。 |
+| `executorHistoryRef` | yes | 同一 `execute-file.json` 最后一次 Executor 执行历史文件的 `ScoutArtifactReference`，用于追溯执行侧；由 Runtime/执行顺序确认，不按修改时间猜测。 |
 | `scenarioId` | no | 当前 scenario identity。 |
 | `summary` | yes | 中文总体说明；不填写总状态。 |
 | `timeline` | yes | 全部 `JR-*` 与 `SR-*` 比较点；每个 ID 只出现一次。 |

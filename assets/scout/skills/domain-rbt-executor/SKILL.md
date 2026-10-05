@@ -12,13 +12,13 @@ tags: [scout, rbt, bdd, execution, behavioral, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [domain-rbt-execution-pack, signal-rbt-evidence, tool-guru-knowledge, tool-jarvis-codebase, tool-rbt-behavior, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**]
+    required: [domain-rbt, domain-rbt-execution-pack, signal-rbt-evidence, tool-guru-knowledge, tool-jarvis-codebase, tool-rbt-behavior, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**]
 summary: 从 BDD 和源码形成可比较的 JR/SR，完成一次受控执行与正式交付。
 ---
 
 # Domain RBT Executor
 
-从 BDD 和当前业务源码对齐 RBT Hook、声明 JR/SR，并提交一次受控执行时使用本技能。
+公共术语与 Artifact 引用结构见 `domain-rbt`。本技能负责业务对齐、受控执行与正式交付。
 
 Executor 拥有 BDD、源码到 Hook 与预期的语义映射和覆盖完整性。交给 Reviewer 的 JR/SR 必须包含其仅凭 campaign evidence 独立比较所需的业务含义与条件。
 
@@ -41,8 +41,9 @@ Executor 拥有 BDD、源码到 Hook 与预期的语义映射和覆盖完整性�
 
 Required：
 
-- `bdd_identity`：Coordinator 在当前 task 中提供的 canonical BDD identity。
-- `bdd_source_ref`：Coordinator 在当前 task 中提供的 canonical Behavior 来源。
+- `bdd_id`：Coordinator 在当前 task prompt 中提供的 canonical BDD identity。
+- `bdd_source_path`：Coordinator 提供的 Knowledge 产品根目录相对文件路径，如 `Behaviors/<name>.md`。
+- `target_version`：Coordinator 已确认的 Guru SDK 基线 tag。
 
 Optional：
 
@@ -50,20 +51,21 @@ Optional：
 
 Missing：
 
-- `bdd_identity` 缺失、为空或不唯一：交由 Coordinator 修正。
-- `bdd_source_ref` 缺失、为空、不可读或指向多个来源：交由 Coordinator 修正。
+- `bdd_id` 缺失、为空或不唯一：交由 Coordinator 修正。
+- `bdd_source_path` 缺失、为空、不可读或指向多个来源：交由 Coordinator 修正。
+- `target_version` 缺失或无法明确：交由 Coordinator 修正，不以当前源码或 Runtime 版本代替。
 - `human_constraints` 缺失不阻塞输入确认，不自行补出限制。
 
 Confirmation：
 
-- 来源唯一可读，canonical Behavior 的 frontmatter `id` 与 `bdd_identity` 完全一致；不一致时保留差异并交由 Coordinator 修正。
+- 按 `tool-guru-knowledge` 在当前 Knowledge 根目录下读取 `bdd_source_path`，canonical Behavior 的 frontmatter `id` 与 `bdd_id` 完全一致；不一致时保留差异并交由 Coordinator 修正。
 - Given、When、Then 与已确认的 `human_constraints` 一致；冲突未解决前输入不通过。
 
 ## Workflow Overview
 
 Phase 说明：
 
-- Phase 1：确认 BDD、查询分类与目标源码版本。
+- Phase 1：确认 BDD、查询分类，核对源码与 Runtime 是否对应已指定版本。
 - Phase 2：从 Runtime 确认唯一精确主 Node，满足源码查询前置条件。
 - Phase 3：对齐 Hook 与证据，形成并校验完整执行计划和 JR/SR。
 - Phase 4：提交一次受控执行并保留明确结果。
@@ -71,9 +73,27 @@ Phase 说明：
 
 ## Delivery Contract
 
-- 正式输出为完整 Pack 与 `execute-file`；artifact 内容、格式检查与 handoff 引用使用 `domain-rbt-execution-pack`。
+- 正式输出为完整 Pack 与 `execute-file`；artifact 内容与格式检查使用 `domain-rbt-execution-pack`。
 - 交付只引用已有正式产物；实际命令结果、trace、campaign journal 与 cleanup 记录由 Runtime 保存。
 - Executor 的交付完成与执行状态均不代表 BDD 的最终 pass/fail。
+
+## Handoff Contract
+
+正式 handoff 包含 `bdd_id`、`target_version` 和 `execute-pack-ref`：
+
+```json
+{
+  "bdd_id": "<已确认的 BDD identity>",
+  "target_version": "<已确认的 SDK 基线版本>",
+  "execute-pack-ref": {
+    "workflowId": "<当前 workflow_context.workflowId>",
+    "agentId": "executor",
+    "internalSymbols": ["pack"]
+  }
+}
+```
+
+`bdd_id` 与 `target_version` 原样沿用 task prompt 的已确认输入，Coordinator 转交给 Reviewer。`execute-pack-ref` 标识本次交付的 Pack；不传物理目录、执行结果或权限登记信息。当前 Workflow 的身份取自本次 Workflow Context。
 
 ## Phase 1: 确认 BDD 与版本
 ---
@@ -85,14 +105,14 @@ Knowledge：
 - `tool-guru-knowledge` 提供 canonical BDD；本阶段按 `I-001` 确认输入。
 - BDD frontmatter 的 `rbt` 使用 `domain:category` 字符串，只声明 When 主入口的分类；原样拆分，不从 tags、capability 或 Description 推导。
 - When 的业务对象、操作、输入与返回类型用于匹配主 Node；BDD 明确涉及的业务 symbol 用于后续定点对齐。
-- `tool-jarvis-codebase` 提供 codebase 与 SDK 版本确认方式。本阶段只使用版本与路径信息；SDK 与 Runtime 的目标版本绑定不能用 Unity Editor 版本代替。
+- `tool-jarvis-codebase` 提供 codebase 与实际 SDK 版本确认方式。本阶段只使用版本与路径信息，并将源码及 Runtime 版本与 task 的 `target_version` 核对；这些信息用于核对，不用于重新选择或覆盖目标。SDK 与 Runtime 的版本绑定不能用 Unity Editor 版本代替。
 
 Flow：
 
 ```mermaid
 flowchart TD
   A["读取 canonical BDD 并核对 I-001"] --> B["提取 Given / When / Then 与 rbt 分类"]
-  B --> C["确认 codebase、SDK 版本与 Runtime 目标版本绑定"]
+  B --> C["核对 codebase 与 Runtime 是否对应 target_version"]
   C --> D{"输入、分类与版本均已确认？"}
   D -- 否 --> X["Blocked：处理输入或版本缺口"]
   D -- 是 --> E["Phase 1 Exit"]
@@ -351,7 +371,7 @@ Main Flow：
 
 Knowledge：
 
-- `domain-rbt-execution-pack` 定义正式 handoff；只引用已存在的完整产物，不补交 Runtime 结果。
+- 正式 handoff 使用本技能的 Handoff Contract；只引用已存在的完整产物，不补交 Runtime 结果。
 - correction 只使用已有依据修正交付遗漏或笔误，并按 Pack contract 校验修订后的产物。
 - `tool-scout-submit-task` 定义 SubmitTask 的提交与失败处理；提交失败或状态未知时保留原始状态。
 

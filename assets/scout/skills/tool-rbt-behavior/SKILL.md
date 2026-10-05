@@ -25,12 +25,15 @@ summary: 规范 JarvisBehavior 的执行文件入口、只读查询入口和 Age
 
 ```json
 {
-  "execute_file": "<bdd-id>/<version>/execute-file.json"
+  "execute_file": {
+    "workflowId": "<当前 workflowId>",
+    "agentId": "executor",
+    "internalSymbols": ["pack", "execute-file.json"]
+  }
 }
 ```
 
-- `execute_file` 可以是当前 Agent artifact root 下的相对路径或绝对路径。
-- 路径必须落在当前 Agent artifact root 内，且结构必须是 `<bdd-id>/<version>/execute-file.json`。
+- `execute_file` 使用 `ScoutArtifactReference`，指向 Pack 内的 `execute-file.json`；不提交物理路径或 URI 字符串。
 - 文件格式、命令顺序和内容由生成该 artifact 的 Skill 负责；本工具会在发送 mutation 前校验文件结构、允许命令、必需 identity 和全局顺序。
 - 一次调用执行文件中的完整序列。调用方不再逐条发送 campaign mutation。
 
@@ -203,7 +206,7 @@ summary: 规范 JarvisBehavior 的执行文件入口、只读查询入口和 Age
 
 | code | 含义 |
 | --- | --- |
-| `invalid_dynamic_tool_input` | 输入形式、路径或 execute-file 内容不合法，尚未开始执行。 |
+| `invalid_dynamic_tool_input` | 输入形式、引用或 execute-file 内容不合法，尚未开始执行。 |
 | `command_not_available` | 当前 Phase 未注册该操作。 |
 | `execution_platform_unavailable` | 没有识别到可用于当前执行的平台。 |
 | `execution_platform_ambiguous` | 同时识别到多个执行平台，无法确定唯一目标。 |

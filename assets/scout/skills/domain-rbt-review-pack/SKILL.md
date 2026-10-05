@@ -11,6 +11,8 @@ family: [rbt, artifact]
 tags: [scout, rbt, review, report, artifact]
 devices: [any]
 dependencies:
+  skills:
+    required: [domain-rbt]
   shellTools:
     required: [scoutJsonWrite, rbtReviewReport]
 summary: 定义 RBT 审查结果数据和 HTML 报告交付边界。
@@ -50,7 +52,7 @@ summary: 定义 RBT 审查结果数据和 HTML 报告交付边界。
 Review Pack 位于当前 Reviewer artifact root 下：
 
 ```text
-<artifactRoot>/<bdd-id>/<version>/review-pack/
+<artifactRoot>/pack/
   review-result.json
   review-report.html
 ```
@@ -81,7 +83,7 @@ Review Pack 位于当前 Reviewer artifact root 下：
 Required：
 
 - `bddId`、`targetVersion`、`campaignId`：当前审查边界的原始 identity。
-- `executorHistoryRef`：指向本次 Executor 执行历史文件的稳定 ref；只用于追溯，不复制历史正文。
+- `executorHistoryRef`：指向本次 Executor 执行历史文件的`ScoutArtifactReference`；只用于追溯，不复制历史正文。
 - `summary`：中文总体说明。
 - `timeline`：至少一个对象；每个对象包含唯一 `id`、`status`、`title`、`expected`、`actual`、`comparison`。
 
@@ -106,7 +108,7 @@ Confirmation：
 先通过已挂载的 `scout-json-write` 原子写入结构化结果：
 
 ```text
-scout-json-write artifact --artifact-root "<artifactRoot>" "<bdd-id>/<version>/review-pack/review-result.json" "<prepared-review-result.json>"
+scout-json-write artifact --artifact-root "<artifactRoot>" "pack/review-result.json" "<prepared-review-result.json>"
 ```
 
 `<artifactRoot>` 使用当前 `workflow_context` 中的 Reviewer 路径，遵循 `AGENTS.md` 的 Workflow Context；输出路径相对该根目录，最后一个参数是已经准备好的合法 JSON 文件。命令成功返回的 `path` 是后续报告输入，不需要调用 `--help` 探索接口。

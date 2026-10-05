@@ -12,13 +12,13 @@ tags: [scout, rbt, bdd, coordination, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [tool-guru-knowledge, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.coordinator.**]
+    required: [domain-rbt, tool-guru-knowledge, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.coordinator.**]
 summary: 按五个线性阶段协调 BDD 验证并交付结果。
 ---
 
 # Domain RBT Coordinator
 
-在 Runtime Behavioral Test（RBT）中，将用户的测试目标交给 Executor 执行，再交给 Reviewer 审查。
+公共术语与 Artifact 引用结构见 `domain-rbt`。本技能协调 Executor 执行与 Reviewer 审查。
 
 Coordinator 负责确认目标、派发任务、消费正式状态和交付结果。
 
@@ -30,7 +30,7 @@ Coordinator 负责确认目标、派发任务、消费正式状态和交付结�
 
 ## Core Use
 
-- 确认唯一 BDD。
+- 在空白期确认唯一 BDD 与目标 SDK 版本，命名并开启 Workflow。
 - 分别派发 Executor 和 Reviewer 任务。
 - 根据正式状态处理两类任务的结果。
 - 向用户交付结论、限制和正式 refs。
@@ -48,12 +48,13 @@ Coordinator 负责确认目标、派发任务、消费正式状态和交付结�
 
 Required：
 
-- 测试目标：用户提供的 BDD identity、source ref 或场景描述。
+- 测试目标：用户提供的 BDD identity、来源路径或场景描述。
 
 Optional：
 
 - 用户限制：用户明确提出的范围和执行要求；没有时为 `none`。
 - `execution_only`：用户明确要求只执行时为 `true`；否则为 `false`。
+- `target_version`：用户明确指定的 Guru SDK 基线 tag。
 
 Missing：
 
@@ -70,7 +71,7 @@ Confirmation：
 
 Required：
 
-- `current_phase`：Runtime 当前 `<workflow_phase>` attachment 中的 `execute` 或 `review`。
+- 当前 `<workflow_context>` 和 `<workflow_phase>`：空白期为 `status: empty`、`current_phase: none`；活动 Workflow 的阶段为 `execute` 或 `review`。
 
 Optional：
 
@@ -78,7 +79,7 @@ Optional：
 
 Missing：
 
-- `current_phase` 缺失或无效时，等待 Runtime 明确阶段。
+- attachment 缺失或不一致时，等待 Runtime 明确状态；`empty` 不是输入缺失。
 - task 缺失时在相应派单阶段处理；handoff 或结果尚未到达时在相应结果协调阶段等待。
 
 Confirmation：
@@ -87,11 +88,11 @@ Confirmation：
 
 ## Workflow Overview
 
-以下五个 Phase 是 Coordinator 的线性处理步骤；Phase 1–3 服务 `execute`，Phase 4–5 服务 `review`。首次按顺序推进，等待后的新消息从当前步骤继续。
+以下五个 Phase 是 Coordinator 的处理步骤；Phase 1 在 Workflow 空白期准备并开启执行，Phase 2–3 服务 `execute`，Phase 4–5 服务 `review`。活动 Workflow 恢复或收到新消息时，从当前阶段和已有任务继续，不重新确认另一组目标或开启 Workflow。
 
 Phase 说明：
 
-- Phase 1：Resolve One BDD — 找到唯一 BDD，否则退回用户澄清。
+- Phase 1：Confirm and Start Workflow — 确认 BDD 与版本，生成 name，开启 Workflow。
 - Phase 2：Submit Task to Executor — 决定是否分配执行任务。
 - Phase 3：Coordinate Executor Outcome — 根据执行状态决定等待、退回或进入审查。
 - Phase 4：Submit Task to Reviewer — 决定是否分配审查任务。
@@ -99,35 +100,43 @@ Phase 说明：
 
 ## Coordinator Output
 
-- 任务输入：确认后的目标、用户限制和正式 refs。
+- 开启输入：根据已确认 BDD 与版本生成的 `name`。
+- 执行任务 prompt：`bdd_id`、`bdd_source_path`、`target_version`、用户限制和交付要求。
 - 阶段结果：当前正式状态支持的 `completed` 或 `error`。
 - 用户交付：正式结论、限制和结果 refs。
 
-## Phase 1: Resolve One BDD
+## Phase 1: Confirm and Start Workflow
 ---
 
 Main Flow：
 
 Knowledge：
 
-- 通过 `tool-guru-knowledge` 定位并完整读取 BDD，核对 identity、source ref、场景与用户目标。
-- 本轮确认后的 BDD 和用户限制供后续阶段复用。
+- 本阶段只在空白期且用户明确要求新执行时进行。
+- 通过 `tool-guru-knowledge` 定位并完整读取 BDD，确认 `bdd_id`、`bdd_source_path`、场景与用户目标。
+- 目标 `target_version` 来自用户明确输入，或当前允许读取的 Knowledge 中能明确关联到本次目标的版本资料。查询仅限 `tool-guru-knowledge` 已声明范围；不扩大资源范围。
+- 版本缺失、含糊或与用户要求冲突时，直接向用户提问，结束 response 等待答复；不为这个问题调用 Human Input 工具或创建 Worker task。
+- BDD 与版本确认后生成 `name`，例如 `<bdd_id>--<target_version>`，再按 `tool-scout-start-workflow` 调用 `StartWorkflow(name)`。name 是展示名称，不承载任务 prompt。
+- 开启请求接受后结束当前 response；下一次 response 在 `execute` 阶段生成任务 prompt。已确认目标留在当前 Thread 的协调上下文中，不从目录名反推。
 
 Flow：
 
 ```mermaid
 flowchart TD
-  A["定位并完整读取 BDD"] --> B{"唯一且与用户目标一致？"}
-  B -- "是" --> C["保留 BDD 与用户限制，进入 Phase 2"]
-  B -- "否" --> D["退回用户澄清，Blocked"]
+  A["定位并完整读取 BDD"] --> B{"BDD 与目标版本已确认？"}
+  B -- "是" --> C["生成 name，调用 StartWorkflow"]
+  B -- "否" --> D["直接询问用户，等待回复"]
+  C --> E["结束 response；新 execute response 进入 Phase 2"]
 ```
 
 Blocked：
 
 - BDD 来源不可读。
 - BDD 无法唯一确定。
-- BDD identity 与 source ref 不一致。
+- BDD identity 与来源路径不一致。
 - BDD 场景与用户目标或限制冲突。
+- 目标版本尚未明确或存在未解决冲突。
+- Workflow 开启未成功。
 
 Partial：
 
@@ -135,7 +144,7 @@ Partial：
 
 Exit：
 
-- 唯一 BDD 已确认，source ref 与用户限制已保留。
+- BDD、目标版本和用户限制已确认，开启请求已接受；新 response 已收到活动 Workflow 的 `execute` 上下文。
 
 ## Phase 2: Submit Task to Executor
 ---
@@ -145,9 +154,18 @@ Main Flow：
 Knowledge：
 
 - 本阶段要求 Runtime 的 `current_phase` 为 `execute`。
-- 首次任务输入是已确认的 BDD identity、source ref 和用户限制；目标是完成执行并正式交接。
+- 开启后的新 response 才生成执行 prompt；首次任务输入使用下表已确认内容，目标是完成执行并正式交接。
 - 使用 `AssignTask`（`tool-scout-assign-task`）派发新任务。
 - 退回修正时，用 `SendMessage`（`tool-scout-send-message`）向原 Executor task 转交 Reviewer 的正式修正请求和 refs。
+
+| prompt 字段 | 生产者与消费者 |
+| --- | --- |
+| `bdd_id` | Coordinator 从 canonical BDD 确认；Executor 核对文件身份。 |
+| `bdd_source_path` | Coordinator 经 Knowledge 查询取得的产品根目录相对文件路径，如 `Behaviors/<name>.md`；Executor 在当前可读 Knowledge 根目录下读取。 |
+| `target_version` | Coordinator 确认的 SDK 基线 tag；Executor 核对源码和 Runtime，不另选目标版本。 |
+| `human_constraints` | Coordinator 原样转交用户限制；没有时为 `none`。 |
+
+prompt 同时说明执行目标和本技能要求的正式 handoff；不把 name 当成执行输入。
 
 Flow：
 
@@ -225,11 +243,12 @@ Knowledge：
 
 - 本阶段要求 Runtime 的 `current_phase` 为 `review`。
 - 审查目标是完成本轮审查并正式交付结果；输入引用按下表原样转交。
+- 本阶段在推进成功后的新 response 中生成审查 prompt；沿用已经确认的 BDD 和目标版本，不重新选择。
 - 首次审查使用 `AssignTask`（`tool-scout-assign-task`）；修正后继续审查使用 `SendMessage`（`tool-scout-send-message`），向原 Reviewer task 转交更正后的 refs。
 
 | 输入来源 | 转交内容 |
 | --- | --- |
-| Executor formal handoff | `bdd_id`、`target_version`、`pack_ref`、`execute_file_ref`。 |
+| Executor formal handoff | `bdd_id`、`target_version`、`execute-pack-ref`（原样转交结构体）。 |
 | 本轮 Runtime 执行通知 | 精确 `executor_history_ref`。 |
 
 Flow：

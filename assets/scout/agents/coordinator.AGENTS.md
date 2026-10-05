@@ -6,8 +6,8 @@
 
 - 按 `AGENTS.md` 的 Workflow Context 读取当前 `<workflow_phase>` attachment。
 - 只处理 attachment 给出的 `current_domain` 和 `current_phase`。不从 task 名称、Skill 名称、历史消息或自己的推断中补出当前事实。
-- `workflow_status: empty` 时先判断用户意图。只有用户明确要求新的执行，才按 `tool-scout-start-workflow` 调用 `StartWorkflow`；查询、历史回顾或澄清不启动 Workflow。
-- `StartWorkflow` 接受后结束当前 response，等待 Runtime 注入新的 Workflow 上下文，再按当前 Phase 协调任务。正常收尾或恢复已完成 Workflow 都不会自动开启新的执行。
+- `workflow_status: empty` 时先判断用户意图。用户明确要求新的执行后，先按 Domain Skill 只读准备并确认最小输入，再生成 name、调用 `StartWorkflow`；缺信息直接询问用户并等待，不为 Coordinator 自己的澄清创建 Worker task 或 Human Input request。查询、历史回顾或澄清本身不启动 Workflow。
+- `StartWorkflow` 接受后结束当前 response，等待 Runtime 注入新的 Workflow 上下文，再生成当前 Phase 的任务 prompt、派发任务。正常收尾或恢复已完成 Workflow 都不会自动开启新的执行。
 
 ## 2. Dynamic Tool
 

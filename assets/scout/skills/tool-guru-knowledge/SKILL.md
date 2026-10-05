@@ -1,7 +1,7 @@
 ---
 assetKind: scout.skill
 name: tool-guru-knowledge
-description: Scout Agent 从 Guru Knowledge 快速定位并完整读取指定 Behavior，核对 BDD 身份与场景语义，并返回可重放的来源引用时使用。
+description: Scout Agent 从 Guru Knowledge 快速定位并完整读取指定 Behavior，核对 BDD 身份与场景语义，并返回来源路径时使用。
 id: tool-guru-knowledge
 version: 0.12.0
 type: tool
@@ -12,7 +12,7 @@ dependencies:
   shellTools:
     required: [scoutAssets]
     optional: [rg, sed, cat]
-summary: 只读定位 Behavior、核对 Given/When/Then，并返回 BDD source ref。
+summary: 只读定位 Behavior、核对 Given/When/Then，并返回 bdd_source_path。
 ---
 
 # Tool Guru Knowledge
@@ -24,7 +24,7 @@ summary: 只读定位 Behavior、核对 Given/When/Then，并返回 BDD source r
 - 定位指定 Behavior；
 - 完整读取 Behavior 来源；
 - 核对 `id`、`Given`、`When`、`Then`；
-- 形成可重放的 BDD source ref。
+- 返回 `bdd_source_path` 和来源定位信息。
 
 ## Skill Type
 
@@ -65,10 +65,10 @@ Missing：
 至少提供以下一项：
 
 - canonical Behavior `id`；
-- 已知的 Behavior source ref；
+- 已知的 Behavior 来源文件路径；
 - 足以定位 Behavior 的场景描述。
 
-优先级：`id` > source ref > 场景描述。
+优先级：`id` > 来源路径 > 场景描述。
 
 Missing：
 
@@ -93,9 +93,9 @@ Missing：
 
 4. 命中后只读取命中的完整文件，不继续扫描其它目录。
 
-### 已知 source ref
+### 已知来源路径
 
-直接读取调用方提供的 source ref，并确认它位于当前 Knowledge 根目录的 `Behaviors/` 内。
+产品根目录相对路径在当前 Knowledge 根目录下定位；本机绝对路径只在它属于当前根目录的 `Behaviors/` 时使用。直接读取该文件。
 
 ### 只有场景描述
 
@@ -133,18 +133,19 @@ rg -n '<场景关键词>' '<knowledge-root>/Behaviors'
 
 如果调用方只提供场景描述：
 
-- 返回所有仍可读的候选及各自 source ref；
+- 返回所有仍可读的候选及各自来源路径；
 - 由 Domain 调用方核对意图并决定是否已经唯一闭合。
 
-## BDD Source Ref
+## BDD Source Path
 
-返回的 BDD source ref 必须包含：
+返回 `bdd_source_path`：Knowledge 产品根目录相对文件路径，例如 `Behaviors/<behavior-name>.md`。调用方在当前可读 Knowledge 根目录下定位该文件。
+
+同时保留来源定位信息：
 
 - Knowledge repository：例如 `GuruSdk`；
-- 产品相对路径：例如 `Behaviors/<behavior-name>.md`；
 - 可重放 locator：至少包含 frontmatter `id` 和 `Given`、`When`、`Then` 标题。
 
-本机绝对路径只能作为当前读取位置的诊断信息，不能代替产品相对 source ref。
+本机绝对路径只能作为当前读取位置的诊断信息，不作为 `bdd_source_path` 交付。
 
 ## Workflow
 
@@ -160,7 +161,7 @@ Flow：
 ```mermaid
 flowchart TD
   A["确认 mount 与 Knowledge 根目录"] --> B["确认 Behavior target"]
-  B --> C{"按 ID/ref/场景定位"}
+  B --> C{"按 ID/路径/场景定位"}
   C --> D["完整读取命中文件"]
 ```
 
@@ -175,7 +176,7 @@ Blocked：
 Knowledge：
 
 - canonical `id`、`Given`、`When`、`Then` 必须来自完整 Behavior 来源；
-- source ref 必须能被调用方重新定位。
+- `bdd_source_path` 必须能在调用方当前 Knowledge 根目录下重新定位。
 
 Flow：
 
@@ -184,7 +185,7 @@ flowchart TD
   A["读取完整 Behavior"] --> B["核对 identity"]
   B --> C["核对 Given/When/Then"]
   C --> D{"唯一且一致？"}
-  D -- "是" --> E["返回 BDD source ref"]
+  D -- "是" --> E["返回 bdd_source_path"]
   D -- "否" --> F["返回冲突或候选"]
 ```
 
@@ -200,7 +201,7 @@ Exit：
 - 已完整读取来源；
 - identity 与目标一致；
 - `Given`、`When`、`Then` 可定位；
-- 已返回 BDD source ref，或已明确返回候选冲突。
+- 已返回 `bdd_source_path`，或已明确返回候选冲突。
 
 ## Output Contract
 
@@ -213,9 +214,11 @@ Exit：
 - id: <canonical behavior id>
 - status: <source status>
 
-## BDD Source Ref
+## BDD Source Path
+- bdd_source_path: Behaviors/<behavior-name>.md
+
+## Source Locators
 - repository: <knowledge repository>
-- source: <product-relative behavior path>
 - locator: <replayable locator>
 
 ## Scenario
@@ -228,7 +231,7 @@ Exit：
 ## Limitations
 ```
 
-存在多个候选或来源冲突时，不输出唯一 Behavior 结论；在 `Behavior Identity` 中列出候选 ID 和各自 source ref，并说明冲突。
+存在多个候选或来源冲突时，不输出唯一 Behavior 结论；在 `Behavior Identity` 中列出候选 ID 和各自来源路径，并说明冲突。
 
 ## Failure And Prohibited Rules
 

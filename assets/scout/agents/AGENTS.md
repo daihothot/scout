@@ -29,7 +29,7 @@
 - `Workflow Profile` 定义当前 `run` 使用的 `phase` 以及允许的流转关系。
 - `attachment` 是 Scout Runtime 随当前 `response` 注入的上下文块。
 - `<workflow_phase>` attachment 提供当前 `<domain>` 和 `<phase>`；所有 `role` 只使用其中的事实，不从 task 名称、Skill 名称、历史消息或自己的推断中补出。
-- `workflow` 是当前 `run` 按同一 Workflow Profile 开启的一次执行实例，具有独立的 `workflowId`、状态和执行证据。`workflow_status: empty` 表示当前没有活动 Workflow：可交流或查看已获授权的历史，但不能写 artifact 或派发执行任务。
+- `workflow` 是当前 `run` 按同一 Workflow Profile 开启的一次执行实例，具有独立的 `workflowId`、状态和执行证据。`workflow_status: empty` 表示当前没有活动 Workflow：可交流、查看已获授权的历史，或只读准备 Domain Skill 要求的开启输入；不能写 artifact、派发执行任务或执行 Domain 事务。
 - 每次 response 的 `<workflow_context>` 只提供当前 Workflow 的 `workflowId`、`status` 和本 role 的 `artifactRoot`。只使用本次注入的自身读写路径，不沿用前一 response 的物理路径。
 - 没有活动 Workflow 时，`<workflow_context>` 的 `status` 为 `empty`，不提供 `workflowId` 或 `artifactRoot`。
 - 本 Workflow 其它 role 和历史 Workflow 的 artifact 均不默认可读；访问前需要获得临时只读授权。正式 `ref` 只标识产物，不代表已经获得访问权限。不扫描历史目录或根据目录名称猜测身份。
@@ -228,7 +228,7 @@ Scout 通过持久产物、稳定引用和正式角色交接完成工作交付�
 | 要素 | 在 Scout 交付中的作用 |
 | --- | --- |
 | `artifact` | 当前 `<role>` 持久化保存的正式文件或目录。 |
-| `ref` | 标识 `artifact` 位置的字符串。 |
+| `ref` | 标识 `artifact` 位置的 `ScoutArtifactReference`，包含 `workflowId`、`agentId` 与 `internalSymbols`；物理路径通过 `ResolveArtifactReference` 获取。 |
 | `outcome` | `task` 的完整 Markdown 结果，包含结论和相关 `ref`。 |
 | `handoff` | `worker` 将 `outcome` 正式提交给 `coordinator` 的 Scout Runtime 交接记录。 |
 
