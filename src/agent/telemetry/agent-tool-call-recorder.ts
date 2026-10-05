@@ -1,4 +1,4 @@
-import type { UnsubscribeEventHandler } from "../../core/events/index.js";
+import { EventSubscriptionPriorities, type UnsubscribeEventHandler } from "../../core/events/index.js";
 import { Logger } from "../../core/logging/index.js";
 import { currentRunScope } from "../../run/run-scope.js";
 import { AgentEvents } from "../events/index.js";
@@ -17,8 +17,9 @@ interface ToolCallLogSummary extends AgentToolCallState {
 export class AgentToolCallRecorder {
   private readonly loggers = new Map<string, Logger>();
   private readonly summaries = new Map<string, ToolCallLogSummary>();
-  private readonly recordedCallIds = new Set<string>();
+  private readonly recordedCallIds = new Map<string, string>();
   private unsubscribe?: UnsubscribeEventHandler;
+  private unsubscribeTurnStarted?: UnsubscribeEventHandler;
 
   start(): void {
     if (this.unsubscribe) return;
@@ -26,6 +27,13 @@ export class AgentToolCallRecorder {
       if (!AgentEvents.toolCall.observed.is(event)) return;
       this.record(event.payload);
     });
+    // Reclaim before asynchronous Turn observers can let new tool observations overtake this boundary.
+    this.unsubscribeTurnStarted = currentRunScope().eventBus.subscribe(AgentEvents.turn.started, (event) => {
+      if (!AgentEvents.turn.started.is(event)) return;
+      for (const [callId, agentId] of this.recordedCallIds) {
+        if (agentId === event.payload.agentId) this.recordedCallIds.delete(callId);
+      }
+    }, { priority: EventSubscriptionPriorities.Critical });
   }
 
   stop(): void {
@@ -36,6 +44,8 @@ export class AgentToolCallRecorder {
     }
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    this.unsubscribeTurnStarted?.();
+    this.unsubscribeTurnStarted = undefined;
     this.loggers.clear();
     this.summaries.clear();
     this.recordedCallIds.clear();
@@ -88,7 +98,8 @@ export class AgentToolCallRecorder {
       taskId: summary.taskId,
       data,
     });
-    this.recordedCallIds.add(summary.toolCallId);
+    this.recordedCallIds.set(summary.toolCallId, summary.agentId);
+    this.summaries.delete(summary.toolCallId);
   }
 }
 

@@ -28,7 +28,8 @@ import type { AgentToolCallState } from "../../src/agent/tool-call/types.js";
 import type { AgentTaskNotAssignedEventPayload } from "../../src/agent/task/task-events.js";
 import type { AgentTaskState } from "../../src/agent/task/types.js";
 import { TaskRunner } from "../../src/agent/runner/task/task-runner.js";
-import { InMemoryEventBus, type EventBus } from "../../src/core/events/index.js";
+import { EventSubscriptionPriorities, InMemoryEventBus, type EventBus } from "../../src/core/events/index.js";
+import { Logger } from "../../src/core/logging/index.js";
 import { DomainEvents, type DomainAgentToolCallObservedEvent } from "../../src/domain/domain-events.js";
 import { ScoutDomainId } from "../../src/domain/types.js";
 import { RbtAgentToolCallRecorder } from "../../src/domain/domains/rbt/agent/telemetry/agent-tool-call-recorder.js";
@@ -354,6 +355,125 @@ test("AgentToolCallRecorder aggregates one logical Tool Call lifecycle", async (
   assert.match(text, /- "inProgress"/);
   assert.match(text, /- "failed"/);
   assert.match(text, /AssignTask agent_id must be a non-empty string/);
+});
+
+test("Tool Call telemetry releases completed payloads and bounds deduplication by each Agent Turn", async (t) => {
+  const scope = await installTestRunScope(t, { runId: "tool-call-telemetry-retention" });
+  const recorder = new AgentToolCallRecorder();
+  recorder.start();
+  t.after(() => recorder.stop());
+  const summaries = Reflect.get(recorder, "summaries") as Map<string, unknown>;
+  const recordedCallIds = Reflect.get(recorder, "recordedCallIds") as Map<string, string>;
+  const logsRoot = scope.workflow.agentPaths("coordinator").logsRoot;
+  for (let index = 0; index < 25; index += 1) {
+    await scope.eventBus.publishAndWait(AgentEvents.turn.started, {
+      invocationId: `invocation-${index}`, agentId: "coordinator", role: "coordinator", threadId: "same-thread",
+      prompt: "Continue the current Workflow", startedAt: "2026-10-03T00:00:00.000Z",
+    });
+    assert.equal(recordedCallIds.size, 0);
+    const call: AgentToolCallState = {
+      toolCallId: `call-${index}`, kind: "dynamic", agentId: "coordinator", stepId: `step-${index}`,
+      threadId: "same-thread", turnId: `turn-${index}`, itemId: `call-${index}`, tool: "SendMessage",
+      arguments: { message: "request-".repeat(1_000) }, contentItems: [{ type: "inputText", text: "response-".repeat(1_000) }],
+      status: "inProgress", sourceSeq: index * 2, observedAt: "2026-10-03T00:00:00.000Z",
+    };
+    await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, call);
+    assert.equal(summaries.size, 1);
+    const completed = { ...call, status: "completed", success: true, sourceSeq: index * 2 + 1 };
+    await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, completed);
+    assert.equal(summaries.size, 0);
+    assert.equal(recordedCallIds.size, 1);
+    await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, completed);
+    assert.equal(summaries.size, 0);
+  }
+  assert.equal(readEventCount(readFileSync(join(logsRoot, "tool-calls.log"), "utf8")), 25);
+  recorder.stop();
+  await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, {
+    toolCallId: "after-stop", kind: "dynamic", agentId: "coordinator", stepId: "step-after-stop",
+    threadId: "same-thread", turnId: "after-stop", itemId: "after-stop", tool: "SendMessage",
+    status: "completed", sourceSeq: 100, observedAt: "2026-10-03T00:00:00.000Z",
+  } satisfies AgentToolCallState);
+  assert.equal(readEventCount(readFileSync(join(logsRoot, "tool-calls.log"), "utf8")), 25);
+});
+
+test("A new Agent Turn recycles only its own tool markers before queued observations", async (t) => {
+  const scope = await installTestRunScope(t, { runId: "tool-call-turn-recycling" });
+  const recorder = new AgentToolCallRecorder();
+  recorder.start();
+  t.after(() => recorder.stop());
+  const completed: AgentToolCallState = {
+    toolCallId: "coordinator-old", kind: "dynamic", agentId: "coordinator", stepId: "step-coordinator",
+    threadId: "coordinator-thread", turnId: "old-turn", itemId: "coordinator-old", tool: "SendMessage",
+    status: "completed", sourceSeq: 1, observedAt: "2026-10-03T00:00:00.000Z",
+  };
+  const workerCall = { ...completed, toolCallId: "researcher-old", agentId: "researcher", threadId: "researcher-thread" };
+  await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, completed);
+  await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, workerCall);
+  let release!: () => void;
+  const observing = new Promise<void>((resolve) => { release = resolve; });
+  const unsubscribe = scope.eventBus.subscribe(AgentEvents.turn.started, () => observing,
+    { priority: EventSubscriptionPriorities.High });
+  const started = scope.eventBus.publishAndWait(AgentEvents.turn.started, {
+    invocationId: "next-invocation", agentId: "coordinator", role: "coordinator", threadId: "coordinator-thread",
+    prompt: "Continue", startedAt: "2026-10-03T00:00:01.000Z",
+  });
+  try {
+    const next = { ...completed, toolCallId: "coordinator-next", itemId: "coordinator-next", turnId: "next-turn", sourceSeq: 2 };
+    await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, next);
+    const recordedCallIds = Reflect.get(recorder, "recordedCallIds") as Map<string, string>;
+    assert.equal(recordedCallIds.has(completed.toolCallId), false);
+    assert.equal(recordedCallIds.has(workerCall.toolCallId), true);
+    assert.equal(recordedCallIds.has(next.toolCallId), true);
+    release();
+    await started;
+    await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, next);
+    await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, workerCall);
+    assert.equal(readEventCount(readFileSync(join(scope.workflow.agentPaths("coordinator").logsRoot, "tool-calls.log"), "utf8")), 2);
+    assert.equal(readEventCount(readFileSync(join(scope.workflow.agentPaths("researcher").logsRoot, "tool-calls.log"), "utf8")), 1);
+  } finally {
+    release();
+    await started;
+    unsubscribe();
+  }
+});
+
+test("A failed Tool Call summary write keeps its payload and first directory for retry", async (t) => {
+  const scope = await installTestRunScope(t, { runId: "tool-call-write-retry" });
+  const recorder = new AgentToolCallRecorder();
+  recorder.start();
+  t.after(() => recorder.stop());
+  const originalInfo = Logger.prototype.info;
+  let unavailable = true;
+  t.mock.method(Logger.prototype, "info", function (this: Logger, input: Parameters<Logger["info"]>[0]) {
+    if (unavailable && input.event === "agent.tool_call.summary") throw new Error("telemetry disk unavailable");
+    originalInfo.call(this, input);
+  });
+  const call: AgentToolCallState = {
+    toolCallId: "retry-call", kind: "dynamic", agentId: "coordinator", stepId: "retry-step",
+    threadId: "coordinator-thread", turnId: "retry-turn", itemId: "retry-call", tool: "SendMessage",
+    arguments: { message: "retain input until written" }, contentItems: [{ type: "inputText", text: "retain output until written" }],
+    status: "completed", sourceSeq: 1, observedAt: "2026-10-03T00:00:00.000Z",
+  };
+  const firstLogs = scope.workflow.agentPaths("coordinator").logsRoot;
+  const summaries = Reflect.get(recorder, "summaries") as Map<string, unknown>;
+  const recordedCallIds = Reflect.get(recorder, "recordedCallIds") as Map<string, string>;
+  try {
+    await assert.rejects(scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, call), /telemetry disk unavailable/);
+    assert.equal(summaries.size, 1);
+    assert.equal(recordedCallIds.has(call.toolCallId), false);
+    const nextLogs = join(scope.runRoot, "workflows", "later-physical-directory", "agents", "coordinator", "logs");
+    t.mock.method(scope.workflow, "agentPaths", () => ({ artifactRoot: join(nextLogs, "artifacts"), logsRoot: nextLogs }));
+    unavailable = false;
+    await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, call);
+    await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, call);
+    assert.equal(summaries.size, 0);
+    assert.equal(recordedCallIds.has(call.toolCallId), true);
+    const text = readFileSync(join(firstLogs, "tool-calls.log"), "utf8");
+    assert.equal(readEventCount(text), 1);
+    assert.match(text, /retain input until written/);
+    assert.match(text, /retain output until written/);
+    assert.equal(existsSync(join(nextLogs, "tool-calls.log")), false);
+  } finally { unavailable = false; }
 });
 
 test("AgentActivityRecorder writes stable activity to the role activity log", async (t) => {
@@ -918,6 +1038,12 @@ test("Tool Call completion and stop flushing retain the first-observed telemetry
 
   await scope.eventBus.publishAndWait(AgentEvents.toolCall.observed, { ...first, toolCallId: "workflow-pending-call" });
   inWorkflow = false;
+  await scope.eventBus.publishAndWait(AgentEvents.turn.started, {
+    invocationId: "next-invocation", agentId: "coordinator", role: "coordinator", threadId: "thread-1",
+    prompt: "Discuss the completed Workflow", startedAt: "2026-09-29T00:00:01.000Z",
+  });
+  assert.equal(existsSync(workflowLog), false);
+  assert.equal((Reflect.get(recorder, "summaries") as Map<string, unknown>).size, 1);
   recorder.stop();
   assert.equal(readFileSync(entityLog, "utf8"), entityContents);
   const workflowContents = readFileSync(workflowLog, "utf8");
