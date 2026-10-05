@@ -1,4 +1,5 @@
 import { Authorization } from "../../../core/authorization/authorization.js";
+import { agentPermissionRequestSourceType } from "../../../core/authorization/request-source/permission/agent-permission-request-source.js";
 import { currentRunScope } from "../../run-scope.js";
 import type { RunStage } from "../run-stage.js";
 
@@ -15,6 +16,7 @@ export class AuthorizationStage implements RunStage {
     const authorization = new Authorization();
     scope.setAuthorization(authorization);
     this.authorization = authorization;
+    authorization.registerRequestSourceType(agentPermissionRequestSourceType);
     authorization.start();
     scope.workflow.registerParticipant(authorization);
     this.started = true;

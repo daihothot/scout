@@ -1,3 +1,4 @@
+import type { ScoutArtifactReference } from "../../../../core/io/index.js";
 import type { DynamicToolCallResponse } from "../../../../agent-server/types.js";
 import type { AgentJsonValue } from "../../../../agent/tools/types.js";
 import type { ExecutionPlatformRequest, ExecutionSelectionIdentity } from "../../../../execution/index.js";
@@ -62,7 +63,7 @@ export class JarvisBehaviorOrchestrator {
 
   async executeFile(
     call: ScoutDomainDynamicToolCall,
-    executeFileRef: string,
+    executeFileRef: ScoutArtifactReference,
   ): Promise<DynamicToolCallResponse> {
     if (!this.accepting) throw new Error("RBT runtime is not accepting commands.");
     const executeFile = readJarvisBehaviorExecuteFile(call, executeFileRef, this.store);

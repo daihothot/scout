@@ -7,6 +7,7 @@ import {
   buildSubmitTaskDynamicTool,
   buildSubmitPhaseOutcomeDynamicTool,
   buildStartWorkflowDynamicTool,
+  buildResolveArtifactReferenceDynamicTool,
 } from "./agent-tools.js";
 
 /** Selects the role-specific subset of built-in agent tools. */
@@ -19,6 +20,7 @@ export function buildAgentDynamicTools(options: BuildAgentDynamicToolsOptions = 
   if (options.orchestrationTools) {
     return [
       buildStartWorkflowDynamicTool(),
+      buildResolveArtifactReferenceDynamicTool(),
       buildAssignTaskDynamicTool(),
       buildSendMessageDynamicTool(),
       buildRespondHumanInputDynamicTool(),
@@ -26,6 +28,7 @@ export function buildAgentDynamicTools(options: BuildAgentDynamicToolsOptions = 
     ];
   }
   return [
+    buildResolveArtifactReferenceDynamicTool(),
     buildSendMessageDynamicTool(),
     buildRequestHumanInputDynamicTool(),
     buildSubmitTaskDynamicTool(),

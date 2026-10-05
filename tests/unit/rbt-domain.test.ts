@@ -145,8 +145,8 @@ test("RBT restores every missing history after Agent state restoration and does 
   const readyHistories = [1, 2].map((runtimeSequence) => ({
     bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
     executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
-    executorHistoryRef: `agents/executor/artifacts/history/00${runtimeSequence}.json`,
-    executeFileRef: "account/1.0/execute-file.json",
+    executorHistoryRef: `scout-artifact://workflow-001/executor/history/00${runtimeSequence}.json`,
+    executeFileRef: "scout-artifact://workflow-001/executor/pack/execute-file.json",
     runtimeSequence,
     campaignId: `campaign-${runtimeSequence}`,
     scenarioId: "scenario",
@@ -225,8 +225,8 @@ test("RBT recovery skips persisted queued and consumed delivery identities", asy
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
       bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
       executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
-      executorHistoryRef: `history/${runtimeSequence}.json`,
-      executeFileRef: "account/1.0/execute-file.json",
+      executorHistoryRef: `scout-artifact://workflow-001/executor/history/${runtimeSequence}.json`,
+      executeFileRef: "scout-artifact://workflow-001/executor/pack/execute-file.json",
       runtimeSequence,
       campaignId: "campaign",
       scenarioId: "scenario",
@@ -327,7 +327,7 @@ test("RBT history delivery separates identical sequence numbers across Workflows
     `${scope.runId}-workflow-001-rbt-history-executor-1`,
     `${scope.runId}-workflow-002-rbt-history-executor-1`,
   ]);
-  assert.match([...accepted.values()][1]!.message, /scout-artifact:\/\/workflow-002\/executor\/history\/001.json/);
+  assert.ok([...accepted.values()][1]!.message.includes('"workflowId":"workflow-002","agentId":"executor","internalSymbols":["history","001.json"]'));
 });
 
 test("RBT repeated restore replaces the previous pending history subscription", async (t) => {
@@ -342,8 +342,8 @@ test("RBT repeated restore replaces the previous pending history subscription", 
   const history = {
     bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
     executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
-    executorHistoryRef: "history/1.json",
-    executeFileRef: "account/1.0/execute-file.json",
+    executorHistoryRef: "scout-artifact://workflow-001/executor/history/1.json",
+    executeFileRef: "scout-artifact://workflow-001/executor/pack/execute-file.json",
     runtimeSequence: 1,
     campaignId: "campaign",
     scenarioId: "scenario",
@@ -353,7 +353,7 @@ test("RBT repeated restore replaces the previous pending history subscription", 
   };
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history);
   await domain.restore(scope.workflow.snapshot()!);
-  await scope.eventBus.publishAndWait(RbtEvents.history.ready, { ...history, runtimeSequence: 2, executorHistoryRef: "history/2.json" });
+  await scope.eventBus.publishAndWait(RbtEvents.history.ready, { ...history, runtimeSequence: 2, executorHistoryRef: "scout-artifact://workflow-001/executor/history/2.json" });
   await domain.restore(scope.workflow.snapshot()!);
   const deliveries: SendAgentMessageInput[] = [];
   scope.agentRegistry.registerAgent({
@@ -387,8 +387,8 @@ test("RBT cancels restored history delivery on stop, completed restore, Workflow
       await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
         bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
         executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
-        executorHistoryRef: "history/1.json",
-        executeFileRef: "account/1.0/execute-file.json",
+        executorHistoryRef: "scout-artifact://workflow-001/executor/history/1.json",
+        executeFileRef: "scout-artifact://workflow-001/executor/pack/execute-file.json",
         runtimeSequence: 1,
         campaignId: "campaign",
         scenarioId: "scenario",
@@ -444,8 +444,8 @@ test("RBT stops an in-flight history replay before delivering the next history",
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
       bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
       executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
-      executorHistoryRef: `history/${runtimeSequence}.json`,
-      executeFileRef: "account/1.0/execute-file.json",
+      executorHistoryRef: `scout-artifact://workflow-001/executor/history/${runtimeSequence}.json`,
+      executeFileRef: "scout-artifact://workflow-001/executor/pack/execute-file.json",
       runtimeSequence,
       campaignId: "campaign",
       scenarioId: "scenario",
@@ -492,8 +492,8 @@ test("RBT restored history delivery failures reject runtime ready and can be ret
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
     bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
     executeFileDigest: `sha256:${"a".repeat(64)}`, executorHistoryDigest: `sha256:${"b".repeat(64)}`,
-    executorHistoryRef: "history/1.json",
-    executeFileRef: "account/1.0/execute-file.json",
+    executorHistoryRef: "scout-artifact://workflow-001/executor/history/1.json",
+    executeFileRef: "scout-artifact://workflow-001/executor/pack/execute-file.json",
     runtimeSequence: 1,
     campaignId: "campaign",
     scenarioId: "scenario",
@@ -1938,8 +1938,8 @@ test(`RBT executes a ${inputOwner} Pack input through the same pipeline and reco
       JSON.stringify({ workflowId: "workflow-009" }));
   }
   const originalInput = readFileSync(executeFilePath, "utf8");
-  const executeFileRef = `scout-artifact://${inputOwner === "current" ? "workflow-001/executor" : "workflow-009/old-executor"}/account-anon-restore-existing-account/26.7.0-rc.2/execute-file.json`;
-  const executeInput = inputOwner === "current" ? executeFilePath : executeFileRef;
+  const executeFileRef = `scout-artifact://${inputOwner === "current" ? "workflow-001/executor" : "workflow-009/old-executor"}/pack/execute-file.json`;
+  const executeInput = { workflowId: inputOwner === "current" ? "workflow-001" : "workflow-009", agentId: inputOwner === "current" ? "executor" : "old-executor", internalSymbols: ["pack", "execute-file.json"] };
   const execution = await domain.backend.handleDynamicToolCall(dynamicCall({
     callId: "call-execute-file",
     namespace: "rbt_behavior",
@@ -1982,7 +1982,7 @@ test(`RBT executes a ${inputOwner} Pack input through the same pipeline and reco
       hostCommands: Array<{ executable: string; args: string[]; result: { stdout: string } }>;
     }>;
   };
-  assert.equal(history.executeFileRef, executeFileRef);
+  assert.deepEqual(history.executeFileRef, executeInput);
   assert.equal(history.runtimeSequence, 1);
   assert.equal(history.campaignId, "account.restore.success/campaign/main");
   assert.equal(history.scenarioId, "account.restore.success");
@@ -2028,8 +2028,8 @@ test(`RBT executes a ${inputOwner} Pack input through the same pipeline and reco
     CoordinatorContextTags.Observation,
   )[0]?.body ?? "";
   assert.match(historyObservation, /### RBT Execution History Ready/);
-  assert.match(historyObservation, /executor_history_ref: scout-artifact:\/\/workflow-001\/executor\/history\/001\.json/);
-  assert.ok(historyObservation.includes(`execute_file_ref: ${executeFileRef}`));
+  assert.ok(historyObservation.includes('executor_history_ref: {"workflowId":"workflow-001","agentId":"executor","internalSymbols":["history","001.json"]}'));
+  assert.ok(historyObservation.includes(`execute_file_ref: ${JSON.stringify(executeInput)}`));
   assert.match(historyObservation, /campaign_id: account\.restore\.success\/campaign\/main/);
   assert.match(historyObservation, /scenario_id: account\.restore\.success/);
   assert.match(historyObservation, /status: completed/);
@@ -2051,7 +2051,7 @@ test(`RBT executes a ${inputOwner} Pack input through the same pipeline and reco
     platform?: unknown;
   };
   assert.equal(replayHistory.runtimeSequence, 2);
-  assert.equal(replayHistory.executeFileRef, history.executeFileRef);
+  assert.deepEqual(replayHistory.executeFileRef, history.executeFileRef);
   assert.deepEqual(replayHistory.platform, history.platform);
   assert.equal(coordinatorMessages.length, 2);
   assert.deepEqual([...new RbtDomainProjector().project(domain.recordObject.read()).artifacts.histories.values()].map(({ history }) => history.runtimeSequence), [1, 2]);
@@ -2098,7 +2098,7 @@ test("RBT execute-file rejects an array-shaped evidenceCapture before Runtime", 
     callId: "call-invalid-evidence-capture",
     namespace: "rbt_behavior",
     tool: "JarvisBehavior",
-    arguments: { execute_file: executeFilePath },
+    arguments: { execute_file: { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["pack", "execute-file.json"] } },
     role: "executor",
   }));
 
@@ -2164,7 +2164,7 @@ test("RBT execute-file preflights every registry identity before campaign mutati
     callId: "call-identity-preflight",
     namespace: "rbt_behavior",
     tool: "JarvisBehavior",
-    arguments: { execute_file: executeFilePath },
+    arguments: { execute_file: { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["pack", "execute-file.json"] } },
     role: "executor",
   }));
 
@@ -2223,7 +2223,7 @@ test("RBT execute-file continues the sequence when campaign history publication 
     callId: "call-execute-file-history-publication-failure",
     namespace: "rbt_behavior",
     tool: "JarvisBehavior",
-    arguments: { execute_file: executeFilePath },
+    arguments: { execute_file: { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["pack", "execute-file.json"] } },
     role: "executor",
   }));
 
@@ -2285,7 +2285,7 @@ test("RBT campaign history continues after the greatest existing runtime sequenc
     callId: "call-execute-file-after-resume",
     namespace: "rbt_behavior",
     tool: "JarvisBehavior",
-    arguments: { execute_file: executeFilePath },
+    arguments: { execute_file: { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["pack", "execute-file.json"] } },
     role: "executor",
   }));
 
@@ -2322,7 +2322,7 @@ test("RBT execute-file performs cleanup after a command failure and closes faile
     callId: "call-execute-file-failure",
     namespace: "rbt_behavior",
     tool: "JarvisBehavior",
-    arguments: { execute_file: executeFilePath },
+    arguments: { execute_file: { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["pack", "execute-file.json"] } },
     role: "executor",
   }));
 
@@ -2718,12 +2718,12 @@ function writeTestExecuteFile(artifactRoot: string): {
   const scenarioId = "account.restore.success";
   const executeFilePath = join(
     artifactRoot,
-    "account-anon-restore-existing-account",
-    "26.7.0-rc.2",
+    "pack",
     "execute-file.json",
   );
   mkdirSync(join(executeFilePath, ".."), { recursive: true });
   writeFileSync(executeFilePath, `${JSON.stringify({
+    bddId: "account-anon-restore-existing-account", targetVersion: "26.7.0-rc.2",
     commands: [
       {
         command: "behavior.campaign.start",

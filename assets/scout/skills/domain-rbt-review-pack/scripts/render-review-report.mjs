@@ -58,10 +58,17 @@ function readReview(input) {
     throw new Error(`无法读取 review-result.json: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (!isObject(parsed)) throw new Error("review-result.json 必须是对象。");
-  for (const field of ["bddId", "targetVersion", "campaignId", "executorHistoryRef", "summary"]) {
+  for (const field of ["bddId", "targetVersion", "campaignId", "summary"]) {
     if (typeof parsed[field] !== "string" || parsed[field].trim() === "") {
       throw new Error(`${field} 必须是非空字符串。`);
     }
+  }
+  const ref = parsed.executorHistoryRef;
+  if (!isObject(ref) || typeof ref.workflowId !== "string" || !/^workflow-[0-9]{3,}$/.test(ref.workflowId)
+    || typeof ref.agentId !== "string" || !/^[A-Za-z0-9._-]+$/.test(ref.agentId) || ref.agentId === "." || ref.agentId === ".."
+    || !Array.isArray(ref.internalSymbols) || ref.internalSymbols.length !== 2
+    || ref.internalSymbols[0] !== "history" || !/^[0-9]+\.json$/.test(ref.internalSymbols[1])) {
+    throw new Error("executorHistoryRef 必须是执行历史文件的 ScoutArtifactReference。");
   }
   if (parsed.scenarioId !== undefined && typeof parsed.scenarioId !== "string") {
     throw new Error("scenarioId 必须是字符串。");
@@ -169,7 +176,7 @@ function renderHtml(review, overall) {
   <section class="metadata" aria-label="执行信息">
     ${metadataItem("目标版本", review.targetVersion)}
     ${metadataItem("Campaign", review.campaignId)}
-    ${metadataItem("Executor 执行历史", review.executorHistoryRef)}
+    ${metadataItem("Executor 执行历史", JSON.stringify(review.executorHistoryRef))}
     ${review.scenarioId ? metadataItem("Scenario", review.scenarioId) : ""}
     ${metadataItem("预期点", String(review.timeline.length))}
   </section>

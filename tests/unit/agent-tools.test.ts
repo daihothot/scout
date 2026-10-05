@@ -8,6 +8,7 @@ import {
   AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
   AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
   buildAssignTaskDynamicTool,
+  buildResolveArtifactReferenceDynamicTool,
   buildRequestHumanInputDynamicTool,
   buildRespondHumanInputDynamicTool,
   buildSendMessageDynamicTool,
@@ -104,6 +105,20 @@ test("agent tool parser rejects malformed and removed Skill tool payloads", () =
   );
   assert.throws(() => parseAgentDynamicToolCall("FindSkills", {}), /Unsupported agent tool/);
   assert.throws(() => parseAgentDynamicToolCall("ReadSkillResource", {}), /Unsupported agent tool/);
+});
+
+test("Artifact resolution accepts only structured literal references without domain knowledge", () => {
+  const reference = { workflowId: "workflow-001", agentId: "arbitrary-owner", internalSymbols: ["pack", "file with space.md"] };
+  const spec = buildResolveArtifactReferenceDynamicTool();
+  assert.equal(spec.guidanceSkill, "tool-scout-resolve-artifact-reference");
+  assert.deepEqual(readRequired(spec.inputSchema), ["reference"]);
+  assert.deepEqual(parseAgentDynamicToolCall("ResolveArtifactReference", { reference }), {
+    tool: "ResolveArtifactReference", reference,
+  });
+  for (const internalSymbols of [[".."], ["/tmp"], ["pack/file.md"], [""]]) {
+    assert.throws(() => parseAgentDynamicToolCall("ResolveArtifactReference", { reference: { ...reference, internalSymbols } }));
+  }
+  assert.throws(() => parseAgentDynamicToolCall("ResolveArtifactReference", { reference: "scout-artifact://workflow-001/executor/pack" }));
 });
 
 test("agent tools are hard-bound to their registered namespaces", () => {

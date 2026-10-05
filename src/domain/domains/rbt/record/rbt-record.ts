@@ -1,3 +1,4 @@
+import { readArtifactReference } from "../../../../core/io/index.js";
 import type { RecordEvent } from "../../../../core/record/index.js";
 import type { RbtArtifactReference, RbtExecutionPackReference, RbtReviewerPackReference } from "../artifacts/types.js";
 
@@ -62,7 +63,7 @@ export function decodeRbtRecords(records: readonly RecordEvent[]): RbtRecord[] {
       const algorithm = ref.algorithm;
       if (algorithm !== "sha256" && algorithm !== "scout-directory-sha256-v1") return invalid("artifact algorithm");
       return {
-        workflowId: text(ref, "workflowId"), agentId: text(ref, "agentId"), path: text(ref, "path"),
+        ...readArtifactReference(ref),
         digest: text(ref, "digest"), algorithm,
       };
     };

@@ -131,7 +131,7 @@ test("RBT execute-file releases its command queue between campaign commands", { 
     campaignStarted.resolve();
     await continueCampaign.promise;
   });
-  const execution = fixture.orchestrator.executeFile(call, fixture.executeFilePath);
+  const execution = fixture.orchestrator.executeFile(call, { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["pack", "execute-file.json"] });
   await campaignStarted.promise;
   const peer = await fixture.orchestrator.executeCommand("execute", call, "peer-query", {});
   assert.equal(peer.success, true);
@@ -155,7 +155,7 @@ test("RBT execute-file closes failed history and attempts cleanup after a thrown
   fixture.onCommand = async (command) => {
     if (command === "behavior.trigger.invoke") throw new Error("transport disconnected");
   };
-  assert.equal((await fixture.orchestrator.executeFile(call, fixture.executeFilePath)).success, false);
+  assert.equal((await fixture.orchestrator.executeFile(call, { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["pack", "execute-file.json"] })).success, false);
   assert.deepEqual(fixture.commands.slice(-2), ["behavior.scenario.deactivate", "behavior.campaign.stop"]);
   assert.deepEqual(ready, ["failed"]);
   const history = JSON.parse(readFileSync(join(fixture.scope.workflow.agentPaths("executor").artifactRoot, "history", "001.json"), "utf8"));
@@ -180,7 +180,7 @@ test("RBT history identifies the executed bytes even when the execute-file chang
   fixture.scope.eventBus.subscribe(RbtEvents.history.ready, (event) => {
     if (RbtEvents.history.ready.is(event)) recordedDigest = event.payload.executeFileDigest;
   });
-  assert.equal((await fixture.orchestrator.executeFile(call, fixture.executeFilePath)).success, true);
+  assert.equal((await fixture.orchestrator.executeFile(call, { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["pack", "execute-file.json"] })).success, true);
   assert.equal(recordedDigest, `sha256:${createHash("sha256").update(original).digest("hex")}`);
   assert.notEqual(recordedDigest, `sha256:${createHash("sha256").update(readFileSync(fixture.executeFilePath)).digest("hex")}`);
 });
@@ -200,7 +200,7 @@ test("RBT target loss closes local history without claiming remote cleanup succe
     assert.ok(target.ok);
     await fixture.base.execution.ensureStopped(request, target.identity);
   });
-  assert.equal((await fixture.orchestrator.executeFile(call, fixture.executeFilePath)).success, false);
+  assert.equal((await fixture.orchestrator.executeFile(call, { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["pack", "execute-file.json"] })).success, false);
   const history = JSON.parse(readFileSync(join(fixture.scope.workflow.agentPaths("executor").artifactRoot, "history", "001.json"), "utf8"));
   assert.equal(history.status, "failed");
   assert.equal(history.commands.at(-1).request.type, "behavior.campaign.stop");
@@ -215,7 +215,7 @@ test("RBT execute-file fails after target shutdown without relaunching its old c
     assert.ok(target.ok);
     assert.ok((await fixture.base.execution.ensureStopped(request, target.identity)).ok);
   });
-  const execution = await fixture.orchestrator.executeFile(call, fixture.executeFilePath);
+  const execution = await fixture.orchestrator.executeFile(call, { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["pack", "execute-file.json"] });
   assert.equal(execution.success, false);
   assert.match(execution.contentItems[0]!.text, /execution_target_not_started/);
   assert.deepEqual(fixture.commands, ["behavior.registry.manifest", "behavior.campaign.start"]);
@@ -230,7 +230,7 @@ test("RBT quiesce waits for execute-file event delivery outside the command queu
     campaignStarted.resolve();
     await continueCampaign.promise;
   });
-  const execution = fixture.orchestrator.executeFile(call, fixture.executeFilePath);
+  const execution = fixture.orchestrator.executeFile(call, { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["pack", "execute-file.json"] });
   await campaignStarted.promise;
   let drained = false;
   const stopped = fixture.orchestrator.quiesce().then(() => { drained = true; });
@@ -301,9 +301,9 @@ async function createFixture(t: TestContext) {
     rootAccess: { mountRoots: [], readableRoots: [], writableRoots: [] },
     contextBundle: { contextBundleId: "context", runId: scope.runId, assetCommit, sharedInputs: { mountRoot: scope.runRoot, manifestPath: "unused", resourceHash: "test" } },
   });
-  const executeFilePath = join(scope.workflow.agentPaths("executor").artifactRoot, "bdd", "version", "execute-file.json");
+  const executeFilePath = join(scope.workflow.agentPaths("executor").artifactRoot, "pack", "execute-file.json");
   mkdirSync(dirname(executeFilePath), { recursive: true });
-  writeFileSync(executeFilePath, JSON.stringify({ commands: [
+  writeFileSync(executeFilePath, JSON.stringify({ bddId: "sample", targetVersion: "26.9.0", commands: [
     { command: "behavior.campaign.start", payload: { campaignId: "campaign", scenarioId: "scenario" } },
     { command: "behavior.scenario.activate", payload: { scenarioId: "scenario", rootId: "node" } },
     { command: "behavior.trigger.invoke", payload: { scenarioId: "scenario", triggerCommandId: "trigger" } },

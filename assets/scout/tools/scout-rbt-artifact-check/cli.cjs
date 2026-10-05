@@ -96,11 +96,10 @@ function checkPack(pack, bddId, version) {
     if (doc.meta.artifact_type !== type || doc.meta.artifact_version !== String(artifactVersion)) issue(doc.file, "ARTIFACT_VERSION", `${type} requires artifact_version ${artifactVersion}`);
   };
 
-  if (path.basename(pack) !== "execute-pack" || path.basename(path.dirname(pack)) !== version || path.basename(path.dirname(path.dirname(pack))) !== bddId) issue(pack, "PACK_IDENTITY", "Expected <bdd-id>/<target-version>/execute-pack");
+  if (path.basename(pack) !== "pack") issue(pack, "PACK_IDENTITY", "Expected Artifact root/pack");
   try {
     if (!fs.lstatSync(pack).isDirectory() || fs.lstatSync(pack).isSymbolicLink()) throw new Error("Expected a regular pack directory");
-    for (const name of fs.readdirSync(path.dirname(pack))) if (!["execute-file.json", "execute-pack"].includes(name)) issue(path.join(pack, "..", name), "EXTRA_ARTIFACT", "Only template-defined artifacts are allowed");
-    for (const name of fs.readdirSync(pack)) if (![...fixed, "evidence"].includes(name)) issue(path.join(pack, name), "EXTRA_ARTIFACT", "Only template-defined artifacts are allowed");
+    for (const name of fs.readdirSync(pack)) if (![...fixed, "evidence", "execute-file.json"].includes(name)) issue(path.join(pack, name), "EXTRA_ARTIFACT", "Only template-defined artifacts are allowed");
   } catch (error) { issue(pack, "READ_ERROR", error.message); return issues; }
   for (const file of fixed) load(path.join(pack, file));
   const codeDir = path.join(pack, "evidence");
@@ -212,12 +211,13 @@ function checkPack(pack, bddId, version) {
     }
   }
 
-  const execute = path.join(pack, "..", "execute-file.json");
+  const execute = path.join(pack, "execute-file.json");
   try {
     if (!fs.lstatSync(execute).isFile()) throw new Error("Expected regular execute-file.json");
     const plan = JSON.parse(fs.readFileSync(execute, "utf8"));
     const commands = ["behavior.campaign.start", "behavior.scenario.activate", "behavior.trigger.invoke", "behavior.scenario.deactivate", "behavior.campaign.stop"];
-    if (!plan || Object.keys(plan).join() !== "commands" || !Array.isArray(plan.commands) || plan.commands.length !== 5) throw new Error("Expected only commands, containing the five lifecycle commands");
+    if (!plan || Object.keys(plan).sort().join() !== "bddId,commands,targetVersion" || !Array.isArray(plan.commands) || plan.commands.length !== 5) throw new Error("Expected bddId, targetVersion and the five lifecycle commands");
+    if (plan.bddId !== bddId || plan.targetVersion !== version) issue(execute, "EXECUTE_IDENTITY", "bddId and targetVersion must match the verification target");
     plan.commands.forEach((entry, i) => {
       if (entry?.command !== commands[i] || Object.keys(entry).sort().join() !== "command,payload" || !entry.payload || typeof entry.payload !== "object" || Array.isArray(entry.payload)) throw new Error(`Invalid command at index ${i}`);
       for (const key of i === 0 ? ["campaignId", "scenarioId"] : i === 4 ? ["campaignId"] : ["scenarioId"]) if (entry.payload[key] !== scope[key]) issue(execute, "EXECUTE_SCOPE", `${i}.${key} disagrees with Journal scope`);

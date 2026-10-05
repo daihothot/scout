@@ -2,9 +2,7 @@ import { realpathSync } from "node:fs";
 import type {
   AppServerRequestController, JsonRpcServerRequest,
 } from "../../../agent-server/codex/app-server-client.js";
-import { agentPermissionRequestType } from "../../../core/authorization/request/permission/agent-permission-request.js";
-import { resolveArtifactTarget } from "../../../core/io/index.js";
-import type { AgentPermissionRequest } from "../../../core/authorization/request/permission/types.js";
+import { agentPermissionRequestSourceType } from "../../../core/authorization/request-source/permission/agent-permission-request-source.js";
 import { currentRunScope } from "../../../run/run-scope.js";
 import type { AgentPermissionConsumer } from "./types.js";
 
@@ -16,17 +14,16 @@ export class AgentRequestApprovalBackend {
     const scope = this.scope;
     const correlation: {
       rpcId: string | number;
-      requestId?: string;
       threadId?: string;
       turnId?: string;
       itemId?: string;
     } = { rpcId: request.id };
     let agentId: string | undefined;
-    let approved: Awaited<ReturnType<typeof approveRegisteredRequest>> = undefined;
+    let approved: Awaited<ReturnType<typeof approveApplication>> = undefined;
 
     try {
       const input = parseReadRequest();
-      approved = input ? await approveRegisteredRequest(input) : undefined;
+      approved = input ? await approveApplication(input) : undefined;
     } catch (error) {
       scope.logger.error({ module: "agent.permission", event: "request_failed", agentId,
         message: error instanceof Error ? error.stack ?? error.message : String(error), data: correlation });
@@ -52,11 +49,6 @@ export class AgentRequestApprovalBackend {
       if ("threadId" in params && typeof params.threadId === "string") correlation.threadId = params.threadId;
       if ("turnId" in params && typeof params.turnId === "string") correlation.turnId = params.turnId;
       if ("itemId" in params && typeof params.itemId === "string") correlation.itemId = params.itemId;
-      if (!("reason" in params) || typeof params.reason !== "string") return deny("Missing request marker.");
-      const marker = /^scout-request-id:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(params.reason);
-      if (!marker) return deny("Invalid request marker.");
-      const requestId = marker[1]!;
-      correlation.requestId = requestId;
       if (!("threadId" in params) || typeof params.threadId !== "string"
         || !("turnId" in params) || typeof params.turnId !== "string"
         || !("itemId" in params) || typeof params.itemId !== "string" || !params.itemId
@@ -97,14 +89,12 @@ export class AgentRequestApprovalBackend {
           && (!Array.isArray(fileSystem.read) || fileSystem.read.length !== 1 || fileSystem.read[0] !== path))) {
         return deny("Additional filesystem permissions were not registered.");
       }
-      return { requestId, threadId: params.threadId, turnId: params.turnId, itemId: params.itemId,
+      return { threadId: params.threadId, turnId: params.turnId, itemId: params.itemId,
         cwd: params.cwd, environmentId: params.environmentId, path };
     }
 
-    // Match the decoded request to trusted registration and current runtime facts.
-    async function approveRegisteredRequest(input: NonNullable<ReturnType<typeof parseReadRequest>>) {
-      const registered = scope.authorization.get(agentPermissionRequestType, input.requestId);
-      if (!registered || registered.state.status !== "active") return deny("No active permission request.");
+    // Establish the actual native consumer; Authorization owns source matching and decisions.
+    async function approveApplication(input: NonNullable<ReturnType<typeof parseReadRequest>>) {
       const caller = scope.agentRegistry.resolveAgentByThreadId(input.threadId);
       if (!caller) return deny("Unknown permission request caller.");
       agentId = caller.agentId;
@@ -126,35 +116,27 @@ export class AgentRequestApprovalBackend {
       };
       if (!hasCurrentTurn()) return undefined;
       const workflow = scope.workflow.snapshot();
-      if (!workflow || workflow.status !== "active" || registered.workflowId !== workflow.workflowId) {
+      if (!workflow || workflow.status !== "active") {
         return deny("Permission request Workflow is not active.");
       }
       const phase = scope.workflow.graph.snapshot().currentPhase;
-      let grant: AgentPermissionRequest["allowedGrants"][number] | undefined;
-      let path: string | undefined;
-      for (const candidate of registered.allowedGrants) {
-        const allowed = candidate.scope;
-        if (allowed.workflowId !== workflow.workflowId || allowed.agentId !== caller.agentId || !allowed.phases.includes(phase)) continue;
-        const resolved = resolveArtifactTarget(candidate.target);
-        if ("reason" in resolved) continue;
-        if (resolved.path === input.path) { grant = candidate; path = resolved.path; break; }
-      }
-      if (!grant || path === undefined) return deny("No matching registered read target for this Agent and Phase.");
       const consumer: AgentPermissionConsumer = { agentId: caller.agentId, threadId: input.threadId, turnId: input.turnId,
         itemId: input.itemId, phase, cwd, environmentId: "local" };
-      const result = await scope.authorization.submit(registered, {
-        result: { decision: "approved", scope: grant.scope, target: grant.target }, consumer,
+      const result = await scope.authorization.submit(agentPermissionRequestSourceType, {
+        workflowId: workflow.workflowId, consumer,
+        scope: { workflowId: workflow.workflowId, agentId: caller.agentId, phase, access: "read" },
+        target: { path: input.path },
       });
       if (result.decision === "denied") return deny(result.reason);
       // A user can interrupt the Turn while the authorization fact is being committed.
       // Durable business rights never restore or extend an ended native Turn.
       if (!hasCurrentTurn()) return undefined;
       const currentWorkflow = scope.workflow.snapshot();
-      if (!currentWorkflow || currentWorkflow.status !== "active" || currentWorkflow.workflowId !== registered.workflowId
+      if (!currentWorkflow || currentWorkflow.status !== "active" || currentWorkflow.workflowId !== workflow.workflowId
         || !result.scope.phases.includes(scope.workflow.graph.snapshot().currentPhase)) {
         return deny("Permission request Workflow or Phase changed during approval.");
       }
-      return { result, path };
+      return { result, path: input.path };
 
     }
   }

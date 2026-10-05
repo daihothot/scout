@@ -1,3 +1,4 @@
+import { readArtifactReference, type ScoutArtifactReference } from "../../core/io/index.js";
 import type { AgentDynamicToolSpec, AgentJsonValue } from "./types.js";
 import type { AgentMessageDeliveryMode } from "../message/types.js";
 import type { WorkflowPhaseOutcome } from "../../core/workflow/index.js";
@@ -20,6 +21,7 @@ export const AGENT_RESPOND_HUMAN_INPUT_TOOL_NAMESPACE = "scout_agent_respondhuma
 export const AGENT_SUBMIT_TASK_TOOL_NAMESPACE = "scout_agent_submittask";
 /** Namespace for Coordinator-owned Workflow Phase outcomes. */
 export const AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE = "scout_agent_submitphaseoutcome";
+export const AGENT_RESOLVE_ARTIFACT_REFERENCE_TOOL_NAMESPACE = "scout_agent_resolveartifactreference";
 export const AGENT_START_WORKFLOW_TOOL_NAMESPACE = "scout_agent_startworkflow";
 
 /** Maps protocol tool names to their required app-server namespace. */
@@ -31,6 +33,7 @@ export const AGENT_TOOL_NAMESPACE_BY_NAME: Readonly<Record<string, string>> = {
   SubmitTask: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
   SubmitPhaseOutcome: AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
   StartWorkflow: AGENT_START_WORKFLOW_TOOL_NAMESPACE,
+  ResolveArtifactReference: AGENT_RESOLVE_ARTIFACT_REFERENCE_TOOL_NAMESPACE,
 };
 
 /** Set used to reject non-Scout namespaces at the app-server boundary. */
@@ -93,8 +96,31 @@ export interface StartWorkflowToolCall {
   prompt: string;
 }
 
+export interface ResolveArtifactReferenceToolCall {
+  tool: "ResolveArtifactReference";
+  reference: ScoutArtifactReference;
+}
+
+/** Locates an Artifact without registering a source or approving access. */
+export function buildResolveArtifactReferenceDynamicTool(): AgentDynamicToolSpec {
+  return {
+    guidanceSkill: "tool-scout-resolve-artifact-reference",
+    namespace: AGENT_RESOLVE_ARTIFACT_REFERENCE_TOOL_NAMESPACE,
+    name: "ResolveArtifactReference",
+    description: "将 ScoutArtifactReference 解析为当前物理路径；不授予访问权限。",
+    inputSchema: objectSchema({
+      reference: objectSchema({
+        workflowId: { type: "string" },
+        agentId: { type: "string" },
+        internalSymbols: { type: "array", items: { type: "string" } },
+      }, ["workflowId", "agentId", "internalSymbols"]),
+    }, ["reference"]),
+  };
+}
+
 /** Discriminated union accepted by the dynamic-tool dispatcher. */
 export type AgentDynamicToolCall =
+  | ResolveArtifactReferenceToolCall
   | StartWorkflowToolCall
   | AssignTaskToolCall
   | SendMessageToolCall
@@ -236,6 +262,8 @@ export function parseAgentDynamicToolCall(tool: string, args: unknown): AgentDyn
   const input = args as Record<string, unknown>;
 
   switch (tool) {
+    case "ResolveArtifactReference":
+      return { tool, reference: readArtifactReference(input.reference) };
     case "StartWorkflow": {
       if (typeof input.prompt !== "string" || !input.prompt.trim()) throw new Error("StartWorkflow requires a non-empty prompt.");
       return { tool, prompt: input.prompt };

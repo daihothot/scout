@@ -13,7 +13,6 @@ import {
   type AgentTaskState,
 } from "../../task/types.js";
 import { currentRunScope, type RunScope } from "../../../run/run-scope.js";
-import { canonicalizeAgentArtifactReferences } from "../../../core/io/index.js";
 import { AgentHumanInputBackend } from "./agent-human-input-backend.js";
 import type {
   RequestHumanInputToolCall,
@@ -74,11 +73,7 @@ export class AgentTaskBackend {
       turnId: input.delivery.turnId,
       callId: input.delivery.callId,
       timestamp: new Date().toISOString(),
-      outcome: canonicalizeAgentArtifactReferences(input.call.outcome, {
-        workflowId: workflowData.workflowId,
-        agentId: input.caller.agentId,
-        artifactRoot: workflow.agentPaths(input.caller.agentId).artifactRoot,
-      }),
+      outcome: input.call.outcome,
     });
   }
 

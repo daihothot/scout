@@ -1,3 +1,4 @@
+import { readArtifactReference } from "../../../../../../core/io/index.js";
 import type { DynamicToolCallResponse } from "../../../../../../agent-server/types.js";
 import type { AgentJsonValue } from "../../../../../../agent/tools/types.js";
 import type { DomainAgentTool } from "../../../../../agent/index.js";
@@ -48,10 +49,7 @@ export class JarvisBehaviorTool implements DomainAgentTool {
       }
       const unexpectedKeys = Object.keys(input).filter((key) => key !== "execute_file");
       if (unexpectedKeys.length > 0) throw new Error(`execute_file input contains unsupported fields: ${unexpectedKeys.join(", ")}.`);
-      if (typeof input.execute_file !== "string" || input.execute_file.trim().length === 0) {
-        throw new Error("execute_file must be a non-empty path.");
-      }
-      return this.orchestrator.executeFile(call, input.execute_file);
+      return this.orchestrator.executeFile(call, readArtifactReference(input.execute_file));
     }
 
     const unexpectedKeys = Object.keys(input).filter((key) => key !== "command" && key !== "payload");

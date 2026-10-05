@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentJsonValue } from "../../../../agent/tools/types.js";
 import type { UnsubscribeEventHandler } from "../../../../core/events/index.js";
+import { formatArtifactReference, parseArtifactReference } from "../../../../core/io/index.js";
 import { currentRunScope } from "../../../../run/run-scope.js";
 import type { ExecutionPlatformIdentity } from "../../../../execution/scout-execution-system.js";
 import {
@@ -103,7 +104,8 @@ export class RbtCampaignExecutionHistoryStore {
       status: command.status === "failed" ? "failed" : "recording",
       commands: [historyCommand(command)],
       artifactPath,
-      artifactRef: `scout-artifact://${workflowData.workflowId}/${command.agentId}/history/${String(command.runtimeSequence).padStart(3, "0")}.json`,
+      artifactRef: formatArtifactReference({ workflowId: workflowData.workflowId, agentId: command.agentId,
+        internalSymbols: ["history", `${String(command.runtimeSequence).padStart(3, "0")}.json`] }),
     };
     if (command.status !== "failed") this.active.set(key, history);
     const digest = this.write(history);
@@ -133,7 +135,7 @@ export class RbtCampaignExecutionHistoryStore {
   private write(history: CampaignExecutionHistory): string {
     mkdirSync(dirname(history.artifactPath), { recursive: true });
     const { artifactPath: _artifactPath, artifactRef: _artifactRef, ...artifact } = history;
-    const content = `${JSON.stringify(artifact, null, 2)}\n`;
+    const content = `${JSON.stringify({ ...artifact, executeFileRef: parseArtifactReference(artifact.executeFileRef) }, null, 2)}\n`;
     writeFileSync(history.artifactPath, content, "utf8");
     return `sha256:${createHash("sha256").update(content).digest("hex")}`;
   }

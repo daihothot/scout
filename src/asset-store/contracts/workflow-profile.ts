@@ -21,6 +21,8 @@ export interface WorkflowWorkerPhaseDefinition {
 
 /** Agent runtime settings owned by one role declaration. */
 export interface WorkflowRoleDefinition {
+  /** Roles allowed to request read access to this role's current Workflow artifacts. */
+  readonly artifactReaders?: readonly string[];
   readonly phases?: readonly string[];
   readonly multiAgent: boolean;
   readonly customAgents: readonly string[];

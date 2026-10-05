@@ -28,7 +28,7 @@ test("RBT review report renderer computes overall status and renders all timelin
       bddId: "bdd.example",
       targetVersion: "v1",
       campaignId: "bdd.example/campaign/main",
-      executorHistoryRef: "history/001.json",
+      executorHistoryRef: { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["history", "001.json"] },
       scenarioId: "bdd.example",
       summary: "存在一项需要人工关注的证据。",
       timeline: [
@@ -101,7 +101,7 @@ test("RBT review report renderer rejects invalid timeline points", () => {
       bddId: "bdd.example",
       targetVersion: "v1",
       campaignId: "campaign",
-      executorHistoryRef: "history/001.json",
+      executorHistoryRef: { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["history", "001.json"] },
       summary: "summary",
       timeline: [{
         id: "EXP-001",
@@ -134,7 +134,7 @@ for (const formatDefect of ["missing-summary", "invalid-summary", "empty-summary
       };
       const timeline = [point];
       const value: Record<string, unknown> = {
-        bddId: "bdd.example", targetVersion: "v1", campaignId: "campaign", executorHistoryRef: "history/001.json",
+        bddId: "bdd.example", targetVersion: "v1", campaignId: "campaign", executorHistoryRef: { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["history", "001.json"] },
         summary: "Comparison facts", timeline,
       };
       let expected: RegExp;
@@ -177,7 +177,7 @@ test("RBT review report renderer applies pass and attention totals", () => {
       bddId: "bdd.example",
       targetVersion: "v1",
       campaignId: "campaign",
-      executorHistoryRef: "history/001.json",
+      executorHistoryRef: { workflowId: "workflow-001", agentId: "executor", internalSymbols: ["history", "001.json"] },
       summary: "summary",
     };
     const render = (status: "match" | "warning") => {

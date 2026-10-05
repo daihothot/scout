@@ -11,8 +11,15 @@ export class OrchestratorStage implements RunStage {
   async start(): Promise<void> {
     if (this.started) return;
     if (this.orchestrator) throw new Error("AgentOrchestrator startup cleanup is pending; stop the installed owner before retrying.");
-    const orchestrator = new AgentOrchestrator();
     const scope = currentRunScope();
+    const roles = scope.workflow.profileAsset.profile.roles;
+    const artifactReaders = Object.entries(roles).flatMap(([agentId, role]) => {
+      const readers = (role.artifactReaders ?? []).map((reader) => ({
+        agentId: reader, phases: roles[reader]!.phases ?? ["Synthesis"],
+      }));
+      return readers.length ? [{ agentId, readers }] : [];
+    });
+    const orchestrator = new AgentOrchestrator(artifactReaders);
     scope.setAgentOrchestrator(orchestrator);
     this.orchestrator = orchestrator;
     scope.workflow.registerParticipant(orchestrator);

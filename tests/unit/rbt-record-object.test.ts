@@ -78,23 +78,23 @@ test("RBT encoding preserves the Journal payload format while projection owns in
   const ready = history(1);
   const occurredAt = "2026-09-29T01:00:00.000Z";
   const executeFile = {
-    workflowId: "workflow-001", agentId: "executor", path: "account/1.0/execute-file.json",
+    workflowId: "workflow-001", agentId: "executor", internalSymbols: ["pack","execute-file.json"],
     digest: ready.executeFileDigest, algorithm: "sha256" as const,
   };
   const submitted: RbtExecutionPackSubmission = {
     bddId: "account", targetVersion: "1.0", taskId: "execute-task", stepId: "execute-step", submittedAt: occurredAt,
-    pack: { ...executeFile, path: "account/1.0/execute-pack", algorithm: "scout-directory-sha256-v1", executeFile },
+    pack: { ...executeFile, internalSymbols: ["pack"], algorithm: "scout-directory-sha256-v1", executeFile },
   };
   const reviewed: RbtReviewSubmission = {
     bddId: "account", targetVersion: "1.0", taskId: "review-task", stepId: "review-step", submittedAt: occurredAt,
     pack: {
-      workflowId: "workflow-001", agentId: "reviewer", path: "account/1.0/review-pack",
+      workflowId: "workflow-001", agentId: "reviewer", internalSymbols: ["pack"],
       digest: submitted.pack.digest, algorithm: "scout-directory-sha256-v1", result: "pass",
       executionPack: submitted.pack,
       execution: {
         workflowId: "workflow-001", agentId: "executor", runtimeSequence: 1, campaignId: "campaign", scenarioId: "scenario",
         platform: { ...ready.platform }, executeFile,
-        executorHistory: { ...executeFile, path: "history/001.json", digest: ready.executorHistoryDigest },
+        executorHistory: { ...executeFile, internalSymbols: ["history","001.json"], digest: ready.executorHistoryDigest },
       },
     },
   };
@@ -110,23 +110,23 @@ test("RBT encoding preserves the Journal payload format while projection owns in
   const data = new RbtDomainProjector().project(records);
   assert.equal(data.artifacts.histories.get(ready.executorHistoryRef)!.occurredAt, occurredAt);
   assert.deepEqual(data.artifacts.acceptedSubmissions, new Set([
-    "execute-task\0execute-step\0workflow-001\0executor\0account/1.0/execute-pack",
-    "review-task\0review-step\0workflow-001\0reviewer\0account/1.0/review-pack",
+    "execute-task\0execute-step\0scout-artifact://workflow-001/executor/pack",
+    "review-task\0review-step\0scout-artifact://workflow-001/reviewer/pack",
   ]));
   const historyRecord = records.find((record) => record.kind === "execution-history")!;
   const packRecord = records.find((record) => record.kind === "execution-pack")!;
   const reviewRecord = records.find((record) => record.kind === "review")!;
   historyRecord.payload.platform.type = "record-only";
-  packRecord.payload.pack.executeFile.path = "record-only";
-  reviewRecord.payload.pack.agentId = "record-only";
+  packRecord.payload.pack.executeFile = { ...packRecord.payload.pack.executeFile, internalSymbols: ["record-only"] };
+  reviewRecord.payload.pack = { ...reviewRecord.payload.pack, agentId: "record-only" };
   assert.equal(data.artifacts.histories.get(ready.executorHistoryRef)!.history.platform.type, ready.platform.type);
-  assert.equal(data.artifacts.executionPacks[0]!.pack.executeFile.path, executeFile.path);
-  assert.ok(data.artifacts.acceptedSubmissions.has("review-task\0review-step\0workflow-001\0reviewer\0account/1.0/review-pack"));
+  assert.deepEqual(data.artifacts.executionPacks[0]!.pack.executeFile.internalSymbols, executeFile.internalSymbols);
+  assert.ok(data.artifacts.acceptedSubmissions.has("review-task\0review-step\0scout-artifact://workflow-001/reviewer/pack"));
   data.artifacts.histories.get(ready.executorHistoryRef)!.history.platform.version = "runtime-only";
-  data.artifacts.executionPacks[0]!.pack.path = "runtime-only";
+  data.artifacts.executionPacks[0]!.pack = { ...data.artifacts.executionPacks[0]!.pack, internalSymbols: ["runtime-only"] };
   data.artifacts.acceptedSubmissions.clear();
   assert.equal(historyRecord.payload.platform.version, ready.platform.version);
-  assert.equal(packRecord.payload.pack.path, submitted.pack.path);
+  assert.deepEqual(packRecord.payload.pack.internalSymbols, submitted.pack.internalSymbols);
   assert.deepEqual(readJournalEvents(journal.path), stored, "Neither runtime nor decoded-record mutation rewrites storage");
 });
 

@@ -1,5 +1,4 @@
 import { currentRunScope } from "../../../run/run-scope.js";
-import { agentPermissionRequestType } from "../../../core/authorization/request/permission/agent-permission-request.js";
 import { AgentRequestApprovalBackend } from "./agent-request-approval-backend.js";
 
 /** Routes server requests requiring a host response, excluding the dynamic-tool entry. */
@@ -10,8 +9,8 @@ export class AgentRequestBackend {
 
   start(): void {
     if (this.unsubscribe) return;
-    // Authorization must be installed before native approval is reachable.
-    this.scope.authorization.registerRequestType(agentPermissionRequestType);
+    // Source types are installed by boot; this consumer still requires the owner before subscribing.
+    void this.scope.authorization;
     this.unsubscribe = this.scope.appServer.onServerRequest(async (request, controller) => {
       if (request.method !== "item/permissions/requestApproval") return false;
       await this.approval.handle(request, controller);

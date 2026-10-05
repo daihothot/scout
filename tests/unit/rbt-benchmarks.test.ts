@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { resolveWorkflowLocation } from "../../src/core/io/index.js";
+import { parseArtifactReference, resolveWorkflowLocation } from "../../src/core/io/index.js";
 import test, { type TestContext } from "node:test";
 import { AgentEvents } from "../../src/agent/events/index.js";
 import type { ScoutEvent } from "../../src/core/events/index.js";
@@ -60,14 +60,14 @@ async function fixture(t: TestContext) {
     const bdd = options.bdd ?? bddId;
     const version = options.version ?? targetVersion;
     const sequence = options.sequence ?? 1;
-    const content = JSON.stringify({ commands: [{ command: "behavior.campaign.start", payload: { campaignId: "campaign", scenarioId: "scenario" } }] });
+    const content = JSON.stringify({ bddId: bdd, targetVersion: version, commands: [{ command: "behavior.campaign.start", payload: { campaignId: "campaign", scenarioId: "scenario" } }] });
     if (!options.executeFileRef) {
-      write(agentId, `${bdd}/${version}/execute-file.json`, content);
-      write(agentId, `${bdd}/${version}/execute-pack/bdd-evidence.md`, "# BDD evidence\n");
-      write(agentId, `${bdd}/${version}/execute-pack/evidence/E-CODE-001.md`, "# SDK evidence\n");
+      write(agentId, `pack/execute-file.json`, content);
+      write(agentId, `pack/bdd-evidence.md`, "# BDD evidence\n");
+      write(agentId, `pack/evidence/E-CODE-001.md`, "# SDK evidence\n");
     }
     const command: RbtCampaignCommandEvent = {
-      bddId: bdd, targetVersion: version, executeFileRef: options.executeFileRef ?? ref(agentId, `${bdd}/${version}/execute-file.json`),
+      bddId: bdd, targetVersion: version, executeFileRef: options.executeFileRef ?? ref(agentId, `pack/execute-file.json`),
       executeFileDigest: `sha256:${createHash("sha256").update(content).digest("hex")}`,
       runtimeSequence: sequence, campaignId: "campaign", scenarioId: "scenario", runId: scope.runId,
       sequence: 1, agentId, role: agentId, callId: `call-${sequence}`, platform: { type: options.platform ?? "unity-editor", version: "2022.3" },
@@ -82,14 +82,14 @@ async function fixture(t: TestContext) {
     return { command, history };
   };
   const executionHandoff = (agentId = "operator", bdd = bddId, version = targetVersion) => handoff("execute", agentId, [
-    `pack_ref: ${ref(agentId, `${bdd}/${version}/execute-pack`)}`,
-    `execute_file_ref: ${ref(agentId, `${bdd}/${version}/execute-file.json`)}`,
+    `pack_ref: ${ref(agentId, `pack`)}`,
+    `execute_file_ref: ${ref(agentId, `pack/execute-file.json`)}`,
   ].join("\n"));
   const review = (history: RbtExecutionHistory, statuses = ["match"], agentId = "auditor") => {
-    const prefix = `${history.bddId}/${history.targetVersion}/review-pack`;
+    const prefix = `pack`;
     const value = {
       bddId: history.bddId, targetVersion: history.targetVersion, campaignId: history.campaignId, scenarioId: history.scenarioId,
-      executorHistoryRef: history.executorHistoryRef, summary: "Comparison facts, not a manually assigned verdict",
+      executorHistoryRef: parseArtifactReference(history.executorHistoryRef), summary: "Comparison facts, not a manually assigned verdict",
       timeline: statuses.map((status, index) => ({ id: `SR-${index + 1}`, title: "Signal", status, expected: true, actual: true, comparison: "Compared evidence" })),
     };
     const path = write(agentId, `${prefix}/review-result.json`, JSON.stringify(value));
@@ -120,10 +120,10 @@ test("RBT indexes actual execution identity and formal Packs; Task done alone is
   await f.submit(executionHandoff);
   assert.deepEqual(f.entry()!.history.lastExecutionPack, { workflowId: "workflow-001" });
   const pack = new RbtDomainProjector().project(f.domain.recordObject.read()).artifacts.executionPacks.at(-1)!.pack;
-  assert.equal(pack.path, `${bddId}/${targetVersion}/execute-pack`);
+  assert.deepEqual(pack.internalSymbols, ["pack"]);
   assert.equal(pack.executeFile.digest, command.executeFileDigest);
   const digest = execFileSync(process.execPath, [join(process.cwd(), "assets/scout/tools/scout-artifact-digest.cjs"),
-    join(f.scope.workflow.agentPaths("operator").artifactRoot, pack.path)], { encoding: "utf8" });
+    join(f.scope.workflow.agentPaths("operator").artifactRoot, ...pack.internalSymbols)], { encoding: "utf8" });
   assert.ok(digest.includes(`digest=${pack.digest}`));
   assert.ok(digest.includes(`digest_algorithm=${pack.algorithm}`));
   const result = f.review(history);
@@ -236,7 +236,7 @@ test("Published RBT artifact values cannot mutate the live history and Pack inde
 test("Execution history status, platform and BDD identity are read from the finalized file", async (t) => {
   const f = await fixture(t);
   const content = JSON.stringify({
-    runtimeSequence: 1, executeFileRef: f.ref("operator", `${bddId}/${targetVersion}/execute-file.json`),
+    bddId, targetVersion, runtimeSequence: 1, executeFileRef: parseArtifactReference(f.ref("operator", "pack/execute-file.json")),
     executeFileDigest: `sha256:${"a".repeat(64)}`, campaignId: "campaign", scenarioId: "scenario",
     platform: { type: "android", version: "15" }, status: "failed",
   });
@@ -257,34 +257,31 @@ test("Execution history status, platform and BDD identity are read from the fina
   assert.deepEqual(f.warnings, []);
 });
 
-test("One Agent can submit multiple formal BDD and version files without Outcome path selection", async (t) => {
+test("One formal Pack is captured from the fixed location while each execution retains its history", async (t) => {
   const f = await fixture(t);
-  const first = await f.execute();
-  const second = await f.execute({ version: "26.10.0", sequence: 2 });
-  const third = await f.execute({ bdd: "other-bdd", sequence: 3 });
+  await f.execute({ sequence: 1 });
+  await f.execute({ sequence: 2 });
+  const latest = await f.execute({ sequence: 3 });
   await f.submit(f.handoff("execute", "operator", "Execution artifacts are ready."));
-  const reviews = [first, second, third].map(({ history }) => f.review(history));
-  reviews[0]!.input.outcome = "审查完成。";
-  await f.submit(reviews[0]!.input);
-  for (const [bdd, version] of [[bddId, targetVersion], [bddId, "26.10.0"], ["other-bdd", targetVersion]]) {
-    assert.deepEqual(f.entry(bdd, version)!.history.lastReviewSuccess, { workflowId: "workflow-001" });
-    assert.deepEqual(f.entry(bdd, version)!.statistics?.passedPlatforms, ["unity-editor"]);
-  }
+  const review = f.review(latest.history);
+  await f.submit(review.input);
   const facts = new RbtDomainProjector().project(f.domain.recordObject.read());
-  assert.equal(facts.artifacts.executionPacks.length, 3);
-  assert.equal(f.domain.recordObject.read().filter((record) => record.kind === "review").length, 3);
-  await f.submit(reviews[0]!.input);
-  assert.equal(f.domain.recordObject.read().filter((record) => record.kind === "review").length, 3);
+  assert.equal(facts.artifacts.executionPacks.length, 1);
+  assert.equal(facts.artifacts.histories.size, 3);
+  assert.equal(f.domain.recordObject.read().filter((record) => record.kind === "review").length, 1);
+  assert.deepEqual(f.entry()!.history.lastReviewSuccess, { workflowId: "workflow-001" });
+  await f.submit(review.input);
+  assert.equal(f.domain.recordObject.read().filter((record) => record.kind === "review").length, 1);
   assert.deepEqual(f.warnings, []);
 });
 
 test("Subscriber failure does not cause already published Artifact facts to be published again", async (t) => {
   const f = await fixture(t);
   await f.execute();
-  await f.execute({ bdd: "other-bdd", sequence: 2 });
+  await f.execute({ sequence: 2 });
   let failOnce = true;
   const dispatch = f.scope.eventBus.subscribe<RbtExecutionPackSubmittedEvent>(RbtEvents.artifact.executionPackSubmitted, (event) => {
-    if (event.payload.bddId === "other-bdd" && failOnce) { failOnce = false; throw new Error("subscriber unavailable"); }
+    if (event.payload.bddId === bddId && failOnce) { failOnce = false; throw new Error("subscriber unavailable"); }
   });
   const input = f.handoff("execute", "operator", "Ready");
   await f.submit(input);
@@ -292,7 +289,7 @@ test("Subscriber failure does not cause already published Artifact facts to be p
   await f.submit(input);
   const facts = new RbtDomainProjector().project(f.domain.recordObject.read());
   assert.equal(facts.artifacts.executionPacks.filter((fact) => fact.bddId === bddId).length, 1);
-  assert.equal(facts.artifacts.executionPacks.filter((fact) => fact.bddId === "other-bdd").length, 1);
+  assert.equal(facts.artifacts.executionPacks.length, 1);
   assert.equal(f.warnings.length, 1);
 });
 
@@ -323,7 +320,7 @@ test("A historical Pack remains owned by its source while execution, restored ha
   await f.submit(f.executionHandoff());
   await f.submit(f.review(first.history).input);
   const oldRoot = f.scope.workflow.agentPaths("operator").artifactRoot;
-  const oldExecute = readFileSync(join(oldRoot, bddId, targetVersion, "execute-file.json"), "utf8");
+  const oldExecute = readFileSync(join(oldRoot, "pack", "execute-file.json"), "utf8");
   const oldJournal = readFileSync(join(f.scope.workflow.journalRoot, "rbt-events.jsonl"), "utf8");
   const oldJournalPath = join(f.scope.workflow.journalRoot, "rbt-events.jsonl");
   await f.scope.workflow.advance("error");
@@ -357,7 +354,7 @@ test("A historical Pack remains owned by its source while execution, restored ha
   });
   assert.deepEqual(f.entry()!.statistics?.passedPlatforms, ["unity-editor", "android"]);
   assert.equal(existsSync(join(f.scope.workflow.agentPaths("new-operator").artifactRoot, bddId)), false);
-  assert.equal(readFileSync(join(oldRoot, bddId, targetVersion, "execute-file.json"), "utf8"), oldExecute);
+  assert.equal(readFileSync(join(oldRoot, "pack", "execute-file.json"), "utf8"), oldExecute);
   assert.equal(readFileSync(oldJournalPath, "utf8"), oldJournal);
   assert.deepEqual(f.warnings, []);
 });
@@ -366,13 +363,13 @@ for (const corruption of ["recording", "missing-platform", "wrong-reference", "d
   test(`An invalid ${corruption} history notification does not publish a historical fact`, async (t) => {
     const f = await fixture(t);
     const value: Record<string, unknown> = {
-      runtimeSequence: 1, executeFileRef: f.ref("operator", `${bddId}/${targetVersion}/execute-file.json`),
+      runtimeSequence: 1, executeFileRef: f.ref("operator", `pack/execute-file.json`),
       executeFileDigest: `sha256:${"a".repeat(64)}`, campaignId: "campaign", scenarioId: "scenario",
       platform: { type: "unity-editor", version: "2022.3" }, status: "completed",
     };
     if (corruption === "recording") value.status = "recording";
     if (corruption === "missing-platform") value.platform = null;
-    if (corruption === "wrong-reference") value.executeFileRef = "scout-artifact://another-workflow/operator/bdd/version/not-execute-file.json";
+    if (corruption === "wrong-reference") value.executeFileRef = { workflowId: "workflow-001", agentId: "operator", internalSymbols: ["pack", "not-execute-file.json"] };
     const content = JSON.stringify(value);
     f.write("operator", "history/001.json", content);
     await f.scope.eventBus.publishAndWait(RbtEvents.history.campaignExecutionHistory, {
@@ -428,8 +425,8 @@ for (const corruption of ["execute-file", "execute-pack", "history", "bdd", "cam
     const value: Record<string, unknown> = { ...review.value };
     let content: unknown = value;
     switch (corruption) {
-      case "execute-file": f.write("operator", `${bddId}/${targetVersion}/execute-file.json`, "changed"); break;
-      case "execute-pack": f.write("operator", `${bddId}/${targetVersion}/execute-pack/bdd-evidence.md`, "changed"); break;
+      case "execute-file": f.write("operator", `pack/execute-file.json`, "changed"); break;
+      case "execute-pack": f.write("operator", `pack/bdd-evidence.md`, "changed"); break;
       case "history": f.write("operator", "history/001.json", "changed"); break;
       case "bdd": value.bddId = "different"; break;
       case "campaign": value.campaignId = "different"; break;

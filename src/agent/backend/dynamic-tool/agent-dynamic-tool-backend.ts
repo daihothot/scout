@@ -1,3 +1,4 @@
+import { resolveArtifactTarget } from "../../../core/io/index.js";
 import type {
   DynamicToolCallInput,
   DynamicToolCallResponse,
@@ -310,6 +311,12 @@ export class AgentDynamicToolBackend {
     delivery: DynamicToolCallInput,
   ): Promise<unknown> {
     switch (call.tool) {
+      case "ResolveArtifactReference": {
+        caller.assertOwnsActiveTurn(delivery);
+        if (!currentRunScope().workflow.snapshot()) throw new Error("Artifact resolution requires an active Workflow.");
+        const location = resolveArtifactTarget(call.reference);
+        return "reason" in location ? { status: "unavailable", reason: location.reason } : { status: "resolved", path: location.path };
+      }
       case "StartWorkflow":
         if (!(caller instanceof CoordinatorAgent)) throw new Error("StartWorkflow is only available to the Coordinator.");
         caller.requestWorkflowStart(delivery, call.prompt);

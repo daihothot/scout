@@ -125,6 +125,7 @@
       "customAgents": []
     },
     "executor": {
+      "artifactReaders": ["reviewer"],
       "phases": [
         "execute"
       ],

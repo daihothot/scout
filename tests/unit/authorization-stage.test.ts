@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import { AuthorizationStage } from "../../src/run/lifecycle/stages/authorization-stage.js";
 import { Authorization } from "../../src/core/authorization/authorization.js";
 import { AuthorizationRecordObject } from "../../src/core/authorization/record/authorization-record-object.js";
-import { RequestHub } from "../../src/core/authorization/request/request-hub.js";
-import type { RequestType, ScoutRequest } from "../../src/core/authorization/request/types.js";
+import { RequestSourceHub } from "../../src/core/authorization/request-source/request-source-hub.js";
+import type { RequestSourceType, ScoutRequestSource } from "../../src/core/authorization/request-source/types.js";
 import { authorizationJournalPaths } from "../../src/core/io/index.js";
 import { readJournalEvents } from "../../src/core/journal/index.js";
 import { WorkflowState } from "../../src/core/workflow/index.js";
@@ -24,12 +25,12 @@ test("AuthorizationStage installs one public Workflow owner and restores its sha
   await stage.start();
   assert.equal(scope.authorization, authorization);
   assert.throws(() => scope.setAuthorization(authorization), /already available/);
-  const type: RequestType<ScoutRequest> = { name: "stage", encode: (value) => ({ ...value, state: { status: "active" } }), decode: (value) => structuredClone(value), project: (value) => structuredClone(value) };
+  const type: RequestSourceType<ScoutRequestSource> = { name: "stage", encode: (value) => ({ ...value, state: { status: "active" } }), decode: (value) => structuredClone(value), project: (value) => structuredClone(value), decodeGrant: (value) => structuredClone(value), match: (source, request) => source.allowedGrants.find((grant) => isDeepStrictEqual(grant.scope, request.scope) && isDeepStrictEqual(grant.target, request.target)), covers: (source, grant) => source.allowedGrants.some((allowed) => isDeepStrictEqual(allowed.scope, grant.scope) && isDeepStrictEqual(allowed.target, grant.target)) };
   const grant = { scope: { phase: "execute" }, target: { artifactRef: "stage-input" } };
-  const request = await authorization.register(type, { maxConsumptions: 2, allowedGrants: [grant] });
-  await authorization.submit(request, {
-    result: { decision: "approved", ...grant }, consumer: { agentId: "executor" },
-  });
+  const request = await authorization.register(type, { sourceKey: "stage-source", maxApprovals: 2, allowedGrants: [grant] });
+  await authorization.submit(type, { workflowId: request.workflowId, ...{
+    ...grant, consumer: { agentId: "executor" },
+  } });
   const previousApprovals = authorization.approvals(request);
   assert.equal(authorization.consumed(request), 1);
   const paths = authorizationJournalPaths(scope.workflow.journalRoot);
@@ -51,12 +52,12 @@ test("AuthorizationStage installs one public Workflow owner and restores its sha
   const restoredOwner = scope.authorization;
   assert.notEqual(restoredOwner, authorization);
   assert.throws(() => scope.clearAuthorization(authorization), /inactive/);
-  restoredOwner.registerRequestType(type);
+  restoredOwner.registerRequestSourceType(type);
   const read = t.mock.method(AuthorizationRecordObject.prototype, "read");
   await scope.workflow.enterState({ state: WorkflowState.Restoring, input: recovery });
   assert.equal(scope.workflow.state, WorkflowState.Running);
   assert.equal(read.mock.callCount(), 1, "Shared records are decoded once by the Authorization owner.");
-  const restored = scope.authorization.get(type, request.requestId)!;
+  const restored = scope.authorization.get(type, request.sourceId)!;
   assert.deepEqual(restored, request);
   assert.deepEqual(scope.authorization.approvals(restored), previousApprovals);
   assert.equal(scope.authorization.consumed(restored), 1);
@@ -68,12 +69,12 @@ test("Authorization abort retains unfinished Workflow requests and credentials f
   t.after(() => stage.stop());
   const scope = await installTestRunScope(t, { runId: "authorization-abort" });
   await stage.start();
-  const type: RequestType<ScoutRequest> = { name: "abort", encode: (value) => ({ ...value, state: { status: "active" } }), decode: (value) => structuredClone(value), project: (value) => structuredClone(value) };
+  const type: RequestSourceType<ScoutRequestSource> = { name: "abort", encode: (value) => ({ ...value, state: { status: "active" } }), decode: (value) => structuredClone(value), project: (value) => structuredClone(value), decodeGrant: (value) => structuredClone(value), match: (source, request) => source.allowedGrants.find((grant) => isDeepStrictEqual(grant.scope, request.scope) && isDeepStrictEqual(grant.target, request.target)), covers: (source, grant) => source.allowedGrants.some((allowed) => isDeepStrictEqual(allowed.scope, grant.scope) && isDeepStrictEqual(allowed.target, grant.target)) };
   const grant = { scope: { phase: "execute" }, target: { artifactRef: "unfinished-input" } };
-  const request = await scope.authorization.register(type, { maxConsumptions: 1, allowedGrants: [grant] });
-  const approved = await scope.authorization.submit(request, {
-    result: { decision: "approved", ...grant }, consumer: { agentId: "executor" },
-  });
+  const request = await scope.authorization.register(type, { sourceKey: "stage-source", maxApprovals: 1, allowedGrants: [grant] });
+  const approved = await scope.authorization.submit(type, { workflowId: request.workflowId, ...{
+    ...grant, consumer: { agentId: "executor" },
+  } });
   const credentialId = scope.authorization.credentials(request)[0]!.credentialId;
   const recovery = {
     workflowData: scope.workflow.snapshot()!, graphData: scope.workflow.graph.snapshot(),
@@ -83,23 +84,23 @@ test("Authorization abort retains unfinished Workflow requests and credentials f
   const history = readFileSync(paths.path, "utf8");
   await scope.workflow.enterState({ state: WorkflowState.Aborting });
   assert.equal(scope.workflow.snapshot()?.status, "active");
-  assert.equal(scope.authorization.get(type, request.requestId)?.state.status, "active");
+  assert.equal(scope.authorization.get(type, request.sourceId)?.state.status, "active");
   assert.equal(scope.authorization.credential(request, credentialId)?.credentialId, credentialId);
   assert.equal(readFileSync(paths.path, "utf8"), history);
   await stage.stop();
   assert.equal(existsSync(paths.lockPath), false);
   await scope.workflow.enterState({ state: WorkflowState.Idle });
   await stage.start();
-  scope.authorization.registerRequestType(type);
+  scope.authorization.registerRequestSourceType(type);
   await scope.workflow.enterState({ state: WorkflowState.Restoring, input: recovery });
-  const restored = scope.authorization.get(type, request.requestId)!;
+  const restored = scope.authorization.get(type, request.sourceId)!;
   assert.deepEqual(restored, request);
   assert.equal(scope.authorization.consumed(restored), 1);
   assert.equal(readFileSync(paths.path, "utf8"), history, "Recovery does not create an approval.");
-  const automatic = await scope.authorization.submit(restored, {
-    result: { decision: "approved", ...grant },
+  const automatic = await scope.authorization.submit(type, { workflowId: restored.workflowId, ...{
+    ...grant,
     consumer: { agentId: "executor", turnId: "restored-turn" },
-  });
+  } });
   assert.deepEqual(automatic, approved);
   assert.equal(scope.authorization.consumed(restored), 1);
   assert.equal(scope.authorization.credentials(restored).length, 1);
@@ -122,7 +123,7 @@ test("AuthorizationStage retains failed startup resources for cleanup before ret
   const stage = new AuthorizationStage();
   t.after(() => stage.stop());
   const scope = await installTestRunScope(t, { runId: "authorization-start-failed" });
-  const fault = t.mock.method(RequestHub.prototype, "start", () => { throw new Error("request projection unavailable"); });
+  const fault = t.mock.method(RequestSourceHub.prototype, "start", () => { throw new Error("request projection unavailable"); });
   await assert.rejects(stage.start(), /request projection unavailable/);
   const failed = scope.authorization;
   assert.equal(scope.workflow.participants.includes(failed), false);

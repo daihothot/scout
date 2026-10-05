@@ -3,8 +3,8 @@ import type { ApprovalResult } from "./types.js";
 
 export interface ApprovalSubmittedEvent {
   readonly approvalId: string;
-  readonly requestId: string;
-  readonly requestType: string;
+  readonly sourceId: string;
+  readonly sourceType: string;
   readonly workflowId: string;
   readonly submittedAt: string;
   readonly consumer: object;

@@ -10,9 +10,15 @@ export const jarvisBehaviorAgentTool: AgentDynamicToolSpec = {
     additionalProperties: false,
     properties: {
       execute_file: {
-        type: "string",
-        minLength: 1,
-        description: "待执行的 execute-file.json 路径。",
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          workflowId: { type: "string" },
+          agentId: { type: "string" },
+          internalSymbols: { type: "array", items: { type: "string" } },
+        },
+        required: ["workflowId", "agentId", "internalSymbols"],
+        description: "待执行的 execute-file.json 的 ScoutArtifactReference。",
       },
       command: {
         type: "string",

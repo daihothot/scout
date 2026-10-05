@@ -1,3 +1,4 @@
+import { formatArtifactReference } from "../../core/io/index.js";
 import { AgentInbox } from "../core/agent-inbox.js";
 import { AgentHumanInputStore } from "../human-input/agent-human-input-store.js";
 import { AgentStepStore } from "../step/agent-step-store.js";
@@ -12,6 +13,7 @@ import { AgentEntityRecovery } from "./recovery/agent-entity-recovery.js";
 import { AgentTaskRecovery } from "./recovery/agent-task-recovery.js";
 import { AgentContextRecovery } from "./recovery/agent-context-recovery.js";
 import { AgentInterruptionRecovery } from "./recovery/agent-interruption-recovery.js";
+import { agentPermissionRequestSourceType } from "../../core/authorization/request-source/permission/agent-permission-request-source.js";
 
 /** Observable lifecycle state for the task-event orchestrator. */
 export interface AgentOrchestratorSnapshot {
@@ -35,7 +37,9 @@ export class AgentOrchestrator implements ScoutWorkflowParticipant {
   private runtimeReady = false;
   private activationPending = false;
 
-  constructor() {
+  constructor(private readonly artifactReaders: readonly {
+    readonly agentId: string; readonly readers: readonly { readonly agentId: string; readonly phases: readonly string[] }[];
+  }[] = []) {
     this.inbox = new AgentInbox({
       isStopped: () => this.stopped,
       onEvents: async (events) => {
@@ -76,7 +80,21 @@ export class AgentOrchestrator implements ScoutWorkflowParticipant {
     if (failures.length) throw new AggregateError(failures, "AgentOrchestrator cleanup failed.");
   }
 
-  create(): void { this.clearWorkflow(); }
+  async create(): Promise<void> {
+    this.clearWorkflow();
+    const scope = currentRunScope();
+    const workflowId = scope.workflow.snapshot()!.workflowId;
+    for (const owner of this.artifactReaders) {
+      await scope.authorization.register(agentPermissionRequestSourceType, {
+        sourceKey: formatArtifactReference({ workflowId, agentId: owner.agentId, internalSymbols: [] }), maxApprovals: null,
+        origin: { kind: "workflow", runId: scope.runId, agentId: owner.agentId },
+        allowedGrants: owner.readers.map((reader) => ({
+          scope: { workflowId, agentId: reader.agentId, phases: reader.phases, access: "read" },
+          target: { workflowId, agentId: owner.agentId, internalSymbols: [] },
+        })),
+      });
+    }
+  }
 
   async restore(data: WorkflowData): Promise<void> {
     const scope = currentRunScope();

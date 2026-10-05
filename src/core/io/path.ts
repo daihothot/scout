@@ -15,76 +15,21 @@ export interface PathWithinOptions {
   allowRoot?: boolean;
 }
 
-/** Identifies an artifact independently of its Workflow directory and originating Run. */
-export interface ScoutArtifactReference {
-  readonly workflowId: string;
-  readonly agentId: string;
-  readonly path: string;
-}
-
-/** Replaces the current Agent's physical artifact path with a stable Workflow identity reference. */
-export function canonicalizeAgentArtifactReferences(
-  value: string,
-  input: { workflowId: string; agentId: string; artifactRoot: string },
-): string {
-  const root = resolve(input.artifactRoot);
-  return value.replaceAll(`${root}${sep}`, `scout-artifact://${input.workflowId}/${input.agentId}/`);
-}
-
-/** Supplies physical paths for known artifact roots; it neither registers nor grants access. */
-export function resolveAgentArtifactReferences(
-  value: string,
-  input: {
-    workflowId: string;
-    artifacts: readonly { agentId: string; path: string }[];
-    readRequests: readonly { artifact_ref: string; read_path: string }[];
-  },
-): { ref: string; path: string }[] {
-  const resolved = new Map<string, string>();
-  // Quoted references may contain spaces; bare references end at text/Markdown delimiters.
-  const references = /(["'`])(scout-artifact:\/\/[^"'`\r\n]+)\1|(scout-artifact:\/\/[^\s"'`<>()\[\]{},;*]+)/g;
-  const roots = [
-    ...input.artifacts.map((artifact) => ({ prefix: `scout-artifact://${input.workflowId}/${artifact.agentId}/`, path: artifact.path })),
-    ...input.readRequests.map((request) => ({ prefix: `${request.artifact_ref}/`, path: request.read_path })),
-  ];
-  for (const match of value.matchAll(references)) {
-    const ref = match[2] ?? match[3]!;
-    if (resolved.has(ref)) continue;
-    const root = roots.find(({ prefix }) => ref.startsWith(prefix));
-    if (!root) continue;
-    const relativePath = ref.slice(root.prefix.length);
-    if (!relativePath || isAbsolute(relativePath) || /[\u0000-\u001f\u007f\\]/.test(relativePath)) continue;
-    const path = resolve(root.path, relativePath);
-    if (!isPathWithin(root.path, path, { allowRoot: false })) continue;
-    resolved.set(ref, path);
-  }
-  return [...resolved].map(([ref, path]) => ({ ref, path }));
-}
-
-/** Parses an external stable reference; paths are literal, never URL-decoded. */
-export function parseArtifactReference(reference: string): ScoutArtifactReference {
-  const match = /^scout-artifact:\/\/([^/]+)\/([A-Za-z0-9_-]+)\/(.+)$/.exec(reference);
-  if (!match || match[1]!.trim() !== match[1] || /[\u0000-\u001f\u007f\\]/.test(reference)
-    || match[3]!.split("/").some((part) => !part || part === "." || part === "..")) {
-    throw new Error("Invalid scout-artifact reference.");
-  }
-  return { workflowId: match[1]!, agentId: match[2]!, path: match[3]! };
-}
-
-/** Resolves current physical evidence by identity and rejects escaping or symlinked read targets. */
-export function resolveArtifactTarget(target: ScoutArtifactReference): { path: string } | { reason: string } {
-  const location = resolveWorkflowLocation(currentRunScope().runRoot, target.workflowId);
-  if (!location) return { reason: `Artifact target Workflow is unavailable: ${target.workflowId}` };
-  // Workflow identity corruption is a system error, not an unavailable file.
+/** Locates an Artifact file or directory beneath its physical owner, rejecting escaping and symlinked targets. */
+export function resolveWorkflowArtifactPath(
+  runRoot: string, workflowId: string, agentId: string, artifactRelativePath: string,
+): { path: string } | { reason: string } {
+  const location = resolveWorkflowLocation(runRoot, workflowId);
+  if (!location) return { reason: `Artifact target Workflow is unavailable: ${workflowId}` };
   try {
     const workflowRoot = realpathSync(location.workflowRoot);
-    const artifactRoot = resolve(workflowAgentPaths(workflowRoot, target.agentId).artifactRoot);
+    const artifactRoot = resolve(workflowAgentPaths(workflowRoot, agentId).artifactRoot);
     const ownerPath = relative(workflowPaths(workflowRoot).agentsRoot, artifactRoot);
     if (isAbsolute(ownerPath) || ownerPath.split(sep).length !== 2 || ownerPath.split(sep)[0] === "..") {
       return { reason: "Artifact target escapes its Agent artifact owner." };
     }
-    if (isAbsolute(target.path)) return { reason: "Artifact target path must be relative to Agent artifacts." };
-    const path = resolve(artifactRoot, target.path);
+    if (isAbsolute(artifactRelativePath)) return { reason: "Artifact target path must be relative to Agent artifacts." };
+    const path = resolve(artifactRoot, artifactRelativePath);
     if (!isPathWithin(artifactRoot, path)) return { reason: "Artifact target escapes Agent artifacts." };
     let cursor = workflowRoot;
     for (const part of relative(workflowRoot, path).split(sep)) {

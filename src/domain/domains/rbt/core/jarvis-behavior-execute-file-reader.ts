@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join } from "node:path";
 import type { AgentJsonValue } from "../../../../agent/tools/types.js";
-import { parseArtifactReference, resolveArtifactTarget } from "../../../../core/io/index.js";
+import { formatArtifactReference, resolveArtifactTarget, type ScoutArtifactReference } from "../../../../core/io/index.js";
 import { currentRunScope } from "../../../../run/run-scope.js";
 import type { ScoutDomainDynamicToolCall } from "../../../types.js";
 import type { JarvisBehaviorToolStore } from "./jarvis-behavior-tool-store.js";
@@ -20,30 +20,17 @@ const EXECUTE_FILE_COMMANDS = new Set([
 /** Resolves one Pack input and validates its execute-file before using the shared execution pipeline. */
 export function readJarvisBehaviorExecuteFile(
   call: ScoutDomainDynamicToolCall,
-  executeFileInput: string,
+  source: ScoutArtifactReference,
   store: JarvisBehaviorToolStore,
 ): ParsedExecuteFile {
   const workflow = currentRunScope().workflow;
   const workflowData = workflow.snapshot();
   if (!workflowData) throw new Error("RBT execution requires an active Workflow.");
   const artifactRoot = workflow.agentPaths(call.caller.agentId).artifactRoot;
-  const referenceRoot = `scout-artifact://${workflowData.workflowId}/${call.caller.agentId}/`;
-  let executeFileRef = executeFileInput;
-  if (!executeFileInput.startsWith("scout-artifact://")) {
-    const inputPath = resolve(isAbsolute(executeFileInput) ? executeFileInput : join(artifactRoot, executeFileInput));
-    const artifactRelative = relative(artifactRoot, inputPath);
-    if (!artifactRelative || artifactRelative === ".." || artifactRelative.startsWith(`..${sep}`) || isAbsolute(artifactRelative)) {
-      throw new Error("execute_file must stay inside the calling Agent artifact root.");
-    }
-    executeFileRef = `${referenceRoot}${artifactRelative.split(sep).join("/")}`;
+  if (source.internalSymbols.length !== 2 || source.internalSymbols[0] !== "pack" || source.internalSymbols[1] !== "execute-file.json") {
+    throw new Error("execute_file must reference pack/execute-file.json.");
   }
-  const source = parseArtifactReference(executeFileRef);
-  const pathParts = source.path.split("/");
-  if (pathParts.length !== 3 || pathParts[2] !== "execute-file.json") {
-    throw new Error("execute_file must use <bdd-id>/<version>/execute-file.json in its Pack owner.");
-  }
-  const [bddId, targetVersion] = pathParts;
-  if (!bddId || !targetVersion) throw new Error("execute_file path has an empty BDD or version segment.");
+  const executeFileRef = formatArtifactReference(source);
   const location = resolveArtifactTarget(source);
   if ("reason" in location) throw new Error(location.reason);
   const executeFilePath = location.path;
@@ -58,8 +45,13 @@ export function readJarvisBehaviorExecuteFile(
     throw new Error(`execute_file is not readable JSON: ${String(error)}`);
   }
   const file = requireObject(value, "execute-file.json");
-  const unexpectedKeys = Object.keys(file).filter((key) => key !== "commands");
+  const unexpectedKeys = Object.keys(file).filter((key) => key !== "commands" && key !== "bddId" && key !== "targetVersion");
   if (unexpectedKeys.length > 0) throw new Error(`execute-file.json contains unsupported fields: ${unexpectedKeys.join(", ")}.`);
+  if (typeof file.bddId !== "string" || !file.bddId.trim()
+    || typeof file.targetVersion !== "string" || !file.targetVersion.trim()) {
+    throw new Error("execute-file.json requires bddId and targetVersion.");
+  }
+  const { bddId, targetVersion } = file;
   if (!Array.isArray(file.commands)) throw new Error("execute-file.json commands must be an array.");
   const commands = file.commands.map((entry, index) => {
     const command = requireObject(entry, `execute-file.json commands[${index}]`);

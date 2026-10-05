@@ -1,27 +1,28 @@
 import { defineEventCatalog, event } from "../../events/index.js";
 
-export interface RequestRegisteredEvent {
-  readonly request: {
-    readonly requestId: string;
+export interface RequestSourceRegisteredEvent {
+  readonly source: {
+    readonly sourceId: string;
+    readonly sourceKey: string;
     readonly type: string;
     readonly workflowId: string;
     readonly createdAt: string;
-    readonly maxConsumptions: number;
+    readonly maxApprovals: number | null;
     readonly allowedGrants: readonly { readonly scope: object; readonly target: object }[];
     readonly state: { readonly status: "active" };
   };
 }
 
-export interface RequestExpiredEvent {
-  readonly requestId: string;
+export interface RequestSourceExpiredEvent {
+  readonly sourceId: string;
   readonly workflowId: string;
   readonly reason: string;
 }
 
 /** Request lifecycle facts; approval and credential facts have their own catalogs. */
-export const RequestEvents = defineEventCatalog("system", {
-  authorizationRequest: {
-    registered: event<RequestRegisteredEvent>(),
-    expired: event<RequestExpiredEvent>(),
+export const RequestSourceEvents = defineEventCatalog("system", {
+  authorizationRequestSource: {
+    registered: event<RequestSourceRegisteredEvent>(),
+    expired: event<RequestSourceExpiredEvent>(),
   },
 } as const);

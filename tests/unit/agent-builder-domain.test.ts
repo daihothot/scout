@@ -8,13 +8,16 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { AgentBuilder } from "../../src/agent/builder/agent-builder.js";
-import { resolveWorkflowLocation, workflowAgentPaths } from "../../src/core/io/index.js";
+import { AuthorizationStage } from "../../src/run/lifecycle/stages/authorization-stage.js";
+import { agentPermissionRequestSourceType } from "../../src/core/authorization/request-source/permission/agent-permission-request-source.js";
+import { authorizationJournalPaths, resolveWorkflowLocation, workflowAgentPaths, workflowPaths } from "../../src/core/io/index.js";
 import { AgentTimelineBackend } from "../../src/agent/backend/timeline/agent-timeline-backend.js";
 import { AgentDynamicToolBackend } from "../../src/agent/backend/dynamic-tool/agent-dynamic-tool-backend.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
@@ -29,6 +32,7 @@ import {
   AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
   AGENT_SUBMIT_PHASE_OUTCOME_TOOL_NAMESPACE,
   AGENT_START_WORKFLOW_TOOL_NAMESPACE,
+  AGENT_RESOLVE_ARTIFACT_REFERENCE_TOOL_NAMESPACE,
 } from "../../src/agent/tools/agent-tools.js";
 import {
   scoutAgentPermissionProfile,
@@ -221,6 +225,7 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   assert.ok(tools.some((tool) => tool.namespace === AGENT_REQUEST_HUMAN_INPUT_TOOL_NAMESPACE && tool.name === "RequestHumanInput"));
   assert.ok(tools.some((tool) => tool.namespace === AGENT_SUBMIT_TASK_TOOL_NAMESPACE && tool.name === "SubmitTask"));
   assert.deepEqual(tools.filter((tool) => tool.namespace !== "domain-worker").map((tool) => tool.name), [
+    "ResolveArtifactReference",
     "SendMessage",
     "RequestHumanInput",
     "SubmitTask",
@@ -3446,7 +3451,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
           namespace: AGENT_SUBMIT_TASK_TOOL_NAMESPACE,
           tool: "SubmitTask",
           arguments: {
-            outcome: `## Outcome\n\n- Artifact: ${currentRunScope().workflow.agentPaths("verifier").artifactRoot}/result.md`,
+            outcome: '## Outcome\n\n- Artifact: {"workflowId":"workflow-001","agentId":"verifier","internalSymbols":["result.md"]}',
           },
         });
         submitSucceeded = result.success;
@@ -3615,11 +3620,11 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   assert.equal(submittedDisposition?.callId, "call-submit-task");
   assert.ok(appServer.turnInputs.some((turn) =>
     turn.prompt?.includes(
-      "<task-outcome>\n## Outcome\n\n- Artifact: scout-artifact://workflow-001/verifier/result.md\n</task-outcome>",
+      '<task-outcome>\n## Outcome\n\n- Artifact: {"workflowId":"workflow-001","agentId":"verifier","internalSymbols":["result.md"]}\n</task-outcome>',
     )
   ));
   const handoffTurn = appServer.turnInputs.find((turn) => turn.prompt?.includes(
-    "<task-outcome>\n## Outcome\n\n- Artifact: scout-artifact://workflow-001/verifier/result.md\n</task-outcome>",
+    '<task-outcome>\n## Outcome\n\n- Artifact: {"workflowId":"workflow-001","agentId":"verifier","internalSymbols":["result.md"]}\n</task-outcome>',
   ));
   assert.ok(handoffTurn?.prompt);
   const handoffContext = JSON.parse(attachments.readTagBlock(handoffTurn.prompt, "workflow_context")[0]!.body);
@@ -3633,7 +3638,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   assert.ok(submittedOutcome && AgentEvents.task.outcomeSubmitted.is(submittedOutcome));
   assert.equal(
     submittedOutcome.payload.outcome,
-    "## Outcome\n\n- Artifact: scout-artifact://workflow-001/verifier/result.md",
+    '## Outcome\n\n- Artifact: {"workflowId":"workflow-001","agentId":"verifier","internalSymbols":["result.md"]}',
   );
   const humanResponseEvent = fixture.journal.readAll().find((event) =>
     AgentEvents.humanInput.responded.is(event)
@@ -4053,10 +4058,10 @@ test("resumed Workflow updates its own artifact path after a directory rename wi
   const relativePath = "result.json";
   const artifactRoot = original.agentPaths("researcher").artifactRoot;
   mkdirSync(artifactRoot, { recursive: true });
-  const ref = "scout-artifact://workflow-001/researcher/result.json";
+  const ref = { workflowId: "workflow-001", agentId: "researcher", internalSymbols: ["result.json"] };
   const artifactContent = JSON.stringify({ executorHistoryRef: ref, recordLocator: "JR/123", refs: ["SR/456"] });
   writeFileSync(join(artifactRoot, relativePath), artifactContent);
-  const prompt = agent.turn.task_outcome(`## Outcome\n\n- Artifact: ${ref}`);
+  const prompt = agent.turn.task_outcome(`## Outcome\n\n- Artifact: ${JSON.stringify(ref)}`);
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
   let resumed: Workflow | undefined;
@@ -4108,7 +4113,7 @@ test("empty Workflow does not resolve historical refs or supply artifact access 
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
   try {
-    const prompt = "Explain scout-artifact://workflow-001/researcher/result.json";
+    const prompt = 'Explain {"workflowId":"workflow-001","agentId":"researcher","internalSymbols":["result.json"]}';
     await coordinator.runTurn({ prompt });
     const delivered = appServer.turnInputs[0]!.prompt!;
     const context = JSON.parse(attachments.readTagBlock(delivered, "workflow_context")[0]!.body);
@@ -4147,6 +4152,56 @@ for (const status of ["failed", "interrupted"] as const) {
     }
   });
 }
+
+test("ResolveArtifactReference follows stable identity after rename without registering or approving access", async () => {
+  const reference = { workflowId: "workflow-009", agentId: "executor", internalSymbols: ["pack"] };
+  const responses: unknown[] = [];
+  const appServer = createFakeAppServer({
+    turnIds: ["resolve-before-rename", "resolve-after-rename"],
+    onRunTurn: async () => {
+      assert.ok(appServer.handler);
+      const turnId = responses.length === 0 ? "resolve-before-rename" : "resolve-after-rename";
+      const response = await appServer.handler({
+        threadId: "thread-test", turnId, callId: turnId,
+        namespace: AGENT_RESOLVE_ARTIFACT_REFERENCE_TOOL_NAMESPACE, tool: "ResolveArtifactReference",
+        arguments: { reference },
+      });
+      assert.equal(response.success, true, JSON.stringify(response));
+      responses.push(JSON.parse(response.contentItems[0]!.text!));
+    },
+  });
+  await createAgentFixture("resolve-artifact-reference", { appServer });
+  const scope = currentRunScope();
+  const historicalRoot = join(scope.runRoot, "workflows", "imported evidence");
+  const packPath = join(workflowAgentPaths(historicalRoot, "executor").artifactRoot, "pack");
+  mkdirSync(packPath, { recursive: true });
+  writeFileSync(workflowPaths(historicalRoot).identityPath, JSON.stringify({ workflowId: reference.workflowId }));
+  writeFileSync(join(packPath, "journal-expected.md"), "unchanged evidence");
+  const originalPath = realpathSync(packPath);
+  const backend = new AgentDynamicToolBackend();
+  backend.start();
+  const coordinator = new AgentBuilder().buildCoordinator();
+  await coordinator.startThread();
+  const sources = scope.authorization.sources(agentPermissionRequestSourceType);
+  const recordPath = authorizationJournalPaths(scope.workflow.journalRoot).path;
+  const recorded = readFileSync(recordPath, "utf8");
+  try {
+    await coordinator.runTurn({ prompt: "Resolve the supplied reference." });
+    const renamedRoot = join(scope.runRoot, "workflows", "renamed evidence");
+    renameSync(historicalRoot, renamedRoot);
+    await coordinator.runTurn({ prompt: "Resolve the same reference." });
+    assert.deepEqual(responses, [
+      { status: "resolved", path: originalPath },
+      { status: "resolved", path: realpathSync(join(workflowAgentPaths(renamedRoot, "executor").artifactRoot, "pack")) },
+    ]);
+    assert.deepEqual(scope.authorization.sources(agentPermissionRequestSourceType), sources);
+    assert.equal(readFileSync(recordPath, "utf8"), recorded, "Resolution produces no authorization facts.");
+    assert.equal(appServer.threadInputs.length, 1);
+  } finally {
+    await coordinator.stopAgent("test_cleanup");
+    backend.stop();
+  }
+});
 
 async function createAgentFixture(
   name: string,
@@ -4262,6 +4317,8 @@ async function createAgentFixture(
     createdAt,
     checkpointSeq: 0,
   });
+  const authorizationStage = new AuthorizationStage();
+  await authorizationStage.start();
   await workflow.start();
   if (workflowRecovery) await workflow.enterState({ state: WorkflowState.Restoring, input: workflowRecovery });
   // This harness seeds Graph data before constructing Agents. Production recovery
@@ -4282,6 +4339,7 @@ async function createAgentFixture(
       scope.domainRegistry.unregister(registeredDomain);
     }
     await workflow.stop();
+    await authorizationStage.stop();
     releaseScope();
   };
   const registry = scope.agentRegistry;
@@ -4352,6 +4410,7 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
   }
   const guidanceSkills = role === "coordinator"
     ? [
+      "tool-scout-resolve-artifact-reference",
       "tool-scout-assign-task",
       "tool-scout-send-message",
       "tool-scout-respond-human-input",
@@ -4360,6 +4419,7 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
       "tool-domain-probe",
     ]
     : [
+      "tool-scout-resolve-artifact-reference",
       "tool-scout-send-message",
       "tool-scout-request-human-input",
       "tool-scout-submit-task",

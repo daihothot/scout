@@ -1,8 +1,8 @@
 import { defineEventCatalog, event } from "../../events/index.js";
 export interface CredentialIssuedEvent {
   readonly credentialId: string;
-  readonly requestId: string;
-  readonly requestType: string;
+  readonly sourceId: string;
+  readonly sourceType: string;
   readonly workflowId: string;
   readonly issuedAt: string;
   readonly scope: object;
@@ -12,7 +12,7 @@ export interface CredentialIssuedEvent {
 export interface CredentialUsedEvent {
   readonly credentialId: string;
   readonly approvalId: string;
-  readonly requestId: string;
+  readonly sourceId: string;
   readonly workflowId: string;
   readonly usedAt: string;
   readonly consumer: object;

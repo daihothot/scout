@@ -1,3 +1,4 @@
+import { formatArtifactReference } from "../../../../core/io/index.js";
 import type { RbtRecord } from "../record/rbt-record.js";
 import type { ScoutDomainRuntimeFact } from "../../../types.js";
 import type { RbtArtifactData, RbtExecutionHistory, RbtExecutionPackSubmission } from "../artifacts/types.js";
@@ -37,12 +38,12 @@ export class RbtDomainProjector {
             stepId: saved.stepId, submittedAt: saved.submittedAt, pack: structuredClone(saved.pack),
           };
           data.artifacts.executionPacks.push(submission);
-          data.artifacts.acceptedSubmissions.add(`${submission.taskId}\0${submission.stepId}\0${submission.pack.workflowId}\0${submission.pack.agentId}\0${submission.pack.path}`);
+          data.artifacts.acceptedSubmissions.add(`${submission.taskId}\0${submission.stepId}\0${formatArtifactReference(submission.pack)}`);
           break;
         }
         case "review": {
           const saved = record.payload;
-          data.artifacts.acceptedSubmissions.add(`${saved.taskId}\0${saved.stepId}\0${saved.pack.workflowId}\0${saved.pack.agentId}\0${saved.pack.path}`);
+          data.artifacts.acceptedSubmissions.add(`${saved.taskId}\0${saved.stepId}\0${formatArtifactReference(saved.pack)}`);
           break;
         }
       }

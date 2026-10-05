@@ -106,6 +106,11 @@ export function parseWorkflowProfile(value: unknown, path: string): WorkflowProf
       `Invalid Workflow Profile at ${path}: roles.coordinator cannot declare phases.`,
     );
   }
+  for (const [owner, role] of Object.entries(roles)) {
+    for (const reader of role.artifactReaders ?? []) {
+      if (!Object.hasOwn(roles, reader)) throw new Error(`Invalid Workflow Profile at ${path}: roles.${owner}.artifactReaders references unknown role ${reader}.`);
+    }
+  }
   validateEdges(workers, path);
   const domain = requireString(profile.domain, path, "domain");
   if (!DOMAIN_ID_PATTERN.test(domain)) {
@@ -207,7 +212,7 @@ function parseRole(
 ): WorkflowRoleDefinition {
   const label = `roles.${name}`;
   const role = requireRecord(value, path, label);
-  assertKeys(role, ["phases", "multiAgent", "customAgents", "model"], path, label);
+  assertKeys(role, ["phases", "multiAgent", "customAgents", "model", "artifactReaders"], path, label);
   const phases = role.phases === undefined
     ? undefined
     : requireStringArray(role.phases, path, `${label}.phases`);
@@ -227,6 +232,7 @@ function parseRole(
   }
   return {
     phases,
+    ...(role.artifactReaders === undefined ? {} : { artifactReaders: requireStringArray(role.artifactReaders, path, `${label}.artifactReaders`) }),
     multiAgent: requireBoolean(role.multiAgent, path, `${label}.multiAgent`),
     customAgents,
     model: role.model === undefined ? undefined : parseModel(role.model, path, `${label}.model`),

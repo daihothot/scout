@@ -20,7 +20,7 @@ test("scout-rbt-artifact-check help succeeds without a pack", () => {
 function fixture(t: TestContext): string {
   const root = mkdtempSync(join(tmpdir(), "scout-rbt-check-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const pack = join(root, "sample.bdd", "26.9.0", "execute-pack");
+  const pack = join(root, "pack");
   mkdirSync(join(pack, "evidence"), { recursive: true });
   // Fill the actual templates, so metadata/table drift is visible in this test.
   const put = (template: string, target: string, values: Record<string, string>) => {
@@ -67,7 +67,7 @@ function fixture(t: TestContext): string {
   put("human-input-evidence.md", "human-input-evidence.md", {});
   mutate(pack, "human-input-evidence.md", text => text.replace(/## Human Input Records[\s\S]*?(?=## Evidence Boundary)/,
     "## Human Input Records\n\nnone\n\n"));
-  writeFileSync(join(dirname(pack), "execute-file.json"), JSON.stringify({ commands: [
+  writeFileSync(join(pack, "execute-file.json"), JSON.stringify({ bddId: "sample.bdd", targetVersion: "26.9.0", commands: [
     { command: "behavior.campaign.start", payload: { campaignId: "sample/campaign/main", scenarioId: "sample" } },
     { command: "behavior.scenario.activate", payload: { scenarioId: "sample", rootId: "growth.remote_config.get_string", activations: [] } },
     { command: "behavior.trigger.invoke", payload: { scenarioId: "sample", triggerCommandId: "sample.trigger", params: {} } },
@@ -83,7 +83,7 @@ function mutate(pack: string, file: string, fn: (text: string) => string): void 
 }
 
 function mutateExecute(pack: string, fn: (plan: { commands: Array<{ payload: Record<string, unknown> }> }) => void): void {
-  const target = join(pack, "..", "execute-file.json");
+  const target = join(pack, "execute-file.json");
   const plan = JSON.parse(readFileSync(target, "utf8"));
   fn(plan);
   writeFileSync(target, `${JSON.stringify(plan, null, 2)}\n`);
@@ -128,7 +128,7 @@ test("RBT checker accepts filled current templates and does not inspect source o
 
 test("RBT checker rejects an incomplete Pack without executable inputs", async t => {
   const pack = await fixture(t);
-  rmSync(join(dirname(pack), "execute-file.json"));
+  rmSync(join(pack, "execute-file.json"));
   const result = check(pack);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /EXECUTE_FILE/);
@@ -172,7 +172,7 @@ test("RBT checker rejects extra artifacts and symlinked evidence", async t => {
 
 test("RBT checker rejects execute-file scope/order without invoking any command", async t => {
   const pack = await fixture(t);
-  mutate(pack, "../execute-file.json", text => text.replace('"behavior.scenario.activate"', '"behavior.registry.nodes"'));
+  mutate(pack, "execute-file.json", text => text.replace('"behavior.scenario.activate"', '"behavior.registry.nodes"'));
   assert.match(check(pack).stderr, /EXECUTE_FILE/);
 });
 

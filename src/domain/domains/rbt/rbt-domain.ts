@@ -1,3 +1,4 @@
+import { parseArtifactReference } from "../../../core/io/index.js";
 import type { ScoutAgentPhase } from "../../../agent/thread/types.js";
 import { AgentEvents } from "../../../agent/events/index.js";
 import { attachments } from "../../../agent/context/attachments.js";
@@ -313,8 +314,8 @@ export class RbtDomain implements ScoutDomain {
       message: attachments.addTagBlock(CoordinatorContextTags.Observation, [
         "### RBT Execution History Ready",
         "",
-        `- executor_history_ref: ${history.executorHistoryRef}`,
-        `- execute_file_ref: ${history.executeFileRef}`,
+        `- executor_history_ref: ${JSON.stringify(parseArtifactReference(history.executorHistoryRef))}`,
+        `- execute_file_ref: ${JSON.stringify(parseArtifactReference(history.executeFileRef))}`,
         `- runtime_sequence: ${history.runtimeSequence}`,
         `- campaign_id: ${history.campaignId}`,
         `- scenario_id: ${history.scenarioId}`,

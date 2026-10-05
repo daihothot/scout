@@ -1,16 +1,15 @@
-import type { BenchmarkWorkflowReference } from "../../../../core/benchmarks/index.js";
+import type { ScoutArtifactReference } from "../../../../core/io/index.js";
 import type { ScoutAgentRole } from "../../../../agent/thread/types.js";
 import type { ExecutionPlatformIdentity } from "../../../../execution/scout-execution-system.js";
 
-/** Content identity at the time a fact was recorded; path is relative to an Agent artifact root. */
-export interface RbtArtifactReference extends BenchmarkWorkflowReference {
-  agentId: string;
-  path: string;
+/** Content identity at the time a logically addressed Artifact fact was recorded. */
+export interface RbtArtifactReference extends ScoutArtifactReference {
   digest: string;
   algorithm: "sha256" | "scout-directory-sha256-v1";
 }
 
-export interface RbtExecutionReference extends BenchmarkWorkflowReference {
+export interface RbtExecutionReference {
+  workflowId: string;
   agentId: string;
   runtimeSequence: number;
   campaignId: string;

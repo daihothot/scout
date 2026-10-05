@@ -58,8 +58,8 @@ export class Workflow implements ScoutWorkflowParticipant {
   private creatingTransition?: WorkflowCreatingTransition;
   private started = false;
 
-  constructor(asset: WorkflowProfileAsset) {
-    this.graph = new Graph(asset);
+  constructor(readonly profileAsset: WorkflowProfileAsset) {
+    this.graph = new Graph(profileAsset);
     this.running = new WorkflowRunning(this);
   }
 
