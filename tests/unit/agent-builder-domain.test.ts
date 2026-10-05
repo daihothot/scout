@@ -18,7 +18,6 @@ import { AgentBuilder } from "../../src/agent/builder/agent-builder.js";
 import { AuthorizationStage } from "../../src/run/lifecycle/stages/authorization-stage.js";
 import { agentPermissionRequestSourceType } from "../../src/core/authorization/request-source/permission/agent-permission-request-source.js";
 import { authorizationJournalPaths, resolveWorkflowLocation, workflowAgentPaths, workflowPaths } from "../../src/core/io/index.js";
-import { AgentTimelineBackend } from "../../src/agent/backend/timeline/agent-timeline-backend.js";
 import { AgentDynamicToolBackend } from "../../src/agent/backend/dynamic-tool/agent-dynamic-tool-backend.js";
 import { AgentRegistry } from "../../src/agent/core/agent-registry.js";
 import { AgentTaskStore } from "../../src/agent/task/agent-task-store.js";
@@ -183,6 +182,99 @@ test("AgentBuilder creates a coordinator with orchestration tools only", async (
   );
 });
 
+test("Agent backend returns independent definition snapshots for configured Phase tools", async () => {
+  await createAgentFixture("agent-phase-tools");
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
+  assert.deepEqual(backend.dynamicToolsForPhase("Synthesis").map((tool) => tool.name), [
+    "StartWorkflow", "ResolveArtifactReference", "AssignTask", "SendMessage", "RespondHumanInput", "SubmitPhaseOutcome",
+  ]);
+  assert.deepEqual(backend.dynamicToolsForPhase("research").map((tool) => tool.name), [
+    "ResolveArtifactReference", "SendMessage", "RequestHumanInput", "SubmitTask",
+  ]);
+  assert.deepEqual(backend.dynamicToolsForPhase("unknown"), []);
+  const tools = backend.dynamicToolsForPhase("research");
+  tools[0]!.name = "Changed";
+  tools[0]!.inputSchema = {};
+  assert.equal(backend.dynamicToolsForPhase("research")[0]!.name, "ResolveArtifactReference");
+  assert.notDeepEqual(backend.dynamicToolsForPhase("research")[0]!.inputSchema, {});
+});
+
+test("AgentBuilder queries its Orchestrator backend for each role Phase", async (t) => {
+  const fixture = await createAgentFixture("builder-owned-phase-tools");
+  const mount = createMount(fixture.root, "researcher");
+  mount.agentProfile.phases = ["research", "verify"];
+  prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
+  const dynamicToolsForPhase = backend.dynamicToolsForPhase.bind(backend);
+  const requestedPhases: string[] = [];
+  t.mock.method(backend, "dynamicToolsForPhase", (phase: string) => {
+    requestedPhases.push(phase);
+    return dynamicToolsForPhase(phase);
+  });
+  new AgentBuilder().buildCoordinator();
+  const worker = new AgentBuilder().buildWorker("researcher");
+  assert.deepEqual(requestedPhases, ["Synthesis", "research", "verify"]);
+  assert.equal(worker.spec.dynamicTools!.filter((tool) => tool.name === "SubmitTask").length, 1);
+});
+
+test("Worker cannot invoke an orchestration tool absent from its Phase allocation", async () => {
+  const fixture = await createAgentFixture("worker-cannot-assign");
+  const mount = createMount(fixture.root, "researcher");
+  prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
+  const worker = new AgentBuilder().buildWorker("researcher");
+  await worker.startThread();
+  const result = await currentRunScope().agentOrchestrator.dynamicToolBackend.handleDynamicToolCall({
+    threadId: worker.threadId!, turnId: "worker-turn", callId: "worker-assign",
+    namespace: AGENT_ASSIGN_TASK_TOOL_NAMESPACE, tool: "AssignTask",
+    arguments: { description: "should not be assigned", prompt: "should not execute" },
+  });
+  assert.equal(result.success, false);
+  assert.match(result.contentItems[0]?.text ?? "", /not configured for Phase research/);
+  assert.deepEqual(fixture.taskStore.listTasks(), []);
+  await worker.stopAgent("test_cleanup");
+});
+
+test("Workflow resource allocation excludes installed Domain tools from exposure and direct calls", async (t) => {
+  const appServer = createFakeAppServer();
+  const calls: ScoutDomainDynamicToolCall[] = [];
+  const fixture = await createAgentFixture("unallocated-domain-tool", { appServer });
+  const domainBackend = fixture.domainRegistry.get(ScoutDomainId.Base).backend;
+  Object.defineProperty(domainBackend, "toolDefinitions", { value: [buildDomainTool("unallocated-domain")] });
+  t.mock.method(domainBackend, "handleDynamicToolCall", async (call: ScoutDomainDynamicToolCall) => {
+    calls.push(call);
+    return { success: true, contentItems: [] };
+  });
+  const mount = createMount(fixture.root, "researcher");
+  prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
+  const worker = new AgentBuilder().buildWorker("researcher");
+  assert.equal(worker.spec.dynamicTools?.some((tool) => tool.namespace === "unallocated-domain"), false);
+  await worker.startThread();
+  const result = await currentRunScope().agentOrchestrator.dynamicToolBackend.handleDynamicToolCall({
+    threadId: worker.threadId!, turnId: "worker-turn", callId: "unallocated-tool",
+    namespace: "unallocated-domain", tool: "DomainProbe", arguments: {},
+  });
+  assert.equal(result.success, false);
+  assert.match(result.contentItems[0]?.text ?? "", /unallocated-domain\/DomainProbe is not configured for Phase research/);
+  assert.deepEqual(calls, []);
+  await worker.stopAgent("test_cleanup");
+});
+
+test("AgentBuilder rejects a configured but unavailable implementation before starting a Thread", async () => {
+  const appServer = createFakeAppServer();
+  const fixture = await createAgentFixture("unavailable-configured-tool", {
+    appServer,
+    phaseTools: { research: ["MissingTool"] },
+  });
+  const mount = createMount(fixture.root, "researcher");
+  prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
+  assert.throws(
+    () => new AgentBuilder().buildWorker("researcher"),
+    /Workflow resources reference unavailable Dynamic Tool MissingTool for Phase research/,
+  );
+  assert.deepEqual(appServer.threadInputs, []);
+  assert.equal(fixture.registry.findAgent("researcher"), undefined);
+});
+
 test("AgentBuilder rejects a dynamic tool whose guidance Skill is not mounted", async () => {
   const fixture = await createAgentFixture("builder-missing-tool-guidance", {
     domain: createStaticDomain("domain-empty", []),
@@ -200,6 +292,7 @@ test("AgentBuilder rejects a dynamic tool whose guidance Skill is not mounted", 
 test("AgentBuilder creates one worker role while preserving domain tool scope", async () => {
   const fixture = await createAgentFixture("builder-worker", {
     domain: createStaticDomain("domain-worker", [buildDomainTool("domain-worker")]),
+    phaseTools: { research: ["DomainProbe"] },
   });
   const researcherMount = createMount(fixture.root, "researcher");
   const researcherCommit = createAssetCommit(researcherMount);
@@ -242,36 +335,33 @@ test("AgentBuilder creates one worker role while preserving domain tool scope", 
   assert.ok(instructions.indexOf("common instructions") < instructions.indexOf("worker instructions"));
 });
 
-test("AgentBuilder unions and deduplicates Domain tools across a Worker's Phases", async () => {
-  const requestedPhases: string[] = [];
-  const shared = buildDomainTool("domain-shared");
+test("AgentBuilder unions and deduplicates configured Domain tools across a Worker's Phases", async () => {
+  const shared = buildDomainTool("domain-shared", "SharedProbe");
   const domain: ScoutDomain = {
     ...testWorkflowParticipant,
     description: { id: ScoutDomainId.Rbt, name: "domain-phase-tools" },
     backend: new class extends DomainAgentBackend {
-      override dynamicToolsForPhase(phase: ScoutAgentPhase) {
-        requestedPhases.push(phase);
-        return phase === "research"
-          ? [shared, buildDomainTool("domain-research")]
-          : phase === "verify"
-            ? [shared, buildDomainTool("domain-verify")]
-            : [];
-      }
+      readonly toolDefinitions = [shared, buildDomainTool("domain-research", "ResearchProbe"), buildDomainTool("domain-verify", "VerifyProbe")];
 
       override async handleDynamicToolCall() { return undefined; }
     }(),
   };
-  const fixture = await createAgentFixture("builder-worker-phase-tools", { domain });
+  const fixture = await createAgentFixture("builder-worker-phase-tools", {
+    domain,
+    phaseTools: {
+      research: ["SharedProbe", "ResearchProbe"],
+      verify: ["SharedProbe", "VerifyProbe"],
+    },
+  });
   const researcherMount = createMount(fixture.root, "researcher");
   researcherMount.agentProfile.phases = ["research", "verify"];
   prepareAgent(fixture, "researcher", researcherMount, createAssetCommit(researcherMount));
 
   const worker = new AgentBuilder().buildWorker("researcher");
   const domainNamespaces = (worker.spec.dynamicTools ?? [])
-    .filter((tool) => tool.name === "DomainProbe")
+    .filter((tool) => tool.namespace?.startsWith("domain-"))
     .map((tool) => tool.namespace);
 
-  assert.deepEqual(requestedPhases, ["research", "verify"]);
   assert.deepEqual(domainNamespaces, ["domain-shared", "domain-research", "domain-verify"]);
 });
 
@@ -427,7 +517,7 @@ test("WorkerAgent keeps its bound TaskRunner and reports a rejected task assignm
   const coordinatorAgent = builder.buildCoordinator();
   await coordinatorAgent.startThread();
   const worker = builder.buildWorker("researcher") as WorkerAgent;
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   const firstAssignment = await worker.assignTask({
     taskId: "researcher-task-0001",
     description: "Research the first BDD",
@@ -532,7 +622,7 @@ test("AssignTask routes through the current Phase and skips a busy first role", 
     maxTaskSequence: 1,
   });
   await coordinatorAgent.startThread();
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
 
   assert.ok(appServer.handler);
@@ -611,7 +701,7 @@ test("SubmitPhaseOutcome advances the cursor and schedules one fresh Coordinator
   const fixture = await createAgentFixture("submit-phase-outcome", { appServer });
   const coordinatorAgent = new AgentBuilder().buildCoordinator();
   await coordinatorAgent.startThread();
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
 
   assert.ok(appServer.handler);
@@ -704,7 +794,7 @@ test("SubmitPhaseOutcome combines event and inbox draining for user input arrivi
   const workflow = currentRunScope().workflow;
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
   const originalDrain = coordinator.drainInput.bind(coordinator);
   t.mock.method(coordinator, "drainInput", async () => { enterInbox(); await inboxGate; await originalDrain(); });
@@ -790,7 +880,7 @@ test("Input arriving during inbox drain defers advance without automatically ret
   const workflow = currentRunScope().workflow;
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
   const originalDrain = coordinator.drainInput.bind(coordinator);
   t.mock.method(coordinator, "drainInput", async () => { enterInbox(); await inboxGate; await originalDrain(); });
@@ -836,7 +926,7 @@ test("SubmitPhaseOutcome rejects a Worker before touching Workflow state", async
   prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
   const worker = new AgentBuilder().buildWorker("researcher");
   await worker.startThread();
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
   try {
     assert.ok(appServer.handler);
@@ -848,7 +938,7 @@ test("SubmitPhaseOutcome rejects a Worker before touching Workflow state", async
       tool: "SubmitPhaseOutcome", arguments: { outcome: "completed" },
     });
     assert.equal(result.success, false);
-    assert.match(result.contentItems[0]?.text ?? "", /only available to the Coordinator/);
+    assert.match(result.contentItems[0]?.text ?? "", /not configured for Phase research/);
     assert.deepEqual(workflow.graph.snapshot(), before);
   } finally {
     await worker.stopAgent("test_cleanup");
@@ -864,7 +954,7 @@ test("SubmitPhaseOutcome leaves Workflow unchanged while a queued or running Tas
   // Isolate the task barrier; real Turn admission and replay are covered above.
   t.mock.method(coordinator, "assertOwnsActiveTurn", () => {});
   await coordinator.startThread();
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
   const now = new Date().toISOString();
   fixture.taskStore.addTask({
@@ -974,7 +1064,7 @@ test("Rejected Phase completion keeps human input reachable through Gateway unti
   await coordinator.startThread();
   worker = builder.buildWorker("researcher") as WorkerAgent;
   await worker.startThread();
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
 
   try {
@@ -1063,7 +1153,7 @@ test("SubmitPhaseOutcome waits for a stopped Worker's in-flight Step to finish",
   await coordinator.startThread();
   const worker = builder.buildWorker("researcher") as WorkerAgent;
   await worker.startThread();
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
 
   try {
@@ -1154,7 +1244,7 @@ test("SubmitPhaseOutcome rejects already accepted work before a Done Task starts
   await coordinator.startThread();
   worker = builder.buildWorker("researcher") as WorkerAgent;
   await worker.startThread();
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
   let unsubscribe: (() => void) | undefined;
 
@@ -1262,7 +1352,7 @@ for (const boundary of ["phase-advanced", "completed-with-release-failure"] as c
     }
     assert.equal(workflow.snapshot()?.status, boundary === "completed-with-release-failure" ? "completed" : "active");
     // The existing Agent entity remains usable; no new Thread is started after a failed exit.
-    const backend = new AgentDynamicToolBackend();
+    const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
     backend.start();
     const before = worker.snapshot();
     const taskBefore = fixture.taskStore.getTask(task.taskId);
@@ -1344,7 +1434,7 @@ test(`A terminal Phase outcome completes before its Coordinator Step ends${perma
   if (permalinkFails) t.mock.method(ScoutBenchmarks.prototype, "recordSuccess", () => { throw new Error("success permalink failed"); });
   const coordinatorAgent = new AgentBuilder().buildCoordinator();
   await coordinatorAgent.startThread();
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
 
   try {
@@ -1414,7 +1504,7 @@ test("Coordinator does not carry phase or settlement scheduling into an idle run
     mode: "start", attachedAt: new Date().toISOString(), processId: process.pid,
   });
   const oldPath = workflow.journalPath;
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
   assert.ok(appServer.handler);
   handleTool = appServer.handler;
@@ -1512,7 +1602,7 @@ test("AssignTask replaces a Done binding, serializes replacement, and preserves 
   worker.restoreTask({ task: oldTask, maxTaskSequence: 7 });
   await fixture.eventBus.publishAndWait(AgentEvents.task.assigned, oldTask);
   const oldRunner = worker.taskRunner;
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
   let releaseStarted!: () => void;
   const releasing = new Promise<void>((resolve) => { releaseStarted = resolve; });
@@ -1953,7 +2043,7 @@ test("AgentTimelineBackend does not publish app-server agent message deltas as a
     activities.push(event.payload);
   });
   const registry = fixture.registry;
-  new AgentTimelineBackend().start();
+  currentRunScope().agentOrchestrator.timelineBackend.start();
   const coordinator = new CoordinatorAgent(fixture.options);
   registry.registerAgent(coordinator);
   registry.bindThread(coordinator.agentId, "thread-coordinator");
@@ -2008,7 +2098,7 @@ test("AgentTimelineBackend normalizes app-server items into Agent activity", asy
   fixture.eventBus.subscribe<AgentActivity>(AgentEvents.activity.observed, (event) => {
     activities.push(event.payload);
   });
-  new AgentTimelineBackend().start();
+  currentRunScope().agentOrchestrator.timelineBackend.start();
 
   appServer.emitTimeline(entry);
 
@@ -2066,7 +2156,7 @@ test("AgentTimelineBackend publishes one command fact without the command result
   fixture.eventBus.subscribe(AgentEvents.commandExecution.observed, (event) => {
     if (AgentEvents.commandExecution.observed.is(event)) commands.push(event.payload);
   });
-  new AgentTimelineBackend().start();
+  currentRunScope().agentOrchestrator.timelineBackend.start();
 
   appServer.emitTimeline(entry);
   await waitFor(() => commands.length === 1);
@@ -2147,7 +2237,7 @@ test("AgentTimelineBackend projects a failed command without its return value", 
   fixture.eventBus.subscribe(AgentEvents.commandExecution.observed, (event) => {
     if (AgentEvents.commandExecution.observed.is(event)) commands.push(event.payload);
   });
-  new AgentTimelineBackend().start();
+  currentRunScope().agentOrchestrator.timelineBackend.start();
 
   appServer.emitTimeline(entry);
   await waitFor(() => commands.length === 1);
@@ -2216,7 +2306,7 @@ test("AgentTimelineBackend keeps command bodies out of Activity facts", async ()
   fixture.eventBus.subscribe(AgentEvents.commandExecution.observed, (event) => {
     if (AgentEvents.commandExecution.observed.is(event)) commands.push(event.payload);
   });
-  new AgentTimelineBackend().start();
+  currentRunScope().agentOrchestrator.timelineBackend.start();
 
   appServer.emitTimeline(entry);
   await waitFor(() => commands.length === 1);
@@ -2268,7 +2358,7 @@ test("AgentTimelineBackend publishes context compaction as ordinary activity", a
   fixture.eventBus.subscribe<AgentActivity>(AgentEvents.activity.observed, (event) => {
     activities.push(event.payload);
   });
-  new AgentTimelineBackend().start();
+  currentRunScope().agentOrchestrator.timelineBackend.start();
 
   for (const entry of entries) appServer.emitTimeline(entry);
 
@@ -2349,7 +2439,7 @@ test("AgentTimelineBackend publishes native subagent facts without activity dupl
       nativeSubagentActivities.push(event.payload);
     },
   );
-  new AgentTimelineBackend().start();
+  currentRunScope().agentOrchestrator.timelineBackend.start();
 
   appServer.emitTimeline(entry);
 
@@ -2426,7 +2516,7 @@ test("AgentTimelineBackend publishes turn lifecycle separately from item activit
       turnActivities.push(event.payload);
     },
   );
-  new AgentTimelineBackend().start();
+  currentRunScope().agentOrchestrator.timelineBackend.start();
 
   appServer.emitTimeline(started);
   appServer.emitTimeline(completed);
@@ -2449,7 +2539,7 @@ test("AgentTimelineBackend logs only health failures from an unbound app-server 
     domain: createStaticDomain("domain-app-server-log-volume", []),
     logger,
   });
-  new AgentTimelineBackend().start();
+  currentRunScope().agentOrchestrator.timelineBackend.start();
 
   for (let seq = 1; seq <= 500; seq += 1) {
     appServer.emitTimeline({
@@ -2480,12 +2570,12 @@ test("Timeline and Dynamic Tool backends own independent subscription lifetimes"
     appServer,
     domain: createStaticDomain("domain-agent-backend-stop", []),
   });
-  const backend = new AgentTimelineBackend();
+  const backend = currentRunScope().agentOrchestrator.timelineBackend;
 
   backend.start();
   assert.equal(appServer.handler, undefined);
   assert.equal(appServer.timelineHandlerCount, 1);
-  const dynamicTool = new AgentDynamicToolBackend();
+  const dynamicTool = currentRunScope().agentOrchestrator.dynamicToolBackend;
   dynamicTool.start();
   assert.ok(appServer.handler);
 
@@ -2510,7 +2600,7 @@ test("Worker child threads cannot inherit domain tool access from their register
     ...testWorkflowParticipant,
     description: { id: ScoutDomainId.Rbt, name: "domain-child-tool" },
     backend: new class extends DomainAgentBackend {
-      override dynamicToolsForPhase() { return [buildDomainTool("domain-child-tool")]; }
+      readonly toolDefinitions = [buildDomainTool("domain-child-tool")];
 
       override async handleDynamicToolCall(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
         calls.push(call);
@@ -2521,7 +2611,10 @@ test("Worker child threads cannot inherit domain tool access from their register
       }
     }(),
   };
-  const fixture = await createAgentFixture("worker-child-domain-tool", { appServer, domain });
+  const fixture = await createAgentFixture("worker-child-domain-tool", {
+    appServer, domain,
+    phaseTools: { research: ["DomainProbe"] },
+  });
   const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
     fixture,
@@ -2530,7 +2623,7 @@ test("Worker child threads cannot inherit domain tool access from their register
     createAssetCommit(researcherMount),
   );
   const researcher = new AgentBuilder().buildWorker("researcher");
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   await researcher.startThread();
 
   assert.ok(appServer.handler);
@@ -2557,7 +2650,7 @@ test("AgentDynamicToolBackend passes the current Workflow Phase to a Domain tool
     ...testWorkflowParticipant,
     description: { id: ScoutDomainId.Rbt, name: "domain-phase-call" },
     backend: new class extends DomainAgentBackend {
-      override dynamicToolsForPhase() { return [buildDomainTool("domain-phase-call")]; }
+      readonly toolDefinitions = [buildDomainTool("domain-phase-call")];
 
       override async handleDynamicToolCall(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
         calls.push(call);
@@ -2568,7 +2661,10 @@ test("AgentDynamicToolBackend passes the current Workflow Phase to a Domain tool
       }
     }(),
   };
-  const fixture = await createAgentFixture("worker-domain-phase-call", { appServer, domain });
+  const fixture = await createAgentFixture("worker-domain-phase-call", {
+    appServer, domain,
+    phaseTools: { research: ["DomainProbe"] },
+  });
   const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
     fixture,
@@ -2577,7 +2673,7 @@ test("AgentDynamicToolBackend passes the current Workflow Phase to a Domain tool
     createAssetCommit(researcherMount),
   );
   const researcher = new AgentBuilder().buildWorker("researcher");
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   await researcher.startThread();
 
   assert.ok(appServer.handler);
@@ -2595,21 +2691,21 @@ test("AgentDynamicToolBackend passes the current Workflow Phase to a Domain tool
   assert.equal(calls[0]?.caller.phase, "research");
 });
 
-test("AgentDynamicToolBackend routes tools across every registered Scout Domain", async () => {
+test("AgentDynamicToolBackend routes tools across every installed Scout Domain", async (t) => {
   const calls: ScoutDomainDynamicToolCall[] = [];
   const appServer = createFakeAppServer();
-  const fixture = await createAgentFixture("worker-multiple-domain-tools", { appServer });
-  fixture.domainRegistry.get(ScoutDomainId.Base).backend.register("research", {
-    definition: buildDomainTool("secondary-domain"),
-    tool: {
-      async execute(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
-        calls.push(call);
-        return {
-          success: true,
-          contentItems: [{ type: "inputText", text: "secondary domain result" }],
-        };
-      }
-    },
+  const fixture = await createAgentFixture("worker-multiple-domain-tools", {
+    appServer,
+    phaseTools: { research: ["DomainProbe"] },
+  });
+  const domainBackend = fixture.domainRegistry.get(ScoutDomainId.Base).backend;
+  Object.defineProperty(domainBackend, "toolDefinitions", { value: [buildDomainTool("secondary-domain")] });
+  t.mock.method(domainBackend, "handleDynamicToolCall", async (call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> => {
+    calls.push(call);
+    return {
+      success: true,
+      contentItems: [{ type: "inputText", text: "secondary domain result" }],
+    };
   });
   const researcherMount = createMount(fixture.root, "researcher");
   prepareAgent(
@@ -2619,7 +2715,7 @@ test("AgentDynamicToolBackend routes tools across every registered Scout Domain"
     createAssetCommit(researcherMount),
   );
   const researcher = new AgentBuilder().buildWorker("researcher");
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   await researcher.startThread();
 
   assert.ok(researcher.spec.dynamicTools?.some((tool) =>
@@ -2640,33 +2736,35 @@ test("AgentDynamicToolBackend routes tools across every registered Scout Domain"
   assert.equal(calls[0]?.caller.phase, "research");
 });
 
-test("AgentDynamicToolBackend rejects duplicate Domain backend registrations before invoking either tool", async () => {
+test("AgentDynamicToolBackend rejects duplicate configured names across Domain definitions before invoking either tool", async () => {
   const appServer = createFakeAppServer();
   const calls: ScoutDomainDynamicToolCall[] = [];
   const fixture = await createAgentFixture("duplicate-domain-backends", {
     appServer,
+    phaseTools: { research: ["DomainProbe"] },
     domain: {
       ...testWorkflowParticipant,
       description: { id: ScoutDomainId.Rbt, name: "Duplicate tool Domain" },
       backend: new class extends DomainAgentBackend {
+        readonly toolDefinitions = [buildDomainTool("duplicate-domain-tool")];
         override async handleDynamicToolCall(call: ScoutDomainDynamicToolCall) { calls.push(call); return undefined; }
       }(),
     },
   });
   const definition = buildDomainTool("duplicate-domain-tool");
   assert.ok(definition.namespace);
-  for (const id of [ScoutDomainId.Base, ScoutDomainId.Rbt]) {
-    const backend = fixture.domainRegistry.get(id).backend;
-    backend.register("research", {
-      definition,
-      tool: { execute: async (call) => { calls.push(call); return { success: true, contentItems: [] }; } },
-    });
-  }
   const mount = createMount(fixture.root, "researcher");
   prepareAgent(fixture, "researcher", mount, createAssetCommit(mount));
   const researcher = new AgentBuilder().buildWorker("researcher");
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   await researcher.startThread();
+  Object.defineProperty(fixture.domainRegistry.get(ScoutDomainId.Base).backend, "toolDefinitions", {
+    value: [buildDomainTool("another-domain-tool")],
+  });
+  assert.throws(
+    () => currentRunScope().agentOrchestrator.dynamicToolBackend.dynamicToolsForPhase("research"),
+    /DomainProbe has multiple runtime definitions for Phase research/,
+  );
   assert.ok(appServer.handler);
   const response = await appServer.handler({
     threadId: researcher.threadId ?? "",
@@ -2677,7 +2775,7 @@ test("AgentDynamicToolBackend rejects duplicate Domain backend registrations bef
     arguments: {},
   });
   assert.equal(response.success, false);
-  assert.match(response.contentItems[0]?.text ?? "", /registered by multiple Scout Domains: base, rbt/);
+  assert.match(response.contentItems[0]?.text ?? "", /DomainProbe has multiple runtime definitions for Phase research/);
   assert.deepEqual(calls, []);
 });
 
@@ -2696,7 +2794,7 @@ test("Child threads cannot call Scout agent lifecycle tools", async () => {
     createAssetCommit(researcherMount),
   );
   const researcher = new AgentBuilder().buildWorker("researcher");
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   await researcher.startThread();
 
   assert.ok(appServer.handler);
@@ -2716,7 +2814,7 @@ test("Child threads cannot call Scout agent lifecycle tools", async () => {
 test("Unknown threads remain unauthorized for domain dynamic tools", async () => {
   const appServer = createFakeAppServer();
   const fixture = await createAgentFixture("unknown-domain-tool-caller", { appServer });
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
 
   assert.ok(appServer.handler);
   const result = await appServer.handler({
@@ -2738,7 +2836,7 @@ test("SendMessage reports an undelivered message when the target Worker has no T
   const fixture = await createAgentFixture("send-message-no-worker-runner", { appServer, domain });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
@@ -2776,7 +2874,7 @@ test("Worker SendMessage reaches Coordinator and Coordinator output reaches the 
   });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
@@ -2967,7 +3065,7 @@ for (const failOldRawInput of [false, true]) {
     await fixture.eventBus.publishAndWait(RunEvents.runtime.attached, {
       mode: "start", attachedAt: new Date().toISOString(), processId: process.pid,
     });
-    const backend = new AgentDynamicToolBackend();
+    const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
     backend.start();
     assert.ok(appServer.handler);
     handleTool = appServer.handler;
@@ -3096,7 +3194,7 @@ test(`Workflow ${outcome} consumes pending user input before deciding completion
   await fixture.eventBus.publishAndWait(RunEvents.runtime.attached, {
     mode: "start", attachedAt: new Date().toISOString(), processId: process.pid,
   });
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
   assert.ok(appServer.handler);
   handleTool = appServer.handler;
@@ -3465,7 +3563,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
   });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
@@ -3677,7 +3775,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
     },
   });
   assert.equal(coordinatorRequest.success, false);
-  assert.match(coordinatorRequest.contentItems[0]?.text ?? "", /only available to Worker agents/);
+  assert.match(coordinatorRequest.contentItems[0]?.text ?? "", /not configured for Phase Synthesis/);
 
   const workerResponse = await appServer.handler({
     threadId: verifier.threadId ?? "",
@@ -3691,7 +3789,7 @@ test("Human input tools deliver through Coordinator and update the bound task", 
     },
   });
   assert.equal(workerResponse.success, false);
-  assert.match(workerResponse.contentItems[0]?.text ?? "", /only available to the Coordinator agent/);
+  assert.match(workerResponse.contentItems[0]?.text ?? "", /not configured for Phase verify/);
   await coordinator.stopAgent("test_cleanup");
 });
 
@@ -3785,7 +3883,7 @@ test("RequestHumanInput yields its Worker turn before a fast human response star
   });
   const workerMount = createMount(fixture.root, "verifier");
   const workerCommit = createAssetCommit(workerMount);
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   prepareAgent(fixture, "verifier", workerMount, workerCommit);
   const builder = new AgentBuilder();
   coordinator = builder.buildCoordinator();
@@ -3845,7 +3943,7 @@ test("AssignTask replaces a finished TaskRunner while preserving its thread and 
   const fixture = await createAgentFixture("archive-task", { appServer, domain });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const coordinator = builder.buildCoordinator();
@@ -3899,7 +3997,7 @@ test("removed ArchiveTask cannot be invoked by any agent", async () => {
   const fixture = await createAgentFixture("archive-task-role", { appServer, domain });
   const verifierMount = createMount(fixture.root, "verifier");
   const verifierCommit = createAssetCommit(verifierMount);
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   prepareAgent(fixture, "verifier", verifierMount, verifierCommit);
   const builder = new AgentBuilder();
   const verifier = builder.buildWorker("verifier") as WorkerAgent;
@@ -3925,7 +4023,7 @@ test("SubmitTask rejects a Coordinator caller", async () => {
   const appServer = createFakeAppServer();
   const domain = createStaticDomain("domain-worker-lifecycle-tool-role", []);
   const fixture = await createAgentFixture("worker-lifecycle-tool-role", { appServer, domain });
-  new AgentDynamicToolBackend().start();
+  currentRunScope().agentOrchestrator.dynamicToolBackend.start();
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
 
@@ -3942,7 +4040,7 @@ test("SubmitTask rejects a Coordinator caller", async () => {
   });
 
   assert.equal(submitResult.success, false);
-  assert.match(submitResult.contentItems[0]?.text ?? "", /only available to Worker agents/);
+  assert.match(submitResult.contentItems[0]?.text ?? "", /not configured for Phase Synthesis/);
   await coordinator.stopAgent("test_cleanup");
 });
 
@@ -4002,7 +4100,7 @@ test("Coordinator opens each Workflow only after its requesting Turn and reuses 
     },
   });
   const fixture = await createAgentFixture("explicit-workflow-start", { appServer, withoutActiveWorkflow: true });
-  backend = new AgentDynamicToolBackend();
+  backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   const scope = currentRunScope();
   scope.domainRegistry.get(ScoutDomainId.Base)!.start!();
   const coordinatorAgent = new AgentBuilder().buildCoordinator();
@@ -4100,7 +4198,7 @@ test("Workflow start carries only a name; task prompt is produced and assigned i
   const worker = new AgentBuilder().buildWorker("researcher");
   assert.ok(worker instanceof WorkerAgent);
   await worker.startThread();
-  backend = new AgentDynamicToolBackend();
+  backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   try {
     await coordinator.sendMessage({ message: agent.turn.message("Start the confirmed verification.") });
     await coordinator.runToIdle();
@@ -4209,7 +4307,7 @@ for (const status of ["failed", "interrupted"] as const) {
       assert.equal(result.success, true);
     } });
     await createAgentFixture("failed-start-workflow-" + status, { appServer, withoutActiveWorkflow: true });
-    backend = new AgentDynamicToolBackend();
+    backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
     const coordinatorAgent = new AgentBuilder().buildCoordinator();
     await coordinatorAgent.startThread();
     try {
@@ -4248,7 +4346,7 @@ test("ResolveArtifactReference follows stable identity after rename without regi
   writeFileSync(workflowPaths(historicalRoot).identityPath, JSON.stringify({ workflowId: reference.workflowId }));
   writeFileSync(join(packPath, "journal-expected.md"), "unchanged evidence");
   const originalPath = realpathSync(packPath);
-  const backend = new AgentDynamicToolBackend();
+  const backend = currentRunScope().agentOrchestrator.dynamicToolBackend;
   backend.start();
   const coordinator = new AgentBuilder().buildCoordinator();
   await coordinator.startThread();
@@ -4278,6 +4376,7 @@ async function createAgentFixture(
   input: {
     appServer?: ReturnType<typeof createFakeAppServer>;
     domain?: ScoutDomain;
+    phaseTools?: Readonly<Record<string, readonly string[]>>;
     logger?: Logger;
     interactionPort?: RuntimeInteractionPort;
     runtimeGraph?: Graph;
@@ -4326,7 +4425,7 @@ async function createAgentFixture(
     storage.release();
     resume = { workflowData: { workflowId: prepared.workflowId, status: "active", checkpointSeq: 2 }, journalRoot: prepared.journalRoot };
   }
-  const workflow = new Workflow(createTestWorkflowAsset(runtimeGraph.snapshot()));
+  const workflow = new Workflow(createTestWorkflowAsset(runtimeGraph.snapshot(), input.phaseTools));
   const workflowRecovery = resume ? { graphData: runtimeGraph.snapshot(), ...resume } : undefined;
   if (releaseTestRunScope) {
     throw new Error("Test run scope was not released before creating another fixture.");
@@ -4399,6 +4498,11 @@ async function createAgentFixture(
   workflow.registerParticipant(domain);
   workflow.registerParticipant(orchestrator);
   orchestrator.start();
+  orchestrator.startBackends();
+  // Agent fixtures allocate the owner's entries; protocol-specific tests subscribe explicitly.
+  orchestrator.timelineBackend.stop();
+  orchestrator.dynamicToolBackend.stop();
+  orchestrator.requestBackend.stop();
   releaseTestRunScope = async () => {
     orchestrator.stop();
     workflow.unregisterParticipant(orchestrator);
@@ -4518,6 +4622,7 @@ function createMount(root: string, role: ScoutAgentRole): CodexMount {
       }[role] ?? "verify"],
       resourceParks: [],
       shellTools: [],
+      dynamicTools: [],
       mcpServers: [],
       plugins: [],
       readableRoots: [],
@@ -4566,18 +4671,18 @@ function createStaticDomain(domainId: string, tools: AgentDynamicToolSpec[]): Sc
     ...testWorkflowParticipant,
     description: { id: ScoutDomainId.Rbt, name: domainId },
     backend: new class extends DomainAgentBackend {
-      override dynamicToolsForPhase() { return tools; }
+      readonly toolDefinitions = tools;
 
       override async handleDynamicToolCall() { return undefined; }
     }(),
   };
 }
 
-function buildDomainTool(namespace: string): AgentDynamicToolSpec {
+function buildDomainTool(namespace: string, name = "DomainProbe"): AgentDynamicToolSpec {
   return {
     guidanceSkill: "tool-domain-probe",
     namespace,
-    name: "DomainProbe",
+    name,
     description: "domain probe",
     inputSchema: {
       type: "object",
@@ -4802,6 +4907,7 @@ function createFakeAppServer(options: {
         if (index >= 0) timelineHandlers.splice(index, 1);
       };
     },
+    onServerRequest(): () => void { return () => undefined; },
     emitTimeline(entry: AppServerTimelineEntry): void {
       for (const handler of timelineHandlers) {
         handler(entry);

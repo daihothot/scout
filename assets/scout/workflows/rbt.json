@@ -41,7 +41,8 @@
       "mcpServers": [],
       "plugins": [],
       "readableRoots": [],
-      "writableRoots": []
+      "writableRoots": [],
+      "dynamicTools": []
     },
     "knowledge-access": {
       "phases": [
@@ -57,7 +58,15 @@
       "readableRoots": [
         "~/.guru/knowledge"
       ],
-      "writableRoots": []
+      "writableRoots": [],
+      "dynamicTools": [
+        "StartWorkflow",
+        "ResolveArtifactReference",
+        "AssignTask",
+        "SendMessage",
+        "RespondHumanInput",
+        "SubmitPhaseOutcome"
+      ]
     },
     "rbt-execution": {
       "phases": [
@@ -89,7 +98,14 @@
         "~/.codegraph",
         "~/.guru/jarvis/runtime"
       ],
-      "network": true
+      "network": true,
+      "dynamicTools": [
+        "ResolveArtifactReference",
+        "SendMessage",
+        "RequestHumanInput",
+        "SubmitTask",
+        "JarvisBehavior"
+      ]
     },
     "rbt-review": {
       "phases": [
@@ -116,7 +132,15 @@
       "writableRoots": [
         "~/.guru/jarvis/runtime"
       ],
-      "network": true
+      "network": true,
+      "dynamicTools": [
+        "ResolveArtifactReference",
+        "SendMessage",
+        "RequestHumanInput",
+        "SubmitTask",
+        "JarvisBehavior",
+        "ExecutionPlatform"
+      ]
     }
   },
   "roles": {

@@ -677,6 +677,7 @@ function testMount(input: {
       phases: ["Synthesis"],
       resourceParks: [],
       shellTools: [],
+      dynamicTools: [],
       mcpServers: [],
       plugins: input.plugins ?? [],
       readableRoots: input.readableRoots,

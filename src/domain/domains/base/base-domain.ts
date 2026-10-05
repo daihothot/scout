@@ -5,12 +5,8 @@ import {
   type ScoutDomain,
   type ScoutDomainDescription,
 } from "../../types.js";
-import type { DomainAgentToolRegistration } from "../../agent/index.js";
 import { BaseDomainAgentBackend } from "./agent/index.js";
-import {
-  ExecutionPlatformTool,
-  executionPlatformAgentTool,
-} from "./agent/tools/index.js";
+import { ExecutionPlatformTool } from "./agent/tools/index.js";
 import { BaseDomainRecordObject } from "./record/base-domain-record-object.js";
 import { BaseDomainProjector, type BaseDomainRuntimeFact } from "./projector/base-domain-projector.js";
 import { BaseDomainToolCallStore } from "./base-domain-tool-call-store.js";
@@ -26,9 +22,6 @@ export class BaseDomain implements ScoutDomain {
   readonly toolCallStore = new BaseDomainToolCallStore();
   readonly execution: BaseDomainExecution;
   readonly backend: BaseDomainAgentBackend;
-  readonly agentTools: Readonly<{
-    executionPlatform: DomainAgentToolRegistration;
-  }>;
   private restoredFact: BaseDomainRuntimeFact = {
     domainId: "base",
     journalSeq: 0,
@@ -39,13 +32,7 @@ export class BaseDomain implements ScoutDomain {
   constructor() {
     const scope = currentRunScope();
     this.execution = new BaseDomainExecution(scope.eventBus, scope.executionSystem);
-    this.backend = new BaseDomainAgentBackend(this.toolCallStore);
-    this.agentTools = Object.freeze({
-      executionPlatform: Object.freeze({
-        definition: executionPlatformAgentTool,
-        tool: new ExecutionPlatformTool(this.execution),
-      }),
-    });
+    this.backend = new BaseDomainAgentBackend(this.toolCallStore, new ExecutionPlatformTool(this.execution));
   }
 
   get runtimeFact(): BaseDomainRuntimeFact {

@@ -6,6 +6,7 @@ export interface WorkflowResourcePark {
   readonly default?: true;
   readonly phases: readonly string[];
   readonly shellTools: readonly string[];
+  readonly dynamicTools: readonly string[];
   readonly mcpServers: readonly string[];
   readonly plugins: readonly string[];
   readonly readableRoots: readonly string[];

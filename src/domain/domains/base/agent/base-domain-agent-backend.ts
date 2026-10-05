@@ -1,5 +1,7 @@
 import type { DynamicToolCallResponse } from "../../../../agent-server/types.js";
-import { DomainAgentBackend } from "../../../agent/index.js";
+import type { AgentDynamicToolSpec } from "../../../../agent/tools/types.js";
+import { DomainAgentBackend, type DomainAgentTool } from "../../../agent/index.js";
+import { executionPlatformAgentTool } from "./tools/agent-tools.js";
 import type { ScoutDomainDynamicToolCall } from "../../../types.js";
 import { BaseDomainEvents } from "../base-domain-events.js";
 import type { BaseDomainToolCallStore } from "../base-domain-tool-call-store.js";
@@ -7,26 +9,24 @@ import { currentRunScope } from "../../../../run/run-scope.js";
 
 /** Executes and records Agent calls owned by the shared Base Domain. */
 export class BaseDomainAgentBackend extends DomainAgentBackend {
-  constructor(private readonly toolCallStore: BaseDomainToolCallStore) {
+  readonly toolDefinitions: readonly AgentDynamicToolSpec[] = [executionPlatformAgentTool];
+
+  constructor(
+    private readonly toolCallStore: BaseDomainToolCallStore,
+    private readonly executionPlatformTool: DomainAgentTool,
+  ) {
     super();
   }
 
   override async handleDynamicToolCall(
     call: ScoutDomainDynamicToolCall,
   ): Promise<DynamicToolCallResponse | undefined> {
-    const identity = this.toolIdentity(call.input.namespace, call.input.tool);
-    const registered = this.toolsByPhase.get(call.caller.phase)?.get(identity);
-    if (!registered) {
-      const known = [...this.toolsByPhase.values()].some((phaseTools) => phaseTools.has(identity));
-      if (!known) return undefined;
-      return failure(
-        `${call.input.tool} is not registered for Phase ${call.caller.phase}.`,
-      );
-    }
+    if (call.input.tool !== executionPlatformAgentTool.name
+      || call.input.namespace !== executionPlatformAgentTool.namespace) return undefined;
     const startedAt = new Date().toISOString();
     let response: DynamicToolCallResponse;
     try {
-      response = await registered.tool.execute(call);
+      response = await this.executionPlatformTool.execute(call);
     } catch (error) {
       response = failure(error instanceof Error ? error.stack ?? error.message : String(error));
     }

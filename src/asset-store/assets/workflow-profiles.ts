@@ -163,6 +163,7 @@ function parseResourcePark(
     "default",
     "phases",
     "shellTools",
+    "dynamicTools",
     "mcpServers",
     "plugins",
     "readableRoots",
@@ -187,6 +188,7 @@ function parseResourcePark(
     }
   }
   const shellTools = requireStringArray(resource.shellTools, path, `${label}.shellTools`);
+  const dynamicTools = requireStringArray(resource.dynamicTools, path, `${label}.dynamicTools`);
   const mcpServers = requireStringArray(resource.mcpServers, path, `${label}.mcpServers`);
   const plugins = requireStringArray(resource.plugins, path, `${label}.plugins`);
   for (const resourceName of [...shellTools, ...mcpServers, ...plugins]) {
@@ -196,6 +198,7 @@ function parseResourcePark(
     ...(resource.default === true ? { default: true as const } : {}),
     phases,
     shellTools,
+    dynamicTools,
     mcpServers,
     plugins,
     readableRoots: requireStringArray(resource.readableRoots, path, `${label}.readableRoots`),

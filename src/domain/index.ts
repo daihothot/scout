@@ -64,9 +64,7 @@ export async function createDomainRuntime(domainId: ScoutDomainId): Promise<Scou
   const backend = candidate.backend;
   if (
     !(backend instanceof DomainAgentBackend)
-    || typeof backend.register !== "function"
-    || typeof backend.unregister !== "function"
-    || typeof backend.dynamicToolsForPhase !== "function"
+    || !Array.isArray(backend.toolDefinitions)
     || typeof backend.handleDynamicToolCall !== "function"
   ) {
     throw new Error(`Workflow domain ${domainId} returned an invalid Domain backend.`);

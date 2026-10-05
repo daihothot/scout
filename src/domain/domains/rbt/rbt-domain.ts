@@ -1,5 +1,4 @@
 import { parseArtifactReference } from "../../../core/io/index.js";
-import type { ScoutAgentPhase } from "../../../agent/thread/types.js";
 import { AgentEvents } from "../../../agent/events/index.js";
 import { attachments } from "../../../agent/context/attachments.js";
 import { CoordinatorContextTags } from "../../../agent/runner/coordinator/coordinator-attachments.js";
@@ -14,10 +13,8 @@ import {
   type ScoutDomain,
   type ScoutDomainDescription,
 } from "../../types.js";
-import type { DomainAgentToolRegistration } from "../../agent/index.js";
 import { BaseDomain } from "../base/index.js";
 import {
-  jarvisBehaviorAgentTool,
   RbtDomainAgentBackend,
   RbtAgentToolCallRecorder,
   JarvisBehaviorTool,
@@ -68,14 +65,6 @@ export class RbtDomain implements ScoutDomain {
   private started = false;
   private cleanupFailed = false;
   private stopping?: Promise<void>;
-  private readonly registeredAgentTools: Array<{
-    phase: ScoutAgentPhase;
-    registration: DomainAgentToolRegistration;
-  }> = [];
-  private readonly agentTools: Readonly<{
-    executeBehavior: DomainAgentToolRegistration;
-    reviewBehavior: DomainAgentToolRegistration;
-  }>;
   readonly backend: RbtDomainAgentBackend;
 
   constructor(options: RbtDomainRuntimeOptions = {}) {
@@ -105,17 +94,9 @@ export class RbtDomain implements ScoutDomain {
       new JarvisBehaviorExecuteFileRunner(this.behaviorStore),
       this.behaviorStore,
     );
-    this.backend = new RbtDomainAgentBackend();
-    this.agentTools = Object.freeze({
-      executeBehavior: Object.freeze({
-        definition: jarvisBehaviorAgentTool,
-        tool: new JarvisBehaviorTool("execute", this.behaviorOrchestrator),
-      }),
-      reviewBehavior: Object.freeze({
-        definition: jarvisBehaviorAgentTool,
-        tool: new JarvisBehaviorTool("review", this.behaviorOrchestrator),
-      }),
-    });
+    this.backend = new RbtDomainAgentBackend(
+      new JarvisBehaviorTool(this.behaviorOrchestrator),
+    );
   }
 
   get config(): RbtConfig {
@@ -127,7 +108,7 @@ export class RbtDomain implements ScoutDomain {
 
   async start(): Promise<void> {
     if (this.started) return;
-    if (this.stopping || this.cleanupFailed || this.registeredAgentTools.length > 0 || this.baseDomain) {
+    if (this.stopping || this.cleanupFailed || this.baseDomain) {
       throw new Error("Cannot start RBT Domain before its previous cleanup completes.");
     }
     const scope = currentRunScope();
@@ -136,22 +117,11 @@ export class RbtDomain implements ScoutDomain {
       this.recordObject.start();
       this.benchmarks.start();
       this.artifact.start();
-      this.backend.register("execute", this.agentTools.executeBehavior);
-      this.registeredAgentTools.push({
-        phase: "execute",
-        registration: this.agentTools.executeBehavior,
-      });
-      this.backend.register("review", this.agentTools.reviewBehavior);
-      this.registeredAgentTools.push({
-        phase: "review",
-        registration: this.agentTools.reviewBehavior,
-      });
       const baseDomain = scope.domainRegistry.get(ScoutDomainId.Base);
       if (!(baseDomain instanceof BaseDomain)) {
         throw new Error("Registered Base Domain has an invalid runtime type.");
       }
       baseDomain.execution.configure(this.executionRequest());
-      baseDomain.backend.register("review", baseDomain.agentTools.executionPlatform);
       this.baseDomain = baseDomain;
       this.unsubscribeHistoryReady = scope.eventBus.subscribe<RbtExecutionHistoryReadyEvent>(
         RbtEvents.history.ready,
@@ -273,13 +243,8 @@ export class RbtDomain implements ScoutDomain {
         },
         () => {
           if (!this.baseDomain) return;
-          this.baseDomain.backend.unregister("review", this.baseDomain.agentTools.executionPlatform);
           this.baseDomain = undefined;
         },
-        ...[...this.registeredAgentTools].reverse().map((registered) => () => {
-          this.backend.unregister(registered.phase, registered.registration);
-          this.registeredAgentTools.splice(this.registeredAgentTools.indexOf(registered), 1);
-        }),
         () => this.campaignHistoryStore.stop(),
         () => this.toolCallRecorder.stop(),
         () => this.behaviorStore.clear(),

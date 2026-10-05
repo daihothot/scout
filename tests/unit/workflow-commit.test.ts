@@ -351,7 +351,8 @@ async function fixture(t: TestContext) {
     domain: {
       ...testWorkflowParticipant,
       description: { id: ScoutDomainId.Rbt, name: "Transition test Domain" },
-      backend: new class extends DomainAgentBackend {
+    backend: new class extends DomainAgentBackend {
+      readonly toolDefinitions = [];
         override async handleDynamicToolCall() { return undefined; }
       }(),
       stop() { for (const stop of subscriptions) stop(); },

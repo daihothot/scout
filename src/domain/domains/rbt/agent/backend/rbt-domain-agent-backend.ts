@@ -1,27 +1,32 @@
 import type { DynamicToolCallResponse } from "../../../../../agent-server/types.js";
+import type { AgentDynamicToolSpec } from "../../../../../agent/tools/types.js";
 import { currentRunScope } from "../../../../../run/run-scope.js";
-import { DomainAgentBackend } from "../../../../agent/index.js";
+import { DomainAgentBackend, type DomainAgentTool } from "../../../../agent/index.js";
+import { jarvisBehaviorAgentTool } from "../tools/agent-tools.js";
 import { DomainEvents } from "../../../../domain-events.js";
 import { ScoutDomainId, type ScoutDomainDynamicToolCall } from "../../../../types.js";
 
 /** Executes RBT Agent tools and publishes their completed call observations. */
 export class RbtDomainAgentBackend extends DomainAgentBackend {
+  readonly toolDefinitions: readonly AgentDynamicToolSpec[] = [jarvisBehaviorAgentTool];
+
+  constructor(
+    private readonly behaviorTool: DomainAgentTool,
+  ) {
+    super();
+  }
+
   override async handleDynamicToolCall(
     call: ScoutDomainDynamicToolCall,
-  ): Promise<DynamicToolCallResponse> {
+  ): Promise<DynamicToolCallResponse | undefined> {
+    const definition = this.toolDefinitions.find((tool) =>
+      tool.name === call.input.tool && (tool.namespace ?? null) === call.input.namespace
+    );
+    if (!definition) return undefined;
     const startedAt = new Date().toISOString();
     let response: DynamicToolCallResponse;
     try {
-      const registered = this.toolsByPhase.get(call.caller.phase)?.get(
-        this.toolIdentity(call.input.namespace, call.input.tool),
-      );
-      if (!registered) {
-        response = failedResponse(
-          `RBT dynamic tool ${call.input.namespace ?? "<none>"}/${call.input.tool} is not registered for Phase ${call.caller.phase}.`,
-        );
-      } else {
-        response = await registered.tool.execute(call);
-      }
+      response = await this.behaviorTool.execute(call);
     } catch (error) {
       response = failedResponse(error instanceof Error ? error.stack ?? error.message : String(error));
     }

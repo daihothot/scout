@@ -245,6 +245,33 @@ test("AssetStore rejects an incomplete per-agent model override", () => {
   }), /roles\.coordinator\.model\.reasoningEffort/);
 });
 
+test("Dynamic Tool allocation participates in persisted Agent resource identity", (t) => {
+  const fixtureRoot = createCodexAssetFixture("scout-dynamic-tool-resource-identity-");
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  const store = new AssetStore();
+  const runId = "run-dynamic-tool-resource-identity";
+  const initial = store.materializeMount({ scoutRoot: fixtureRoot, runId, agentId: "coordinator" });
+  const persistedManifest = JSON.parse(readFileSync(initial.manifestPath, "utf8")) as MountManifest;
+  assert.deepEqual(persistedManifest.agentProfile.dynamicTools, initial.agentProfile.dynamicTools);
+  const remainingTools = initial.agentProfile.dynamicTools.filter((name) => name !== "SendMessage");
+  assert.notEqual(remainingTools.length, initial.agentProfile.dynamicTools.length);
+  updateAgentProfile(fixtureRoot, "coordinator", { dynamicTools: remainingTools });
+  const options = {
+    scoutRoot: fixtureRoot, runId, agentId: "coordinator", cleanRunRoot: false,
+    persistedManifest,
+    persistedIdentity: {
+      assetCommitId: initial.assetCommitId, parentAssetCommitId: initial.parentAssetCommitId,
+      mountId: initial.mountId, resourceHash: initial.resourceHash,
+    },
+  };
+  assert.throws(() => store.inspectMount(options), /Persisted asset changed/);
+  assert.throws(() => store.inspectMount({ ...options, allowAssetResourceDrift: true }), /Persisted asset changed/);
+  const changed = store.materializeMount({ scoutRoot: fixtureRoot, runId: "run-changed-tool-allocation", agentId: "coordinator" });
+  assert.notEqual(changed.resourceHash, initial.resourceHash);
+  assert.notEqual(changed.mountId, initial.mountId);
+  assert.deepEqual(changed.agentProfile.dynamicTools, remainingTools);
+});
+
 test("AssetStore exposes effective permission roots", () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), "scout-asset-store-permissions-"));
   mkdirSync(join(fixtureRoot, "assets"), { recursive: true });
@@ -573,8 +600,11 @@ function updateAgentProfile(
   const defaultResource = resourceEntries.find(([, resource]) => resource.default === true);
   if (!defaultResource) throw new Error("Missing default Resource Park.");
   for (const phase of phases) {
-    const matches = resourceEntries.filter(([, resource]) => resource.phases.includes(phase));
-    for (const [name] of matches.length > 0 ? matches : [defaultResource]) {
+    const matches = resourceEntries.filter(([, resource]) =>
+      resource.phases.includes(phase)
+      || (resource === defaultResource[1] && resource.phases.length === 0)
+    );
+    for (const [name] of matches) {
       selectedResourceNames.add(name);
     }
   }
@@ -583,6 +613,7 @@ function updateAgentProfile(
     .map(([, resource]) => resource);
   for (const resource of resources) {
     if (Object.hasOwn(patch, "shellTools")) resource.shellTools = [...(patch.shellTools ?? [])];
+    if (patch.dynamicTools !== undefined) resource.dynamicTools = [...patch.dynamicTools];
     if (patch.mcpServers !== undefined) resource.mcpServers = [...patch.mcpServers];
     if (patch.plugins !== undefined) resource.plugins = [...patch.plugins];
     if (patch.readableRoots !== undefined) resource.readableRoots = [...patch.readableRoots];

@@ -24,7 +24,7 @@ test("Base stop closes its journal even when execution cleanup and logging fail"
   base.stop();
 });
 
-test("RBT stop closes its journal and unregisters tools despite WebSocket failure, then retries remaining cleanup", async (t) => {
+test("RBT stop closes its journal despite WebSocket failure, then retries remaining cleanup", async (t) => {
   const websocket = new JarvisWebSocketTool();
   const failure = new Error("websocket cleanup failed");
   let attempts = 0;
@@ -34,30 +34,29 @@ test("RBT stop closes its journal and unregisters tools despite WebSocket failur
   await domain.start();
   await assert.rejects(domain.stop(), (error) => error instanceof AggregateError && error.errors.includes(failure));
   assert.equal(existsSync(join(scope.workflow.journalRoot, ".rbt-events.lock")), false);
-  assert.deepEqual(domain.backend.dynamicToolsForPhase("execute"), []);
-  assert.deepEqual(scope.domainRegistry.get(ScoutDomainId.Base).backend.dynamicToolsForPhase("review"), []);
   await assert.rejects(domain.start(), /previous cleanup completes/);
   await domain.stop();
   assert.equal(attempts, 2);
 });
 
-test("RBT startup preserves the primary error while closing journals after failed tool unregistration", async (t) => {
-  const domain = new RbtDomain();
+test("RBT startup preserves the primary error while closing journals after failed WebSocket cleanup", async (t) => {
+  const websocket = new JarvisWebSocketTool();
+  const domain = new RbtDomain({ websocket });
   const scope = await installTestRunScope(t, { runId: "rbt-start-cleanup-failure", scoutRoot: process.cwd(), domain });
-  const primary = new Error("base tool registration failed");
-  const cleanup = new Error("rbt tool unregistration failed");
+  const primary = new Error("base execution configuration failed");
+  const cleanup = new Error("WebSocket cleanup failed");
   const base = scope.domainRegistry.get(ScoutDomainId.Base);
-  const register = t.mock.method(base.backend, "register", () => { throw primary; });
-  const unregister = t.mock.method(domain.backend, "unregister", () => { throw cleanup; });
+  assert.ok(base instanceof BaseDomain);
+  const configure = t.mock.method(base.execution, "configure", () => { throw primary; });
+  const stopWebSocket = t.mock.method(websocket, "stop", async () => { throw cleanup; });
   await assert.rejects(domain.start(), (error) => error instanceof AggregateError
     && error.errors[0] === primary
     && error.errors[1] instanceof AggregateError
     && error.errors[1].errors.includes(cleanup));
   assert.equal(existsSync(join(scope.workflow.journalRoot, ".rbt-events.lock")), false);
-  register.mock.restore();
-  unregister.mock.restore();
+  configure.mock.restore();
+  stopWebSocket.mock.restore();
   await domain.stop();
-  assert.deepEqual(domain.backend.dynamicToolsForPhase("execute"), []);
 });
 
 test("WebSocket shutdown retains failed sessions and platform links while releasing independent resources", async (t) => {

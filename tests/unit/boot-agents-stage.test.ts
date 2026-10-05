@@ -235,6 +235,7 @@ function createStaticDomain(): ScoutDomain {
     ...testWorkflowParticipant,
     description: { id: ScoutDomainId.Rbt, name: "Test Domain" },
     backend: new class extends DomainAgentBackend {
+      readonly toolDefinitions = [];
       override async handleDynamicToolCall() { return undefined; }
     }(),
   };

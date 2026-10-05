@@ -5,7 +5,18 @@ import type {
 } from "../../../agent-server/types.js";
 import type { ScoutAgent } from "../../core/scout-agent.js";
 import { CoordinatorAgent } from "../../roles/coordinator-agent.js";
+import { WorkflowBuilder } from "../../../asset-store/builders/workflow-builder.js";
+import type { ScoutAgentPhase } from "../../thread/types.js";
+import type { AgentDynamicToolSpec } from "../../tools/types.js";
 import {
+  buildStartWorkflowDynamicTool,
+  buildResolveArtifactReferenceDynamicTool,
+  buildAssignTaskDynamicTool,
+  buildSendMessageDynamicTool,
+  buildRespondHumanInputDynamicTool,
+  buildSubmitPhaseOutcomeDynamicTool,
+  buildRequestHumanInputDynamicTool,
+  buildSubmitTaskDynamicTool,
   type AssignTaskToolCall,
   AGENT_TOOL_NAMESPACES,
   assertAgentToolNamespace,
@@ -39,6 +50,8 @@ type AssignTaskToolResponse =
  * backends while routing other namespaces to the domain.
  */
 export class AgentDynamicToolBackend {
+  private readonly agentTools: readonly AgentDynamicToolSpec[];
+  private readonly workflowBuilder: WorkflowBuilder;
   private readonly registry: RunScope["agentRegistry"];
   private readonly domains: RunScope["domainRegistry"];
   private readonly taskStore: RunScope["agentOrchestrator"]["taskStore"];
@@ -59,6 +72,36 @@ export class AgentDynamicToolBackend {
     this.taskStore = scope.agentOrchestrator.taskStore;
     const humanInputBackend = new AgentHumanInputBackend();
     this.taskBackend = new AgentTaskBackend({ humanInputBackend });
+    this.workflowBuilder = new WorkflowBuilder(scope.workflow.profileAsset);
+    this.agentTools = [
+      buildStartWorkflowDynamicTool(),
+      buildResolveArtifactReferenceDynamicTool(),
+      buildAssignTaskDynamicTool(),
+      buildSendMessageDynamicTool(),
+      buildRespondHumanInputDynamicTool(),
+      buildSubmitPhaseOutcomeDynamicTool(),
+      buildRequestHumanInputDynamicTool(),
+      buildSubmitTaskDynamicTool(),
+    ];
+  }
+
+  dynamicToolsForPhase(phase: ScoutAgentPhase): AgentDynamicToolSpec[] {
+    const names = this.workflowBuilder.dynamicToolNamesForPhase(phase);
+    if (names.length === 0) return [];
+    const available = [
+      ...this.agentTools,
+      ...this.domains.list().flatMap((domain) => domain.backend.toolDefinitions),
+    ];
+    return names.map((name) => {
+      const matches = available.filter((tool) => tool.name === name);
+      if (matches.length === 0) {
+        throw new Error(`Workflow resources reference unavailable Dynamic Tool ${name} for Phase ${phase}.`);
+      }
+      if (matches.length > 1) {
+        throw new Error(`Dynamic Tool ${name} has multiple runtime definitions for Phase ${phase}.`);
+      }
+      return structuredClone(matches[0]!);
+    });
   }
 
   start(): void {
@@ -87,6 +130,11 @@ export class AgentDynamicToolBackend {
     try {
       assertAgentToolNamespace(input.namespace, input.tool);
       const call = parseAgentDynamicToolCall(input.tool, input.arguments);
+      if (!caller.phases.some((phase) => this.dynamicToolsForPhase(phase).some((tool) =>
+        tool.namespace === input.namespace && tool.name === input.tool
+      ))) {
+        throw new Error(`Agent tool ${input.tool} is not configured for Phase ${caller.phases.join(", ")}.`);
+      }
       const result = await this.dispatchAgentDynamicToolCall(call, caller, input);
       return dynamicToolSuccess(result);
     } catch (error) {
@@ -119,8 +167,13 @@ export class AgentDynamicToolBackend {
           `Role ${caller.role} is not assigned to the current Workflow Phase ${phase}.`,
         );
       }
+      if (!this.dynamicToolsForPhase(phase).some((tool) =>
+        (tool.namespace ?? null) === input.namespace && tool.name === input.tool
+      )) {
+        return dynamicToolFailure(`Dynamic Tool ${input.namespace ?? "<none>"}/${input.tool} is not configured for Phase ${phase}.`);
+      }
       const owners = this.domains.list().filter((domain) =>
-        domain.backend.dynamicToolsForPhase(phase).some((tool) =>
+        domain.backend.toolDefinitions.some((tool) =>
           (tool.namespace ?? null) === input.namespace && tool.name === input.tool
         )
       );
@@ -132,7 +185,7 @@ export class AgentDynamicToolBackend {
       if (owners.length > 1) {
         throw new Error(
           `Dynamic tool ${input.namespace ?? "<none>"}/${input.tool}`
-          + ` is registered by multiple Scout Domains: ${owners.map((domain) =>
+          + ` is provided by multiple Scout Domains: ${owners.map((domain) =>
             domain.description.id
           ).join(", ")}.`,
         );

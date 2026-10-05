@@ -291,7 +291,7 @@ async function createFixture(t: TestContext) {
     issues: [], readableRoots: [], writableRoots: [], shellTools: [], mcpServers: [], customAgents: [], skills: [], plugins: [],
     agentProfile: {
       config: "test", multiAgent: false, maxThreads: 1, maxDepth: 1, customAgents: [], phases: ["execute"],
-      resourceParks: [], shellTools: [], mcpServers: [], plugins: [], readableRoots: [], writableRoots: [],
+      resourceParks: [], shellTools: [], dynamicTools: [], mcpServers: [], plugins: [], readableRoots: [], writableRoots: [],
       model: { id: "test", provider: "test", reasoningEffort: "low", reasoningSummary: "none" },
     },
   };

@@ -16,6 +16,7 @@ export interface AgentProfile {
   phases: ScoutAgentPhase[];
   resourceParks: string[];
   shellTools: string[];
+  dynamicTools: string[];
   mcpServers: string[];
   plugins: string[];
   readableRoots: string[];

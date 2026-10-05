@@ -4,8 +4,8 @@ import test, { type TestContext } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 import { AgentDynamicToolBackend } from "../../src/agent/backend/dynamic-tool/agent-dynamic-tool-backend.js";
+import { AgentOrchestrator } from "../../src/agent/orchestration/agent-orchestrator.js";
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
 import {
@@ -17,8 +17,7 @@ import { AssetStore } from "../../src/asset-store/index.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import { Logger } from "../../src/core/logging/index.js";
 import { Workflow } from "../../src/core/workflow/index.js";
-import { BaseDomainAgentBackend, BaseDomainToolCallStore, ScoutDomainId } from "../../src/domain/index.js";
-import { RbtDomainAgentBackend } from "../../src/domain/domains/rbt/index.js";
+import { DomainAgentBackend, ScoutDomainId, type ScoutDomainDynamicToolCall } from "../../src/domain/index.js";
 import { NoopRuntimeInteractionPort } from "../../src/interaction/index.js";
 import { RunManifestStore } from "../../src/run/persistence/index.js";
 import { installRunScope, RunScope } from "../../src/run/run-scope.js";
@@ -52,16 +51,14 @@ test("StartWorkflow exposes only the formal tool, namespace and guidance Skill c
 
 test("Dynamic tool routing invokes an omitted-namespace definition for a null protocol namespace", async (t) => {
   const scope = await installNamespaceScope(t);
-  const store = new BaseDomainToolCallStore();
-  const backend = new BaseDomainAgentBackend(store);
   const calls: Array<string | null> = [];
-  backend.register("research", {
-    definition: unnamespacedTool,
-    tool: { execute: (call) => {
+  const backend = new class extends DomainAgentBackend {
+    readonly toolDefinitions = [unnamespacedTool];
+    override async handleDynamicToolCall(call: ScoutDomainDynamicToolCall) {
       calls.push(call.input.namespace);
-      return { success: true, contentItems: [{ type: "inputText", text: "executed" }] };
-    } },
-  });
+      return { success: true, contentItems: [{ type: "inputText" as const, text: "executed" }] };
+    }
+  }();
   scope.domainRegistry.register({
     ...testWorkflowParticipant, description: { id: ScoutDomainId.Base, name: "Base" }, backend });
 
@@ -72,21 +69,18 @@ test("Dynamic tool routing invokes an omitted-namespace definition for a null pr
     });
   assert.equal(response.success, true);
   assert.deepEqual(calls, [null]);
-  assert.deepEqual(store.list().map((call) => call.callId), ["call-1"]);
 });
 
 test("Dynamic tool routing does not match a named namespace to an omitted-namespace definition", async (t) => {
   const scope = await installNamespaceScope(t);
-  const store = new BaseDomainToolCallStore();
-  const backend = new BaseDomainAgentBackend(store);
   let invocationCount = 0;
-  backend.register("research", {
-    definition: unnamespacedTool,
-    tool: { execute: () => {
+  const backend = new class extends DomainAgentBackend {
+    readonly toolDefinitions = [unnamespacedTool];
+    override async handleDynamicToolCall() {
       invocationCount += 1;
       return { success: true, contentItems: [] };
-    } },
-  });
+    }
+  }();
   scope.domainRegistry.register({
     ...testWorkflowParticipant, description: { id: ScoutDomainId.Base, name: "Base" }, backend });
 
@@ -96,26 +90,21 @@ test("Dynamic tool routing does not match a named namespace to an omitted-namesp
       namespace: "other_namespace", tool: "Probe", arguments: {},
     });
   assert.equal(response.success, false);
-  assert.match(response.contentItems[0]?.text ?? "", /Unsupported dynamic tool namespace: other_namespace/);
+  assert.match(response.contentItems[0]?.text ?? "", /other_namespace\/Probe is not configured for Phase research/);
   assert.equal(invocationCount, 0);
-  assert.deepEqual(store.list(), []);
 });
 
 test("Dynamic tool routing rejects null-namespace collisions across Domains before executing either tool", async (t) => {
   const scope = await installNamespaceScope(t);
   const calls: ScoutDomainId[] = [];
-  const backends = [
-    { id: ScoutDomainId.Base, backend: new BaseDomainAgentBackend(new BaseDomainToolCallStore()) },
-    { id: ScoutDomainId.Rbt, backend: new RbtDomainAgentBackend() },
-  ];
-  for (const { id, backend } of backends) {
-    backend.register("research", {
-      definition: unnamespacedTool,
-      tool: { execute: () => {
+  for (const id of [ScoutDomainId.Base, ScoutDomainId.Rbt]) {
+    const backend = new class extends DomainAgentBackend {
+      readonly toolDefinitions = [unnamespacedTool];
+      override async handleDynamicToolCall() {
         calls.push(id);
         return { success: true, contentItems: [] };
-      } },
-    });
+      }
+    }();
     scope.domainRegistry.register({
     ...testWorkflowParticipant, description: { id, name: id }, backend });
   }
@@ -126,7 +115,7 @@ test("Dynamic tool routing rejects null-namespace collisions across Domains befo
       namespace: null, tool: "Probe", arguments: {},
     });
   assert.equal(response.success, false);
-  assert.match(response.contentItems[0]?.text ?? "", /registered by multiple Scout Domains: base, rbt/);
+  assert.match(response.contentItems[0]?.text ?? "", /Probe has multiple runtime definitions for Phase research/);
   assert.deepEqual(calls, []);
 });
 
@@ -139,7 +128,9 @@ async function installNamespaceScope(t: TestContext): Promise<RunScope> {
     scoutRoot: root,
     runRoot,
     config: new AssetStore().config(root),
-    workflow: new Workflow(createTestWorkflowAsset(createDefaultTestGraph().snapshot())),
+    workflow: new Workflow(createTestWorkflowAsset(createDefaultTestGraph().snapshot(), {
+      research: ["Probe"],
+    })),
     manifestStore: new RunManifestStore(runRoot),
     logger: new Logger({ runId, logsRoot: join(runRoot, "logs") }),
     eventBus: new InMemoryEventBus(),

@@ -3,10 +3,7 @@ import type { DynamicToolCallResponse } from "../../../../../../agent-server/typ
 import type { AgentJsonValue } from "../../../../../../agent/tools/types.js";
 import type { DomainAgentTool } from "../../../../../agent/index.js";
 import type { ScoutDomainDynamicToolCall } from "../../../../../types.js";
-import {
-  JarvisBehaviorOrchestrator,
-  type JarvisBehaviorPhase,
-} from "../../../core/jarvis-behavior-orchestrator.js";
+import { JarvisBehaviorOrchestrator } from "../../../core/jarvis-behavior-orchestrator.js";
 
 const EXECUTE_QUERY_COMMANDS = new Set([
   "behavior.registry.nodes",
@@ -22,7 +19,6 @@ const REVIEW_QUERY_COMMANDS = new Set([
 /** Owns the Agent-facing RBT Behavior input boundary and delegates core work. */
 export class JarvisBehaviorTool implements DomainAgentTool {
   constructor(
-    private readonly phase: JarvisBehaviorPhase,
     private readonly orchestrator: JarvisBehaviorOrchestrator,
   ) {}
 
@@ -38,13 +34,17 @@ export class JarvisBehaviorTool implements DomainAgentTool {
   }
 
   private async executeInput(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
+    const phase = call.caller.phase;
+    if (phase !== "execute" && phase !== "review") {
+      return failedToolResponse("command_not_available", `Behavioral operations are not available in RBT Phase ${phase}.`);
+    }
     const input = requireObject(call.input.arguments, "JarvisBehavior arguments");
     const hasExecuteFile = Object.hasOwn(input, "execute_file");
     const hasCommand = Object.hasOwn(input, "command") || Object.hasOwn(input, "payload");
     if (hasExecuteFile === hasCommand) throw new Error("Provide either execute_file or command + payload.");
 
     if (hasExecuteFile) {
-      if (this.phase !== "execute") {
+      if (phase !== "execute") {
         return failedToolResponse("command_not_available", "execute_file is not available in the current RBT Phase.");
       }
       const unexpectedKeys = Object.keys(input).filter((key) => key !== "execute_file");
@@ -55,12 +55,12 @@ export class JarvisBehaviorTool implements DomainAgentTool {
     const unexpectedKeys = Object.keys(input).filter((key) => key !== "command" && key !== "payload");
     if (unexpectedKeys.length > 0) throw new Error(`Behavioral query contains unsupported fields: ${unexpectedKeys.join(", ")}.`);
     if (typeof input.command !== "string" || input.command.length === 0) throw new Error("command must be a non-empty string.");
-    const allowed = this.phase === "execute" ? EXECUTE_QUERY_COMMANDS : REVIEW_QUERY_COMMANDS;
+    const allowed = phase === "execute" ? EXECUTE_QUERY_COMMANDS : REVIEW_QUERY_COMMANDS;
     if (!allowed.has(input.command)) {
       return failedToolResponse("command_not_available", `Behavioral command ${input.command} is not available in the current RBT Phase.`);
     }
     const payload = toJsonObject(requireObject(input.payload, "Behavioral query payload"));
-    return this.orchestrator.executeCommand(this.phase, call, input.command, payload);
+    return this.orchestrator.executeCommand(phase, call, input.command, payload);
   }
 }
 

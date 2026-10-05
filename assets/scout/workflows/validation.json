@@ -40,9 +40,28 @@
     }
   },
   "resources": {
+    "synthesis-tools": {
+      "phases": [
+        "Synthesis"
+      ],
+      "dynamicTools": [
+        "StartWorkflow",
+        "ResolveArtifactReference",
+        "AssignTask",
+        "SendMessage",
+        "RespondHumanInput",
+        "SubmitPhaseOutcome"
+      ],
+      "shellTools": [],
+      "mcpServers": [],
+      "plugins": [],
+      "readableRoots": [],
+      "writableRoots": []
+    },
     "common-inspection": {
       "default": true,
       "phases": [],
+      "dynamicTools": [],
       "shellTools": [
         "scoutAssets",
         "scoutMemory",
@@ -61,6 +80,12 @@
         "research-reviewer",
         "verify",
         "verify-reviewer"
+      ],
+      "dynamicTools": [
+        "ResolveArtifactReference",
+        "SendMessage",
+        "RequestHumanInput",
+        "SubmitTask"
       ],
       "shellTools": [
         "scoutJsonWrite",
@@ -87,6 +112,7 @@
         "research",
         "verify"
       ],
+      "dynamicTools": [],
       "shellTools": [],
       "mcpServers": [],
       "plugins": [],
@@ -97,6 +123,7 @@
       "phases": [
         "research"
       ],
+      "dynamicTools": [],
       "shellTools": [
         "scoutResearchArtifactCheck",
         "scoutArtifactDigest"
@@ -111,6 +138,7 @@
         "research-reviewer",
         "verify-reviewer"
       ],
+      "dynamicTools": [],
       "shellTools": [
         "scoutArtifactDigest",
         "wc",
@@ -130,6 +158,7 @@
       "phases": [
         "verify"
       ],
+      "dynamicTools": [],
       "shellTools": [
         "unity",
         "wc",

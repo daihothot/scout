@@ -50,6 +50,7 @@ function domain(id: ScoutDomainId, name: string): ScoutDomain {
     ...testWorkflowParticipant,
     description: { id, name },
     backend: new class extends DomainAgentBackend {
+      readonly toolDefinitions = [];
       override async handleDynamicToolCall() { return undefined; }
     }(),
   };

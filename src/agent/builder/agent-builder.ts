@@ -6,7 +6,7 @@ import type {
   ScoutAgent,
   ScoutAgentOptions,
 } from "../core/scout-agent.js";
-import { buildAgentDynamicTools } from "../tools/tool-profiles.js";
+import type { AgentDynamicToolSpec } from "../tools/types.js";
 import type { DynamicToolSpec } from "../../agent-server/codex/app-server-client.js";
 import {
   scoutAgentPermissionProfile,
@@ -15,6 +15,7 @@ import {
 } from "../thread/types.js";
 import {
   resolveSynthesisRole,
+  SynthesisPhase,
 } from "../../core/workflow/index.js";
 
 /** Builds Workflow-declared agents from prepared mounts and domain tools. */
@@ -28,7 +29,7 @@ export class AgentBuilder {
       ...options,
       dynamicTools: this.dynamicToolsForRole(
         role,
-        buildAgentDynamicTools({ orchestrationTools: true }),
+        this.scope.agentOrchestrator.dynamicToolBackend.dynamicToolsForPhase(SynthesisPhase),
       ),
     });
     return this.registerAgent(agent) as CoordinatorAgent;
@@ -41,16 +42,12 @@ export class AgentBuilder {
     }
     const agentOptions = this.agentOptionsForRole(role);
     const phaseDynamicTools = agentOptions.agentMount.agentProfile.phases
-      .flatMap((phase) => this.scope.domainRegistry.list()
-        .flatMap((domain) => domain.backend.dynamicToolsForPhase(phase)));
+      .flatMap((phase) => this.scope.agentOrchestrator.dynamicToolBackend.dynamicToolsForPhase(phase));
     const options = {
       ...agentOptions,
       dynamicTools: this.dynamicToolsForRole(
         role,
-        [
-          ...buildAgentDynamicTools({ orchestrationTools: false }),
-          ...phaseDynamicTools,
-        ],
+        phaseDynamicTools,
       ),
     };
     const profile = options.agentMount.agentProfile;
@@ -82,7 +79,7 @@ export class AgentBuilder {
 
   private dynamicToolsForRole(
     role: ScoutAgentRole,
-    definitions: ReturnType<typeof buildAgentDynamicTools>,
+    definitions: AgentDynamicToolSpec[],
   ): DynamicToolSpec[] {
     const uniqueDefinitions = new Map<string, typeof definitions[number]>();
     for (const definition of definitions) {

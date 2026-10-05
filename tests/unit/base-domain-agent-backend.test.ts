@@ -3,127 +3,75 @@ import test from "node:test";
 import type { AgentDynamicToolSpec } from "../../src/agent/tools/types.js";
 import {
   BaseDomainAgentBackend,
+  BaseDomainEvents,
   BaseDomainToolCallStore,
   type ScoutDomainDynamicToolCall,
 } from "../../src/domain/index.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
+import { executionPlatformAgentTool } from "../../src/domain/domains/base/agent/tools/agent-tools.js";
 
-test("BaseDomainAgentBackend registers and invokes multiple tools by Phase", async (t) => {
-  await installTestRunScope(t, { runId: "run-base-domain-agent-tools" });
+test("BaseDomainAgentBackend invokes its constructed tool with the actual Phase and records completion", async (t) => {
+  const scope = await installTestRunScope(t, { runId: "run-base-domain-agent-tools" });
   const store = new BaseDomainToolCallStore();
-  const invoked: string[] = [];
-  const first = toolSpec("base_first", "FirstTool");
-  const second = toolSpec("base_second", "SecondTool");
-  const firstRegistration = {
-    definition: first,
-    tool: {
-      execute(call: ScoutDomainDynamicToolCall) {
-        invoked.push(call.input.tool);
-        return success("first");
-      },
+  const invocations: string[] = [];
+  const observations: string[] = [];
+  scope.eventBus.subscribe(BaseDomainEvents.agentToolCall.observed, (event) => {
+    if (BaseDomainEvents.agentToolCall.observed.is(event)) observations.push(event.payload.phase);
+  });
+  const backend = new BaseDomainAgentBackend(store, {
+    execute(call) {
+      invocations.push(call.caller.phase);
+      return success(call.caller.phase);
     },
-  };
-  const duplicateFirstRegistration = {
-    definition: structuredClone(first),
-    tool: firstRegistration.tool,
-  };
-  const secondRegistration = {
-    definition: second,
-    tool: {
-      execute(call: ScoutDomainDynamicToolCall) {
-        invoked.push(call.input.tool);
-        return success("second");
-      },
-    },
-  };
-  const backend = new BaseDomainAgentBackend(store);
-
-  backend.register("execute", firstRegistration);
-  backend.register("review", firstRegistration);
-  backend.register("review", duplicateFirstRegistration);
-  backend.register("review", secondRegistration);
-
-  assert.deepEqual(backend.dynamicToolsForPhase("execute"), [first]);
-  assert.deepEqual(backend.dynamicToolsForPhase("review"), [first, second]);
-  const exposed = backend.dynamicToolsForPhase("review");
-  const exposedSchema = exposed[0]!.inputSchema;
-  assert.ok(exposedSchema && typeof exposedSchema === "object" && !Array.isArray(exposedSchema));
-  exposedSchema.properties = { mutated: { type: "string" } };
-  assert.deepEqual(backend.dynamicToolsForPhase("review"), [first, second]);
-
-  const result = await backend.handleDynamicToolCall(call("review", second));
-
-  assert.deepEqual(result, success("second"));
-  assert.deepEqual(invoked, ["SecondTool"]);
-  assert.deepEqual(store.list().map((entry) => entry.tool), ["SecondTool"]);
-
-  backend.unregister("review", duplicateFirstRegistration);
-  assert.deepEqual(backend.dynamicToolsForPhase("review"), [first, second]);
-  backend.unregister("review", firstRegistration);
-  assert.deepEqual(backend.dynamicToolsForPhase("review"), [second]);
-  assert.deepEqual(backend.dynamicToolsForPhase("execute"), [first]);
-  assert.throws(() => backend.unregister("review", firstRegistration), /is not registered/);
+  });
+  for (const phase of ["execute", "review"]) {
+    const invocation = call(phase, executionPlatformAgentTool);
+    invocation.input.callId = "call-" + phase;
+    assert.deepEqual(await backend.handleDynamicToolCall(invocation), success(phase));
+  }
+  assert.deepEqual(invocations, ["execute", "review"]);
+  assert.deepEqual(store.list().map((entry) => entry.phase), ["execute", "review"]);
+  assert.deepEqual(observations, ["execute", "review"]);
 });
 
-test("BaseDomainAgentBackend rejects conflicting and unregistered Phase tools", async (t) => {
+test("BaseDomainAgentBackend ignores other tool identities without execution or recording", async (t) => {
   await installTestRunScope(t, { runId: "run-base-domain-agent-tool-rejection" });
-  const installed = toolSpec("base_installed", "InstalledTool");
-  const missing = toolSpec("base_missing", "MissingTool");
+  const store = new BaseDomainToolCallStore();
   let invocationCount = 0;
-  const registration = {
-    definition: installed,
-    tool: {
-      execute() {
-        invocationCount += 1;
-        return success("installed");
-      },
-    },
-  };
-  const backend = new BaseDomainAgentBackend(new BaseDomainToolCallStore());
-  backend.register("execute", registration);
-
-  assert.throws(
-    () => backend.register("execute", {
-      definition: structuredClone(installed),
-      tool: { execute: () => success("conflict") },
-    }),
-    /conflicts with its existing registration for Phase execute/,
-  );
-  const changedDefinition = {
-    definition: { ...installed, inputSchema: { type: "string" } },
-    tool: registration.tool,
-  };
-  assert.throws(() => backend.register("execute", changedDefinition), /conflicts/);
-  assert.throws(() => backend.unregister("execute", changedDefinition), /is not registered/);
-  const denied = await backend.handleDynamicToolCall(call("review", installed));
-  const unknown = await backend.handleDynamicToolCall(call("review", missing));
-
-  assert.equal(denied?.success, false);
-  assert.match(denied?.contentItems[0]?.text ?? "", /InstalledTool is not registered for Phase review/);
-  assert.equal(unknown, undefined);
+  const backend = new BaseDomainAgentBackend(store, {
+    execute() { invocationCount += 1; return success("executed"); },
+  });
+  for (const definition of [
+    { ...executionPlatformAgentTool, name: "MissingTool" },
+    { ...executionPlatformAgentTool, namespace: "other_namespace" },
+  ]) assert.equal(await backend.handleDynamicToolCall(call("review", definition)), undefined);
   assert.equal(invocationCount, 0);
-  assert.deepEqual(
-    await backend.handleDynamicToolCall(call("execute", installed)),
-    success("installed"),
-  );
-  assert.equal(invocationCount, 1);
-  backend.unregister("execute", registration);
-  assert.deepEqual(backend.dynamicToolsForPhase("execute"), []);
+  assert.deepEqual(store.list(), []);
 });
 
-function toolSpec(namespace: string, name: string): AgentDynamicToolSpec {
-  return {
-    guidanceSkill: `tool-${namespace}`,
-    namespace,
-    name,
-    description: `${name} test tool.`,
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {},
-    },
-  };
-}
+test("BaseDomainAgentBackend records thrown and rejected tool failures", async (t) => {
+  const scope = await installTestRunScope(t, { runId: "run-base-domain-tool-errors" });
+  const observed: string[] = [];
+  scope.eventBus.subscribe(BaseDomainEvents.agentToolCall.observed, (event) => {
+    if (BaseDomainEvents.agentToolCall.observed.is(event)) observed.push(event.payload.callId);
+  });
+  const store = new BaseDomainToolCallStore();
+  const error = new Error("Base tool failed");
+  for (const [index, tool] of [
+    { execute() { throw error; } },
+    { async execute() { throw error; } },
+  ].entries()) {
+    const backend = new BaseDomainAgentBackend(store, tool);
+    const invocation = call("review", executionPlatformAgentTool);
+    invocation.input.callId = "call-error-" + index;
+    const response = await backend.handleDynamicToolCall(invocation);
+    assert.ok(response);
+    assert.equal(response.success, false);
+    assert.match(response.contentItems[0]?.text ?? "", /Base tool failed/);
+    assert.deepEqual(store.list().at(-1)?.response, response);
+  }
+  assert.deepEqual(observed, ["call-error-0", "call-error-1"]);
+});
 
 function call(phase: string, definition: AgentDynamicToolSpec): ScoutDomainDynamicToolCall {
   return {

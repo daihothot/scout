@@ -15,6 +15,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { WorkflowEvents } from "../../src/core/workflow/index.js";
 import type { ShellToolContract } from "../../src/asset-store/contracts/resources.js";
+import { buildWorkflow } from "../../src/asset-store/builders/workflow-builder.js";
+import { AgentDynamicToolBackend } from "../../src/agent/backend/dynamic-tool/agent-dynamic-tool-backend.js";
 import { attachments } from "../../src/agent/context/attachments.js";
 import { CoordinatorContextTags } from "../../src/agent/runner/coordinator/coordinator-attachments.js";
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
@@ -55,30 +57,33 @@ import { installTestRunScope, createTestGraph } from "../helpers/run-persistence
 test("RBT Domain exposes behavior execution and final platform shutdown by Phase", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
+  const asset = buildWorkflow(process.cwd(), "rbt");
   const scope = await installTestRunScope(t, {
     runId: "run-rbt-tools",
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    runtimeGraph: rbtGraph(eventBus),
+    runtimeGraph: new Graph(asset),
+    workflowAsset: asset,
   });
   await domain.start();
   await domain.run();
   t.after(() => domain.stop());
 
-  assert.deepEqual(domain.backend.dynamicToolsForPhase("execute").map((tool) => tool.name), ["JarvisBehavior"]);
-  assert.deepEqual(domain.backend.dynamicToolsForPhase("review").map((tool) => tool.name), [
-    "JarvisBehavior",
+  const backend = new AgentDynamicToolBackend();
+  assert.deepEqual(backend.dynamicToolsForPhase("execute").map((tool) => tool.name), [
+    "ResolveArtifactReference", "SendMessage", "RequestHumanInput", "SubmitTask", "JarvisBehavior",
   ]);
-  assert.deepEqual(baseDomain(scope).backend.dynamicToolsForPhase("review").map((tool) => tool.name), [
-    "ExecutionPlatform",
+  assert.deepEqual(backend.dynamicToolsForPhase("review").map((tool) => tool.name), [
+    "ResolveArtifactReference", "SendMessage", "RequestHumanInput", "SubmitTask", "JarvisBehavior", "ExecutionPlatform",
   ]);
-  assert.deepEqual(domain.backend.dynamicToolsForPhase("Synthesis"), []);
+  assert.deepEqual(backend.dynamicToolsForPhase("Synthesis").map((tool) => tool.name), [
+    "StartWorkflow", "ResolveArtifactReference", "AssignTask", "SendMessage", "RespondHumanInput", "SubmitPhaseOutcome",
+  ]);
 
   await domain.stop();
-  assert.deepEqual(baseDomain(scope).backend.dynamicToolsForPhase("review"), []);
-  assert.deepEqual(domain.backend.dynamicToolsForPhase("execute"), []);
-  assert.deepEqual(domain.backend.dynamicToolsForPhase("review"), []);
+  assert.deepEqual(baseDomain(scope).backend.toolDefinitions.map((tool) => tool.name), ["ExecutionPlatform"]);
+  assert.deepEqual(domain.backend.toolDefinitions.map((tool) => tool.name), ["JarvisBehavior"]);
 });
 
 test("RBT schema follows execute roles, including renamed workers and a reviewer without codebase access", async (t) => {
@@ -818,12 +823,14 @@ test("ExecutionPlatform Agent tool accepts only operation semantics and uses run
 test("RBT hides ExecutionPlatform from Executor", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
+  const asset = buildWorkflow(process.cwd(), "rbt");
   const scope = await installTestRunScope(t, {
     runId: "run-rbt-unity-pipeline",
     scoutRoot: process.cwd(),
     eventBus,
     domain,
-    runtimeGraph: rbtGraph(eventBus),
+    runtimeGraph: new Graph(asset),
+    workflowAsset: asset,
   });
   const roots = roleRoots(scope.runRoot, "executor");
   scope.setEnvironment(rbtEnvironment(scope.runId, {
@@ -845,10 +852,14 @@ test("RBT hides ExecutionPlatform from Executor", async (t) => {
     role: "executor",
   });
 
-  const denied = await baseDomain(scope).backend.handleDynamicToolCall(call);
+  const caller = { agentId: "executor", role: "executor", phases: ["execute"], threadId: call.input.threadId } as ScoutAgent;
+  t.mock.method(scope.agentRegistry, "resolveToolCaller", () => caller);
+  const execution = t.mock.method(baseDomain(scope).backend, "handleDynamicToolCall");
+  const denied = await new AgentDynamicToolBackend().handleDynamicToolCall(call.input);
   assert.ok(denied);
   assert.equal(denied.success, false);
-  assert.match(denied.contentItems[0]?.text ?? "", /ExecutionPlatform is not registered for Phase execute/);
+  assert.match(denied.contentItems[0]?.text ?? "", /ExecutionPlatform is not configured for Phase execute/);
+  assert.equal(execution.mock.callCount(), 0);
 });
 
 test("RBT Reviewer shuts down the restored session using only operation, even when configuration differs", async (t) => {
@@ -1555,6 +1566,7 @@ test("RBT Execute link failure does not shut down an already running shared targ
     arguments: { command: "behavior.registry.nodes", payload: {} },
     role: "executor",
   }));
+  assert.ok(result);
   assert.equal(result.success, false);
   assert.deepEqual(lifecycle, ["launch"]);
   const current = execution.current(request);
@@ -1602,6 +1614,7 @@ test("RBT Execute link failure preserves a fresh target reused by another caller
     arguments: { command: "behavior.registry.nodes", payload: {} },
     role: "executor",
   }));
+  assert.ok(result);
   assert.equal(result.success, false);
   assert.deepEqual(lifecycle, ["launch"]);
   const current = baseDomain(scope).execution.current(request);
@@ -2354,7 +2367,7 @@ test("RBT execute-file performs cleanup after a command failure and closes faile
   ]);
 });
 
-test("RBT dynamic-tool backend rejects a tool that is not registered for the call Phase", async (t) => {
+test("RBT behavior execution rejects operations outside its business Phases", async (t) => {
   const eventBus = new InMemoryEventBus();
   const domain = new RbtDomain();
   await installTestRunScope(t, {
@@ -2374,7 +2387,7 @@ test("RBT dynamic-tool backend rejects a tool that is not registered for the cal
     assert.equal(response?.success, false);
     assert.match(
       response?.contentItems[0]?.text ?? "",
-      /rbt_behavior\/JarvisBehavior is not registered for Phase Synthesis/,
+      /Behavioral operations are not available in RBT Phase Synthesis/,
     );
   });
 });

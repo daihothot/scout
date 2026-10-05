@@ -4,7 +4,7 @@ import { sha256File } from "../../core/io/index.js";
 import { parseWorkflowProfile, workflowProfilePath } from "../assets/workflow-profiles.js";
 import { ScoutAssetLayout } from "../assets/asset-layout.js";
 import { AssetJsonReader } from "../files/asset-json-reader.js";
-import type { WorkflowProfileAsset } from "../contracts/workflow-profile.js";
+import type { WorkflowProfileAsset, WorkflowResourcePark } from "../contracts/workflow-profile.js";
 import type { AgentProfile } from "../contracts/profile.js";
 
 /** Builds a validated, identified Asset without creating runtime state. */
@@ -31,22 +31,9 @@ export class WorkflowBuilder {
       throw new Error(`Workflow Profile ${this.asset.name} does not declare role ${roleName}.`);
     }
     const phases = roleName === "coordinator" ? [SynthesisPhase] : [...(role.phases ?? [])];
-    const resourceEntries = Object.entries(workflow.resources);
-    const defaultResourcePark = resourceEntries
-      .find(([, resource]) => resource.default === true);
     const selectedResourceParks = new Set<string>();
     for (const phase of phases) {
-      const matchingParks = resourceEntries.filter(([, resource]) =>
-        resource.default !== true && resource.phases.includes(phase)
-      );
-      const inheritedDefaultParks = defaultResourcePark
-        && (
-          defaultResourcePark[1].phases.length === 0
-          || defaultResourcePark[1].phases.includes(phase)
-        )
-        ? [defaultResourcePark]
-        : [];
-      const phaseResourceParks = [...inheritedDefaultParks, ...matchingParks];
+      const phaseResourceParks = this.resourceParksForPhase(phase);
       if (phaseResourceParks.length === 0) {
         throw new Error(
           `Workflow Profile ${this.asset.name} role ${roleName}`
@@ -57,7 +44,7 @@ export class WorkflowBuilder {
         selectedResourceParks.add(name);
       }
     }
-    const resources = resourceEntries
+    const resources = Object.entries(workflow.resources)
       .filter(([name]) => selectedResourceParks.has(name));
     const merge = (values: readonly (readonly string[])[]): string[] => [
       ...new Set(values.flatMap((value) => value)),
@@ -72,11 +59,24 @@ export class WorkflowBuilder {
       phases,
       resourceParks: resources.map(([name]) => name),
       shellTools: merge(resources.map(([, resource]) => resource.shellTools)),
+      dynamicTools: merge(resources.map(([, resource]) => resource.dynamicTools)),
       mcpServers: merge(resources.map(([, resource]) => resource.mcpServers)),
       plugins: merge(resources.map(([, resource]) => resource.plugins)),
       readableRoots: merge(resources.map(([, resource]) => resource.readableRoots)),
       writableRoots: merge(resources.map(([, resource]) => resource.writableRoots)),
       network: resources.some(([, resource]) => resource.network === true),
     };
+  }
+
+  /** Projects the same resource allocation used by role mounts for one declared Phase. */
+  dynamicToolNamesForPhase(phase: string): string[] {
+    if (phase !== SynthesisPhase && !Object.hasOwn(this.asset.profile.phases.workers, phase)) return [];
+    return [...new Set(this.resourceParksForPhase(phase).flatMap(([, resource]) => resource.dynamicTools))];
+  }
+
+  private resourceParksForPhase(phase: string): [string, WorkflowResourcePark][] {
+    return Object.entries(this.asset.profile.resources).filter(([, resource]) =>
+      resource.phases.includes(phase) || (resource.default === true && resource.phases.length === 0)
+    );
   }
 }

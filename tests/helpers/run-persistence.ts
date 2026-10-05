@@ -45,6 +45,7 @@ const testDomain: ScoutDomain = {
   ...testWorkflowParticipant,
   description: { id: ScoutDomainId.Rbt, name: "Test Domain" },
   backend: new class extends DomainAgentBackend {
+    readonly toolDefinitions = [];
     override async handleDynamicToolCall() { return undefined; }
   }(),
 };
@@ -64,6 +65,7 @@ export async function createTestRunPersistence(
   eventBus = new InMemoryEventBus(),
   runRootOverride?: string,
   graphOverride?: Graph,
+  workflowAssetOverride?: WorkflowProfileAsset,
 ): Promise<{
   runRoot: string;
   journal: {
@@ -95,7 +97,7 @@ export async function createTestRunPersistence(
   seed.close();
   benchmarks.recordStarted(prepared.workflowId);
   storage.release();
-  const workflow = new Workflow(createTestWorkflowAsset(runtimeGraph.snapshot()));
+  const workflow = new Workflow(workflowAssetOverride ?? createTestWorkflowAsset(runtimeGraph.snapshot()));
   const config = new AssetStore().config(scoutRoot);
   const scope = new RunScope({
     runId,
@@ -159,6 +161,7 @@ export async function installTestRunScope(
     appServer?: CodexAppServerClient;
     environment?: RunEnvironment;
     runtimeGraph?: Graph;
+    workflowAsset?: WorkflowProfileAsset;
     executionSystem?: ExecutionPlatformPort;
     workflowData?: WorkflowData;
     terminate?(reason: string): Promise<void>;
@@ -180,6 +183,7 @@ export async function installTestRunScope(
       eventBus,
       options.runRoot,
       options.runtimeGraph,
+      options.workflowAsset,
     );
   const scope = new RunScope({
     runId: options.runId,
@@ -241,14 +245,27 @@ function resolveTestWorkflowRoot(runRoot: string): string {
 }
 
 /** Static Asset fixture for tests that supply custom graph definitions. */
-export function createTestWorkflowAsset(state: GraphData): WorkflowProfileAsset {
+export function createTestWorkflowAsset(
+  state: GraphData,
+  domainTools: Readonly<Record<string, readonly string[]>> = {},
+): WorkflowProfileAsset {
+  const allocations = [
+    { phase: "Synthesis", tools: ["StartWorkflow", "ResolveArtifactReference", "AssignTask", "SendMessage", "RespondHumanInput", "SubmitPhaseOutcome"] },
+    ...state.phases.map((phase) => ({ phase: phase.name, tools: ["ResolveArtifactReference", "SendMessage", "RequestHumanInput", "SubmitTask"] })),
+  ];
   return {
     name: state.workflowProfile, sourcePath: `workflows/${state.workflowProfile}.json`, hash: "test-asset",
     profile: {
       domain: state.domain,
       defaults: { config: "test", model: { id: "gpt-5", provider: "openai", reasoningEffort: "medium", reasoningSummary: "auto" }, maxThreads: 1, maxDepth: 1 },
       phases: { workers: Object.fromEntries(state.phases.map((phase) => [phase.name, { edges: phase.edges }])) },
-      resources: {},
+      resources: Object.fromEntries(allocations.map(({ phase, tools }) => [phase, {
+        phases: [phase], shellTools: [], mcpServers: [], plugins: [], readableRoots: [], writableRoots: [],
+        dynamicTools: [
+          ...tools,
+          ...(domainTools[phase] ?? []),
+        ],
+      }])),
       roles: Object.fromEntries(state.roles.map((role) => [role.name, {
         multiAgent: false, customAgents: [], ...(role.name === "coordinator" ? {} : { phases: role.phases }),
       }])),
