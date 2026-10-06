@@ -1,28 +1,28 @@
 import type { DynamicToolCallResponse } from "../../../../agent-server/types.js";
 import type { AgentDynamicToolSpec } from "../../../../agent/tools/types.js";
 import { DomainAgentBackend, type DomainAgentTool } from "../../../agent/index.js";
-import { executionPlatformAgentTool } from "./tools/agent-tools.js";
+import { buildExecutionPlatformDynamicTool } from "./tools/agent-tools.js";
 import type { ScoutDomainDynamicToolCall } from "../../../types.js";
-import { BaseDomainEvents } from "../base-domain-events.js";
-import type { BaseDomainToolCallStore } from "../base-domain-tool-call-store.js";
+import { BaseDomainEvents, type BaseDomainAgentToolCallObservedEvent } from "../base-domain-events.js";
 import { currentRunScope } from "../../../../run/run-scope.js";
 
-/** Executes and records Agent calls owned by the shared Base Domain. */
+/** Executes Base tools and publishes completion facts for independent consumers. */
 export class BaseDomainAgentBackend extends DomainAgentBackend {
-  readonly toolDefinitions: readonly AgentDynamicToolSpec[] = [executionPlatformAgentTool];
+  readonly toolDefinitions: readonly AgentDynamicToolSpec[];
 
   constructor(
-    private readonly toolCallStore: BaseDomainToolCallStore,
     private readonly executionPlatformTool: DomainAgentTool,
   ) {
     super();
+    this.toolDefinitions = [buildExecutionPlatformDynamicTool()];
   }
 
   override async handleDynamicToolCall(
     call: ScoutDomainDynamicToolCall,
   ): Promise<DynamicToolCallResponse | undefined> {
-    if (call.input.tool !== executionPlatformAgentTool.name
-      || call.input.namespace !== executionPlatformAgentTool.namespace) return undefined;
+    if (!this.toolDefinitions.some((spec) =>
+      spec.name === call.input.tool && (spec.namespace ?? null) === call.input.namespace
+    )) return undefined;
     const startedAt = new Date().toISOString();
     let response: DynamicToolCallResponse;
     try {
@@ -31,7 +31,7 @@ export class BaseDomainAgentBackend extends DomainAgentBackend {
       response = failure(error instanceof Error ? error.stack ?? error.message : String(error));
     }
     const completedAt = new Date().toISOString();
-    const stored = this.toolCallStore.record({
+    const observation: BaseDomainAgentToolCallObservedEvent = {
       callId: call.input.callId,
       ...(call.caller.threadId ? { threadId: call.caller.threadId } : {}),
       agentId: call.caller.agentId,
@@ -43,17 +43,17 @@ export class BaseDomainAgentBackend extends DomainAgentBackend {
       response: structuredClone(response),
       startedAt,
       completedAt,
-    });
+    };
     const scope = currentRunScope();
-    await scope.eventBus.publishAndWait(BaseDomainEvents.agentToolCall.observed, stored, {
+    await scope.eventBus.publishAndWait(BaseDomainEvents.agentToolCall.observed, observation, {
       occurredAt: completedAt,
     });
     scope.logger.info({
       module: "domain.base.agent.tool_call",
       event: BaseDomainEvents.agentToolCall.observed.routeKey,
-      agentId: stored.agentId,
-      message: `Base Domain handled ${stored.namespace}/${stored.tool}.`,
-      data: stored,
+      agentId: observation.agentId,
+      message: `Base Domain handled ${observation.namespace}/${observation.tool}.`,
+      data: observation,
     });
     return response;
   }

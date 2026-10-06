@@ -32,7 +32,7 @@ export class BaseDomain implements ScoutDomain {
   constructor() {
     const scope = currentRunScope();
     this.execution = new BaseDomainExecution(scope.eventBus, scope.executionSystem);
-    this.backend = new BaseDomainAgentBackend(this.toolCallStore, new ExecutionPlatformTool(this.execution));
+    this.backend = new BaseDomainAgentBackend(new ExecutionPlatformTool(this.execution));
   }
 
   get runtimeFact(): BaseDomainRuntimeFact {
@@ -44,6 +44,7 @@ export class BaseDomain implements ScoutDomain {
     const scope = currentRunScope();
     const workflowData = scope.workflow.snapshot();
     this.recordObject.start();
+    this.toolCallStore.start();
     this.started = true;
     scope.logger.info({
       module: "domain.base",
@@ -60,7 +61,7 @@ export class BaseDomain implements ScoutDomain {
     for (const release of [
       () => this.recordObject.stop(),
       () => this.execution.stop(),
-      () => this.toolCallStore.clear(),
+      () => this.toolCallStore.stop(),
       () => this.recordObject.close(),
     ]) {
       try {

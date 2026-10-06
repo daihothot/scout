@@ -1,10 +1,27 @@
-import type { BaseDomainAgentToolCallObservedEvent } from "./base-domain-events.js";
+import type { UnsubscribeEventHandler } from "../../../core/events/index.js";
+import { currentRunScope } from "../../../run/run-scope.js";
+import { BaseDomainEvents, type BaseDomainAgentToolCallObservedEvent } from "./base-domain-events.js";
 
-/** Restorable authority for Base Domain dynamic-tool results in the active Workflow. */
+/** Projects Base tool completion events into the active Workflow's call history. */
 export class BaseDomainToolCallStore {
   private readonly calls = new Map<string, BaseDomainAgentToolCallObservedEvent>();
+  private unsubscribe?: UnsubscribeEventHandler;
 
-  record(call: BaseDomainAgentToolCallObservedEvent): BaseDomainAgentToolCallObservedEvent {
+  start(): void {
+    if (this.unsubscribe) return;
+    this.unsubscribe = currentRunScope().eventBus.subscribe<BaseDomainAgentToolCallObservedEvent>(
+      BaseDomainEvents.agentToolCall.observed,
+      (event) => this.record(event.payload),
+    );
+  }
+
+  stop(): void {
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
+    this.clear();
+  }
+
+  private record(call: BaseDomainAgentToolCallObservedEvent): void {
     const existing = this.calls.get(call.callId);
     if (existing && (
       existing.agentId !== call.agentId
@@ -13,9 +30,7 @@ export class BaseDomainToolCallStore {
     )) {
       throw new Error(`Base Domain tool call ${call.callId} conflicts with its existing identity.`);
     }
-    const stored = structuredClone(call);
-    this.calls.set(call.callId, stored);
-    return structuredClone(stored);
+    this.calls.set(call.callId, structuredClone(call));
   }
 
   list(): BaseDomainAgentToolCallObservedEvent[] {
