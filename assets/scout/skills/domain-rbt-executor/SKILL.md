@@ -195,7 +195,7 @@ Main Flow：
 
 Knowledge：
 
-- `found` 提供已通过格式检查的 Pack 引用。该 `execute-pack-ref` 保持查询结果中的 Workflow、Agent 与内部分段，不改写为当前 Workflow。
+- `found` 提供可引用的历史 Pack；查询结果契约见 `tool-rbt-search-execution-pack`。该 `execute-pack-ref` 保持查询结果中的 Workflow、Agent 与内部分段，不改写为当前 Workflow。
 - 按 `tool-scout-resolve-artifact-reference` 定位并申请本 Turn 的只读访问，读取本次执行所需的计划与 JR/SR；不修改历史 Pack。
 - 历史成功事实用于选择 Pack，不代替本次执行结果或 Reviewer 的本次审查。
 

@@ -44,7 +44,7 @@ summary: 定义 SearchExecutionPack 的查询输入与 Execute Pack 引用结果
 }
 ```
 
-该 Pack 已通过格式检查，可以作为本次引用的 Pack；获得引用不等于取得读取权限。按 `tool-scout-resolve-artifact-reference` 解析引用并申请当前 Turn 的只读访问。
+该引用对应相同 BDD、SDK 版本下最近一次审查成功所使用的、仍然存在的 Execute Pack，可以作为本次引用的 Pack；查询不重新检查 Pack 内容格式。获得引用不等于取得读取权限。按 `tool-scout-resolve-artifact-reference` 解析引用并申请当前 Turn 的只读访问。
 
 `not_found` 表示没有可用 Pack。`failed` 表示查询或工具执行失败，不等同于未命中；保留原始错误。
 

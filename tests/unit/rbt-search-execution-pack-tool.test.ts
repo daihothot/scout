@@ -9,8 +9,6 @@ import { agentPermissionRequestSourceType } from "../../src/core/authorization/r
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
 import type { CodexAppServerClient } from "../../src/agent-server/codex/app-server-client.js";
 import type { DynamicToolCallResponse } from "../../src/agent-server/types.js";
-import { ShellToolBuilder } from "../../src/asset-store/builders/shell-tool-builder.js";
-import type { ShellToolContract } from "../../src/asset-store/contracts/resources.js";
 import { RequestSourceEvents } from "../../src/core/authorization/request-source/request-source-events.js";
 import { ApprovalEvents } from "../../src/core/authorization/approval/approval-events.js";
 import type { BenchmarkValue } from "../../src/core/benchmarks/types.js";
@@ -32,9 +30,8 @@ const historyAddress = ["bddCatalog", bddId, targetVersion, "history"];
 const packReference: ScoutArtifactReference = { workflowId: historicalId, agentId: ownerId, internalSymbols: ["pack"] };
 const executeFileReference: ScoutArtifactReference = { ...packReference, internalSymbols: ["pack", "execute-file.json"] };
 const successHistory = {
-  lastExecutionSuccess: { workflowId: historicalId },
   lastReviewSuccess: { workflowId: historicalId },
-  // A newer formal delivery must not replace the jointly successful candidate.
+  // A newer formal delivery must not replace the last reviewed candidate.
   lastExecutionPack: { workflowId: "workflow-010" },
 };
 
@@ -118,20 +115,11 @@ async function fixture(t: TestContext) {
     }),
   });
   await stage.start();
-  const checker: ShellToolContract = {
-    id: "scoutRbtArtifactCheck", name: "scout-rbt-artifact-check", command: "node",
-    args: ["assets/scout/tools/scout-rbt-artifact-check/cli.cjs"], exposeAs: "scout-rbt-artifact-check", required: true,
-  };
   const mountRoot = join(root, "mount");
-  const built = new ShellToolBuilder(mountRoot, join(process.cwd(), "assets/scout")).build([checker]);
-  assert.deepEqual(built.issues, []);
-  const wrapper = built.tools[0]!;
-  mkdirSync(dirname(wrapper.wrapperPath), { recursive: true });
-  writeFileSync(wrapper.wrapperPath, wrapper.wrapperContent, { mode: 0o755 });
   const turns = new Map([["executor", "execute-1"], ["reviewer", "review-1"]]);
   for (const agentId of ["executor", "reviewer"]) {
     scope.agentRegistry.registerAgent({
-      agentId, mount: { mountRoot, shellTools: [checker] }, spec: { cwd: root },
+      agentId, mount: { mountRoot, shellTools: [] }, spec: { cwd: root },
       snapshot: () => ({ activeTask: undefined, pendingMessageCount: 0 }),
       assertOwnsActiveTurn(input: { threadId: string; turnId: string }) {
         assert.equal(input.threadId, `thread-${agentId}`);
@@ -171,7 +159,7 @@ async function fixture(t: TestContext) {
     return responses[0];
   };
   t.after(() => { unsubscribe(); rmSync(root, { recursive: true, force: true }); });
-  return { root, scope, stage, call, packPath, historicalRoot, historicalJournal, checker, turns, recordBytes, approve,
+  return { root, scope, stage, call, packPath, historicalRoot, historicalJournal, turns, recordBytes, approve,
     registered: () => registered,
     request: () => scope.authorization.sources(agentPermissionRequestSourceType)[0]!,
     setHistory(history: BenchmarkValue) { scope.workflow.benchmarks.submit("rbt", [{ path: historyAddress, value: history }]); },
@@ -186,7 +174,7 @@ function output(response: DynamicToolCallResponse) {
   return JSON.parse(item.text);
 }
 
-test("Pack lookup selects the jointly successful Workflow, ignores latest deliveries and statistics, and leaves history untouched", async (t) => {
+test("Pack lookup selects the last reviewed Workflow without an execution-success pointer and leaves history untouched", async (t) => {
   const f = await fixture(t);
   const oldJournal = readFileSync(f.historicalJournal, "utf8");
   const benchmarks = readFileSync(f.scope.workflow.benchmarks.path, "utf8");
@@ -220,22 +208,31 @@ test("Pack lookup selects the jointly successful Workflow, ignores latest delive
 });
 
 for (const [name, history, reason] of [
-  ["no successful facts", {}, "execution_or_review_not_successful"],
-  ["execution completed but review pending", { lastExecutionSuccess: { workflowId: historicalId } }, "execution_or_review_not_successful"],
-  ["success facts belong to different Workflows", { ...successHistory, lastReviewSuccess: { workflowId: "workflow-008" } }, "success_workflows_differ"],
+  ["no successful review", {}, "no_review_success"],
+  ["execution completed but review pending", { lastExecutionSuccess: { workflowId: historicalId } }, "no_review_success"],
 ] as const) {
   test(`Pack lookup does not reuse when ${name}`, async (t) => {
     const f = await fixture(t);
     f.setHistory(history);
     f.scope.workflow.benchmarks.submit("rbt", [{ path: ["bddCatalog", bddId, targetVersion, "statistics"], value: { passedPlatforms: ["android", "unity-editor"] } }]);
-    const run = t.mock.method(HostCommandExecutor.prototype, "run", () => assert.fail("Not eligible for checking"));
     const before = f.recordBytes();
     assert.deepEqual(output(await new SearchExecutionPackTool().execute(f.call)), { status: "not_found", reason });
-    assert.equal(run.mock.callCount(), 0);
     assert.equal(f.registered(), 0);
     assert.equal(f.recordBytes(), before);
   });
 }
+
+test("A newer execution without successful review does not hide the previously reviewed Pack", async (t) => {
+  const f = await fixture(t);
+  f.setHistory({ ...successHistory, lastExecutionSuccess: { workflowId: "workflow-010" },
+    lastReviewerPack: { workflowId: "workflow-010" } });
+  const benchmarks = readFileSync(f.scope.workflow.benchmarks.path, "utf8");
+  assert.deepEqual(output(await new SearchExecutionPackTool().execute(f.call)), {
+    status: "found", "execute-pack-ref": packReference,
+  });
+  assert.equal(f.registered(), 1);
+  assert.equal(readFileSync(f.scope.workflow.benchmarks.path, "utf8"), benchmarks);
+});
 
 test("Pack lookup resolves renamed and reidentified mounted evidence without historical record edits", async (t) => {
   const f = await fixture(t);
@@ -274,24 +271,30 @@ test("Pack lookup cannot find absent BDD/SDK data or an unmounted successful Wor
   assert.equal(f.registered(), 0);
 });
 
-test("Mounted checker rejects malformed Pack contents, wrong SDK evidence and invalid execute-file before registration", async (t) => {
+test("Pack lookup trusts the Review Benchmark without checking physical Pack content format", async (t) => {
   const f = await fixture(t);
   const tool = new SearchExecutionPackTool();
-  for (const [path, content, diagnostic] of [
-    [join(f.packPath, "signal-expected.md"), "unfinished pack", "FRONTMATTER"],
-    [join(f.packPath, "evidence/E-CODE-001.md"), readFileSync(join(f.packPath, "evidence/E-CODE-001.md"), "utf8").replaceAll(targetVersion, "26.8.0"), "VERSION_MISMATCH"],
-    [join(f.packPath, "execute-file.json"), '{"commands":[]}', "EXECUTE_FILE"],
+  t.mock.method(HostCommandExecutor.prototype, "run", () => assert.fail("Search must not run a Pack format checker"));
+  for (const [path, content] of [
+    [join(f.packPath, "signal-expected.md"), "unfinished pack"],
+    [join(f.packPath, "evidence/E-CODE-001.md"), readFileSync(join(f.packPath, "evidence/E-CODE-001.md"), "utf8").replaceAll(targetVersion, "26.8.0")],
+    [join(f.packPath, "execute-file.json"), "not JSON"],
   ]) {
     const original = readFileSync(path!, "utf8");
     writeFileSync(path!, content!);
     const found = output(await tool.execute(f.call));
-    assert.equal(found.status, "not_found");
-    assert.equal(found.reason, "pack_invalid");
-    assert.match(found.detail, new RegExp(diagnostic!));
+    assert.deepEqual(found, { status: "found", "execute-pack-ref": packReference });
     writeFileSync(path!, original);
   }
+  assert.equal(f.registered(), 1);
+});
+
+test("A retained Pack directory without its execute-file is not a physical Execute Pack", async (t) => {
+  const f = await fixture(t);
+  rmSync(join(f.packPath, "execute-file.json"));
+  assert.equal(existsSync(f.packPath), true);
+  assert.deepEqual(output(await new SearchExecutionPackTool().execute(f.call)), { status: "not_found", reason: "pack_unavailable" });
   assert.equal(f.registered(), 0);
-  assert.equal(f.recordBytes(), "");
 });
 
 test("Pack lookup does not follow symlinked evidence ancestors", async (t) => {
@@ -300,7 +303,6 @@ test("Pack lookup does not follow symlinked evidence ancestors", async (t) => {
   const detached = join(f.root, "detached-artifacts");
   renameSync(artifactRoot, detached);
   symlinkSync(detached, artifactRoot);
-  t.mock.method(HostCommandExecutor.prototype, "run", () => assert.fail("Must not read outside evidence ownership"));
   assert.deepEqual(output(await new SearchExecutionPackTool().execute(f.call)), { status: "not_found", reason: "pack_unavailable" });
   assert.equal(f.registered(), 0);
 });
@@ -313,18 +315,13 @@ test("Pack lookup reports ambiguous artifact ownership instead of guessing which
   assert.equal(f.registered(), 0);
 });
 
-test("Pack lookup reports malformed manual pointers and checker failures rather than successful misses", async (t) => {
+test("Pack lookup reports malformed manual Review pointers rather than successful misses", async (t) => {
   const f = await fixture(t);
   const tool = new SearchExecutionPackTool();
   for (const invalid of [null, "workflow-009", {}]) {
     f.setHistory({ ...successHistory, lastReviewSuccess: invalid });
     await assert.rejects(tool.execute(f.call), /lastReviewSuccess must be a Workflow reference/);
   }
-  f.setHistory(successHistory);
-  t.mock.method(HostCommandExecutor.prototype, "run", async () => ({
-    status: "failed" as const, exitCode: 2, stdout: "", stderr: "checker unavailable", durationMs: 0,
-  }));
-  await assert.rejects(tool.execute(f.call), /checker unavailable/);
   assert.equal(f.registered(), 0);
 });
 
@@ -495,6 +492,23 @@ test("Review delivery selects the actual external Pack instead of a retained loc
   assert.deepEqual(found["execute-pack-ref"], packReference);
   assert.notEqual(f.packPath, localPack);
   assert.deepEqual(resolveArtifactTarget(found["execute-pack-ref"]), { path: f.packPath });
+  rmSync(join(f.packPath, "execute-file.json"));
+  assert.deepEqual(output(await new SearchExecutionPackTool().execute(f.call)), {
+    status: "not_found", reason: "pack_unavailable",
+  }, "The retained local trial does not replace a missing delivered external Pack.");
+  assert.equal(f.registered(), 1, "A missing Pack does not register another source.");
+});
+
+test("A missing Review execution link does not select a retained local trial Pack", async (t) => {
+  const f = await fixture(t);
+  const reviewRoot = join(workflowAgentPaths(f.historicalRoot, "reviewer").artifactRoot, "pack");
+  mkdirSync(reviewRoot, { recursive: true });
+  writeFileSync(join(reviewRoot, "review-result.json"), JSON.stringify({
+    executorHistoryRef: { workflowId: historicalId, agentId: ownerId, internalSymbols: ["history", "001.json"] },
+  }));
+  assert.equal(existsSync(join(f.packPath, "execute-file.json")), true);
+  assert.deepEqual(output(await new SearchExecutionPackTool().execute(f.call)), { status: "not_found", reason: "pack_unavailable" });
+  assert.equal(f.registered(), 0);
 });
 
 test("A mounted Review's local Pack link follows its new identity rather than the original Run's namesake", async (t) => {

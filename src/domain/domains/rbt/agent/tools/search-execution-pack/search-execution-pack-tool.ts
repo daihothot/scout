@@ -4,17 +4,14 @@ import type { DynamicToolCallResponse } from "../../../../../../agent-server/typ
 import type { AgentJsonValue } from "../../../../../../agent/tools/types.js";
 import {
   formatArtifactReference, listFiles, listWorkflowArtifactPaths, readArtifactReference, readJsonFile,
-  resolveArtifactTarget, resolveWorkflowLocation, shellToolWrapperPath, type ScoutArtifactReference,
+  resolveArtifactTarget, resolveWorkflowLocation, type ScoutArtifactReference,
 } from "../../../../../../core/io/index.js";
-import { HostCommandExecutor } from "../../../../../../host/host-command-executor.js";
 import { currentRunScope } from "../../../../../../run/run-scope.js";
 import type { DomainAgentTool } from "../../../../../agent/domain-agent-backend.js";
 import { ScoutDomainId, type ScoutDomainDynamicToolCall } from "../../../../../types.js";
 
 /** Searches Benchmarks for a usable historical Pack and registers its read-access source, not its use. */
 export class SearchExecutionPackTool implements DomainAgentTool {
-  constructor(private readonly commands = new HostCommandExecutor()) {}
-
   async execute(call: ScoutDomainDynamicToolCall): Promise<DynamicToolCallResponse> {
     const scope = currentRunScope();
     scope.workflow.requireActiveWorkflow();
@@ -37,42 +34,35 @@ export class SearchExecutionPackTool implements DomainAgentTool {
     const respond = (output: AgentJsonValue): DynamicToolCallResponse => ({
       success: true, contentItems: [{ type: "inputText", text: JSON.stringify(output, null, 2) }],
     });
-    const miss = (reason: string, detail?: string): DynamicToolCallResponse => respond({
-      status: "not_found", reason, ...(detail ? { detail } : {}),
-    });
+    const miss = (reason: string): DynamicToolCallResponse => respond({ status: "not_found", reason });
 
-    // The manually editable Benchmarks are the authority for execution/review success.
+    // The last successful Review remains authoritative when a newer execution has not passed review.
     const history = scope.workflow.benchmarks.read(ScoutDomainId.Rbt, ["bddCatalog", bddId, targetVersion, "history"]);
     if (history === undefined) return miss("no_successful_workflow");
     if (!history || typeof history !== "object" || Array.isArray(history)) {
       throw new Error("RBT Benchmark history must be an object.");
     }
-    const [executionId, reviewId] = ["lastExecutionSuccess", "lastReviewSuccess"].map((field) => {
-      const reference = history[field];
-      if (reference === undefined) return undefined;
-      if (!reference || typeof reference !== "object" || Array.isArray(reference)
-        || typeof reference.workflowId !== "string") {
-        throw new Error(`RBT Benchmark ${field} must be a Workflow reference.`);
-      }
-      return reference.workflowId;
-    });
-    if (!executionId || !reviewId) return miss("execution_or_review_not_successful");
-    if (executionId !== reviewId) return miss("success_workflows_differ");
-    if (!resolveWorkflowLocation(scope.runRoot, executionId)) return miss("workflow_unavailable");
+    const reference = history.lastReviewSuccess;
+    if (reference === undefined) return miss("no_review_success");
+    if (!reference || typeof reference !== "object" || Array.isArray(reference)
+      || typeof reference.workflowId !== "string") {
+      throw new Error("RBT Benchmark lastReviewSuccess must be a Workflow reference.");
+    }
+    const reviewId = reference.workflowId;
+    if (!resolveWorkflowLocation(scope.runRoot, reviewId)) return miss("workflow_unavailable");
 
     // Physical Packs remain usable even when imported evidence has no execution links.
     const sources = new Map<string, ScoutArtifactReference>();
-    for (const { agentId } of listWorkflowArtifactPaths(scope.runRoot, executionId, "pack/execute-file.json")) {
+    for (const { agentId } of listWorkflowArtifactPaths(scope.runRoot, reviewId, "pack/execute-file.json")) {
       // Imported physical owner names are external identity data, not this Run's registered Agents.
-      const source = readArtifactReference({ workflowId: executionId, agentId, internalSymbols: ["pack", "execute-file.json"] });
+      const source = readArtifactReference({ workflowId: reviewId, agentId, internalSymbols: ["pack", "execute-file.json"] });
       sources.set(formatArtifactReference(source), source);
     }
-    const readExecutionSource = (path: string): ScoutArtifactReference | undefined => {
+    const readExecutionSource = (path: string): ScoutArtifactReference => {
       const value = readJsonFile<unknown>(path);
       if (!value || typeof value !== "object" || Array.isArray(value)) {
         throw new Error("RBT execution artifact must be an object.");
       }
-      if (!("bddId" in value) || value.bddId !== bddId || !("targetVersion" in value) || value.targetVersion !== targetVersion) return undefined;
       const source = readArtifactReference("executeFileRef" in value ? value.executeFileRef : undefined);
       if (source.internalSymbols.join("/") !== "pack/execute-file.json") {
         throw new Error("RBT execution artifact must reference pack/execute-file.json.");
@@ -81,24 +71,24 @@ export class SearchExecutionPackTool implements DomainAgentTool {
     };
     if (sources.size === 0) {
       // These file links only locate a Pack used elsewhere; statuses and digests do not qualify it.
-      for (const { path } of listWorkflowArtifactPaths(scope.runRoot, executionId, "history")) {
+      for (const { path } of listWorkflowArtifactPaths(scope.runRoot, reviewId, "history")) {
         for (const file of listFiles(path)) {
           if (!/^\d+\.json$/.test(relative(path, file))) continue;
           const source = readExecutionSource(file);
-          if (source) sources.set(formatArtifactReference(source), source);
+          sources.set(formatArtifactReference(source), source);
         }
       }
     }
-    let candidates: { reference: ScoutArtifactReference; path: string }[] = [];
+    let candidates: ScoutArtifactReference[] = [];
     for (const source of sources.values()) {
-      const reference = { ...source, internalSymbols: ["pack"] };
-      const target = resolveArtifactTarget(reference);
-      if (!("reason" in target)) candidates.push({ reference, path: target.path });
+      const target = resolveArtifactTarget(source);
+      if (!("reason" in target)) candidates.push({ ...source, internalSymbols: ["pack"] });
     }
     // A Review link identifies the actual delivered execution, even if a trial Pack remains locally.
     // Read only location links; neither the verdict nor historical status/digest qualifies the Pack.
     const deliveredSources = new Map<string, ScoutArtifactReference>();
-    for (const { path } of listWorkflowArtifactPaths(scope.runRoot, executionId, "pack/review-result.json")) {
+    const reviewDeliveries = listWorkflowArtifactPaths(scope.runRoot, reviewId, "pack/review-result.json");
+    for (const { path } of reviewDeliveries) {
       const value = readJsonFile<unknown>(path);
       if (!value || typeof value !== "object" || Array.isArray(value) || !("executorHistoryRef" in value)) {
         throw new Error("RBT Review delivery must identify its Executor history.");
@@ -108,53 +98,37 @@ export class SearchExecutionPackTool implements DomainAgentTool {
         throw new Error("RBT Review delivery must reference an Executor history file.");
       }
       // Imported local evidence keeps its original link; the selected identity owns that file now.
-      const target = resolveArtifactTarget({ ...historyRef, workflowId: executionId });
+      const target = resolveArtifactTarget({ ...historyRef, workflowId: reviewId });
       if ("reason" in target) continue;
       const source = readExecutionSource(target.path);
-      if (!source) continue;
       // Local Pack references move with a reidentified import; external Pack references retain ownership.
-      const reference = { ...source, workflowId: source.workflowId === historyRef.workflowId ? executionId : source.workflowId,
+      const reference = { ...source, workflowId: source.workflowId === historyRef.workflowId ? reviewId : source.workflowId,
         internalSymbols: ["pack"] };
       deliveredSources.set(formatArtifactReference(reference), reference);
     }
-    if (deliveredSources.size) {
+    if (reviewDeliveries.length) {
       candidates = [];
       for (const reference of deliveredSources.values()) {
-        const target = resolveArtifactTarget(reference);
-        if (!("reason" in target)) candidates.push({ reference, path: target.path });
+        const target = resolveArtifactTarget({ ...reference, internalSymbols: ["pack", "execute-file.json"] });
+        if (!("reason" in target)) candidates.push(reference);
       }
     }
     if (!candidates.length) return miss("pack_unavailable");
-    if (candidates.length > 1) throw new Error(`Ambiguous RBT Execution Pack in ${executionId}: ${candidates.map(({ reference }) => `${reference.workflowId}/${reference.agentId}`).join(", ")}.`);
+    if (candidates.length > 1) throw new Error(`Ambiguous RBT Execution Pack in ${reviewId}: ${candidates.map((reference) => `${reference.workflowId}/${reference.agentId}`).join(", ")}.`);
     const candidate = candidates[0]!;
-
-    const caller = scope.agentRegistry.resolveToolCaller(call.input.threadId);
-    if (!caller) throw new Error(`Unknown Pack search caller: ${call.input.threadId}`);
-    const checker = caller.mount.shellTools.find((tool) => tool.id === "scoutRbtArtifactCheck");
-    if (!checker) throw new Error("SearchExecutionPack requires the mounted scoutRbtArtifactCheck tool.");
-    const checked = await this.commands.run({
-      executable: shellToolWrapperPath(caller.mount.mountRoot, checker.exposeAs),
-      args: ["pack", candidate.path, "--bdd-id", bddId, "--target-version", targetVersion],
-      cwd: caller.spec.cwd,
-      timeoutMs: 30_000,
-    });
-    if (checked.status !== "completed") {
-      if (checked.status === "failed" && checked.exitCode === 1) return miss("pack_invalid", checked.stderr.trim());
-      throw new Error(`RBT Pack checker failed: ${checked.error || checked.stderr.trim() || checked.status}`);
-    }
 
     const allowedConsumers = scope.workflow.graph.snapshot().roles.flatMap((role) => {
       const phases = role.phases.filter((phase) => phase === "execute" || phase === "review");
       return phases.length ? [{ agentId: role.name, phases }] : [];
     });
     await registerAgentPermissionRequestSource(call.input, {
-      sourceKey: formatArtifactReference(candidate.reference),
-      target: candidate.reference,
+      sourceKey: formatArtifactReference(candidate),
+      target: candidate,
       allowedConsumers,
       maxApprovals: allowedConsumers.length,
     });
     return respond({ status: "found", "execute-pack-ref": {
-      ...candidate.reference, internalSymbols: [...candidate.reference.internalSymbols],
+      ...candidate, internalSymbols: [...candidate.internalSymbols],
     } });
   }
 }
