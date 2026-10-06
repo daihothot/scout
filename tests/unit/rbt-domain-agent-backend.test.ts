@@ -9,7 +9,9 @@ import {
 } from "../../src/domain/index.js";
 import { RbtDomain, RbtDomainAgentBackend } from "../../src/domain/domains/rbt/index.js";
 import { JarvisBehaviorTool } from "../../src/domain/domains/rbt/agent/tools/jarvis-behavior/jarvis-behavior-tool.js";
-import { buildJarvisBehaviorDynamicTool, buildSearchExecutionPackDynamicTool } from "../../src/domain/domains/rbt/agent/tools/agent-tools.js";
+import { SearchExecutionPackTool } from "../../src/domain/domains/rbt/agent/tools/search-execution-pack/search-execution-pack-tool.js";
+import { SelectExecutionSourceTool } from "../../src/domain/domains/rbt/agent/tools/select-execution-source/select-execution-source-tool.js";
+import { buildJarvisBehaviorDynamicTool, buildSearchExecutionPackDynamicTool, buildSelectExecutionSourceDynamicTool } from "../../src/domain/domains/rbt/agent/tools/agent-tools.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
 test("RbtDomainAgentBackend invokes the same constructed tool with the actual call Phase", async (t) => {
@@ -19,17 +21,24 @@ test("RbtDomainAgentBackend invokes the same constructed tool with the actual ca
     if (DomainEvents.agentToolCall.observed.is(event)) observations.push(event.payload);
   });
   const invocations: string[] = [];
-  const backend = new RbtDomainAgentBackend({
-    execute(call) { invocations.push(call.caller.phase); return success(call.caller.phase); },
-  }, { execute: () => success("lookup") });
+  const instances: JarvisBehaviorTool[] = [];
+  t.mock.method(JarvisBehaviorTool.prototype, "execute", async function (this: JarvisBehaviorTool, call: ScoutDomainDynamicToolCall) {
+    instances.push(this);
+    invocations.push(call.caller.phase);
+    return success(call.caller.phase);
+  });
+  const backend = new RbtDomainAgentBackend();
   for (const phase of ["execute", "review"]) {
     assert.deepEqual(await backend.handleDynamicToolCall(call(phase, toolSpec())), success(phase));
   }
   assert.deepEqual(invocations, ["execute", "review"]);
+  assert.strictEqual(instances[0], instances[1], "One Backend keeps one Tool across calls");
   assert.deepEqual(observations.map((event) => ({ domainId: event.domainId, phase: event.phase, response: event.response })), [
     { domainId: ScoutDomainId.Rbt, phase: "execute", response: success("execute") },
     { domainId: ScoutDomainId.Rbt, phase: "review", response: success("review") },
   ]);
+  await new RbtDomainAgentBackend().handleDynamicToolCall(call("execute", toolSpec()));
+  assert.notStrictEqual(instances[0], instances[2], "Another Backend creates its own Tool");
 });
 
 test("RbtDomainAgentBackend routes distinct tool identities and ignores unrelated namespaces", async (t) => {
@@ -38,16 +47,17 @@ test("RbtDomainAgentBackend routes distinct tool identities and ignores unrelate
   scope.eventBus.subscribe(DomainEvents.agentToolCall.observed, (event) => {
     if (DomainEvents.agentToolCall.observed.is(event)) observations.push(event.payload);
   });
-  const backend = new RbtDomainAgentBackend(
-    { execute: () => success("behavior") },
-    { execute: () => success("lookup") },
-  );
+  t.mock.method(JarvisBehaviorTool.prototype, "execute", async () => success("behavior"));
+  t.mock.method(SearchExecutionPackTool.prototype, "execute", async () => success("lookup"));
+  t.mock.method(SelectExecutionSourceTool.prototype, "execute", async () => success("selection"));
+  const backend = new RbtDomainAgentBackend();
   assert.equal(await backend.handleDynamicToolCall(call("execute", { ...toolSpec(), namespace: "other_behavior" })), undefined);
   assert.equal(await backend.handleDynamicToolCall(call("execute", { ...toolSpec(), name: "MissingTool" })), undefined);
   assert.deepEqual(observations, []);
   assert.deepEqual(await backend.handleDynamicToolCall(call("execute", toolSpec())), success("behavior"));
   assert.deepEqual(await backend.handleDynamicToolCall(call("execute", buildSearchExecutionPackDynamicTool())), success("lookup"));
-  assert.equal(observations.length, 2);
+  assert.deepEqual(await backend.handleDynamicToolCall(call("execute", buildSelectExecutionSourceDynamicTool())), success("selection"));
+  assert.equal(observations.length, 3);
 });
 
 test("RbtDomainAgentBackend converts thrown and rejected tool errors into observed failures", async (t) => {
@@ -63,7 +73,8 @@ test("RbtDomainAgentBackend converts thrown and rejected tool errors into observ
     { async execute() { throw error; } },
   ];
   for (const [index, tool] of tools.entries()) {
-    const backend = new RbtDomainAgentBackend(tool, { execute: () => success("lookup") });
+    const execute = t.mock.method(JarvisBehaviorTool.prototype, "execute", tool.execute);
+    const backend = new RbtDomainAgentBackend();
     const invocation = call("execute", definition);
     invocation.input.callId = `call-error-${index}`;
     const response = await backend.handleDynamicToolCall(invocation);
@@ -74,6 +85,7 @@ test("RbtDomainAgentBackend converts thrown and rejected tool errors into observ
     assert.equal(observations.length, index + 1);
     assert.equal(observations[index]!.callId, invocation.input.callId);
     assert.deepEqual(observations[index]!.response, response);
+    execute.mock.restore();
   }
 });
 
@@ -131,10 +143,9 @@ test("RbtDomain exposes its backend for invocation with one detached completion"
 });
 
 test("RBT Backend constructs independent Specs using tool declaration functions", () => {
-  const tool = { execute: () => success("completed") };
-  const backend = new RbtDomainAgentBackend(tool, tool);
-  const another = new RbtDomainAgentBackend(tool, tool);
-  const declarations = [buildJarvisBehaviorDynamicTool(), buildSearchExecutionPackDynamicTool()];
+  const backend = new RbtDomainAgentBackend();
+  const another = new RbtDomainAgentBackend();
+  const declarations = [buildJarvisBehaviorDynamicTool(), buildSearchExecutionPackDynamicTool(), buildSelectExecutionSourceDynamicTool()];
   assert.deepEqual(backend.toolDefinitions, declarations);
   for (const [index, declaration] of declarations.entries()) {
     const spec = backend.toolDefinitions[index]!;

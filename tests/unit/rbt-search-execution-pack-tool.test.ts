@@ -441,7 +441,7 @@ test("Pack file requests approve each consumer once and restore their source gra
 
 test("RBT Backend invokes the constructed lookup tool", async (t) => {
   const f = await fixture(t);
-  const backend = new RbtDomainAgentBackend({ execute: () => ({ success: true, contentItems: [] }) }, new SearchExecutionPackTool());
+  const backend = new RbtDomainAgentBackend();
   const result = await backend.handleDynamicToolCall(f.call);
   assert.ok(result);
   assert.equal(output(result).status, "found");

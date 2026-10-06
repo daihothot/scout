@@ -17,9 +17,7 @@ import { BaseDomain } from "../base/index.js";
 import {
   RbtDomainAgentBackend,
   RbtAgentToolCallRecorder,
-  JarvisBehaviorTool,
   JarvisWebSocketTool,
-  SearchExecutionPackTool,
 } from "./agent/index.js";
 import {
   JarvisBehaviorCommandRunner,
@@ -29,7 +27,7 @@ import {
   RbtCampaignExecutionHistoryStore,
   JarvisBehaviorWebSocketLinker,
 } from "./core/index.js";
-import { loadRbtConfig, type RbtConfig } from "./config/index.js";
+import { loadRbtConfig, type RbtConfig, type RbtPlatform } from "./config/index.js";
 import { RbtEvents, type RbtExecutionHistoryReadyEvent } from "./rbt-events.js";
 import { RbtRecordObject } from "./record/rbt-record-object.js";
 import { RbtDomainProjector } from "./projector/rbt-domain-projector.js";
@@ -57,10 +55,12 @@ export class RbtDomain implements ScoutDomain {
   private readonly campaignHistoryStore = new RbtCampaignExecutionHistoryStore();
   private readonly behaviorStore = new JarvisBehaviorToolStore();
   private readonly websocket: JarvisWebSocketTool;
-  private readonly behaviorOrchestrator: JarvisBehaviorOrchestrator;
+  readonly behaviorOrchestrator: JarvisBehaviorOrchestrator;
   private unsubscribeHistoryReady?: UnsubscribeEventHandler;
   private unsubscribeRestoredHistoryReady?: UnsubscribeEventHandler;
   private activeConfig?: RbtConfig;
+  private selectedPlatform?: RbtPlatform;
+  private selectionTail: Promise<void> = Promise.resolve();
   private readonly executionRequest: () => ExecutionPlatformRequest;
   private baseDomain?: BaseDomain;
   private started = false;
@@ -71,15 +71,17 @@ export class RbtDomain implements ScoutDomain {
   constructor(options: RbtDomainRuntimeOptions = {}) {
     const executable = options.executable ?? "jarvis";
     const baseArgs = options.baseArgs ?? [];
-    const executionRequest = options.executionRequest ?? (() => {
-      const { transport, platform, appId } = this.config.execution;
-      const request: ExecutionPlatformRequest = {
+    const executionOverride = options.executionRequest;
+    const executionRequest = () => {
+      const platform = this.selectedPlatform;
+      if (!platform) throw new Error("SelectExecutionSource must bind the task platform before RBT execution.");
+      const { transport, appId } = this.config.executionSources[platform]!;
+      return executionOverride?.() ?? {
         ...(transport ? { transport } : {}),
-        ...(platform ? { platform } : {}),
+        platform,
         ...(appId ? { appId } : {}),
       };
-      return request;
-    });
+    };
     this.executionRequest = executionRequest;
     this.websocket = options.websocket ?? new JarvisWebSocketTool();
     this.behaviorOrchestrator = new JarvisBehaviorOrchestrator(
@@ -95,9 +97,7 @@ export class RbtDomain implements ScoutDomain {
       new JarvisBehaviorExecuteFileRunner(this.behaviorStore),
       this.behaviorStore,
     );
-    this.backend = new RbtDomainAgentBackend(
-      new JarvisBehaviorTool(this.behaviorOrchestrator), new SearchExecutionPackTool(),
-    );
+    this.backend = new RbtDomainAgentBackend();
   }
 
   get config(): RbtConfig {
@@ -122,7 +122,6 @@ export class RbtDomain implements ScoutDomain {
       if (!(baseDomain instanceof BaseDomain)) {
         throw new Error("Registered Base Domain has an invalid runtime type.");
       }
-      baseDomain.execution.configure(this.executionRequest());
       this.baseDomain = baseDomain;
       this.unsubscribeHistoryReady = scope.eventBus.subscribe<RbtExecutionHistoryReadyEvent>(
         RbtEvents.history.ready,
@@ -141,7 +140,31 @@ export class RbtDomain implements ScoutDomain {
     }
   }
 
-  create(): void {
+  /** Serializes the Workflow's one platform decision; repeat use does not create another fact. */
+  selectExecutionSource(platform: RbtPlatform): Promise<void> {
+    const selection = this.selectionTail.then(async () => {
+      const scope = currentRunScope();
+      scope.workflow.requireActiveWorkflow();
+      if (!this.started || !this.baseDomain) throw new Error("RBT Domain is not running.");
+      if (!this.config.executionSources[platform]) throw new Error(`No RBT execution source is configured for ${platform}.`);
+      if (this.selectedPlatform && this.selectedPlatform !== platform) {
+        throw new Error(`This Workflow already selected ${this.selectedPlatform}; it cannot switch to ${platform}.`);
+      }
+      if (!this.selectedPlatform) {
+        await scope.eventBus.publishAndWait(RbtEvents.execution.sourceSelected, { platform });
+        // Unlike observation logs, selecting a recoverable target promises a durable fact.
+        if (this.recordObject.failed) throw new Error("RBT execution source selection could not be recorded.");
+        this.selectedPlatform = platform;
+      }
+      this.baseDomain.execution.configure(this.executionRequest());
+    });
+    this.selectionTail = selection.then(() => undefined, () => undefined);
+    return selection;
+  }
+
+  async create(): Promise<void> {
+    await this.selectionTail;
+    this.selectedPlatform = undefined;
     this.unsubscribeRestoredHistoryReady?.();
     this.unsubscribeRestoredHistoryReady = undefined;
     this.behaviorStore.clear();
@@ -150,6 +173,7 @@ export class RbtDomain implements ScoutDomain {
 
   async restore(workflowData: WorkflowData): Promise<void> {
     if (workflowData.status === "completed") return;
+    await this.selectionTail;
     await this.behaviorOrchestrator.quiesce();
     this.unsubscribeRestoredHistoryReady?.();
     this.unsubscribeRestoredHistoryReady = undefined;
@@ -158,6 +182,14 @@ export class RbtDomain implements ScoutDomain {
     this.recordObject.attach(currentRunScope().workflow.journalRoot);
     const records = this.recordObject.read();
     const runtimeData = new RbtDomainProjector().project(records);
+    this.selectedPlatform = runtimeData.executionPlatform;
+    if (this.selectedPlatform) {
+      if (!this.config.executionSources[this.selectedPlatform]) {
+        throw new Error(`No RBT execution source is configured for restored platform ${this.selectedPlatform}.`);
+      }
+      if (!this.baseDomain) throw new Error("RBT Domain is not running.");
+      this.baseDomain.execution.configure(this.executionRequest());
+    }
     this.artifact.restore(runtimeData.artifacts);
     const { histories } = runtimeData.artifacts;
     if (histories.size === 0) {
@@ -204,6 +236,7 @@ export class RbtDomain implements ScoutDomain {
   run(): void { this.behaviorOrchestrator.start(); }
 
   async close(): Promise<void> {
+    await this.selectionTail;
     await this.behaviorOrchestrator.quiesce();
     this.unsubscribeRestoredHistoryReady?.();
     this.unsubscribeRestoredHistoryReady = undefined;
@@ -211,6 +244,7 @@ export class RbtDomain implements ScoutDomain {
   }
 
   async abort(): Promise<void> {
+    await this.selectionTail;
     await this.behaviorOrchestrator.quiesce();
     this.unsubscribeRestoredHistoryReady?.();
     this.unsubscribeRestoredHistoryReady = undefined;
@@ -218,6 +252,7 @@ export class RbtDomain implements ScoutDomain {
   }
 
   clearWorkflow(): void {
+    this.selectedPlatform = undefined;
     this.behaviorStore.clear();
     this.artifact.clear();
     this.campaignHistoryStore.clearWorkflow();
@@ -228,6 +263,7 @@ export class RbtDomain implements ScoutDomain {
     if (this.stopping) return this.stopping;
     this.started = false;
     this.stopping = (async () => {
+      await this.selectionTail;
       await this.behaviorOrchestrator.quiesce();
       const failures: unknown[] = [];
       for (const release of [
@@ -259,6 +295,7 @@ export class RbtDomain implements ScoutDomain {
         }
       }
       this.activeConfig = undefined;
+      this.selectedPlatform = undefined;
       this.cleanupFailed = failures.length > 0;
       if (failures.length > 0) throw new AggregateError(failures, "Failed to stop RBT Domain.");
     })();

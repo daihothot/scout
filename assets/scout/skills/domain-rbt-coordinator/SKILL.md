@@ -102,7 +102,7 @@ Phase 说明：
 ## Coordinator Output
 
 - 开启输入：根据已确认 BDD、版本与平台生成的 `name`，格式见 Phase 1 的默认 name 定义。
-- 执行任务 prompt：`bdd_id`、`bdd_source_path`、`target_version`、用户限制和交付要求。
+- 执行任务 prompt：`bdd_id`、`bdd_source_path`、`target_version`、`platform`、用户限制和交付要求。
 - 阶段结果：当前正式状态支持的 `completed` 或 `error`。
 - 用户交付：正式结论、限制和结果 refs。
 
@@ -172,6 +172,7 @@ Knowledge：
 | `bdd_id` | Coordinator 从 canonical BDD 确认；Executor 核对文件身份。 |
 | `bdd_source_path` | Coordinator 经 Knowledge 查询取得的产品根目录相对文件路径，如 `Behaviors/<name>.md`；Executor 在当前可读 Knowledge 根目录下读取。 |
 | `target_version` | Coordinator 确认的 SDK 基线 tag；Executor 核对源码和 Runtime，不另选目标版本。 |
+| `platform` | Coordinator 与用户确认的执行平台；Executor 按此绑定当前 Workflow 的执行配置。 |
 | `human_constraints` | Coordinator 原样转交用户限制；没有时为 `none`。 |
 
 prompt 同时说明执行目标和本技能要求的正式 handoff；不把 name 当成执行输入。

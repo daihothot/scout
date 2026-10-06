@@ -13,7 +13,7 @@ import {
 
 const request = { transport: "adb", platform: "android", appId: "com.example.first" };
 
-test("Base semantic launch uses isolated runtime configuration and survives a Workflow state reset", async (t) => {
+test("Base semantic launch isolates configuration and releases it at the Workflow boundary", async (t) => {
   const { execution, operations } = await fixture(t);
   const configuration = { ...request, parameters: { activity: "MainActivity" } };
   execution.configure(configuration);
@@ -30,8 +30,11 @@ test("Base semantic launch uses isolated runtime configuration and survives a Wo
     appId: request.appId, launchParameters: { activity: "MainActivity" },
   });
   execution.stop();
+  const unconfigured = await execution.launch();
+  assert.ok(!unconfigured.ok && unconfigured.code === "execution_not_configured");
+  execution.configure({ ...request, appId: "com.example.second" });
   assert.ok((await execution.launch()).ok);
-  assert.deepEqual(operations.at(-1)!.parameters, operations[1]!.parameters);
+  assert.equal(operations.at(-1)!.parameters.appId, "com.example.second");
 });
 
 test("Base semantic operations report missing runtime information without selecting a guessed target", async (t) => {

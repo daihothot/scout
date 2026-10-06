@@ -6,26 +6,22 @@ import test from "node:test";
 import { AssetStore } from "../../src/asset-store/index.js";
 import { loadRbtConfig } from "../../src/domain/domains/rbt/index.js";
 
-test("loadRbtConfig reads the physical execution target", () => {
+test("loadRbtConfig reads isolated platform-keyed physical execution sources", () => {
   const scoutRoot = mkdtempSync(join(tmpdir(), "scout-rbt-config-"));
   const configRoot = join(scoutRoot, "assets", "scout", "config");
   mkdirSync(configRoot, { recursive: true });
   writeFileSync(join(configRoot, "rbt.config.json"), JSON.stringify({
-    execution: {
-      transport: "adb",
-      platform: "android",
-      appId: "com.example.app",
-      artifactPath: "/tmp/example.apk",
+    executionSources: {
+      unity_editor: { transport: "unity-pipeline" },
+      android: { transport: "adb", appId: "com.example.app", artifactPath: "/tmp/example.apk" },
     },
   }), "utf8");
 
   try {
     assert.deepEqual(loadRbtConfig(new AssetStore().config(scoutRoot)), {
-      execution: {
-        transport: "adb",
-        platform: "android",
-        appId: "com.example.app",
-        artifactPath: "/tmp/example.apk",
+      executionSources: {
+        unity_editor: { transport: "unity-pipeline" },
+        android: { transport: "adb", appId: "com.example.app", artifactPath: "/tmp/example.apk" },
       },
     });
   } finally {
@@ -40,22 +36,16 @@ test("loadRbtConfig allows discovery defaults and platform-specific fields to be
   mkdirSync(configRoot, { recursive: true });
 
   try {
-    writeFileSync(configPath, JSON.stringify({}), "utf8");
+    writeFileSync(configPath, JSON.stringify({ executionSources: {} }), "utf8");
     assert.deepEqual(loadRbtConfig(new AssetStore().config(scoutRoot)), {
-      execution: {},
+      executionSources: {},
     });
 
     writeFileSync(configPath, JSON.stringify({
-      execution: {
-        transport: "unity-pipeline",
-        platform: "unity_editor",
-      },
+      executionSources: { unity_editor: { transport: "unity-pipeline" } },
     }), "utf8");
     assert.deepEqual(loadRbtConfig(new AssetStore().config(scoutRoot)), {
-      execution: {
-        transport: "unity-pipeline",
-        platform: "unity_editor",
-      },
+      executionSources: { unity_editor: { transport: "unity-pipeline" } },
     });
   } finally {
     rmSync(scoutRoot, { recursive: true, force: true });
@@ -69,26 +59,31 @@ test("loadRbtConfig rejects malformed or unknown provided fields", () => {
   mkdirSync(configRoot, { recursive: true });
 
   try {
+    for (const value of [
+      {}, { execution: {} }, { executionSources: [] },
+      { executionSources: { windows: {} } },
+      { executionSources: { android: { platform: "android" } } },
+      { executionSources: { android: null } },
+    ]) {
+      writeFileSync(configPath, JSON.stringify(value), "utf8");
+      assert.throws(() => loadRbtConfig(new AssetStore().config(scoutRoot)), /Invalid RBT config/);
+    }
     writeFileSync(configPath, JSON.stringify({
-      execution: {
-        transport: "adb",
-        platform: "android",
-        appId: "com.example.app",
-        artifactPath: "/tmp/example.apk",
-        targetId: "device-1",
-      },
+      executionSources: { android: {
+        transport: "adb", appId: "com.example.app", artifactPath: "/tmp/example.apk", targetId: "device-1",
+      } },
     }), "utf8");
     assert.throws(
       () => loadRbtConfig(new AssetStore().config(scoutRoot)),
-      /unknown execution field.*targetId/,
+      /unknown executionSources.android field.*targetId/,
     );
 
     writeFileSync(configPath, JSON.stringify({
-      execution: { appId: 42 },
+      executionSources: { android: { appId: 42 } },
     }), "utf8");
     assert.throws(
       () => loadRbtConfig(new AssetStore().config(scoutRoot)),
-      /execution\.appId must be a string/,
+      /executionSources\.android\.appId must be a string/,
     );
   } finally {
     rmSync(scoutRoot, { recursive: true, force: true });

@@ -1,4 +1,20 @@
 import type { AgentDynamicToolSpec } from "../../../../../agent/tools/types.js";
+import { RbtPlatforms } from "../../config/index.js";
+
+/** Binds one confirmed platform before the Executor prepares or executes its Pack. */
+export function buildSelectExecutionSourceDynamicTool(): AgentDynamicToolSpec {
+  return {
+    guidanceSkill: "tool-rbt-select-execution-source",
+    namespace: "rbt_execution",
+    name: "SelectExecutionSource",
+    description: "根据任务已确认的 platform 选择本 Workflow 的执行配置；不启动应用。",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      properties: { platform: { type: "string", enum: [...RbtPlatforms] } },
+      required: ["platform"],
+    },
+  };
+}
 
 /** Searches for an Execution Pack and returns its stable Artifact reference. */
 export function buildSearchExecutionPackDynamicTool(): AgentDynamicToolSpec {

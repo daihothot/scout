@@ -132,6 +132,7 @@ export class BaseDomainExecution {
   stop(): void {
     while (this.unsubscribers.length > 0) this.unsubscribers.pop()?.();
     this.state = undefined;
+    this.configuration = undefined;
     this.rollbackLaunchId = undefined;
   }
 

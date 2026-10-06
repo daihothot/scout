@@ -105,7 +105,8 @@
         "RequestHumanInput",
         "SubmitTask",
         "JarvisBehavior",
-        "SearchExecutionPack"
+        "SearchExecutionPack",
+        "SelectExecutionSource"
       ]
     },
     "rbt-review": {

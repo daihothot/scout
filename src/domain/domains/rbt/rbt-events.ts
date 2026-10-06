@@ -4,6 +4,12 @@ import { defineEventCatalog, event } from "../../../core/events/index.js";
 import type { HostCommandExecution } from "../../../host/host-command-executor.js";
 import type { ExecutionPlatformIdentity } from "../../../execution/scout-execution-system.js";
 import type { RbtExecutionHistory, RbtExecutionPackSubmission, RbtReviewSubmission } from "./artifacts/types.js";
+import type { RbtPlatform } from "./config/index.js";
+
+/** The platform selected for this Workflow; physical configuration stays in the Domain. */
+export interface RbtExecutionSourceSelectedEvent {
+  platform: RbtPlatform;
+}
 
 /** One host command executed while serving an RBT dynamic-tool call. */
 export type RbtHostCommandExecution = HostCommandExecution;
@@ -71,6 +77,9 @@ export interface RbtReviewSubmittedEvent extends RbtReviewSubmission {}
 
 /** In-memory RBT observation routes consumed by Domain telemetry and artifacts. */
 export const RbtEvents = defineEventCatalog("domain.rbt", {
+  execution: {
+    sourceSelected: event<RbtExecutionSourceSelectedEvent>(),
+  },
   campaign: {
     start: event<RbtCampaignCommandEvent>(),
     command: event<RbtCampaignCommandEvent>(),

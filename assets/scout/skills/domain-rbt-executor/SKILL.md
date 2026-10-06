@@ -12,7 +12,7 @@ tags: [scout, rbt, bdd, execution, behavioral, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [domain-rbt, domain-rbt-execution-pack, signal-rbt-evidence, tool-guru-knowledge, tool-jarvis-codebase, tool-rbt-behavior, tool-rbt-search-execution-pack, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**]
+    required: [domain-rbt, domain-rbt-execution-pack, signal-rbt-evidence, tool-guru-knowledge, tool-jarvis-codebase, tool-rbt-select-execution-source, tool-rbt-behavior, tool-rbt-search-execution-pack, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**]
 summary: 选择可用 Pack，或从 BDD 和源码形成 JR/SR，完成一次受控执行与正式交付。
 ---
 
@@ -44,6 +44,7 @@ Required：
 - `bdd_id`：Coordinator 在当前 task prompt 中提供的 canonical BDD identity。
 - `bdd_source_path`：Coordinator 提供的 Knowledge 产品根目录相对文件路径，如 `Behaviors/<name>.md`。
 - `target_version`：Coordinator 已确认的 Guru SDK 基线 tag。
+- `platform`：Coordinator 已确认的执行平台，标识见 `domain-rbt` 的 Platform。
 
 Optional：
 
@@ -54,6 +55,7 @@ Missing：
 - `bdd_id` 缺失、为空或不唯一：交由 Coordinator 修正。
 - `bdd_source_path` 缺失、为空、不可读或指向多个来源：交由 Coordinator 修正。
 - `target_version` 缺失或无法明确：交由 Coordinator 修正，不以当前源码或 Runtime 版本代替。
+- `platform` 缺失或无法明确：交由 Coordinator 修正，不从目录名或 Pack 推导。
 - `human_constraints` 缺失不阻塞输入确认，不自行补出限制。
 
 Confirmation：
@@ -65,7 +67,7 @@ Confirmation：
 
 ```mermaid
 flowchart TD
-  P1["Phase 1：确认 BDD 与版本"] --> P2["Phase 2：查询与准备 Pack"]
+  P1["Phase 1：确认 BDD、版本并绑定平台"] --> P2["Phase 2：查询与准备 Pack"]
   P2 --> Q{"历史 Pack 查询结果"}
   Q -- found --> P21["Phase 2-1：使用历史 Pack"]
   Q -- not_found --> P22["Phase 2-2：制作新 Pack"]
@@ -79,7 +81,7 @@ flowchart TD
 
 Phase 说明：
 
-- Phase 1：确认 BDD、查询分类，核对源码与 Runtime 是否对应已指定版本。
+- Phase 1：确认 BDD、查询分类，绑定已确认平台，核对源码与 Runtime 是否对应已指定版本。
 - Phase 2：查询历史 Pack，完成所选分支的 Pack 准备。
   - Phase 2-1：使用查询命中的历史 Pack。
   - Phase 2-2：制作新 Pack。
@@ -112,7 +114,7 @@ Phase 说明：
 
 `bdd_id` 与 `target_version` 原样沿用 task prompt 的已确认输入，Coordinator 转交给 Reviewer。`execute-pack-ref` 原样使用本次选定 Pack 的引用；不传物理目录、执行结果或权限登记信息。
 
-## Phase 1: 确认 BDD 与版本
+## Phase 1: 确认 BDD、版本并绑定平台
 ---
 
 Main Flow：
@@ -122,6 +124,7 @@ Knowledge：
 - `tool-guru-knowledge` 提供 canonical BDD；本阶段按 `I-001` 确认输入。
 - BDD frontmatter 的 `rbt` 使用 `domain:category` 字符串，只声明 When 主入口的分类；原样拆分，不从 tags、capability 或 Description 推导。
 - When 的业务对象、操作、输入与返回类型用于匹配主 Node；BDD 明确涉及的业务 symbol 用于后续定点对齐。
+- 按 `tool-rbt-select-execution-source` 将 task 的 `platform` 提交给 `SelectExecutionSource`；取得 `selected` 后再查询 Runtime 或准备 Pack。历史与新制 Pack 使用同一个已确认平台，不因 Pack 来源改选。
 - `tool-jarvis-codebase` 提供 codebase 与实际 SDK 版本确认方式。本阶段只使用版本与路径信息，并将源码及 Runtime 版本与 task 的 `target_version` 核对；这些信息用于核对，不用于重新选择或覆盖目标。SDK 与 Runtime 的版本绑定不能用 Unity Editor 版本代替。
 
 Flow：
@@ -129,7 +132,8 @@ Flow：
 ```mermaid
 flowchart TD
   A["读取 canonical BDD 并核对 I-001"] --> B["提取 Given / When / Then 与 rbt 分类"]
-  B --> C["核对 codebase 与 Runtime 是否对应 target_version"]
+  B --> S["SelectExecutionSource：绑定 task platform"]
+  S --> C["核对 codebase 与 Runtime 是否对应 target_version"]
   C --> D{"输入、分类与版本均已确认？"}
   D -- 否 --> X["Blocked：处理输入或版本缺口"]
   D -- 是 --> E["Phase 1 Exit"]
@@ -140,6 +144,7 @@ Blocked：
 - `I-001` 未通过确认。
 - BDD 的 `rbt` 缺失。
 - BDD 的 `rbt` 格式无效。
+- 已确认平台的执行配置未成功绑定。
 - 目标 SDK 版本与 Runtime 的绑定无法确认。
 - 目标 SDK 版本与 Runtime 冲突。
 
@@ -151,6 +156,7 @@ Exit：
 
 - `I-001` 已通过确认。
 - Given、When、Then 与查询分类已明确。
+- 任务平台已成功绑定。
 - codebase、目标 SDK 版本及 Runtime 版本绑定已确认。
 
 ## Phase 2: 查询与准备 Pack

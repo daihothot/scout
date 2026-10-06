@@ -269,17 +269,15 @@ test("RbtDomain releases journal resources after startup failure and delegates W
   });
   const journalRoot = scope.workflow.journalRoot;
   const path = join(journalRoot, "rbt-events.jsonl");
-  const base = scope.domainRegistry.get(ScoutDomainId.Base);
-  assert.ok(base instanceof BaseDomain);
-  const configure = t.mock.method(base.execution, "configure", () => {
-    throw new Error("Base execution configuration failed");
+  const startBenchmarks = t.mock.method(domain.benchmarks, "start", () => {
+    throw new Error("RBT benchmarks startup failed");
   });
-  await assert.rejects(domain.start(), /Base execution configuration failed/);
+  await assert.rejects(domain.start(), /RBT benchmarks startup failed/);
   assert.equal(existsSync(join(journalRoot, ".rbt-events.lock")), false);
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(1));
   assert.deepEqual(readJournalEvents(path), []);
 
-  configure.mock.restore();
+  startBenchmarks.mock.restore();
   await domain.start();
   await domain.run();
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(2));
@@ -297,7 +295,7 @@ test("RbtDomain releases journal resources after startup failure and delegates W
   const retryBoundary = { ...boundary, journalRoot: join(scope.runRoot, "next-workflow-retry") };
   await scope.eventBus.publishAndWait(WorkflowEvents.workflow.preparing, retryBoundary);
   await scope.eventBus.publishAndWait(WorkflowEvents.workflow.committing, retryBoundary);
-  domain.create();
+  await domain.create();
   assert.equal(clearBehavior.mock.callCount(), 1);
   await scope.eventBus.publishAndWait(WorkflowEvents.workflow.releasingPrevious, retryBoundary);
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, history(3));

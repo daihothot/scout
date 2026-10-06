@@ -43,18 +43,16 @@ test("RBT startup preserves the primary error while closing journals after faile
   const websocket = new JarvisWebSocketTool();
   const domain = new RbtDomain({ websocket });
   const scope = await installTestRunScope(t, { runId: "rbt-start-cleanup-failure", scoutRoot: process.cwd(), domain });
-  const primary = new Error("base execution configuration failed");
+  const primary = new Error("RBT benchmarks startup failed");
   const cleanup = new Error("WebSocket cleanup failed");
-  const base = scope.domainRegistry.get(ScoutDomainId.Base);
-  assert.ok(base instanceof BaseDomain);
-  const configure = t.mock.method(base.execution, "configure", () => { throw primary; });
+  const startBenchmarks = t.mock.method(domain.benchmarks, "start", () => { throw primary; });
   const stopWebSocket = t.mock.method(websocket, "stop", async () => { throw cleanup; });
   await assert.rejects(domain.start(), (error) => error instanceof AggregateError
     && error.errors[0] === primary
     && error.errors[1] instanceof AggregateError
     && error.errors[1].errors.includes(cleanup));
   assert.equal(existsSync(join(scope.workflow.journalRoot, ".rbt-events.lock")), false);
-  configure.mock.restore();
+  startBenchmarks.mock.restore();
   stopWebSocket.mock.restore();
   await domain.stop();
 });

@@ -1,8 +1,12 @@
 {
-  "execution": {
-    "transport": "adb",
-    "platform": "android",
-    "appId": "tile.connect.onet.onnect.pairs.matching.game.free.puzzle",
-    "artifactPath": "/Users/chengdai/Documents/UnityProjects/Castbox/Guru/gurusdk-unity-showcasse/Build/build.apk"
+  "executionSources": {
+    "unity_editor": {
+      "transport": "unity-pipeline"
+    },
+    "android": {
+      "transport": "adb",
+      "appId": "tile.connect.onet.onnect.pairs.matching.game.free.puzzle",
+      "artifactPath": "/Users/chengdai/Documents/UnityProjects/Castbox/Guru/gurusdk-unity-showcasse/Build/build.apk"
+    }
   }
 }

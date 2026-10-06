@@ -3,14 +3,24 @@ import type { AssetConfig } from "../../../../asset-store/config/asset-config.js
 
 const RBT_CONFIG_FILE = "rbt.config.json";
 
-/** Physical execution target selected by the RBT Domain. */
+export const RbtPlatforms = ["unity_editor", "android", "ios"] as const;
+export type RbtPlatform = typeof RbtPlatforms[number];
+
+/** Stable platform identity accepted at external RBT boundaries. */
+export function isRbtPlatform(value: unknown): value is RbtPlatform {
+  return RbtPlatforms.some((platform) => platform === value);
+}
+
+/** Physical configuration owned by one platform entry. */
+export interface RbtExecutionSource {
+  readonly transport?: string;
+  readonly appId?: string;
+  readonly artifactPath?: string;
+}
+
+/** Platform-keyed execution sources owned by the RBT Domain. */
 export interface RbtConfig {
-  readonly execution: {
-    readonly transport?: string;
-    readonly platform?: string;
-    readonly appId?: string;
-    readonly artifactPath?: string;
-  };
+  readonly executionSources: Readonly<Partial<Record<RbtPlatform, RbtExecutionSource>>>;
 }
 
 /** Loads and validates the configuration owned by the RBT Domain. */
@@ -20,35 +30,28 @@ export function loadRbtConfig(config: AssetConfig): RbtConfig {
   if (!isRecord(value)) {
     throw new Error(`Invalid RBT config at ${path}: expected a JSON object.`);
   }
-  assertKeys(value, ["execution"], path, "top-level");
-  if (value.execution === undefined) {
-    return { execution: {} };
+  assertKeys(value, ["executionSources"], path, "top-level");
+  if (!isRecord(value.executionSources)) {
+    throw new Error(`Invalid RBT config at ${path}: executionSources must be an object.`);
   }
-  if (!isRecord(value.execution)) {
-    throw new Error(`Invalid RBT config at ${path}: execution must be an object.`);
-  }
-  assertKeys(
-    value.execution,
-    ["transport", "platform", "appId", "artifactPath"],
-    path,
-    "execution",
-  );
-  const transport = optionalString(value.execution.transport, path, "execution.transport");
-  const platform = optionalString(value.execution.platform, path, "execution.platform");
-  const appId = optionalString(value.execution.appId, path, "execution.appId");
-  const artifactPath = optionalString(
-    value.execution.artifactPath,
-    path,
-    "execution.artifactPath",
-  );
-  return {
-    execution: {
+  const executionSources: Partial<Record<RbtPlatform, RbtExecutionSource>> = {};
+  for (const [platform, source] of Object.entries(value.executionSources)) {
+    if (!isRbtPlatform(platform)) {
+      throw new Error(`Invalid RBT config at ${path}: unknown execution platform ${platform}.`);
+    }
+    const field = `executionSources.${platform}`;
+    if (!isRecord(source)) throw new Error(`Invalid RBT config at ${path}: ${field} must be an object.`);
+    assertKeys(source, ["transport", "appId", "artifactPath"], path, field);
+    const transport = optionalString(source.transport, path, `${field}.transport`);
+    const appId = optionalString(source.appId, path, `${field}.appId`);
+    const artifactPath = optionalString(source.artifactPath, path, `${field}.artifactPath`);
+    executionSources[platform] = Object.freeze({
       ...(transport ? { transport } : {}),
-      ...(platform ? { platform } : {}),
       ...(appId ? { appId } : {}),
       ...(artifactPath ? { artifactPath } : {}),
-    },
-  };
+    });
+  }
+  return Object.freeze({ executionSources: Object.freeze(executionSources) });
 }
 
 function optionalString(

@@ -7,12 +7,13 @@ import { ScoutDomainId } from "../../../types.js";
 import { RbtEvents } from "../rbt-events.js";
 import {
   decodeRbtRecords, type RbtRecord, type RbtExecutionHistoryRecord,
-  type RbtExecutionPackSubmissionRecord, type RbtReviewSubmissionRecord,
+  type RbtExecutionPackSubmissionRecord, type RbtReviewSubmissionRecord, type RbtExecutionSourceSelectionRecord,
 } from "./rbt-record.js";
 
 /** Serializes and decodes RBT records; the Domain projector rebuilds runtime indexes. */
 export class RbtRecordObject extends DomainRecordObject<RbtRecord> {
   readonly eventTypes = [
+    RbtEvents.execution.sourceSelected,
     RbtEvents.history.ready,
     RbtEvents.artifact.executionPackSubmitted,
     RbtEvents.artifact.reviewSubmitted,
@@ -30,6 +31,10 @@ export class RbtRecordObject extends DomainRecordObject<RbtRecord> {
   protected decode(records: readonly RecordEvent[]): RbtRecord[] { return decodeRbtRecords(records); }
 
   protected override encode(event: ScoutEvent): ScoutEvent {
+    if (RbtEvents.execution.sourceSelected.is(event)) {
+      const payload: RbtExecutionSourceSelectionRecord = { platform: event.payload.platform };
+      return { ...event, payload };
+    }
     if (RbtEvents.history.ready.is(event)) {
       const history = event.payload;
       const payload: RbtExecutionHistoryRecord = {

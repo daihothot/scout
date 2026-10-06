@@ -1,6 +1,12 @@
 import { readArtifactReference } from "../../../../core/io/index.js";
 import type { RecordEvent } from "../../../../core/record/index.js";
 import type { RbtArtifactReference, RbtExecutionPackReference, RbtReviewerPackReference } from "../artifacts/types.js";
+import { isRbtPlatform, type RbtPlatform } from "../config/index.js";
+
+/** Persisted platform selection, separate from the runtime binding and its event. */
+export interface RbtExecutionSourceSelectionRecord {
+  platform: RbtPlatform;
+}
 
 /** The flat persisted history payload; event and runtime fields do not define this format. */
 export interface RbtExecutionHistoryRecord {
@@ -39,6 +45,7 @@ export interface RbtReviewSubmissionRecord {
 
 /** kind discriminates decoded records only; the Journal retains its existing event envelope. */
 export type RbtRecord =
+  | (RecordEvent<RbtExecutionSourceSelectionRecord, "domain.rbt.execution.source_selected"> & { kind: "execution-source" })
   | (RecordEvent<RbtExecutionHistoryRecord, "domain.rbt.history.ready"> & { kind: "execution-history" })
   | (RecordEvent<RbtExecutionPackSubmissionRecord, "domain.rbt.artifact.execution_pack_submitted"> & { kind: "execution-pack" })
   | (RecordEvent<RbtReviewSubmissionRecord, "domain.rbt.artifact.review_submitted"> & { kind: "review" });
@@ -76,6 +83,13 @@ export function decodeRbtRecords(records: readonly RecordEvent[]): RbtRecord[] {
       return value;
     };
     const payload = object(record.payload, "payload");
+    if (record.key.routeKey === "domain.rbt.execution.source_selected") {
+      if (!isRbtPlatform(payload.platform)) return invalid("execution platform");
+      return {
+        ...record, key: { ...record.key, routeKey: "domain.rbt.execution.source_selected" }, kind: "execution-source",
+        payload: { platform: payload.platform },
+      };
+    }
     const bddId = text(payload, "bddId");
     const targetVersion = text(payload, "targetVersion");
     switch (record.key.routeKey) {

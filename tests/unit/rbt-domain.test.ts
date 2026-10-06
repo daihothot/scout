@@ -67,12 +67,13 @@ test("RBT Domain exposes behavior execution and final platform shutdown by Phase
     workflowAsset: asset,
   });
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
   const backend = new AgentDynamicToolBackend();
   assert.deepEqual(backend.dynamicToolsForPhase("execute").map((tool) => tool.name), [
-    "ResolveArtifactReference", "SendMessage", "RequestHumanInput", "SubmitTask", "JarvisBehavior", "SearchExecutionPack",
+    "ResolveArtifactReference", "SendMessage", "RequestHumanInput", "SubmitTask", "JarvisBehavior", "SearchExecutionPack", "SelectExecutionSource",
   ]);
   assert.deepEqual(backend.dynamicToolsForPhase("review").map((tool) => tool.name), [
     "ResolveArtifactReference", "SendMessage", "RequestHumanInput", "SubmitTask", "JarvisBehavior", "ExecutionPlatform",
@@ -83,7 +84,7 @@ test("RBT Domain exposes behavior execution and final platform shutdown by Phase
 
   await domain.stop();
   assert.deepEqual(baseDomain(scope).backend.toolDefinitions.map((tool) => tool.name), ["ExecutionPlatform"]);
-  assert.deepEqual(domain.backend.toolDefinitions.map((tool) => tool.name), ["JarvisBehavior", "SearchExecutionPack"]);
+  assert.deepEqual(domain.backend.toolDefinitions.map((tool) => tool.name), ["JarvisBehavior", "SearchExecutionPack", "SelectExecutionSource"]);
 });
 
 test("RBT schema follows execute roles, including renamed workers and a reviewer without codebase access", async (t) => {
@@ -102,6 +103,7 @@ test("RBT schema follows execute roles, including renamed workers and a reviewer
     reviewer: { ...roleRoots(scope.runRoot, "reviewer"), readableRoots: [], shellTools: [] },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
   for (const [role, phase, command] of [
@@ -128,6 +130,7 @@ test("RBT rejects conflicting schema bindings across execute roles", async (t) =
     ...roleRoots(scope.runRoot, role), readableRoots: [installBehaviorSchema(join(scope.runRoot, role))], shellTools: [],
   }]))));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
   const result = await domain.backend.handleDynamicToolCall(dynamicCall({
@@ -146,6 +149,7 @@ test("RBT restores every missing history after Agent state restoration and does 
     domain,
   });
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   const readyHistories = [1, 2].map((runtimeSequence) => ({
     bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
@@ -224,6 +228,7 @@ test("RBT recovery skips persisted queued and consumed delivery identities", asy
     domain,
   });
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   const occurredAt = "2026-09-27T00:00:01.000Z";
   for (const runtimeSequence of [1, 2, 3]) {
@@ -278,6 +283,7 @@ test("RBT history delivery separates identical sequence numbers across Workflows
   const domain = new RbtDomain();
   const scope = await installTestRunScope(t, { runId: "rbt-cross-workflow-history", scoutRoot: process.cwd(), domain });
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   const accepted = new Map<string, SendAgentMessageInput>();
   const coordinator = {
@@ -343,6 +349,7 @@ test("RBT repeated restore replaces the previous pending history subscription", 
     domain,
   });
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   const history = {
     bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
@@ -388,6 +395,7 @@ test("RBT cancels restored history delivery on stop, completed restore, Workflow
         domain,
       });
       await domain.start();
+      await domain.selectExecutionSource("unity_editor");
       await domain.run();
       await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
         bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
@@ -425,7 +433,7 @@ test("RBT cancels restored history delivery on stop, completed restore, Workflow
         const boundary = { workflowId: "workflow-002", journalRoot: join(scope.runRoot, "next-workflow") };
         await scope.eventBus.publishAndWait(WorkflowEvents.workflow.preparing, boundary);
         await scope.eventBus.publishAndWait(WorkflowEvents.workflow.committing, boundary);
-        domain.create();
+        await domain.create();
         await scope.eventBus.publishAndWait(WorkflowEvents.workflow.releasingPrevious, boundary);
       }
       await scope.eventBus.publishAndWait(RunEvents.runtime.ready, {
@@ -444,6 +452,7 @@ test("RBT stops an in-flight history replay before delivering the next history",
     domain,
   });
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   for (const runtimeSequence of [1, 2]) {
     await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
@@ -493,6 +502,7 @@ test("RBT restored history delivery failures reject runtime ready and can be ret
     domain,
   });
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   await scope.eventBus.publishAndWait(RbtEvents.history.ready, {
     bddId: "account", targetVersion: "1.0", platform: { type: "unity-editor", version: "test" },
@@ -841,6 +851,7 @@ test("RBT hides ExecutionPlatform from Executor", async (t) => {
     },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -870,11 +881,7 @@ test("RBT Reviewer shuts down the restored session using only operation, even wh
   const configRoot = join(root, "assets", "scout", "config");
   mkdirSync(configRoot, { recursive: true });
   writeFileSync(join(configRoot, "rbt.config.json"), JSON.stringify({
-    execution: {
-      transport: "adb",
-      platform: "android",
-      appId: "com.example.next",
-    },
+    executionSources: { android: { transport: "adb", appId: "com.example.next" } },
   }), "utf8");
   const domain = new RbtDomain();
   const scope = await installTestRunScope(t, {
@@ -917,6 +924,7 @@ test("RBT Reviewer shuts down the restored session using only operation, even wh
     { occurredAt: "2026-09-24T00:00:00.000Z" },
   ));
   await domain.start();
+  await domain.selectExecutionSource("android");
   baseDomain(scope).restore(scope.workflow.snapshot()!);
   await domain.restore(scope.workflow.snapshot()!);
   await domain.run();
@@ -991,6 +999,7 @@ test("JarvisBehavior prepares Play Mode without an Agent UnityPipeline call", as
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -1044,6 +1053,7 @@ test("JarvisBehavior reports Play Mode readiness timeout before WebSocket connec
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -1077,18 +1087,15 @@ test("RBT Domain derives Android launch parameters from the identified target", 
   const configRoot = join(root, "assets", "scout", "config");
   mkdirSync(configRoot, { recursive: true });
   writeFileSync(join(configRoot, "rbt.config.json"), JSON.stringify({
-    execution: {
-      transport: "adb",
-      platform: "android",
-      appId: "com.example.app",
-    },
+    executionSources: { android: { transport: "adb", appId: "com.example.app" } },
   }), "utf8");
 
   const requests: ExecutionPlatformRequest[] = [];
   let domain!: RbtDomain;
   domain = new RbtDomain({
     executionRequest: () => {
-      const { transport, platform, appId } = domain.config.execution;
+      const { transport, appId } = domain.config.executionSources.android!;
+      const platform = "android";
       return {
         ...(transport ? { transport } : {}),
         ...(platform ? { platform } : {}),
@@ -1135,6 +1142,7 @@ test("RBT Domain derives Android launch parameters from the identified target", 
   });
   t.after(() => rmSync(root, { recursive: true, force: true }));
   await domain.start();
+  await domain.selectExecutionSource("android");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -1203,6 +1211,7 @@ test("RBT Execute and Review share one launched target across Phase tools", asyn
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.selectExecutionSource("android");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -1295,6 +1304,7 @@ test("RBT Android Review reconnects a restored launched target without identify 
     { occurredAt: "2026-09-24T00:00:00.000Z" },
   ));
   await domain.start();
+  await domain.selectExecutionSource("android");
   baseDomain(scope).restore(scope.workflow.snapshot()!);
   await domain.restore(scope.workflow.snapshot()!);
   await domain.run();
@@ -1353,6 +1363,7 @@ test("RBT Review does not identify or launch a missing Domain target", async (t)
     }),
   });
   await domain.start();
+  await domain.selectExecutionSource("android");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -1434,6 +1445,7 @@ test("RBT Review link failure does not stop the shared Domain target", async (t)
     { occurredAt: "2026-09-24T00:00:00.000Z" },
   ));
   await domain.start();
+  await domain.selectExecutionSource("android");
   await domain.run();
   baseDomain(scope).restore(scope.workflow.snapshot()!);
   await domain.restore(scope.workflow.snapshot()!);
@@ -1502,6 +1514,7 @@ test("RBT Domain stops a target after link failure so the next attempt relaunche
     }),
   });
   await domain.start();
+  await domain.selectExecutionSource("android");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -1554,6 +1567,7 @@ test("RBT Execute link failure does not shut down an already running shared targ
     }),
   });
   await domain.start();
+  await domain.selectExecutionSource("android");
   await domain.run();
   const execution = baseDomain(scope).execution;
   const target = await execution.resolve(request);
@@ -1606,6 +1620,7 @@ test("RBT Execute link failure preserves a fresh target reused by another caller
     }),
   });
   await domain.start();
+  await domain.selectExecutionSource("android");
   await domain.run();
   const result = await domain.backend.handleDynamicToolCall(dynamicCall({
     callId: "call-target-reused-during-connect",
@@ -1686,6 +1701,7 @@ test("JarvisBehavior reports an unavailable human-prepared Unity Editor", async 
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -1732,6 +1748,7 @@ test("JarvisBehavior blocks RBT while the Unity Editor is compiling", async (t) 
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -1790,6 +1807,7 @@ test("JarvisBehavior blocks RBT during Unity domain reload and version changes",
         executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
       }));
       await domain.start();
+      await domain.selectExecutionSource("unity_editor");
       await domain.run();
       testContext.after(() => domain.stop());
 
@@ -1835,6 +1853,7 @@ test("JarvisBehavior blocks an unavailable Unity Editor state", async (t) => {
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -1874,6 +1893,7 @@ test("RBT Agent tool-call recorder consumes the shared Domain event", async (t) 
     executor: { ...roots, readableRoots: [], shellTools: [] },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -1940,6 +1960,7 @@ test(`RBT executes a ${inputOwner} Pack input through the same pipeline and reco
     campaignEvents.push(event.key.routeKey);
   });
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -2097,6 +2118,7 @@ test("RBT execute-file rejects an array-shaped evidenceCapture before Runtime", 
     },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -2170,6 +2192,7 @@ test("RBT execute-file preflights every registry identity before campaign mutati
   };
   writeFileSync(executeFilePath, `${JSON.stringify(executeFile, null, 2)}\n`, "utf8");
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -2229,6 +2252,7 @@ test("RBT execute-file continues the sequence when campaign history publication 
   });
   const { executeFilePath } = writeTestExecuteFile(roots.artifactRoot);
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -2291,6 +2315,7 @@ test("RBT campaign history continues after the greatest existing runtime sequenc
   writeFileSync(join(historyRoot, "007.json"), "{}\n", "utf8");
   const { executeFilePath } = writeTestExecuteFile(roots.artifactRoot);
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -2328,6 +2353,7 @@ test("RBT execute-file performs cleanup after a command failure and closes faile
   }));
   const { executeFilePath } = writeTestExecuteFile(roots.artifactRoot);
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -2407,6 +2433,7 @@ test("RBT Domain rejects mutating behavior commands from a review role", async (
     reviewer: { ...roots, readableRoots: [], shellTools: [] },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -2455,6 +2482,7 @@ test("RBT Reviewer queries a campaign using the Executor-bound schema without co
     },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -2514,6 +2542,7 @@ test("RBT Domain projects a Runtime error without exposing its result envelope",
     reviewer: { ...roots, readableRoots: [], shellTools: [] },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
 
@@ -2579,6 +2608,7 @@ test("RBT Behavior reconnects and retries one read-only query after a disconnect
     executor: { ...roots, readableRoots: [codebaseRoot], shellTools: [] },
   }));
   await domain.start();
+  await domain.selectExecutionSource("unity_editor");
   await domain.run();
   t.after(() => domain.stop());
   t.after(() => rmSync(root, { recursive: true, force: true }));

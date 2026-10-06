@@ -2,9 +2,11 @@ import { formatArtifactReference } from "../../../../core/io/index.js";
 import type { RbtRecord } from "../record/rbt-record.js";
 import type { ScoutDomainRuntimeFact } from "../../../types.js";
 import type { RbtArtifactData, RbtExecutionHistory, RbtExecutionPackSubmission } from "../artifacts/types.js";
+import type { RbtPlatform } from "../config/index.js";
 
 export interface RbtDomainRuntimeData extends ScoutDomainRuntimeFact {
   domainId: "rbt";
+  executionPlatform?: RbtPlatform;
   artifacts: RbtArtifactData;
 }
 
@@ -19,6 +21,12 @@ export class RbtDomainProjector {
       data.journalSeq = record.seq;
       data.updatedAt = record.occurredAt;
       switch (record.kind) {
+        case "execution-source":
+          if (data.executionPlatform && data.executionPlatform !== record.payload.platform) {
+            throw new Error("RBT Workflow contains conflicting execution source selections.");
+          }
+          data.executionPlatform = record.payload.platform;
+          break;
         case "execution-history": {
           const saved = record.payload;
           const history: RbtExecutionHistory = {

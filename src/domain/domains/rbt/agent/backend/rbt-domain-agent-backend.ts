@@ -1,23 +1,30 @@
 import type { DynamicToolCallResponse } from "../../../../../agent-server/types.js";
 import type { AgentDynamicToolSpec } from "../../../../../agent/tools/types.js";
 import { currentRunScope } from "../../../../../run/run-scope.js";
-import { DomainAgentBackend, type DomainAgentTool } from "../../../../agent/index.js";
-import { buildJarvisBehaviorDynamicTool, buildSearchExecutionPackDynamicTool } from "../tools/agent-tools.js";
+import { DomainAgentBackend } from "../../../../agent/index.js";
+import { buildJarvisBehaviorDynamicTool, buildSearchExecutionPackDynamicTool, buildSelectExecutionSourceDynamicTool } from "../tools/agent-tools.js";
+import { JarvisBehaviorTool } from "../tools/jarvis-behavior/jarvis-behavior-tool.js";
+import { SearchExecutionPackTool } from "../tools/search-execution-pack/search-execution-pack-tool.js";
+import { SelectExecutionSourceTool } from "../tools/select-execution-source/select-execution-source-tool.js";
 import { DomainEvents } from "../../../../domain-events.js";
 import { ScoutDomainId, type ScoutDomainDynamicToolCall } from "../../../../types.js";
 
 /** Executes RBT Agent tools and publishes their completed call observations. */
 export class RbtDomainAgentBackend extends DomainAgentBackend {
   readonly toolDefinitions: readonly AgentDynamicToolSpec[];
+  private readonly behaviorTool: JarvisBehaviorTool;
+  private readonly searchExecutionPackTool: SearchExecutionPackTool;
+  private readonly selectExecutionSourceTool: SelectExecutionSourceTool;
 
-  constructor(
-    private readonly behaviorTool: DomainAgentTool,
-    private readonly searchExecutionPackTool: DomainAgentTool,
-  ) {
+  constructor() {
     super();
+    this.behaviorTool = new JarvisBehaviorTool();
+    this.searchExecutionPackTool = new SearchExecutionPackTool();
+    this.selectExecutionSourceTool = new SelectExecutionSourceTool();
     this.toolDefinitions = [
       buildJarvisBehaviorDynamicTool(),
       buildSearchExecutionPackDynamicTool(),
+      buildSelectExecutionSourceDynamicTool(),
     ];
   }
 
@@ -31,7 +38,8 @@ export class RbtDomainAgentBackend extends DomainAgentBackend {
     const startedAt = new Date().toISOString();
     let response: DynamicToolCallResponse;
     try {
-      const tool = definition.name === "JarvisBehavior" ? this.behaviorTool : this.searchExecutionPackTool;
+      const tool = definition.name === "JarvisBehavior" ? this.behaviorTool
+        : definition.name === "SearchExecutionPack" ? this.searchExecutionPackTool : this.selectExecutionSourceTool;
       response = await tool.execute(call);
     } catch (error) {
       response = failedResponse(error instanceof Error ? error.stack ?? error.message : String(error));
