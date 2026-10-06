@@ -68,12 +68,6 @@ export class WorkflowBuilder {
     };
   }
 
-  /** Projects the same resource allocation used by role mounts for one declared Phase. */
-  dynamicToolNamesForPhase(phase: string): string[] {
-    if (phase !== SynthesisPhase && !Object.hasOwn(this.asset.profile.phases.workers, phase)) return [];
-    return [...new Set(this.resourceParksForPhase(phase).flatMap(([, resource]) => resource.dynamicTools))];
-  }
-
   private resourceParksForPhase(phase: string): [string, WorkflowResourcePark][] {
     return Object.entries(this.asset.profile.resources).filter(([, resource]) =>
       resource.phases.includes(phase) || (resource.default === true && resource.phases.length === 0)

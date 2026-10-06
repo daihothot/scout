@@ -15,7 +15,7 @@ import type { ScoutRecord } from "../record/scout-record.js";
 import { ScoutRecordObject } from "../record/scout-record-object.js";
 import { Benchmarks, ScoutBenchmarks } from "../benchmarks/index.js";
 import { StateMachine } from "../state/statemachine/index.js";
-import type { GraphData, WorkflowPhaseOutcome } from "./graph-data.js";
+import { SynthesisPhase, type GraphData, type WorkflowPhaseOutcome } from "./graph-data.js";
 import { Graph, type GraphAdvanceResult } from "./graph.js";
 import { projectGraphData } from "./projector/graph-projector.js";
 import { WorkflowCreatingTransition, WorkflowCreationRolledBackError, WorkflowClosingTransition, reportWorkflowTransitionError } from "./transition/index.js";
@@ -63,6 +63,16 @@ export class Workflow implements ScoutWorkflowParticipant {
 
   constructor(readonly profileAsset: WorkflowProfileAsset) {
     this.graph = new Graph(profileAsset);
+  }
+
+  /** Returns configured tool names without exposing resource configuration or runtime definitions. */
+  dynamicToolNamesForPhase(phase: string): string[] {
+    const profile = this.profileAsset.profile;
+    if (phase !== SynthesisPhase && !Object.hasOwn(profile.phases.workers, phase)) return [];
+    const resources = Object.values(profile.resources).filter((resource) =>
+      resource.phases.includes(phase) || (resource.default === true && resource.phases.length === 0)
+    );
+    return [...new Set(resources.flatMap((resource) => resource.dynamicTools))];
   }
 
   get state(): WorkflowState | undefined { return this.machine.currentState; }

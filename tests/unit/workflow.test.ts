@@ -14,7 +14,7 @@ import {
 } from "../../src/asset-store/index.js";
 import { WorkflowBuilder } from "../../src/asset-store/builders/workflow-builder.js";
 import { parseWorkflowProfile } from "../../src/asset-store/assets/workflow-profiles.js";
-import type { WorkflowResourcePark } from "../../src/asset-store/contracts/workflow-profile.js";
+import type { WorkflowProfileAsset, WorkflowResourcePark } from "../../src/asset-store/contracts/workflow-profile.js";
 import { InMemoryEventBus } from "../../src/core/events/index.js";
 import {
   Phase,
@@ -419,7 +419,7 @@ test("WorkflowBuilder inherits the default Resource Park when its Phase scope al
     const agentProfile = new WorkflowBuilder(asset).buildAgentProfile("fallback-worker");
     assert.deepEqual(agentProfile.resourceParks, ["common-inspection"]);
     assert.deepEqual(agentProfile.dynamicTools, []);
-    assert.deepEqual(new WorkflowBuilder(asset).dynamicToolNamesForPhase("fallback"), []);
+    assert.deepEqual(new Workflow(asset).dynamicToolNamesForPhase("fallback"), []);
     assert.deepEqual(agentProfile.shellTools, [
       "scoutAssets",
       "scoutMemory",
@@ -456,7 +456,7 @@ test("Workflow Profile requires Dynamic Tool names at the configuration boundary
   );
 });
 
-test("WorkflowBuilder projects Dynamic Tools with Resource Park scope and identity deduplication", () => {
+test("Workflow provides Phase tool names consistent with built profiles, Resource Park scope and deduplication", () => {
   const source = buildWorkflow(scoutRoot, "rbt");
   const emptyPark: WorkflowResourcePark = {
     phases: [], shellTools: [], dynamicTools: [], mcpServers: [], plugins: [], readableRoots: [], writableRoots: [],
@@ -464,7 +464,7 @@ test("WorkflowBuilder projects Dynamic Tools with Resource Park scope and identi
   const shared = "SharedProbe";
   const execute = "ExecuteProbe";
   const review = "ReviewProbe";
-  const builder = new WorkflowBuilder({
+  const asset: WorkflowProfileAsset = {
     ...source,
     profile: {
       ...source.profile,
@@ -479,30 +479,34 @@ test("WorkflowBuilder projects Dynamic Tools with Resource Park scope and identi
         synthesis: { ...emptyPark, phases: ["Synthesis"], dynamicTools: [] },
       },
     },
-  });
-  assert.deepEqual(builder.dynamicToolNamesForPhase("execute"), [shared, execute]);
-  assert.deepEqual(builder.dynamicToolNamesForPhase("review"), [shared, review]);
-  assert.deepEqual(builder.dynamicToolNamesForPhase("Synthesis"), [shared]);
-  assert.deepEqual(builder.dynamicToolNamesForPhase("undeclared"), []);
+  };
+  const builder = new WorkflowBuilder(asset);
+  const workflow = new Workflow(asset);
+  assert.equal(workflow.snapshot(), undefined);
+  assert.deepEqual(workflow.dynamicToolNamesForPhase("execute"), [shared, execute]);
+  assert.deepEqual(workflow.dynamicToolNamesForPhase("review"), [shared, review]);
+  assert.deepEqual(workflow.dynamicToolNamesForPhase("Synthesis"), [shared]);
+  assert.deepEqual(workflow.dynamicToolNamesForPhase("undeclared"), []);
   assert.deepEqual(builder.buildAgentProfile("auditor").dynamicTools, [shared, execute, review]);
-  const references = builder.dynamicToolNamesForPhase("execute");
+  const references = workflow.dynamicToolNamesForPhase("execute");
   references[0] = "Changed";
-  assert.deepEqual(builder.dynamicToolNamesForPhase("execute"), [shared, execute]);
+  assert.deepEqual(workflow.dynamicToolNamesForPhase("execute"), [shared, execute]);
 
   const rbtBuilder = new WorkflowBuilder(source);
-  assert.deepEqual(rbtBuilder.dynamicToolNamesForPhase("Synthesis"), [
+  const rbtWorkflow = new Workflow(source);
+  assert.deepEqual(rbtWorkflow.dynamicToolNamesForPhase("Synthesis"), [
     "StartWorkflow", "ResolveArtifactReference", "AssignTask", "SendMessage", "RespondHumanInput", "SubmitPhaseOutcome",
   ]);
   assert.deepEqual(
     rbtBuilder.buildAgentProfile("executor").dynamicTools,
-    rbtBuilder.dynamicToolNamesForPhase("execute"),
+    rbtWorkflow.dynamicToolNamesForPhase("execute"),
   );
   assert.deepEqual(
     rbtBuilder.buildAgentProfile("reviewer").dynamicTools,
-    rbtBuilder.dynamicToolNamesForPhase("review"),
+    rbtWorkflow.dynamicToolNamesForPhase("review"),
   );
-  assert.equal(rbtBuilder.dynamicToolNamesForPhase("execute").includes("ExecutionPlatform"), false);
-  assert.equal(rbtBuilder.dynamicToolNamesForPhase("review").includes("ExecutionPlatform"), true);
+  assert.equal(rbtWorkflow.dynamicToolNamesForPhase("execute").includes("ExecutionPlatform"), false);
+  assert.equal(rbtWorkflow.dynamicToolNamesForPhase("review").includes("ExecutionPlatform"), true);
 });
 
 test("WorkflowBuilder rejects a role Phase with no projected Resource Park", () => {

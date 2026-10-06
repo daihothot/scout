@@ -5,7 +5,6 @@ import type {
 } from "../../../agent-server/types.js";
 import type { ScoutAgent } from "../../core/scout-agent.js";
 import { CoordinatorAgent } from "../../roles/coordinator-agent.js";
-import { WorkflowBuilder } from "../../../asset-store/builders/workflow-builder.js";
 import type { ScoutAgentPhase } from "../../thread/types.js";
 import type { AgentDynamicToolSpec } from "../../tools/types.js";
 import {
@@ -51,7 +50,6 @@ type AssignTaskToolResponse =
  */
 export class AgentDynamicToolBackend {
   private readonly agentTools: readonly AgentDynamicToolSpec[];
-  private readonly workflowBuilder: WorkflowBuilder;
   private readonly registry: RunScope["agentRegistry"];
   private readonly domains: RunScope["domainRegistry"];
   private readonly taskStore: RunScope["agentOrchestrator"]["taskStore"];
@@ -72,7 +70,6 @@ export class AgentDynamicToolBackend {
     this.taskStore = scope.agentOrchestrator.taskStore;
     const humanInputBackend = new AgentHumanInputBackend();
     this.taskBackend = new AgentTaskBackend({ humanInputBackend });
-    this.workflowBuilder = new WorkflowBuilder(scope.workflow.profileAsset);
     this.agentTools = [
       buildStartWorkflowDynamicTool(),
       buildResolveArtifactReferenceDynamicTool(),
@@ -86,7 +83,7 @@ export class AgentDynamicToolBackend {
   }
 
   dynamicToolsForPhase(phase: ScoutAgentPhase): AgentDynamicToolSpec[] {
-    const names = this.workflowBuilder.dynamicToolNamesForPhase(phase);
+    const names = currentRunScope().workflow.dynamicToolNamesForPhase(phase);
     if (names.length === 0) return [];
     const available = [
       ...this.agentTools,

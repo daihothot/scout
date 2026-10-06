@@ -199,6 +199,23 @@ test("Agent backend returns independent definition snapshots for configured Phas
   assert.notDeepEqual(backend.dynamicToolsForPhase("research")[0]!.inputSchema, {});
 });
 
+test("Agent backend delegates every Phase allocation query to the Workflow service", async (t) => {
+  await createAgentFixture("agent-workflow-tool-query", { withoutActiveWorkflow: true });
+  const scope = currentRunScope();
+  const backend = scope.agentOrchestrator.dynamicToolBackend;
+  assert.equal(scope.workflow.snapshot(), undefined);
+  let names = ["SendMessage"];
+  const requestedPhases: string[] = [];
+  t.mock.method(scope.workflow, "dynamicToolNamesForPhase", (phase: string) => {
+    requestedPhases.push(phase);
+    return names;
+  });
+  assert.deepEqual(backend.dynamicToolsForPhase("research").map((tool) => tool.name), ["SendMessage"]);
+  names = ["SubmitTask"];
+  assert.deepEqual(backend.dynamicToolsForPhase("research").map((tool) => tool.name), ["SubmitTask"]);
+  assert.deepEqual(requestedPhases, ["research", "research"]);
+});
+
 test("AgentBuilder queries its Orchestrator backend for each role Phase", async (t) => {
   const fixture = await createAgentFixture("builder-owned-phase-tools");
   const mount = createMount(fixture.root, "researcher");
