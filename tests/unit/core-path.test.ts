@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import {
   agentEntityPaths,
@@ -7,6 +9,7 @@ import {
   workflowPaths,
   workflowRootFromJournalRoot,
   isPathWithin,
+  listWorkflowArtifactPaths,
   runAgentPaths,
   runPaths,
   scoutJournalPaths,
@@ -30,6 +33,31 @@ test("isPathWithin distinguishes roots, descendants, siblings, and prefixes", ()
   for (const [candidateRoot, target, expected] of cases) {
     assert.equal(isPathWithin(candidateRoot, target), expected, `${candidateRoot} -> ${target}`);
   }
+});
+
+test("Artifact target enumeration follows renamed Workflow identities and includes only contained physical owners", (t) => {
+  const runRoot = realpathSync(mkdtempSync(join(tmpdir(), "scout-artifact-enumeration-")));
+  t.after(() => rmSync(runRoot, { recursive: true, force: true }));
+  const workflowRoot = join(runPaths(runRoot).workflowsRoot, "imported evidence");
+  const artifactRoot = workflowAgentPaths(workflowRoot, "old-executor").artifactRoot;
+  mkdirSync(join(artifactRoot, "pack"), { recursive: true });
+  writeFileSync(join(artifactRoot, "pack", "execute-file.json"), "{}");
+  writeFileSync(workflowPaths(workflowRoot).identityPath, JSON.stringify({ workflowId: "workflow-009" }));
+  const outsideRoot = join(runRoot, "outside");
+  mkdirSync(join(outsideRoot, "artifacts", "pack"), { recursive: true });
+  writeFileSync(join(outsideRoot, "artifacts", "pack", "execute-file.json"), "{}");
+  symlinkSync(outsideRoot, join(workflowPaths(workflowRoot).agentsRoot, "linked-owner"));
+  const linkedArtifact = workflowAgentPaths(workflowRoot, "linked-artifacts").artifactRoot;
+  mkdirSync(dirname(linkedArtifact));
+  symlinkSync(join("..", "old-executor", "artifacts"), linkedArtifact);
+
+  const renamed = join(runPaths(runRoot).workflowsRoot, "renamed evidence");
+  renameSync(workflowRoot, renamed);
+  assert.deepEqual(listWorkflowArtifactPaths(runRoot, "workflow-009", "pack/execute-file.json"), [{
+    agentId: "old-executor", path: join(workflowAgentPaths(renamed, "old-executor").artifactRoot, "pack", "execute-file.json"),
+  }]);
+  assert.deepEqual(listWorkflowArtifactPaths(runRoot, "workflow-009", "history"), []);
+  assert.deepEqual(listWorkflowArtifactPaths(runRoot, "workflow-999", "pack"), []);
 });
 
 test("isPathWithin supports strict-child checks and platform separators", () => {

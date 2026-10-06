@@ -2,18 +2,23 @@ import type { DynamicToolCallResponse } from "../../../../../agent-server/types.
 import type { AgentDynamicToolSpec } from "../../../../../agent/tools/types.js";
 import { currentRunScope } from "../../../../../run/run-scope.js";
 import { DomainAgentBackend, type DomainAgentTool } from "../../../../agent/index.js";
-import { jarvisBehaviorAgentTool } from "../tools/agent-tools.js";
+import { buildJarvisBehaviorDynamicTool, buildSearchExecutionPackDynamicTool } from "../tools/agent-tools.js";
 import { DomainEvents } from "../../../../domain-events.js";
 import { ScoutDomainId, type ScoutDomainDynamicToolCall } from "../../../../types.js";
 
 /** Executes RBT Agent tools and publishes their completed call observations. */
 export class RbtDomainAgentBackend extends DomainAgentBackend {
-  readonly toolDefinitions: readonly AgentDynamicToolSpec[] = [jarvisBehaviorAgentTool];
+  readonly toolDefinitions: readonly AgentDynamicToolSpec[];
 
   constructor(
     private readonly behaviorTool: DomainAgentTool,
+    private readonly searchExecutionPackTool: DomainAgentTool,
   ) {
     super();
+    this.toolDefinitions = [
+      buildJarvisBehaviorDynamicTool(),
+      buildSearchExecutionPackDynamicTool(),
+    ];
   }
 
   override async handleDynamicToolCall(
@@ -26,7 +31,8 @@ export class RbtDomainAgentBackend extends DomainAgentBackend {
     const startedAt = new Date().toISOString();
     let response: DynamicToolCallResponse;
     try {
-      response = await this.behaviorTool.execute(call);
+      const tool = definition.name === "JarvisBehavior" ? this.behaviorTool : this.searchExecutionPackTool;
+      response = await tool.execute(call);
     } catch (error) {
       response = failedResponse(error instanceof Error ? error.stack ?? error.message : String(error));
     }

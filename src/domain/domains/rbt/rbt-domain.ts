@@ -19,6 +19,7 @@ import {
   RbtAgentToolCallRecorder,
   JarvisBehaviorTool,
   JarvisWebSocketTool,
+  SearchExecutionPackTool,
 } from "./agent/index.js";
 import {
   JarvisBehaviorCommandRunner,
@@ -95,7 +96,7 @@ export class RbtDomain implements ScoutDomain {
       this.behaviorStore,
     );
     this.backend = new RbtDomainAgentBackend(
-      new JarvisBehaviorTool(this.behaviorOrchestrator),
+      new JarvisBehaviorTool(this.behaviorOrchestrator), new SearchExecutionPackTool(),
     );
   }
 

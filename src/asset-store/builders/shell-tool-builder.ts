@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { shellToolWrapperPath } from "../../core/io/path.js";
 import type {
   MountMaterializationIssue,
 } from "../contracts/mount.js";
@@ -54,7 +54,7 @@ export class ShellToolBuilder {
       );
       tools.push({
         contract,
-        wrapperPath: join(this.mountRoot, "bin", contract.exposeAs),
+        wrapperPath: shellToolWrapperPath(this.mountRoot, contract.exposeAs),
         command,
         args,
         wrapperContent: [

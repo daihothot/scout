@@ -72,7 +72,7 @@ test("RBT Domain exposes behavior execution and final platform shutdown by Phase
 
   const backend = new AgentDynamicToolBackend();
   assert.deepEqual(backend.dynamicToolsForPhase("execute").map((tool) => tool.name), [
-    "ResolveArtifactReference", "SendMessage", "RequestHumanInput", "SubmitTask", "JarvisBehavior",
+    "ResolveArtifactReference", "SendMessage", "RequestHumanInput", "SubmitTask", "JarvisBehavior", "SearchExecutionPack",
   ]);
   assert.deepEqual(backend.dynamicToolsForPhase("review").map((tool) => tool.name), [
     "ResolveArtifactReference", "SendMessage", "RequestHumanInput", "SubmitTask", "JarvisBehavior", "ExecutionPlatform",
@@ -83,7 +83,7 @@ test("RBT Domain exposes behavior execution and final platform shutdown by Phase
 
   await domain.stop();
   assert.deepEqual(baseDomain(scope).backend.toolDefinitions.map((tool) => tool.name), ["ExecutionPlatform"]);
-  assert.deepEqual(domain.backend.toolDefinitions.map((tool) => tool.name), ["JarvisBehavior"]);
+  assert.deepEqual(domain.backend.toolDefinitions.map((tool) => tool.name), ["JarvisBehavior", "SearchExecutionPack"]);
 });
 
 test("RBT schema follows execute roles, including renamed workers and a reviewer without codebase access", async (t) => {

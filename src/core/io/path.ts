@@ -47,6 +47,23 @@ export function resolveWorkflowArtifactPath(
   }
 }
 
+/** Lists an existing relative Artifact target across physical owners, including imported Agents. */
+export function listWorkflowArtifactPaths(
+  runRoot: string, workflowId: string, artifactRelativePath: string,
+): { agentId: string; path: string }[] {
+  const location = resolveWorkflowLocation(runRoot, workflowId);
+  if (!location) return [];
+  const { agentsRoot } = workflowPaths(location.workflowRoot);
+  if (!existsSync(agentsRoot)) return [];
+  const paths: { agentId: string; path: string }[] = [];
+  for (const owner of readdirSync(agentsRoot, { withFileTypes: true })) {
+    if (!owner.isDirectory()) continue;
+    const target = resolveWorkflowArtifactPath(runRoot, workflowId, owner.name, artifactRelativePath);
+    if (!("reason" in target)) paths.push({ agentId: owner.name, path: target.path });
+  }
+  return paths;
+}
+
 /**
  * Tests lexical containment after normalizing both paths, without resolving symlinks.
  * Filesystem callers must perform their own realpath/lstat checks when that matters.
@@ -100,6 +117,11 @@ export function agentEntityPaths(agentRoot: string) {
     threadRecordPath: join(agentRoot, "thread.json"),
     logsRoot: join(agentRoot, "logs"),
   };
+}
+
+/** Physical shell wrapper shared by mount generation and runtime invocation. */
+export function shellToolWrapperPath(mountRoot: string, exposeAs: string): string {
+  return join(mountRoot, "bin", exposeAs);
 }
 
 export function runAgentPaths(runRoot: string, agentId: string) {

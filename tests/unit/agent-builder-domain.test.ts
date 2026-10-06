@@ -4292,6 +4292,56 @@ test("resumed Workflow updates its own artifact path after a directory rename wi
   }
 });
 
+test("Reviewer Turn context stays independent of restored historical access requests and leaves the handoff unchanged", async () => {
+  const appServer = createFakeAppServer({ turnIds: ["review-before-resume", "review-after-resume"] });
+  const fixture = await createAgentFixture("historical-input-context", { appServer, runtimeGraph: createTestGraph({
+    domain: "rbt", workflowProfile: "rbt", currentPhase: "review",
+    phases: [{ name: "review", roles: ["reviewer"], edges: { completed: null, error: null } }],
+    roles: [{ name: "coordinator", phases: ["Synthesis"] }, { name: "reviewer", phases: ["review"] }],
+  }) });
+  const scope = currentRunScope();
+  const historicalRoot = join(scope.runRoot, "workflows", "imported input");
+  const readPath = join(workflowAgentPaths(historicalRoot, "old-executor").artifactRoot, "pack");
+  mkdirSync(readPath, { recursive: true });
+  writeFileSync(workflowPaths(historicalRoot).identityPath, JSON.stringify({ workflowId: "workflow-009" }));
+  writeFileSync(join(readPath, "execute-file.json"), "historical input");
+  const request = await scope.authorization.register(agentPermissionRequestSourceType, {
+    sourceKey: "scout-artifact://workflow-009/old-executor/pack",
+    maxApprovals: 2,
+    origin: { kind: "tool", runId: scope.runId, agentId: "executor", threadId: "thread-executor", turnId: "execute-1",
+      namespace: "rbt_artifact", tool: "SearchExecutionPack", callId: "lookup-1" },
+    allowedGrants: [{ scope: { workflowId: "workflow-001", agentId: "reviewer", phases: ["review"], access: "read" },
+      target: { workflowId: "workflow-009", agentId: "old-executor", internalSymbols: ["pack"] } }],
+  });
+  const ref = { workflowId: "workflow-009", agentId: "old-executor", internalSymbols: ["pack", "execute-file.json"] };
+  const prompt = `Read input: ${JSON.stringify(ref)}`;
+  const mount = createMount(fixture.root, "reviewer");
+  prepareAgent(fixture, "reviewer", mount, fixture.assetCommit);
+  const reviewer = new AgentBuilder().buildWorker("reviewer");
+  await reviewer.startThread();
+  try {
+    await reviewer.runTurn({ prompt });
+    const renamedRoot = join(scope.runRoot, "workflows", "renamed input");
+    renameSync(historicalRoot, renamedRoot);
+    scope.authorization.restore(scope.workflow.snapshot()!);
+    await reviewer.runTurn({ prompt });
+    const contexts = appServer.turnInputs.map((turn) => {
+      assert.ok(turn.prompt?.endsWith(prompt), "The business handoff remains unchanged.");
+      return JSON.parse(attachments.readTagBlock(turn.prompt!, "workflow_context")[0]!.body);
+    });
+    assert.deepEqual(contexts, [0, 1].map(() => ({
+      workflowId: "workflow-001", status: "active",
+      artifactRoot: scope.workflow.agentPaths("reviewer").artifactRoot,
+    })));
+    assert.equal(scope.authorization.get(agentPermissionRequestSourceType, request.sourceId)?.sourceId, request.sourceId);
+    assert.deepEqual(scope.authorization.approvals(request), []);
+    assert.deepEqual(scope.authorization.credentials(request), []);
+    assert.equal(appServer.threadInputs.length, 1);
+  } finally {
+    await reviewer.stopAgent("test_cleanup");
+  }
+});
+
 test("empty Workflow does not resolve historical refs or supply artifact access paths", async () => {
   const appServer = createFakeAppServer();
   await createAgentFixture("idle-artifact-reference", { appServer, withoutActiveWorkflow: true });

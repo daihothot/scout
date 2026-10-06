@@ -1510,6 +1510,26 @@ test("AssetStore mounts the Unity Pipeline CLI Tool and runtime-log Acquisition 
   assert.equal(researcherMount.shellTools.some((tool) => tool.id === "unity"), false);
 });
 
+test("RBT SearchExecutionPack resource includes its Skill and checker only for the Executor", (t) => {
+  const fixtureRoot = createCodexAssetFixture("scout-rbt-search-resources-");
+  t.after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+  const store = new AssetStore();
+  for (const agentId of ["executor", "coordinator", "reviewer"]) {
+    const mount = store.materializeMount({
+      scoutRoot: fixtureRoot, runId: "run-search-resources", agentId, workflowProfileName: "rbt",
+    });
+    const manifest = JSON.parse(readFileSync(mount.manifestPath, "utf8")) as MountManifest;
+    assert.equal(mount.agentProfile.dynamicTools.includes("SearchExecutionPack"), agentId === "executor");
+    assert.equal(manifest.skills.some((skill) => skill.name === "tool-rbt-search-execution-pack"), agentId === "executor");
+    if (agentId === "executor") {
+      assert.ok(mount.shellTools.some((tool) => tool.id === "scoutRbtArtifactCheck"));
+      assert.ok(manifest.skills.some((skill) => skill.name === "tool-scout-resolve-artifact-reference"));
+      const guidance = manifest.skills.find((skill) => skill.name === "tool-rbt-search-execution-pack")!;
+      assert.ok(existsSync(join(mount.mountRoot, guidance.path)));
+    }
+  }
+});
+
 test("AssetStore mounts RBT Reviewer guidance without codebase access or host runtime commands", () => {
   const fixtureRoot = createCodexAssetFixture("scout-asset-store-rbt-reviewer-");
   const store = new AssetStore();

@@ -9,6 +9,7 @@ import {
 } from "../../src/domain/index.js";
 import { RbtDomain, RbtDomainAgentBackend } from "../../src/domain/domains/rbt/index.js";
 import { JarvisBehaviorTool } from "../../src/domain/domains/rbt/agent/tools/jarvis-behavior/jarvis-behavior-tool.js";
+import { buildJarvisBehaviorDynamicTool, buildSearchExecutionPackDynamicTool } from "../../src/domain/domains/rbt/agent/tools/agent-tools.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 
 test("RbtDomainAgentBackend invokes the same constructed tool with the actual call Phase", async (t) => {
@@ -20,7 +21,7 @@ test("RbtDomainAgentBackend invokes the same constructed tool with the actual ca
   const invocations: string[] = [];
   const backend = new RbtDomainAgentBackend({
     execute(call) { invocations.push(call.caller.phase); return success(call.caller.phase); },
-  });
+  }, { execute: () => success("lookup") });
   for (const phase of ["execute", "review"]) {
     assert.deepEqual(await backend.handleDynamicToolCall(call(phase, toolSpec())), success(phase));
   }
@@ -39,12 +40,14 @@ test("RbtDomainAgentBackend routes distinct tool identities and ignores unrelate
   });
   const backend = new RbtDomainAgentBackend(
     { execute: () => success("behavior") },
+    { execute: () => success("lookup") },
   );
   assert.equal(await backend.handleDynamicToolCall(call("execute", { ...toolSpec(), namespace: "other_behavior" })), undefined);
   assert.equal(await backend.handleDynamicToolCall(call("execute", { ...toolSpec(), name: "MissingTool" })), undefined);
   assert.deepEqual(observations, []);
   assert.deepEqual(await backend.handleDynamicToolCall(call("execute", toolSpec())), success("behavior"));
-  assert.equal(observations.length, 1);
+  assert.deepEqual(await backend.handleDynamicToolCall(call("execute", buildSearchExecutionPackDynamicTool())), success("lookup"));
+  assert.equal(observations.length, 2);
 });
 
 test("RbtDomainAgentBackend converts thrown and rejected tool errors into observed failures", async (t) => {
@@ -60,7 +63,7 @@ test("RbtDomainAgentBackend converts thrown and rejected tool errors into observ
     { async execute() { throw error; } },
   ];
   for (const [index, tool] of tools.entries()) {
-    const backend = new RbtDomainAgentBackend(tool);
+    const backend = new RbtDomainAgentBackend(tool, { execute: () => success("lookup") });
     const invocation = call("execute", definition);
     invocation.input.callId = `call-error-${index}`;
     const response = await backend.handleDynamicToolCall(invocation);
@@ -125,6 +128,22 @@ test("RbtDomain exposes its backend for invocation with one detached completion"
   response.contentItems[0]!.text = "changed";
   assert.deepEqual(observed.arguments, { query: "original" });
   assert.deepEqual(observed.response, success("completed"));
+});
+
+test("RBT Backend constructs independent Specs using tool declaration functions", () => {
+  const tool = { execute: () => success("completed") };
+  const backend = new RbtDomainAgentBackend(tool, tool);
+  const another = new RbtDomainAgentBackend(tool, tool);
+  const declarations = [buildJarvisBehaviorDynamicTool(), buildSearchExecutionPackDynamicTool()];
+  assert.deepEqual(backend.toolDefinitions, declarations);
+  for (const [index, declaration] of declarations.entries()) {
+    const spec = backend.toolDefinitions[index]!;
+    assert.notStrictEqual(spec, declaration);
+    assert.notStrictEqual(spec.inputSchema, another.toolDefinitions[index]!.inputSchema);
+    assert.notStrictEqual(spec, another.toolDefinitions[index]);
+    spec.description = "Changed only in this Backend";
+    assert.deepEqual(another.toolDefinitions[index], declaration);
+  }
 });
 
 function toolSpec(): AgentDynamicToolSpec {

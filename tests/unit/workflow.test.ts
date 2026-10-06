@@ -507,6 +507,9 @@ test("Workflow provides Phase tool names consistent with built profiles, Resourc
   );
   assert.equal(rbtWorkflow.dynamicToolNamesForPhase("execute").includes("ExecutionPlatform"), false);
   assert.equal(rbtWorkflow.dynamicToolNamesForPhase("review").includes("ExecutionPlatform"), true);
+  assert.equal(rbtWorkflow.dynamicToolNamesForPhase("execute").includes("SearchExecutionPack"), true);
+  assert.equal(rbtWorkflow.dynamicToolNamesForPhase("review").includes("SearchExecutionPack"), false);
+  assert.equal(rbtWorkflow.dynamicToolNamesForPhase("Synthesis").includes("SearchExecutionPack"), false);
 });
 
 test("WorkflowBuilder rejects a role Phase with no projected Resource Park", () => {

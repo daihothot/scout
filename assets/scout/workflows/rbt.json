@@ -104,7 +104,8 @@
         "SendMessage",
         "RequestHumanInput",
         "SubmitTask",
-        "JarvisBehavior"
+        "JarvisBehavior",
+        "SearchExecutionPack"
       ]
     },
     "rbt-review": {
