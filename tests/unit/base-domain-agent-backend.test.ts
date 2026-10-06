@@ -12,6 +12,7 @@ import {
 } from "../../src/domain/index.js";
 import { installTestRunScope } from "../helpers/run-persistence.js";
 import { buildExecutionPlatformDynamicTool } from "../../src/domain/domains/base/agent/tools/agent-tools.js";
+import { ExecutionPlatformTool } from "../../src/domain/domains/base/agent/tools/execution-platform-tool.js";
 
 test("BaseDomainAgentBackend invokes its constructed tool with the actual Phase and records completion", async (t) => {
   const scope = await installTestRunScope(t, { runId: "run-base-domain-agent-tools" });
@@ -23,20 +24,24 @@ test("BaseDomainAgentBackend invokes its constructed tool with the actual Phase 
   scope.eventBus.subscribe(BaseDomainEvents.agentToolCall.observed, (event) => {
     if (BaseDomainEvents.agentToolCall.observed.is(event)) observations.push(event.payload.phase);
   });
-  const backend = new BaseDomainAgentBackend({
-    execute(call) {
-      invocations.push(call.caller.phase);
-      return success(call.caller.phase);
-    },
+  const instances: ExecutionPlatformTool[] = [];
+  t.mock.method(ExecutionPlatformTool.prototype, "execute", async function (this: ExecutionPlatformTool, call: ScoutDomainDynamicToolCall) {
+    instances.push(this);
+    invocations.push(call.caller.phase);
+    return success(call.caller.phase);
   });
+  const backend = new BaseDomainAgentBackend();
   for (const phase of ["execute", "review"]) {
     const invocation = call(phase, buildExecutionPlatformDynamicTool());
     invocation.input.callId = "call-" + phase;
     assert.deepEqual(await backend.handleDynamicToolCall(invocation), success(phase));
   }
   assert.deepEqual(invocations, ["execute", "review"]);
+  assert.strictEqual(instances[0], instances[1], "One Backend keeps one Tool across calls");
   assert.deepEqual(store.list().map((entry) => entry.phase), ["execute", "review"]);
   assert.deepEqual(observations, ["execute", "review"]);
+  await new BaseDomainAgentBackend().handleDynamicToolCall(call("execute", buildExecutionPlatformDynamicTool()));
+  assert.notStrictEqual(instances[0], instances[2], "Another Backend creates its own Tool");
 });
 
 test("BaseDomainAgentBackend ignores other tool identities without execution or recording", async (t) => {
@@ -45,9 +50,8 @@ test("BaseDomainAgentBackend ignores other tool identities without execution or 
   store.start();
   t.after(() => store.stop());
   let invocationCount = 0;
-  const backend = new BaseDomainAgentBackend({
-    execute() { invocationCount += 1; return success("executed"); },
-  });
+  t.mock.method(ExecutionPlatformTool.prototype, "execute", async () => { invocationCount += 1; return success("executed"); });
+  const backend = new BaseDomainAgentBackend();
   for (const definition of [
     { ...buildExecutionPlatformDynamicTool(), name: "MissingTool" },
     { ...buildExecutionPlatformDynamicTool(), namespace: "other_namespace" },
@@ -70,7 +74,8 @@ test("BaseDomainAgentBackend records thrown and rejected tool failures", async (
     { execute() { throw error; } },
     { async execute() { throw error; } },
   ].entries()) {
-    const backend = new BaseDomainAgentBackend(tool);
+    const execute = t.mock.method(ExecutionPlatformTool.prototype, "execute", tool.execute);
+    const backend = new BaseDomainAgentBackend();
     const invocation = call("review", buildExecutionPlatformDynamicTool());
     invocation.input.callId = "call-error-" + index;
     const response = await backend.handleDynamicToolCall(invocation);
@@ -78,14 +83,14 @@ test("BaseDomainAgentBackend records thrown and rejected tool failures", async (
     assert.equal(response.success, false);
     assert.match(response.contentItems[0]?.text ?? "", /Base tool failed/);
     assert.deepEqual(store.list().at(-1)?.response, response);
+    execute.mock.restore();
   }
   assert.deepEqual(observed, ["call-error-0", "call-error-1"]);
 });
 
 test("Base Backend constructs its own Spec using the tool declaration function", () => {
-  const tool = { execute: () => success("completed") };
-  const backend = new BaseDomainAgentBackend(tool);
-  const another = new BaseDomainAgentBackend(tool);
+  const backend = new BaseDomainAgentBackend();
+  const another = new BaseDomainAgentBackend();
   const spec = backend.toolDefinitions[0]!;
   const declaration = buildExecutionPlatformDynamicTool();
   assert.deepEqual(spec, declaration);
@@ -133,7 +138,8 @@ test("Base Store restores detached history without publishing a second completio
   const scope = await installTestRunScope(t, { runId: "run-base-store-restoration" });
   const domain = scope.domainRegistry.get(ScoutDomainId.Base);
   assert.ok(domain instanceof BaseDomain);
-  const backend = new BaseDomainAgentBackend({ execute: () => success("completed") });
+  t.mock.method(ExecutionPlatformTool.prototype, "execute", async () => success("completed"));
+  const backend = new BaseDomainAgentBackend();
   const observations: string[] = [];
   scope.eventBus.subscribe(BaseDomainEvents.agentToolCall.observed, (event) => {
     if (BaseDomainEvents.agentToolCall.observed.is(event)) observations.push(event.payload.callId);

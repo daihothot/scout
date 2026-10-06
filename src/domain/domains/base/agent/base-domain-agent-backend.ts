@@ -1,7 +1,8 @@
 import type { DynamicToolCallResponse } from "../../../../agent-server/types.js";
 import type { AgentDynamicToolSpec } from "../../../../agent/tools/types.js";
-import { DomainAgentBackend, type DomainAgentTool } from "../../../agent/index.js";
+import { DomainAgentBackend } from "../../../agent/index.js";
 import { buildExecutionPlatformDynamicTool } from "./tools/agent-tools.js";
+import { ExecutionPlatformTool } from "./tools/execution-platform-tool.js";
 import type { ScoutDomainDynamicToolCall } from "../../../types.js";
 import { BaseDomainEvents, type BaseDomainAgentToolCallObservedEvent } from "../base-domain-events.js";
 import { currentRunScope } from "../../../../run/run-scope.js";
@@ -9,11 +10,11 @@ import { currentRunScope } from "../../../../run/run-scope.js";
 /** Executes Base tools and publishes completion facts for independent consumers. */
 export class BaseDomainAgentBackend extends DomainAgentBackend {
   readonly toolDefinitions: readonly AgentDynamicToolSpec[];
+  private readonly executionPlatformTool: ExecutionPlatformTool;
 
-  constructor(
-    private readonly executionPlatformTool: DomainAgentTool,
-  ) {
+  constructor() {
     super();
+    this.executionPlatformTool = new ExecutionPlatformTool();
     this.toolDefinitions = [buildExecutionPlatformDynamicTool()];
   }
 

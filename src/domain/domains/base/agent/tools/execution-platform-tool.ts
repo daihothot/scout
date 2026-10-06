@@ -1,22 +1,12 @@
 import type { DynamicToolCallResponse } from "../../../../../agent-server/types.js";
-import type { ExecutionSelectionIdentity } from "../../../../../execution/index.js";
 import type { DomainAgentTool } from "../../../../agent/index.js";
-import type { ScoutDomainDynamicToolCall } from "../../../../types.js";
+import { ScoutDomainId, type ScoutDomainDynamicToolCall } from "../../../../types.js";
+import { currentRunScope } from "../../../../../run/run-scope.js";
+import { BaseDomain } from "../../base-domain.js";
 
 type ExecutionPlatformOperation = "launch" | "shutdown";
-type ExecutionTargetResult =
-  | { ok: true; identity: ExecutionSelectionIdentity; started: boolean }
-  | { ok: false; code: string; message: string };
-
-interface ExecutionTargetGate {
-  launch(): Promise<ExecutionTargetResult>;
-  shutdown(): Promise<ExecutionTargetResult>;
-}
-
 /** Dispatches Agent operation semantics to the Base Domain execution runtime. */
 export class ExecutionPlatformTool implements DomainAgentTool {
-  constructor(private readonly executionTarget: ExecutionTargetGate) {}
-
   async execute(
     call: ScoutDomainDynamicToolCall,
   ): Promise<DynamicToolCallResponse> {
@@ -46,9 +36,11 @@ export class ExecutionPlatformTool implements DomainAgentTool {
         message: "ExecutionPlatform accepts only the operation field.",
       });
     }
+    const domain = currentRunScope().domainRegistry.get(ScoutDomainId.Base);
+    if (!(domain instanceof BaseDomain)) throw new Error("Registered Base Domain has an invalid runtime type.");
     const result = operation === "launch"
-      ? await this.executionTarget.launch()
-      : await this.executionTarget.shutdown();
+      ? await domain.execution.launch()
+      : await domain.execution.shutdown();
     return result.ok
       ? response(true, { operation, status: "completed", identity: result.identity.platform })
       : failure(operation, result.code, result.message);

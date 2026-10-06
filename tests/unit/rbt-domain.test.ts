@@ -745,7 +745,7 @@ test("ExecutionPlatform Agent tool accepts only operation semantics and uses run
       onShutdown: (request) => requests.push({ operation: "shutdown", request: request ?? {} }),
     }),
   });
-  const tool = new ExecutionPlatformTool(baseDomain(currentRunScope()).execution);
+  const tool = new ExecutionPlatformTool();
   baseDomain(currentRunScope()).execution.configure({
     transport: "adb",
     platform: "android",
