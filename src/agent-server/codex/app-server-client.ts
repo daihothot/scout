@@ -154,6 +154,7 @@ export interface ThreadStartResponse {
 /** Optional overrides used when reattaching a persisted Codex thread. */
 export interface ThreadResumeOptions {
   threadId: string;
+  /** Expected local rollout for response validation; the server resumes by thread id. */
   path?: string;
   cwd?: string;
   runtimeWorkspaceRoots?: string[];
@@ -409,7 +410,6 @@ export class CodexAppServerClient {
     const resumeInput: ThreadResumeRequest = cleanUndefined({
       threadId: options.threadId,
       excludeTurns: true as const,
-      path: options.path,
       model: options.model,
       modelProvider: options.modelProvider,
       cwd: options.cwd,

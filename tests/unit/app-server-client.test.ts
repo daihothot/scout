@@ -376,7 +376,7 @@ test("CodexAppServerClient rejects a mismatched permission selection", async () 
   }
 });
 
-test("CodexAppServerClient resumes a persisted thread without returning turn history", async () => {
+test("CodexAppServerClient resumes by id and verifies the expected rollout without returning turn history", async () => {
   const fakeServer = writeFakeAppServer(`
     const readline = require("node:readline");
     const rl = readline.createInterface({ input: process.stdin });
@@ -389,12 +389,16 @@ test("CodexAppServerClient resumes a persisted thread without returning turn his
       }
       if (message.method === "thread/resume") {
         const path = require("node:path");
+        if (Object.hasOwn(message.params, "path")) {
+          send({ id: message.id, error: { code: -32600, message: "omit path and resume by thread id" } });
+          return;
+        }
         send({
           id: message.id,
           result: {
             thread: {
               id: message.params.threadId,
-              path: path.resolve(process.env.CODEX_HOME, message.params.path),
+              path: path.join(process.env.CODEX_HOME, "sessions/2026/08/02/rollout-thread-persisted.jsonl"),
             },
             cwd: message.params.cwd,
             model: message.params.model,
@@ -437,7 +441,6 @@ test("CodexAppServerClient resumes a persisted thread without returning turn his
     assert.deepEqual(response.params, {
       threadId: "thread-persisted",
       excludeTurns: true,
-      path: "sessions/2026/08/02/rollout-thread-persisted.jsonl",
       model: "gpt-5.5",
       modelProvider: "GuruOpenAI",
       cwd: "/repo",
@@ -452,6 +455,24 @@ test("CodexAppServerClient resumes a persisted thread without returning turn his
       developerInstructions: "developer",
     });
     assert.equal("dynamicTools" in response.params, false);
+    assert.equal("path" in response.params, false);
+
+    const absolutePath = join(tmpdir(), "sessions/2026/08/02/rollout-thread-persisted.jsonl");
+    const absolute = await client.resumeThread({
+      threadId: "thread-persisted",
+      path: absolutePath,
+      permissions: "scout-researcher",
+    });
+    assert.equal("path" in absolute.resumeInput, false);
+
+    await assert.rejects(
+      client.resumeThread({
+        threadId: "thread-persisted",
+        path: "sessions/another-thread.jsonl",
+        permissions: "scout-researcher",
+      }),
+      /expected .*sessions\/another-thread\.jsonl/,
+    );
   } finally {
     client.close();
   }
@@ -475,7 +496,7 @@ test("CodexAppServerClient rejects a resume response from a different runtime wo
           result: {
             thread: {
               id: message.params.threadId,
-              path: path.resolve(process.env.CODEX_HOME, message.params.path),
+              path: path.join(process.env.CODEX_HOME, "sessions/rollout-thread-persisted.jsonl"),
             },
             cwd: message.params.cwd,
             model: message.params.model,
