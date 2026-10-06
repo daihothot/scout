@@ -1,7 +1,7 @@
 ---
 assetKind: scout.skill
 name: domain-rbt-executor
-description: Scout Executor 从 BDD 和业务源码对齐 RBT Hook、声明 JR/SR，通过 JarvisBehavior 执行一次并交付时使用。
+description: Scout Executor 选择历史 Pack 或从 BDD 和业务源码制作 Pack，通过 JarvisBehavior 执行一次并交付时使用。
 id: domain-rbt-executor
 version: 0.17.1
 type: domain
@@ -12,26 +12,26 @@ tags: [scout, rbt, bdd, execution, behavioral, workflow]
 devices: [any]
 dependencies:
   skills:
-    required: [domain-rbt, domain-rbt-execution-pack, signal-rbt-evidence, tool-guru-knowledge, tool-jarvis-codebase, tool-rbt-behavior, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**]
-summary: 从 BDD 和源码形成可比较的 JR/SR，完成一次受控执行与正式交付。
+    required: [domain-rbt, domain-rbt-execution-pack, signal-rbt-evidence, tool-guru-knowledge, tool-jarvis-codebase, tool-rbt-behavior, tool-rbt-search-execution-pack, family:tool.scout.dynamic.general.**, family:tool.scout.dynamic.worker.**]
+summary: 选择可用 Pack，或从 BDD 和源码形成 JR/SR，完成一次受控执行与正式交付。
 ---
 
 # Domain RBT Executor
 
 公共术语与 Artifact 引用结构见 `domain-rbt`。本技能负责业务对齐、受控执行与正式交付。
 
-Executor 拥有 BDD、源码到 Hook 与预期的语义映射和覆盖完整性。交给 Reviewer 的 JR/SR 必须包含其仅凭 campaign evidence 独立比较所需的业务含义与条件。
+Executor 拥有本次 Pack 的选择、制作时 BDD 与源码到 Hook 和预期的语义映射与覆盖完整性，以及正式交付。交给 Reviewer 的 JR/SR 必须包含其仅凭 campaign evidence 独立比较所需的业务含义与条件。
 
 ## Skill Type
 
 - type: domain
 - layout: workflow
-- note: 拥有执行前业务对齐、预期充分性和正式交付；artifact 格式与工具操作引用对应 Skill。
+- note: 拥有 Pack 选择、制作时的业务对齐和预期充分性，以及正式交付；artifact 格式与工具操作引用对应 Skill。
 
 ## Core Use
 
-- 对齐 BDD、当前源码与 Runtime 可用能力，识别业务缺口。
-- 形成覆盖 required Given、When、Then 的执行计划与 JR/SR。
+- 查询已确认 BDD 与版本的历史 Pack，或对齐当前源码与 Runtime 可用能力制作新 Pack。
+- 制作时形成覆盖 required Given、When、Then 的执行计划与 JR/SR。
 - 完成一次受控执行并提交正式 handoff。
 
 ## Inputs
@@ -63,17 +63,34 @@ Confirmation：
 
 ## Workflow Overview
 
+```mermaid
+flowchart TD
+  P1["Phase 1：确认 BDD 与版本"] --> P2["Phase 2：查询与准备 Pack"]
+  P2 --> Q{"历史 Pack 查询结果"}
+  Q -- found --> P21["Phase 2-1：使用历史 Pack"]
+  Q -- not_found --> P22["Phase 2-2：制作新 Pack"]
+  Q -- failed --> X["Blocked"]
+  P22 --> P221["Phase 2-2-1：从 Runtime 锁定主 Node"]
+  P221 --> P222["Phase 2-2-2：对齐业务与证据并形成 Pack"]
+  P21 --> P3["Phase 3：执行一次"]
+  P222 --> P3
+  P3 --> P4["Phase 4：正式交付与 correction"]
+```
+
 Phase 说明：
 
 - Phase 1：确认 BDD、查询分类，核对源码与 Runtime 是否对应已指定版本。
-- Phase 2：从 Runtime 确认唯一精确主 Node，满足源码查询前置条件。
-- Phase 3：对齐 Hook 与证据，形成并校验完整执行计划和 JR/SR。
-- Phase 4：提交一次受控执行并保留明确结果。
-- Phase 5：交付正式 handoff，或按已有依据完成 correction。
+- Phase 2：查询历史 Pack，完成所选分支的 Pack 准备。
+  - Phase 2-1：使用查询命中的历史 Pack。
+  - Phase 2-2：制作新 Pack。
+    - Phase 2-2-1：从 Runtime 确认唯一精确主 Node，满足源码查询前置条件。
+    - Phase 2-2-2：对齐 Hook 与证据，形成并校验完整执行计划和 JR/SR。
+- Phase 3：使用选定 Pack 提交一次受控执行并保留明确结果。
+- Phase 4：交付正式 handoff，或按已有依据完成 correction。
 
 ## Delivery Contract
 
-- 正式输出为完整 Pack 与 `execute-file`；artifact 内容与格式检查使用 `domain-rbt-execution-pack`。
+- 正式交付引用本次选定的完整 Pack 与其中的 `execute-file`；artifact 内容与格式检查使用 `domain-rbt-execution-pack`。
 - 交付只引用已有正式产物；实际命令结果、trace、campaign journal 与 cleanup 记录由 Runtime 保存。
 - Executor 的交付完成与执行状态均不代表 BDD 的最终 pass/fail。
 
@@ -86,14 +103,14 @@ Phase 说明：
   "bdd_id": "<已确认的 BDD identity>",
   "target_version": "<已确认的 SDK 基线版本>",
   "execute-pack-ref": {
-    "workflowId": "<当前 workflow_context.workflowId>",
-    "agentId": "executor",
+    "workflowId": "<选定 Pack 所属 Workflow identity>",
+    "agentId": "<选定 Pack 所属 Agent identity>",
     "internalSymbols": ["pack"]
   }
 }
 ```
 
-`bdd_id` 与 `target_version` 原样沿用 task prompt 的已确认输入，Coordinator 转交给 Reviewer。`execute-pack-ref` 标识本次交付的 Pack；不传物理目录、执行结果或权限登记信息。当前 Workflow 的身份取自本次 Workflow Context。
+`bdd_id` 与 `target_version` 原样沿用 task prompt 的已确认输入，Coordinator 转交给 Reviewer。`execute-pack-ref` 原样使用本次选定 Pack 的引用；不传物理目录、执行结果或权限登记信息。
 
 ## Phase 1: 确认 BDD 与版本
 ---
@@ -136,7 +153,107 @@ Exit：
 - Given、When、Then 与查询分类已明确。
 - codebase、目标 SDK 版本及 Runtime 版本绑定已确认。
 
-## Phase 2: 从 Runtime 锁定主 Node
+## Phase 2: 查询与准备 Pack
+---
+
+Main Flow：
+
+Knowledge：
+
+- 按 `tool-rbt-search-execution-pack` 使用已确认的 `bdd_id` 与 `target_version` 查询历史 Pack；结果契约与复用条件由该 Tool Skill 定义。
+- 本阶段只选择并准备 Pack；两个分支在执行前汇合，本次执行和正式交付使用同一套后续流程。
+
+Flow：
+
+```mermaid
+flowchart TD
+  A["查询已确认 BDD 与版本的历史 Pack"] --> B{"查询结果"}
+  B -- found --> C["Phase 2-1：使用历史 Pack"]
+  B -- not_found --> D["Phase 2-2：制作新 Pack"]
+  B -- failed --> X["Blocked：保留实际错误"]
+  C --> E["Phase 2 Exit：Pack 已准备"]
+  D --> E
+```
+
+Blocked：
+
+- 历史 Pack 查询失败或未取得明确结果。
+- 所选分支未满足 Exit 条件。
+
+Partial：
+
+- `none`
+
+Exit：
+
+- 查询结果对应的分支已通过，取得本次执行使用的 `execute-pack-ref`。
+
+### Phase 2-1: 使用历史 Pack
+---
+
+Main Flow：
+
+Knowledge：
+
+- `found` 提供已通过格式检查的 Pack 引用。该 `execute-pack-ref` 保持查询结果中的 Workflow、Agent 与内部分段，不改写为当前 Workflow。
+- 按 `tool-scout-resolve-artifact-reference` 定位并申请本 Turn 的只读访问，读取本次执行所需的计划与 JR/SR；不修改历史 Pack。
+- 历史成功事实用于选择 Pack，不代替本次执行结果或 Reviewer 的本次审查。
+
+Flow：
+
+```mermaid
+flowchart TD
+  A["使用查询返回的 execute-pack-ref"] --> B["按引用工具契约取得只读访问并读取 Pack"]
+  B --> C{"引用已定位且所需访问与读取已完成？"}
+  C -- 否 --> X["Blocked"]
+  C -- 是 --> E["Phase 2-1 Exit"]
+```
+
+Blocked：
+
+- 引用无法定位。
+- 所需只读访问未获批准。
+- 所需 Pack 内容无法读取。
+
+Partial：
+
+- `none`
+
+Exit：
+
+- 已取得所需只读访问并读取 Pack，选定查询返回的 `execute-pack-ref`。
+
+### Phase 2-2: 制作新 Pack
+---
+
+Main Flow：
+
+Knowledge：
+
+- `not_found` 表示本次查询未提供可用的历史 Pack，进入业务对齐与新 Pack 制作。
+- 新 Pack 写入当前 Workflow Context 的 `artifactRoot`；其引用使用当前 `workflowId`、`agentId: executor` 与 `internalSymbols: ["pack"]`。
+
+Flow：
+
+```mermaid
+flowchart TD
+  A["Phase 2-2-1：从 Runtime 锁定主 Node"] --> B["Phase 2-2-2：对齐业务与证据并形成 Pack"]
+  B --> E["Phase 2-2 Exit"]
+```
+
+Blocked：
+
+- 当前子阶段未满足 Exit 条件。
+
+Partial：
+
+- `none`
+
+Exit：
+
+- 两个子阶段依次通过，取得新 Pack 的 `execute-pack-ref`。
+
+#### Phase 2-2-1: 从 Runtime 锁定主 Node
 ---
 
 Main Flow：
@@ -153,7 +270,7 @@ Flow：
 flowchart TD
   A["behavior.registry.nodes：domain + category"] --> B{"能按 When 确认唯一精确主 Node ID？"}
   B -- 否 --> X["STOP / Blocked<br/>禁止读取业务源码或使用 rg/find/CodeGraph 展开源码"]
-  B -- 是 --> C["Phase 2 Exit：已确认精确主 Node ID<br/>允许进入 Phase 3 源码对齐"]
+  B -- 是 --> C["Phase 2-2-1 Exit：已确认精确主 Node ID<br/>允许进入 Phase 2-2-2 源码对齐"]
 ```
 
 Blocked：
@@ -169,7 +286,7 @@ Exit：
 
 - 已从 Runtime 返回结果确认 When 对应的唯一精确主 Node ID。
 
-## Phase 3: 对齐业务与证据并形成 Pack
+#### Phase 2-2-2: 对齐业务与证据并形成 Pack
 ---
 
 Main Flow：
@@ -210,7 +327,7 @@ flowchart TD
   E --> F["运行 Pack 格式检查并修正诊断"]
   F --> G{"完整产物通过检查？"}
   G -- 否 --> X
-  G -- 是 --> H["Phase 3 Exit"]
+  G -- 是 --> H["Phase 2-2-2 Exit"]
 ```
 
 Blocked：
@@ -235,7 +352,7 @@ Knowledge：
 
 | 业务映射 | Runtime 索引 | 源码接触点 |
 | --- | --- | --- |
-| When 主动作 | Phase 2 已确认的主 Node | `*.Behaviors.cs` 中对应 `BehaviorHook` 与业务方法 |
+| When 主动作 | Phase 2-2-1 已确认的主 Node | `*.Behaviors.cs` 中对应 `BehaviorHook` 与业务方法 |
 | required Given 前置状态 | `behavior.node.variants` | `*Behaviors.cs` 的 `BehaviorVariantHook` 与业务注释 |
 | When 调用入口 | `behavior.trigger.commands` | `*.Behaviors.cs` 的 Trigger 绑定与 `*Behaviors.cs` 的 Trigger 声明 |
 
@@ -329,7 +446,7 @@ Returns To Main Flow：
 - `可比较`：全部预期已完整映射，只给 Reviewer JR/SR 与 campaign 查询结果即可判断。
 - `缺口`：任一局部 Blocked 条件成立；主干进入 Blocked。
 
-## Phase 4: 执行一次
+## Phase 3: 执行一次
 ---
 
 Main Flow：
@@ -337,6 +454,7 @@ Main Flow：
 Knowledge：
 
 - `tool-rbt-behavior` 定义 `JarvisBehavior` 的调用、结果、失败与退出语义；Executor 自己完成预检与正式调用，不转交其它 role 或 child，失败、未知状态与重试边界沿用该 Tool Skill。
+- 使用选定 `execute-pack-ref` 的 Workflow 与 Agent identity，将内部分段指向 `["pack", "execute-file.json"]`，作为 `execute_file` 提交。引用来源不改变执行流程；本次执行历史属于当前 Workflow。
 - 一个 workflow 只提交一次 `execute_file`，文件内只包含一个 Scenario 和一次 trigger；不复用仍 active 的 Scenario。
 - 平台准备、命令执行与 cleanup 由 Runtime 推进；执行成功仅表示执行完成，明确失败按 Tool Skill 处理，不改变已经完成的 Pack。
 
@@ -347,7 +465,7 @@ flowchart TD
   A["提交一次已校验的 execute-file"] --> B["读取执行摘要，按 Tool Skill 处理结果"]
   B --> C{"已取得明确结果并满足 Tool 退出条件？"}
   C -- 否 --> X["Blocked：保留实际错误或未知状态"]
-  C -- 是 --> E["Phase 4 Exit"]
+  C -- 是 --> E["Phase 3 Exit"]
 ```
 
 Blocked：
@@ -364,7 +482,7 @@ Exit：
 - 本次 execute-file 调用已有明确完成或失败结果。
 - `tool-rbt-behavior` 的相应退出条件已满足。
 
-## Phase 5: 正式交付与 correction
+## Phase 4: 正式交付与 correction
 ---
 
 Main Flow：
@@ -372,7 +490,7 @@ Main Flow：
 Knowledge：
 
 - 正式 handoff 使用本技能的 Handoff Contract；只引用已存在的完整产物，不补交 Runtime 结果。
-- correction 只使用已有依据修正交付遗漏或笔误，并按 Pack contract 校验修订后的产物。
+- correction 只使用已有依据修正交付遗漏或笔误；修改当前 Workflow 的 Pack 后，按 Pack contract 校验修订后的产物。历史 Pack 仍由原 Workflow 所有，不修改；需要修改其内容时，将限制交由 Coordinator 处理。
 - `tool-scout-submit-task` 定义 SubmitTask 的提交与失败处理；提交失败或状态未知时保留原始状态。
 
 Flow：
@@ -381,20 +499,21 @@ Flow：
 flowchart TD
   A{"本次是 correction？"}
   A -- 是 --> B["按已有依据修正交付遗漏或笔误"]
-  A -- 否 --> C["按 Pack contract 校验交付与引用，修正有据的格式诊断"]
+  A -- 否 --> C["按 Handoff Contract 形成交付与引用"]
   B --> C
   C --> D{"已满足 handoff 条件？"}
   D -- 否 --> X["Blocked"]
   D -- 是 --> E["调用 SubmitTask"]
   E --> F{"提交已被接受？"}
   F -- 否 --> X
-  F -- 是 --> G["Phase 5 Exit"]
+  F -- 是 --> G["Phase 4 Exit"]
 ```
 
 Blocked：
 
 - 无法根据已有依据满足 Pack 交付 contract。
 - correction 缺少既有依据。
+- correction 需要修改历史 Pack。
 - SubmitTask 未确认接受本次 handoff。
 
 Partial：
@@ -408,9 +527,9 @@ Exit：
 
 ## Workflow Exit Rules (Enforcement)
 
-- XR-001：初次执行按 Phase 1 至 Phase 5 推进，前一阶段全部 Exit 条件成立后才能进入下一阶段。
-- XR-002：Phase 2 未通过时，禁止搜索或读取业务源码，包括 `rg/find` 与 CodeGraph。
-- XR-003：收到 correction 时只进入 Phase 5，不重新执行 Phase 1 至 Phase 4。
+- XR-001：初次执行按 Phase 1 至 Phase 4 推进，当前阶段 Exit 条件成立后才能进入下一阶段；Phase 2 只要求查询结果对应的分支通过，Phase 2-2 的子阶段依次通过。
+- XR-002：制作新 Pack 时，Phase 2-2-1 未通过前禁止搜索或读取业务源码，包括 `rg/find` 与 CodeGraph。
+- XR-003：收到 correction 时只进入 Phase 4，不重新执行 Phase 1 至 Phase 3。
 
 ## Evidence Rules (Enforcement)
 
@@ -442,8 +561,9 @@ Exit：
 ## Checklist
 
 - BDD identity、目标源码版本和人已确认输入一致。
-- 业务源码查询发生在 Runtime 精确主 Node 确认之后。
-- required Given/When/Then 均已对齐到真实可用的 Hook 与业务源码。
+- 已按查询结果完成对应 Pack 准备分支，未将查询或访问失败当作未命中。
+- 制作新 Pack 时，业务源码查询发生在 Runtime 精确主 Node 确认之后，required Given/When/Then 均已对齐到真实可用的 Hook 与业务源码。
+- 历史 Pack 未被修改，选定引用保留真实的 Workflow 与 Agent identity。
 - JR/SR 在执行前完整声明，Reviewer 仅凭声明和 campaign 查询即可比较。
 - 正式执行只提交一次；失败或不匹配后未补发 mutation、重跑或修改预期。
 - Pack 与正式 handoff 已完成，执行状态和业务结论保持区分。

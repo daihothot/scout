@@ -35,6 +35,7 @@ scout:
 | `missing-input-handling` | 一个输入字段缺失、空值、不可读或不唯一时的处理。 |
 | `input-confirmation-condition` | 输入字段、来源和当前事实必须满足的整体确认条件。 |
 | `workflow-definition` | 理解全部 Phase 前必须声明的共享术语；没有时删除。 |
+| `workflow-main-flow` | 全部主阶段、分支阶段与汇合点组成的 Mermaid flowchart 内容；节点标注对应 Phase 编号与名称，不展开阶段内部动作。 |
 | `phase-goal` | 一个 Phase 的目标摘要。 |
 | `result-section-name` | 正式输出或结果 contract 的实际章节名。 |
 | `result-and-limitation-contract` | 输出结构、所有权、限制和下游关系。 |
@@ -115,6 +116,11 @@ Confirmation：
 ## Workflow Overview
 
 <workflow-definition>
+
+```mermaid
+flowchart TD
+  <workflow-main-flow>
+```
 
 Phase 说明：
 
@@ -233,7 +239,36 @@ Returns To Main Flow：
 
 type template 的 Required Content 按语义写入 Core Use、contract、`Inputs`、result 或 Phase。只有全部 Phase 在进入任何阶段前共同依赖的模型和术语，才在 Workflow Overview 之前声明；正式输出或结果结构必须在第一个 Phase 之前声明。只在某一个 Phase 中产生、定义或首次使用的概念、术语、规范、Tool 导航、判断和事实，必须写入该 Phase，并在本 Phase 首次使用前说明，不能提前堆放在全局 contract 或 Workflow Overview 中。
 
-Workflow Overview 先声明理解全部 Phase 所需的共享术语，再使用 `Phase 说明` 列出阶段顺序和目标。没有共享术语时直接从 `Phase 说明` 开始；不在 Overview 中复制 Phase 的具体步骤。
+Workflow Overview 先声明理解全部 Phase 所需的共享术语，再用主流程图表达阶段顺序、分支和汇合点，最后使用 `Phase 说明` 列出各阶段目标。没有共享术语时直接从主流程图开始；不在 Overview 中复制 Phase 的具体步骤。
+
+阶段编号表达层级：主阶段使用 `Phase N`，主阶段内的分支使用 `Phase N-1`、`Phase N-2`，分支内的子阶段继续使用 `Phase N-2-1`、`Phase N-2-2`。编号本身不表示互斥或先后；这些关系由主流程图明确。只有真实存在分支或子阶段时才增加层级，线性流程保持单层编号。
+
+例如，第二阶段存在两个互斥分支，其中第二个分支包含两个有序子阶段，随后汇合到第三阶段：
+
+```mermaid
+flowchart TD
+  P1["Phase 1"] --> P2["Phase 2"]
+  P2 --> Q{"分支条件"}
+  Q -- 条件一 --> P21["Phase 2-1"]
+  Q -- 条件二 --> P22["Phase 2-2"]
+  P22 --> P221["Phase 2-2-1"]
+  P221 --> P222["Phase 2-2-2"]
+  P21 --> P3["Phase 3"]
+  P222 --> P3
+```
+
+对应正文标题层级为：
+
+```markdown
+## Phase 2: <phase-name>
+### Phase 2-1: <phase-name>
+### Phase 2-2: <phase-name>
+#### Phase 2-2-1: <phase-name>
+#### Phase 2-2-2: <phase-name>
+## Phase 3: <phase-name>
+```
+
+`Phase 说明` 使用同样的嵌套层级；主流程图、正文标题和 Exit Rules 的编号与名称一致。父阶段负责分支选择和汇合，子阶段拥有自身工作，不在父阶段重复子阶段的具体规则。互斥分支只要求所选分支通过，不要求未选择的分支也通过；分支内有序子阶段按图逐个通过。
 
 为每个真实阶段复制 Phase 结构。Main Flow 固定使用 `Knowledge`、`Flow`、`Blocked`、`Partial`、`Exit` 的顺序；每个 Subflow 固定使用 `Knowledge`、`Flow`、`Constraints`、`Blocked`、`Partial`、`Returns To Main Flow` 的顺序。
 
@@ -246,7 +281,7 @@ Workflow Overview 先声明理解全部 Phase 所需的共享术语，再使用 
 - Subflow 的 `Blocked` 只表示当前子流程无法继续，不直接决定整个 Phase 的状态；`Returns To Main Flow` 必须把每类局部阻塞映射为主干可以消费的结果，由 Main Flow 决定 Phase 进入 `Blocked`、其它处理或后续动作。
 - Main Flow 和 Subflow 的 `Blocked` 每条只表达一个原子阻塞条件。Subflow 已拥有的阻塞细节不得复制到 Main Flow。
 - Main Flow 和 Subflow 的 `Partial` 每条只表达一种允许保留的部分结果及其所有者或记录位置。Subflow 已拥有的部分结果不得复制到 Main Flow；不存在时使用字面值 `none`。
-- Main Flow 的 `Exit` 每条只表达一个可直接判断的阶段通过条件。默认全部 Exit 条件都成立时 Phase 才通过；Subflow 不使用 Exit。
+- Main Flow 的 `Exit` 每条只表达一个可直接判断的阶段通过条件。全部适用的 Exit 条件成立时 Phase 才通过；父阶段以所选分支的 Exit 为通过条件，不合并互斥分支的门禁。Subflow 不使用 Exit。
 
 当前 Phase 产生、定义或首次使用的内容必须就地说明，不能要求读者跳回前置大段寻找上下文，也不能拥有其它 Phase 的工作。
 
@@ -267,7 +302,8 @@ Workflow Overview 先声明理解全部 Phase 所需的共享术语，再使用 
 
 - Scout 正式术语、字面值和单一路径使用反引号；可执行命令、多行目录结构、schema 和命名形式使用具有语言标记的 fenced code block。
 - 每个占位符必须在模板中先定义再使用；完成态正文不得保留占位符。
-- Workflow Overview 只保留共享定义、阶段顺序和目标，不重复阶段内部规则。
+- Workflow Overview 只保留共享定义、标有 Phase 编号与名称的主流程图和阶段目标，不重复阶段内部规则。
+- 主阶段、分支和嵌套子阶段按 `Phase N`、`Phase N-1`、`Phase N-2-1` 编号，标题依层级使用 `##`、`###`、`####`；局部 Subflow 不使用 Phase 编号。
 - Phase 内部存在流程时使用一张 Main Flow 和必要的 Subflow 表达，不再用正文或编号列表复制流程。每个 Subflow 的知识、约束和结果必须紧邻该图。
 - 每条 Enforcement rule 只表达一个可判断的条件和结果。
 - 只在 Phase 标题和 `I-001`、`I-002` 等 Inputs 标题下使用分隔线。
@@ -279,7 +315,8 @@ Workflow Overview 先声明理解全部 Phase 所需的共享术语，再使用 
 - type template 要求的内容已按 Template Application 映射到实际语义章节，没有复制 type template 标题。
 - Core Use、model/contract、Inputs、Workflow Overview、result、Phase 和 Enforcement 按规定顺序排列。
 - 每个 Input 都完整声明 `Required`、`Optional`、`Missing` 和 `Confirmation`，且 `Confirmation` 可以直接判断。
-- Workflow Overview、各 Phase 和 Workflow Exit Rules 的顺序一致。
+- Workflow Overview 的主流程图、Phase 说明、正文标题和 Workflow Exit Rules 的编号、名称与路径一致，分支汇合点明确。
+- 分支与嵌套子阶段使用层级编号，父阶段只要求所选分支通过；局部 Subflow 没有被编号为独立 Phase。
 - 只服务单一 Phase 的概念、术语、规范、Tool 导航、判断和事实均在该 Phase 首次使用前就地说明，没有提前堆放在全局章节。
 - 每个 Phase 的 Main Flow 按 `Knowledge`、`Flow`、`Blocked`、`Partial`、`Exit` 组织。
 - 每个 Subflow 按 `Knowledge`、`Flow`、`Constraints`、`Blocked`、`Partial`、`Returns To Main Flow` 组织。

@@ -26,14 +26,14 @@ summary: 规范 JarvisBehavior 的执行文件入口、只读查询入口和 Age
 ```json
 {
   "execute_file": {
-    "workflowId": "<当前 workflowId>",
-    "agentId": "executor",
+    "workflowId": "<execute-pack-ref.workflowId>",
+    "agentId": "<execute-pack-ref.agentId>",
     "internalSymbols": ["pack", "execute-file.json"]
   }
 }
 ```
 
-- `execute_file` 使用 `ScoutArtifactReference`，指向 Pack 内的 `execute-file.json`；不提交物理路径或 URI 字符串。
+- `execute_file` 使用 `ScoutArtifactReference`，沿用所执行 Pack 的 Workflow 与 Agent identity，指向其中的 `execute-file.json`；不提交物理路径或 URI 字符串。
 - 文件格式、命令顺序和内容由生成该 artifact 的 Skill 负责；本工具会在发送 mutation 前校验文件结构、允许命令、必需 identity 和全局顺序。
 - 一次调用执行文件中的完整序列。调用方不再逐条发送 campaign mutation。
 
