@@ -28,7 +28,7 @@ const artifact: RequestSourceType<ArtifactRequest, ArtifactRecord> = {
   project(value) { return structuredClone(value); },
   decodeGrant(value) { return structuredClone(value); },
   match(source, request) { return source.allowedGrants.find((grant) => isDeepStrictEqual(grant.scope, request.scope) && isDeepStrictEqual(grant.target, request.target)); },
-  covers(source, grant) { return source.allowedGrants.some((allowed) => isDeepStrictEqual(allowed.scope, grant.scope) && isDeepStrictEqual(allowed.target, grant.target)); },
+  resolveGrant(source, grant) { return source.allowedGrants.find((allowed) => isDeepStrictEqual(allowed.scope, grant.scope) && isDeepStrictEqual(allowed.target, grant.target)); },
 };
 const execution: RequestSourceType<ExecutionRequest, ExecutionRecord> = {
   name: "test.execution",
@@ -40,7 +40,7 @@ const execution: RequestSourceType<ExecutionRequest, ExecutionRecord> = {
   project(value) { return structuredClone(value); },
   decodeGrant(value) { return structuredClone(value); },
   match(source, request) { return source.allowedGrants.find((grant) => isDeepStrictEqual(grant.scope, request.scope) && isDeepStrictEqual(grant.target, request.target)); },
-  covers(source, grant) { return source.allowedGrants.some((allowed) => isDeepStrictEqual(allowed.scope, grant.scope) && isDeepStrictEqual(allowed.target, grant.target)); },
+  resolveGrant(source, grant) { return source.allowedGrants.find((allowed) => isDeepStrictEqual(allowed.scope, grant.scope) && isDeepStrictEqual(allowed.target, grant.target)); },
 };
 const executorGrant = { scope: { agentId: "executor", access: "read" }, target: { path: "pack-a/execute-file.json" } };
 const reviewerGrant = { scope: { agentId: "reviewer", access: "read" }, target: { path: "pack-b/execute-file.json" } };

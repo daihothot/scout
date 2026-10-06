@@ -25,7 +25,7 @@ test("AuthorizationStage installs one public Workflow owner and restores its sha
   await stage.start();
   assert.equal(scope.authorization, authorization);
   assert.throws(() => scope.setAuthorization(authorization), /already available/);
-  const type: RequestSourceType<ScoutRequestSource> = { name: "stage", encode: (value) => ({ ...value, state: { status: "active" } }), decode: (value) => structuredClone(value), project: (value) => structuredClone(value), decodeGrant: (value) => structuredClone(value), match: (source, request) => source.allowedGrants.find((grant) => isDeepStrictEqual(grant.scope, request.scope) && isDeepStrictEqual(grant.target, request.target)), covers: (source, grant) => source.allowedGrants.some((allowed) => isDeepStrictEqual(allowed.scope, grant.scope) && isDeepStrictEqual(allowed.target, grant.target)) };
+  const type: RequestSourceType<ScoutRequestSource> = { name: "stage", encode: (value) => ({ ...value, state: { status: "active" } }), decode: (value) => structuredClone(value), project: (value) => structuredClone(value), decodeGrant: (value) => structuredClone(value), match: (source, request) => source.allowedGrants.find((grant) => isDeepStrictEqual(grant.scope, request.scope) && isDeepStrictEqual(grant.target, request.target)), resolveGrant: (source, grant) => source.allowedGrants.find((allowed) => isDeepStrictEqual(allowed.scope, grant.scope) && isDeepStrictEqual(allowed.target, grant.target)) };
   const grant = { scope: { phase: "execute" }, target: { artifactRef: "stage-input" } };
   const request = await authorization.register(type, { sourceKey: "stage-source", maxApprovals: 2, allowedGrants: [grant] });
   await authorization.submit(type, { workflowId: request.workflowId, ...{
@@ -69,7 +69,7 @@ test("Authorization abort retains unfinished Workflow requests and credentials f
   t.after(() => stage.stop());
   const scope = await installTestRunScope(t, { runId: "authorization-abort" });
   await stage.start();
-  const type: RequestSourceType<ScoutRequestSource> = { name: "abort", encode: (value) => ({ ...value, state: { status: "active" } }), decode: (value) => structuredClone(value), project: (value) => structuredClone(value), decodeGrant: (value) => structuredClone(value), match: (source, request) => source.allowedGrants.find((grant) => isDeepStrictEqual(grant.scope, request.scope) && isDeepStrictEqual(grant.target, request.target)), covers: (source, grant) => source.allowedGrants.some((allowed) => isDeepStrictEqual(allowed.scope, grant.scope) && isDeepStrictEqual(allowed.target, grant.target)) };
+  const type: RequestSourceType<ScoutRequestSource> = { name: "abort", encode: (value) => ({ ...value, state: { status: "active" } }), decode: (value) => structuredClone(value), project: (value) => structuredClone(value), decodeGrant: (value) => structuredClone(value), match: (source, request) => source.allowedGrants.find((grant) => isDeepStrictEqual(grant.scope, request.scope) && isDeepStrictEqual(grant.target, request.target)), resolveGrant: (source, grant) => source.allowedGrants.find((allowed) => isDeepStrictEqual(allowed.scope, grant.scope) && isDeepStrictEqual(allowed.target, grant.target)) };
   const grant = { scope: { phase: "execute" }, target: { artifactRef: "unfinished-input" } };
   const request = await scope.authorization.register(type, { sourceKey: "stage-source", maxApprovals: 1, allowedGrants: [grant] });
   const approved = await scope.authorization.submit(type, { workflowId: request.workflowId, ...{

@@ -3,6 +3,7 @@ import test, { type TestContext } from "node:test";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { AgentRequestApprovalBackend } from "../../src/agent/backend/request/agent-request-approval-backend.js";
 import { agentPermissionRequestSourceType } from "../../src/core/authorization/request-source/permission/agent-permission-request-source.js";
 import type { ScoutAgent } from "../../src/agent/core/scout-agent.js";
@@ -11,6 +12,7 @@ import type { DynamicToolCallResponse } from "../../src/agent-server/types.js";
 import { ShellToolBuilder } from "../../src/asset-store/builders/shell-tool-builder.js";
 import type { ShellToolContract } from "../../src/asset-store/contracts/resources.js";
 import { RequestSourceEvents } from "../../src/core/authorization/request-source/request-source-events.js";
+import { ApprovalEvents } from "../../src/core/authorization/approval/approval-events.js";
 import type { BenchmarkValue } from "../../src/core/benchmarks/types.js";
 import { authorizationJournalPaths, resolveArtifactTarget, runPaths, workflowAgentPaths, workflowPaths, type ScoutArtifactReference } from "../../src/core/io/index.js";
 import { Journal } from "../../src/core/journal/index.js";
@@ -381,6 +383,63 @@ test("Pack lookup registration restores for Reviewer and subsequent credential-b
   assert.equal(f.scope.authorization.consumed(request), 2, "Using the existing credential is not a new approval.");
   assert.equal(f.scope.authorization.credentialUses(f.scope.authorization.credentials(request)[1]!.credentialId).length, 1);
   assert.equal(f.registered(), 1, "Reviewer consumes the original request rather than performing another lookup.");
+});
+
+test("Pack file requests approve each consumer once and restore their source grants without rewriting approval facts", async (t) => {
+  const f = await fixture(t);
+  await new SearchExecutionPackTool().execute(f.call);
+  const source = f.request();
+  assert.equal(source.maxApprovals, 2);
+  const readFile = (path: string) => ({ permissions: { fileSystem: { entries: [
+    { path: { type: "path", path }, access: "read" },
+  ] } }, scope: "turn" });
+  const executePath = join(f.packPath, "execute-file.json");
+  assert.deepEqual(await f.approve(executePath, "executor"), readFile(executePath));
+  assert.equal(f.scope.authorization.consumed(source), 1);
+  assert.deepEqual(f.scope.authorization.credentials(source)[0]!.target, packReference);
+  const journalPath = join(f.packPath, "journal-expected.md");
+  assert.deepEqual(await f.approve(journalPath, "executor"), readFile(journalPath));
+  assert.equal(f.scope.authorization.consumed(source), 1);
+
+  await f.scope.workflow.advance("completed");
+  // Stored decisions can identify a contained file. The source contract determines
+  // the complete reusable runtime grant; replay never edits the original fact.
+  const approvalId = randomUUID();
+  const submittedAt = new Date().toISOString();
+  await f.scope.eventBus.publishAndWait(ApprovalEvents.authorizationApproval.submitted, {
+    approvalId, sourceId: source.sourceId, sourceType: source.type, workflowId: source.workflowId, submittedAt,
+    consumer: { agentId: "reviewer", phase: "review" },
+    result: { decision: "approved", scope: source.allowedGrants[1]!.scope,
+      target: { ...packReference, internalSymbols: ["pack", "journal-expected.md"] } },
+    basis: { kind: "new" },
+  }, { id: approvalId, occurredAt: submittedAt });
+  const originalRecords = f.recordBytes();
+  await f.stage.stop();
+  await f.stage.start();
+  f.scope.authorization.registerRequestSourceType(agentPermissionRequestSourceType);
+  f.scope.authorization.restore(f.scope.workflow.snapshot()!);
+  assert.equal(f.recordBytes(), originalRecords, "Projection does not rewrite persisted approvals.");
+  const restored = f.request();
+  assert.equal(restored.sourceId, source.sourceId);
+  assert.equal(f.scope.authorization.consumed(restored), 2);
+  const credentials = f.scope.authorization.credentials(restored);
+  assert.equal(credentials.length, 2);
+  assert.deepEqual(credentials.map(({ target }) => target), [packReference, packReference]);
+  const reviewerCredential = credentials.find(({ scope }) => scope.agentId === "reviewer")!;
+  assert.equal(reviewerCredential.credentialId, approvalId);
+  f.turns.set("reviewer", "review-after-resume");
+  for (const file of ["journal-expected.md", "signal-expected.md", "execute-file.json"]) {
+    const path = join(f.packPath, file);
+    assert.deepEqual(await f.approve(path, "reviewer"), readFile(path));
+  }
+  assert.deepEqual(await f.approve(f.packPath, "reviewer"), readFile(f.packPath));
+  assert.equal(f.scope.authorization.consumed(restored), 2);
+  assert.equal(f.scope.authorization.approvals(restored).length, 2);
+  assert.equal(f.scope.authorization.credentialUses(approvalId).length, 4);
+  assert.equal(f.recordBytes().startsWith(originalRecords), true, "Further grants append only credential-use facts.");
+  assert.deepEqual(await f.approve(dirname(f.packPath), "reviewer"), { permissions: {}, scope: "turn" });
+  assert.equal(f.scope.authorization.consumed(restored), 2);
+  assert.equal(f.registered(), 1);
 });
 
 test("RBT Backend invokes the constructed lookup tool", async (t) => {

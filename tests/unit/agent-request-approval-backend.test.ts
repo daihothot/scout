@@ -162,7 +162,7 @@ test("Permission approval rejects forged identity, broader rights, and stale con
     { permissions: { network: { enabled: true }, fileSystem: { entries: [readEntry] } } },
     { permissions: { fileSystem: { entries: [{ ...readEntry, access: "write" }] } } },
     { permissions: { fileSystem: { entries: [{ path: { type: "path", path: f.root }, access: "read" }] } } },
-    { permissions: { fileSystem: { entries: [readEntry, readEntry] } } },
+    { permissions: { fileSystem: { entries: [readEntry, { ...readEntry, access: "write" }] } } },
     { permissions: { fileSystem: { read: [f.target] } } },
     { permissions: { fileSystem: { entries: [readEntry], write: [f.target] } } },
     { permissions: { fileSystem: { entries: [readEntry], read: [f.root] } } },
@@ -198,7 +198,7 @@ test("Native approval uses the application rather than a request-ID marker and c
   assert.equal(f.scope.authorization.consumed(source), 1);
   assert.deepEqual(f.scope.authorization.approvals(source)[0]!.result, { decision: "approved",
     scope: { workflowId: source.workflowId, agentId: "executor", phases: ["execute"], access: "read" },
-    target: { ...historicalTarget, internalSymbols: ["execute-file.json"] },
+    target: historicalTarget,
   });
   await f.restore();
   const renamed = join(f.scope.runRoot, "workflows", "renamed permission workflow");
@@ -207,6 +207,96 @@ test("Native approval uses the application rather than a request-ID marker and c
   assert.notDeepEqual(await f.invoke({ ...reference, path: renamedChild }, { reason: undefined }), denied);
   assert.equal(f.scope.authorization.consumed(f.stored(reference.sourceId)), 1);
   assert.deepEqual(await f.invoke({ ...reference, path: f.scope.workflow.agentPaths("reviewer").artifactRoot }), denied);
+});
+
+test("Reviewer can request three contained files with one source grant and reuse its credential after restoration", async (t) => {
+  const f = await fixture(t);
+  const reference = await f.register(1, { ...f.targetRef, internalSymbols: [] });
+  const pack = join(reference.path, "pack");
+  const history = join(reference.path, "history");
+  mkdirSync(pack);
+  mkdirSync(history);
+  const targets = [["pack", "journal-expected.md"], ["pack", "signal-expected.md"], ["history", "001.json"]];
+  const paths = targets.map((symbols) => join(reference.path, ...symbols));
+  for (const path of paths) writeFileSync(path, "{}");
+  const entries = paths.map((path) => ({ path: { type: "path", path }, access: "read" }));
+  f.scope.workflow.graph.advance("completed");
+  assert.deepEqual(await f.invoke(reference, {
+    threadId: "thread-reviewer", turnId: "review-turn-1", permissions: { fileSystem: { entries } },
+  }), { permissions: { fileSystem: { entries } }, scope: "turn" });
+  const source = f.stored(reference.sourceId);
+  assert.equal(f.scope.authorization.consumed(source), 1);
+  const approvals = f.scope.authorization.approvals(source);
+  assert.deepEqual(approvals.map((approval) => approval.result), [{
+    decision: "approved",
+    scope: { workflowId: source.workflowId, agentId: "reviewer", phases: ["review"], access: "read" },
+    target: { ...f.targetRef, internalSymbols: [] },
+  }]);
+  assert.equal(f.scope.authorization.credentialUses(approvals[0]!.approvalId).length, 2);
+  await f.finish("reviewer");
+  await f.restore();
+  f.startTurn("reviewer", "review-turn-restored");
+  assert.deepEqual(await f.invoke(reference, {
+    threadId: "thread-reviewer", turnId: "review-turn-restored", permissions: {
+      fileSystem: { entries, read: [...paths].reverse(), write: [], globScanMaxDepth: null },
+    },
+  }), { permissions: { fileSystem: { entries } }, scope: "turn" });
+  const restored = f.stored(reference.sourceId);
+  assert.equal(f.scope.authorization.consumed(restored), 1);
+  assert.deepEqual(f.scope.authorization.approvals(restored), approvals);
+  assert.equal(f.scope.authorization.credentials(restored).length, 1);
+  assert.equal(f.scope.authorization.credentialUses(approvals[0]!.approvalId).length, 5);
+});
+
+test("One native request can read a directory and a file matched by separate request sources", async (t) => {
+  const f = await fixture(t);
+  const directory = await f.register(1);
+  const fileTarget = { ...f.targetRef, internalSymbols: ["evidence.json"] };
+  const filePath = join(f.scope.workflow.agentPaths("executor").artifactRoot, "evidence.json");
+  writeFileSync(filePath, "{}");
+  const file = await f.register(1, fileTarget);
+  const entries = [directory.path, file.path].map((path) => ({ path: { type: "path", path }, access: "read" }));
+  assert.deepEqual(await f.invoke(directory, { permissions: { fileSystem: { entries } } }),
+    { permissions: { fileSystem: { entries } }, scope: "turn" });
+  for (const reference of [directory, file]) {
+    const source = f.stored(reference.sourceId);
+    assert.equal(f.scope.authorization.consumed(source), 1);
+    assert.equal(f.scope.authorization.approvals(source).length, 1);
+  }
+});
+
+test("An unmatched batch target is denied without blocking or broadening the approved target", async (t) => {
+  const f = await fixture(t);
+  const reference = await f.register(1);
+  const child = join(reference.path, "execute-file.json");
+  writeFileSync(child, "{}");
+  const entries = [f.root, child].map((path) => ({ path: { type: "path", path }, access: "read" }));
+  assert.deepEqual(await f.invoke(reference, { permissions: { fileSystem: { entries } } }), {
+    permissions: { fileSystem: { entries: [entries[1]] } }, scope: "turn",
+  });
+  const source = f.stored(reference.sourceId);
+  assert.equal(f.scope.authorization.consumed(source), 1);
+  assert.equal(f.scope.authorization.approvals(source).length, 1);
+  assert.equal(f.warnings.length, 1);
+  assert.match(f.warnings[0]?.message ?? "", /No matching active request source/);
+  assert.equal(f.errorEvents.length, 0);
+});
+
+test("Contained targets use one source approval while native permissions stay limited to the requested files", async (t) => {
+  const f = await fixture(t);
+  const reference = await f.register(1);
+  const paths = [join(reference.path, "first.json"), join(reference.path, "second.json")];
+  for (const path of paths) writeFileSync(path, "{}");
+  const entries = paths.map((path) => ({ path: { type: "path", path }, access: "read" }));
+  assert.deepEqual(await f.invoke(reference, { permissions: { fileSystem: { entries } } }), {
+    permissions: { fileSystem: { entries } }, scope: "turn",
+  });
+  const source = f.stored(reference.sourceId);
+  assert.equal(f.scope.authorization.consumed(source), 1);
+  assert.equal(f.scope.authorization.credentials(source).length, 1);
+  assert.equal(f.scope.authorization.approvals(source).length, 1);
+  assert.deepEqual(f.scope.authorization.credentials(source)[0]!.target, f.targetRef);
+  assert.equal(f.scope.authorization.credentialUses(f.scope.authorization.credentials(source)[0]!.credentialId).length, 1);
 });
 
 test("Credential approval returns the same grant in later Turns and after restoring authorization facts", async (t) => {
@@ -306,6 +396,7 @@ test("Malformed and unauthorized permission RPCs remain ordinary correlated deni
   for (const overrides of [
     { permissions: null },
     { permissions: { fileSystem: { entries: null } } },
+    { permissions: { fileSystem: { entries: [] } } },
     { permissions: { fileSystem: { entries: [null] } } },
     { permissions: { fileSystem: { entries: [{ access: "read", path: { type: "glob", path: f.target } }] } } },
     { permissions: { fileSystem: { entries: [{ access: "read", path: { type: "path", path: 123 } }] } } },
@@ -338,6 +429,29 @@ test("Matching native mirror fields preserve the exact registered read-only gran
     if (index > 0) assert.ok(f.scope.authorization.credentials(request).length === 1);
   }
   assert.equal(f.warnings.length, 0);
+  assert.equal(f.errorEvents.length, 0);
+});
+
+test("Batch decoding rejects malformed entries and mirror fields before any approval is submitted", async (t) => {
+  const f = await fixture(t);
+  const reference = await f.register();
+  const child = join(reference.path, "execute-file.json");
+  writeFileSync(child, "{}");
+  const entries = [reference.path, child].map((path) => ({ path: { type: "path", path }, access: "read" }));
+  for (const fileSystem of [
+    { entries: [entries[0], null] },
+    { entries: [entries[0], { ...entries[1], access: "write" }] },
+    { entries: [entries[0], { access: "read", path: { type: "glob", path: child } }] },
+    { entries, read: [reference.path] },
+    { entries, read: [reference.path, f.root] },
+    { entries, write: [child] },
+  ]) {
+    assert.deepEqual(await f.invoke(reference, { permissions: { fileSystem } }), denied);
+  }
+  const source = f.stored(reference.sourceId);
+  assert.equal(f.scope.authorization.consumed(source), 0);
+  assert.deepEqual(f.scope.authorization.approvals(source), []);
+  assert.deepEqual(f.scope.authorization.credentials(source), []);
   assert.equal(f.errorEvents.length, 0);
 });
 
@@ -550,14 +664,19 @@ test("Malformed stored Agent permission scope fails during owner restoration rat
   assert.equal(f.scope.authorization.find(reference.sourceId), undefined);
 });
 
-test("A Turn interrupted during durable approval does not receive a restored native grant", async (t) => {
+test("A Turn interrupted during batch approval neither receives native grants nor submits the remaining targets", async (t) => {
   const f = await fixture(t);
   const reference = await f.register();
+  const child = join(reference.path, "execute-file.json");
+  writeFileSync(child, "{}");
+  const entries = [reference.path, child].map((path) => ({ path: { type: "path", path }, access: "read" }));
   f.scope.eventBus.subscribe(ApprovalEvents.authorizationApproval.submitted, () => f.finish("executor", "interrupted"),
     { priority: EventSubscriptionPriorities.Critical });
-  assert.deepEqual(await f.invoke(reference), denied);
+  assert.deepEqual(await f.invoke(reference, { permissions: { fileSystem: { entries } } }), denied);
   const request = f.stored(reference.sourceId);
   assert.equal(f.scope.authorization.consumed(request), 1, "The committed business approval remains a fact.");
+  assert.equal(f.scope.authorization.approvals(request).length, 1);
+  assert.deepEqual(f.scope.authorization.credentials(request)[0]!.target, f.targetRef);
   f.startTurn("executor", "execute-after-interruption");
   assert.notDeepEqual(await f.invoke(reference), denied);
   assert.equal(f.scope.authorization.consumed(request), 1, "A new native Turn can consume the existing business credential.");

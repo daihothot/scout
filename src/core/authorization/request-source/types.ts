@@ -23,10 +23,10 @@ export interface RequestSourceType<TReq extends ScoutRequestSource, TRecord exte
   decode(value: ScoutRequestSourceRecord): TRecord;
   project(value: TRecord): TReq;
   decodeGrant(value: { readonly scope: object; readonly target: object }): TReq["allowedGrants"][number];
-  /** Concrete policy: match one application, returning only its requested grant. */
+  /** Concrete policy: match an application to its source-defined business grant. */
   match(source: TReq, request: TApplication): TReq["allowedGrants"][number] | undefined;
-  /** Pure coverage relation, also used when projecting persisted approvals. */
-  covers(source: TReq, grant: TReq["allowedGrants"][number]): boolean;
+  /** Resolves an approved scope/target to the source's reusable business grant. */
+  resolveGrant(source: TReq, grant: TReq["allowedGrants"][number]): TReq["allowedGrants"][number] | undefined;
 }
 
 export type SourceRegistration<TReq extends ScoutRequestSource> = Omit<

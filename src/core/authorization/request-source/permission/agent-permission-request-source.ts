@@ -52,16 +52,16 @@ export const agentPermissionRequestSourceType: RequestSourceType<AgentPermission
         || !allowed.scope.phases.includes(request.scope.phase)) continue;
       const resolved = resolveArtifactReadTarget(allowed.target, request.target.path);
       if ("reason" in resolved) continue;
-      return { scope: { workflowId: request.workflowId, agentId: request.scope.agentId,
-        phases: [request.scope.phase], access: "read" as const }, target: resolved.target };
+      return structuredClone(allowed);
     }
     return undefined;
   },
-  covers(source: AgentPermissionRequestSource, grant: AgentPermissionRequestSource["allowedGrants"][number]) {
-    return source.allowedGrants.some((allowed) => allowed.scope.workflowId === grant.scope.workflowId
+  resolveGrant(source: AgentPermissionRequestSource, grant: AgentPermissionRequestSource["allowedGrants"][number]) {
+    const allowed = source.allowedGrants.find((allowed) => allowed.scope.workflowId === grant.scope.workflowId
       && allowed.scope.agentId === grant.scope.agentId && allowed.scope.access === grant.scope.access
       && grant.scope.phases.every((phase) => allowed.scope.phases.includes(phase))
       && isArtifactTargetWithin(allowed.target, grant.target));
+    return allowed ? structuredClone(allowed) : undefined;
   },
 });
 

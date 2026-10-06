@@ -24,10 +24,13 @@ export class CredentialProjector {
       } else if (record.key.routeKey === ApprovalEvents.authorizationApproval.submitted.routeKey) {
         const approval = record.payload as ApprovalRecord;
         if (approval.result.decision !== "approved") continue;
+        const request = requests.get(approval.sourceId)!;
+        const grant = this.contracts.get(request.type)!.resolveGrant(request, approval.result);
+        if (!grant) throw new Error("Invalid persisted credential grant.");
         credentials.set(approval.approvalId, {
           credentialId: approval.approvalId, sourceId: approval.sourceId, sourceType: approval.sourceType,
           workflowId: approval.workflowId, issuedAt: approval.submittedAt,
-          scope: structuredClone(approval.result.scope), target: structuredClone(approval.result.target),
+          scope: grant.scope, target: grant.target,
         });
       } else if (record.key.routeKey === CredentialEvents.authorizationCredential.used.routeKey) {
         const use = record.payload as CredentialUseRecord;
@@ -36,7 +39,7 @@ export class CredentialProjector {
         if (!credential || !request || !active.has(request.sourceId)
           || use.workflowId !== workflowId || request.workflowId !== workflowId
           || credential.workflowId !== workflowId || credential.sourceType !== request.type
-          || !this.contracts.get(request.type)!.covers(request, credential)) throw new Error("Invalid persisted credential reference.");
+          || !this.contracts.get(request.type)!.resolveGrant(request, credential)) throw new Error("Invalid persisted credential reference.");
         usages.push({ credentialId: use.credentialId, approvalId: use.approvalId, sourceId: use.sourceId,
           workflowId: use.workflowId, usedAt: use.usedAt, consumer: structuredClone(use.consumer) });
       }

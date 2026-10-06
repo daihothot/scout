@@ -30,11 +30,9 @@ export class AgentRequestApprovalBackend {
     }
 
     // The business grant is durable; the provider grant belongs only to this native Turn.
-    controller.sendResult(approved === undefined
+    controller.sendResult(!approved?.length
       ? { permissions: {}, scope: "turn" }
-      : { permissions: { fileSystem: { entries: [
-        { path: { type: "path", path: approved.path }, access: approved.result.scope.access },
-      ] } }, scope: "turn" });
+      : { permissions: { fileSystem: { entries: approved } }, scope: "turn" });
 
     // Expected refusals neither throw nor consume the registered request's approval allowance.
     function deny(message: string): undefined {
@@ -69,28 +67,32 @@ export class AgentRequestApprovalBackend {
         return deny("Missing filesystem permission.");
       }
       const fileSystem = permissions.fileSystem;
-      if (!("entries" in fileSystem) || !Array.isArray(fileSystem.entries) || fileSystem.entries.length !== 1) {
-        return deny("Exactly one literal read target is required.");
+      if (!("entries" in fileSystem) || !Array.isArray(fileSystem.entries) || !fileSystem.entries.length) {
+        return deny("At least one literal read target is required.");
       }
-      const entry: unknown = fileSystem.entries[0];
-      if (!entry || typeof entry !== "object" || !("access" in entry) || entry.access !== "read"
-        || !("path" in entry) || !entry.path || typeof entry.path !== "object"
-        || !("type" in entry.path) || entry.path.type !== "path"
-        || !("path" in entry.path) || typeof entry.path.path !== "string") {
-        return deny("Exactly one literal read target is required.");
+      const paths: string[] = [];
+      const requestedEntries: readonly unknown[] = fileSystem.entries;
+      for (const entry of requestedEntries) {
+        if (!entry || typeof entry !== "object" || !("access" in entry) || entry.access !== "read"
+          || !("path" in entry) || !entry.path || typeof entry.path !== "object"
+          || !("type" in entry.path) || entry.path.type !== "path"
+          || !("path" in entry.path) || typeof entry.path.path !== "string") {
+          return deny("Only literal read targets are supported.");
+        }
+        paths.push(entry.path.path);
       }
-      const path = entry.path.path;
       // Mirror fields accompanying entries must not introduce additional rights
       // or serve as a fallback for entries.
       if (("write" in fileSystem && fileSystem.write != null
         && (!Array.isArray(fileSystem.write) || fileSystem.write.length !== 0))
         || ("globScanMaxDepth" in fileSystem && fileSystem.globScanMaxDepth != null)
         || ("read" in fileSystem && fileSystem.read != null
-          && (!Array.isArray(fileSystem.read) || fileSystem.read.length !== 1 || fileSystem.read[0] !== path))) {
+          && (!Array.isArray(fileSystem.read) || fileSystem.read.length !== paths.length
+            || fileSystem.read.some((path: unknown) => typeof path !== "string" || !paths.includes(path))))) {
         return deny("Additional filesystem permissions were not registered.");
       }
       return { threadId: params.threadId, turnId: params.turnId, itemId: params.itemId,
-        cwd: params.cwd, environmentId: params.environmentId, path };
+        cwd: params.cwd, environmentId: params.environmentId, paths };
     }
 
     // Establish the actual native consumer; Authorization owns source matching and decisions.
@@ -122,22 +124,28 @@ export class AgentRequestApprovalBackend {
       const phase = scope.workflow.graph.snapshot().currentPhase;
       const consumer: AgentPermissionConsumer = { agentId: caller.agentId, threadId: input.threadId, turnId: input.turnId,
         itemId: input.itemId, phase, cwd, environmentId: "local" };
-      const result = await scope.authorization.submit(agentPermissionRequestSourceType, {
-        workflowId: workflow.workflowId, consumer,
-        scope: { workflowId: workflow.workflowId, agentId: caller.agentId, phase, access: "read" },
-        target: { path: input.path },
-      });
-      if (result.decision === "denied") return deny(result.reason);
-      // A user can interrupt the Turn while the authorization fact is being committed.
-      // Durable business rights never restore or extend an ended native Turn.
-      if (!hasCurrentTurn()) return undefined;
-      const currentWorkflow = scope.workflow.snapshot();
-      if (!currentWorkflow || currentWorkflow.status !== "active" || currentWorkflow.workflowId !== workflow.workflowId
-        || !result.scope.phases.includes(scope.workflow.graph.snapshot().currentPhase)) {
-        return deny("Permission request Workflow or Phase changed during approval.");
+      const entries: { path: { type: "path"; path: string }; access: "read" }[] = [];
+      for (const path of input.paths) {
+        const result = await scope.authorization.submit(agentPermissionRequestSourceType, {
+          workflowId: workflow.workflowId, consumer,
+          scope: { workflowId: workflow.workflowId, agentId: caller.agentId, phase, access: "read" },
+          target: { path },
+        });
+        // A user can interrupt the Turn while the authorization fact is being committed.
+        // Durable business rights never restore or extend an ended native Turn.
+        if (!hasCurrentTurn()) return undefined;
+        const currentWorkflow = scope.workflow.snapshot();
+        if (!currentWorkflow || currentWorkflow.status !== "active" || currentWorkflow.workflowId !== workflow.workflowId
+          || scope.workflow.graph.snapshot().currentPhase !== phase) {
+          return deny("Permission request Workflow or Phase changed during approval.");
+        }
+        if (result.decision === "denied") {
+          deny(result.reason);
+          continue;
+        }
+        entries.push({ path: { type: "path", path }, access: result.scope.access });
       }
-      return { result, path: input.path };
-
+      return entries;
     }
   }
 }

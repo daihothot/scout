@@ -25,9 +25,11 @@ export class ApprovalProjector {
         const request = requests.get(stored.sourceId);
         if (!request || !active.has(request.sourceId) || request.type !== stored.sourceType
           || request.workflowId !== workflowId || stored.workflowId !== workflowId) throw new Error(`Approval has no active request: ${stored.sourceId}`);
-        if (stored.result.decision === "approved") {
-          const result = stored.result;
-          if (!this.contracts.get(request.type)!.covers(request, result)) throw new Error("Invalid persisted approval grant.");
+        let result = stored.result;
+        if (result.decision === "approved") {
+          const grant = this.contracts.get(request.type)!.resolveGrant(request, result);
+          if (!grant) throw new Error("Invalid persisted approval grant.");
+          result = { decision: "approved", ...grant };
           const count = consumed.get(request.sourceId) ?? 0;
           if (request.maxApprovals !== null && count >= request.maxApprovals) throw new Error("Persisted approval exceeds request quota.");
           consumed.set(request.sourceId, count + 1);
@@ -35,9 +37,9 @@ export class ApprovalProjector {
         const identity = { approvalId: stored.approvalId, sourceId: stored.sourceId,
           sourceType: stored.sourceType, workflowId: stored.workflowId, submittedAt: stored.submittedAt,
           consumer: structuredClone(stored.consumer) };
-        approvals.push(stored.result.decision === "approved"
-          ? { ...identity, result: structuredClone(stored.result), basis: { kind: "new" } }
-          : { ...identity, result: structuredClone(stored.result), basis: { kind: "denied" } });
+        approvals.push(result.decision === "approved"
+          ? { ...identity, result: structuredClone(result), basis: { kind: "new" } }
+          : { ...identity, result: structuredClone(result), basis: { kind: "denied" } });
       }
     }
     return approvals;
