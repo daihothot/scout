@@ -54,6 +54,16 @@ Knowledge 描述业务知识与行为约定，Guru SDK 提供对应的业务实�
 
 例如，`gurusdk.behavior.firebase-remote-config-getter-default-fallback` 标识 Firebase Remote Config getter 的默认值回退行为。
 
+## Platform
+
+| 平台标识 | 说明 |
+| --- | --- |
+| `unity_editor` | Unity Editor 执行环境 |
+| `android` | Android 应用执行环境 |
+| `ios` | iOS 应用执行环境，目前 RBT 连接尚未实现 |
+
+以上是当前 RBT 的平台标识。Platform 描述执行环境，与 transport、设备型号和平台版本分别表示不同的信息。
+
 ## RBT Workflow
 
 RBT Workflow 是围绕一个确定的 BDD 与 Guru SDK 基线版本展开的一次验证过程，包含执行、审查，以及关联的 Pack 和运行证据。

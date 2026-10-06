@@ -30,7 +30,7 @@ Coordinator 负责确认目标、派发任务、消费正式状态和交付结�
 
 ## Core Use
 
-- 在空白期确认唯一 BDD 与目标 SDK 版本，命名并开启 Workflow。
+- 在空白期确认唯一 BDD、目标 SDK 版本与执行平台，命名并开启 Workflow。
 - 分别派发 Executor 和 Reviewer 任务。
 - 根据正式状态处理两类任务的结果。
 - 向用户交付结论、限制和正式 refs。
@@ -55,6 +55,7 @@ Optional：
 - 用户限制：用户明确提出的范围和执行要求；没有时为 `none`。
 - `execution_only`：用户明确要求只执行时为 `true`；否则为 `false`。
 - `target_version`：用户明确指定的 Guru SDK 基线 tag。
+- `platform`：用户指定的执行平台，标识见 `domain-rbt` 的 Platform。
 
 Missing：
 
@@ -92,7 +93,7 @@ Confirmation：
 
 Phase 说明：
 
-- Phase 1：Confirm and Start Workflow — 确认 BDD 与版本，生成 name，开启 Workflow。
+- Phase 1：Confirm and Start Workflow — 确认 BDD、版本与平台，生成 name，开启 Workflow。
 - Phase 2：Submit Task to Executor — 决定是否分配执行任务。
 - Phase 3：Coordinate Executor Outcome — 根据执行状态决定等待、退回或进入审查。
 - Phase 4：Submit Task to Reviewer — 决定是否分配审查任务。
@@ -100,7 +101,7 @@ Phase 说明：
 
 ## Coordinator Output
 
-- 开启输入：根据已确认 BDD 与版本生成的 `name`。
+- 开启输入：根据已确认 BDD、版本与平台生成的 `name`，格式见 Phase 1 的默认 name 定义。
 - 执行任务 prompt：`bdd_id`、`bdd_source_path`、`target_version`、用户限制和交付要求。
 - 阶段结果：当前正式状态支持的 `completed` 或 `error`。
 - 用户交付：正式结论、限制和结果 refs。
@@ -116,14 +117,21 @@ Knowledge：
 - 通过 `tool-guru-knowledge` 定位并完整读取 BDD，确认 `bdd_id`、`bdd_source_path`、场景与用户目标。
 - 目标 `target_version` 来自用户明确输入，或当前允许读取的 Knowledge 中能明确关联到本次目标的版本资料。查询仅限 `tool-guru-knowledge` 已声明范围；不扩大资源范围。
 - 版本缺失、含糊或与用户要求冲突时，直接向用户提问，结束 response 等待答复；不为这个问题调用 Human Input 工具或创建 Worker task。
-- BDD 与版本确认后生成 `name`，例如 `<bdd_id>--<target_version>`，再按 `tool-scout-start-workflow` 调用 `StartWorkflow(name)`。name 是展示名称，不承载任务 prompt。
+- 确认执行平台，使用 `domain-rbt` 的 Platform 标识；平台未明确或存在冲突时，直接向用户提问，结束 response 等待答复。
+- BDD、版本与平台确认后，按下方默认 `name` 格式生成名称，不追加轮次或状态，再按 `tool-scout-start-workflow` 调用 `StartWorkflow(name)`。name 是展示名称，不承载任务 prompt，也不包含 Runtime 分配的 Workflow 身份编号。
 - 开启请求接受后结束当前 response；下一次 response 在 `execute` 阶段生成任务 prompt。已确认目标留在当前 Thread 的协调上下文中，不从目录名反推。
+
+默认 `name` 格式：
+
+```text
+<bdd_id>--<target_version>--<platform>
+```
 
 Flow：
 
 ```mermaid
 flowchart TD
-  A["定位并完整读取 BDD"] --> B{"BDD 与目标版本已确认？"}
+  A["定位并完整读取 BDD"] --> B{"BDD、目标版本与平台已确认？"}
   B -- "是" --> C["生成 name，调用 StartWorkflow"]
   B -- "否" --> D["直接询问用户，等待回复"]
   C --> E["结束 response；新 execute response 进入 Phase 2"]
@@ -136,6 +144,7 @@ Blocked：
 - BDD identity 与来源路径不一致。
 - BDD 场景与用户目标或限制冲突。
 - 目标版本尚未明确或存在未解决冲突。
+- 执行平台尚未明确或存在未解决冲突。
 - Workflow 开启未成功。
 
 Partial：
@@ -144,7 +153,7 @@ Partial：
 
 Exit：
 
-- BDD、目标版本和用户限制已确认，开启请求已接受；新 response 已收到活动 Workflow 的 `execute` 上下文。
+- BDD、目标版本、执行平台和用户限制已确认，开启请求已接受；新 response 已收到活动 Workflow 的 `execute` 上下文。
 
 ## Phase 2: Submit Task to Executor
 ---
