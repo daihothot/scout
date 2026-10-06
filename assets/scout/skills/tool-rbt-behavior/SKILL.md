@@ -145,6 +145,15 @@ summary: 规范 JarvisBehavior 的执行文件入口、只读查询入口和 Age
 
 `result` 是 Runtime command result 的 payload，不包含 `type`、`version` 或 `correlationId`。
 
+### Campaign Capture Result
+
+`behavior.campaign.query` 的 historical `evidence` 中，成功的自动采集回执使用 `kind: "capture_result"`、`result: "success"`。
+
+- `data.returnedCount` 是该次 capture 的 EvidenceSource 查询按实际过滤条件和 `limit` 限制后返回的记录数，不包含回执自身；它不是未过滤的 Source 总数量，也不是按 Signal 预期另行计算的匹配数。
+- 回执中的 `data.filters`、`data.fields` 和 `data.limit` 分别记录实际查询的过滤条件、字段选择和数量上限；`limit: null` 表示未设置数量上限，`limit: 0` 表示最多返回零条。
+- 成功采集零条记录时，仍有 `capture_result` 回执且 `data.returnedCount: 0`；采集失败记录为 `kind: "error"`，不是成功的零条结果。
+- campaign 的 `evidenceCount` 是完整 Journal 的累计记录数，包含采集回执及其它 evidence，与单次 capture 的 `data.returnedCount` 不同。
+
 ### Execute Success
 
 ```json
